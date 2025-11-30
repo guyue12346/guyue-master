@@ -1,0 +1,117 @@
+{
+  "name": "guyue-master",
+  "productName": "Guyue Master",
+  "private": true,
+  "version": "1.0.4",
+  "description": "macOS 风格的多功能生产力工具",
+  "author": "Guyue",
+  "main": "dist-electron/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron:dev": "concurrently \"cross-env NODE_ENV=development npm run dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .\"",
+    "electron:build": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder",
+    "electron:build:mac": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder --mac",
+    "electron:build:win": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder --win",
+    "electron:build:dmg": "node scripts/backup_dmg.js && npm run build && npx tsc -p electron/tsconfig.json && electron-builder --mac dmg"
+  },
+  "dependencies": {
+    "@google/genai": "^1.30.0",
+    "@types/react-syntax-highlighter": "^15.5.13",
+    "katex": "^0.16.25",
+    "lucide-react": "^0.554.0",
+    "node-pty": "^1.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "react-syntax-highlighter": "^16.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-github-blockquote-alert": "^2.0.0",
+    "remark-math": "^6.0.0",
+    "xterm": "^5.3.0",
+    "xterm-addon-fit": "^0.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^39.2.3",
+    "electron-builder": "^26.0.12",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0",
+    "wait-on": "^9.0.3"
+  },
+  "build": {
+    "appId": "com.guyue.master",
+    "productName": "Guyue Master",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "darkModeSupport": true
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "ia32",
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
+    },
+    "dmg": {
+      "title": "${productName} ${version}",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
+    "extraMetadata": {
+      "main": "dist-electron/main.js"
+    }
+  }
+}

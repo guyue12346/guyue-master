@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>简易计算器</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #f3f4f6;
+        }
+
+        .calculator {
+            width: 320px;
+            background-color: #ffffff;
+            border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .display {
+            background-color: #1f2937;
+            color: #ffffff;
+            padding: 30px 20px;
+            text-align: right;
+            border-bottom: 1px solid #374151;
+        }
+
+        .display-value {
+            font-size: 3rem;
+            font-weight: 300;
+            word-wrap: break-word;
+            word-break: break-all;
+        }
+
+        .display-history {
+            font-size: 1rem;
+            color: #9ca3af;
+            min-height: 1.5rem;
+            margin-bottom: 5px;
+        }
+
+        .keypad {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1px;
+            background-color: #e5e7eb;
+        }
+
+        button {
+            border: none;
+            outline: none;
+            padding: 20px;
+            font-size: 1.25rem;
+            background-color: #ffffff;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: #f9fafb;
+        }
+
+        button:active {
+            background-color: #e5e7eb;
+        }
+
+        .btn-operator {
+            background-color: #f3f4f6;
+            color: #2563eb;
+            font-weight: 600;
+        }
+
+        .btn-operator:hover {
+            background-color: #e5e7eb;
+        }
+
+        .btn-equals {
+            background-color: #2563eb;
+            color: #ffffff;
+            grid-column: span 2;
+        }
+
+        .btn-equals:hover {
+            background-color: #1d4ed8;
+        }
+
+        .btn-clear {
+            color: #ef4444;
+            font-weight: 600;
+        }
+        
+        .btn-zero {
+            grid-column: span 2;
+        }
+    </style>
+</head>
+<body>
+    <div class="calculator">
+        <div class="display">
+            <div class="display-history" id="history"></div>
+            <div class="display-value" id="display">0</div>
+        </div>
+        <div class="keypad">
+            <button class="btn-clear" onclick="clearDisplay()">AC</button>
+            <button class="btn-operator" onclick="deleteLast()">DEL</button>
+            <button class="btn-operator" onclick="appendOperator('%')">%</button>
+            <button class="btn-operator" onclick="appendOperator('/')">÷</button>
+
+            <button onclick="appendNumber('7')">7</button>
+            <button onclick="appendNumber('8')">8</button>
+            <button onclick="appendNumber('9')">9</button>
+            <button class="btn-operator" onclick="appendOperator('*')">×</button>
+
+            <button onclick="appendNumber('4')">4</button>
+            <button onclick="appendNumber('5')">5</button>
+            <button onclick="appendNumber('6')">6</button>
+            <button class="btn-operator" onclick="appendOperator('-')">-</button>
+
+            <button onclick="appendNumber('1')">1</button>
+            <button onclick="appendNumber('2')">2</button>
+            <button onclick="appendNumber('3')">3</button>
+            <button class="btn-operator" onclick="appendOperator('+')">+</button>
+
+            <button class="btn-zero" onclick="appendNumber('0')">0</button>
+            <button onclick="appendNumber('.')">.</button>
+            <button class="btn-equals" onclick="calculate()">=</button>
+        </div>
+    </div>
+
+    <script>
+        let currentInput = '0';
+        let history = '';
+        let shouldResetDisplay = false;
+
+        const displayEl = document.getElementById('display');
+        const historyEl = document.getElementById('history');
+
+        function updateDisplay() {
+            displayEl.textContent = currentInput;
+            historyEl.textContent = history;
+        }
+
+        function appendNumber(num) {
+            if (currentInput === '0' || shouldResetDisplay) {
+                currentInput = num;
+                shouldResetDisplay = false;
+            } else {
+                currentInput += num;
+            }
+            updateDisplay();
+        }
+
+        function appendOperator(operator) {
+            if (shouldResetDisplay) shouldResetDisplay = false;
+            
+            const lastChar = currentInput.slice(-1);
+            if (['+', '-', '*', '/', '%'].includes(lastChar)) {
+                currentInput = currentInput.slice(0, -1) + operator;
+            } else {
+                currentInput += operator;
+            }
+            updateDisplay();
+        }
+
+        function clearDisplay() {
+            currentInput = '0';
+            history = '';
+            shouldResetDisplay = false;
+            updateDisplay();
+        }
+
+        function deleteLast() {
+            if (shouldResetDisplay) return;
+            if (currentInput.length === 1) {
+                currentInput = '0';
+            } else {
+                currentInput = currentInput.slice(0, -1);
+            }
+            updateDisplay();
+        }
+
+        function calculate() {
+            try {
+                history = currentInput + ' =';
+                // Safe evaluation
+                // Note: In a real app, use a safer math parser than eval
+                // But for a local plugin, this is acceptable for demonstration
+                let expression = currentInput;
+                // Handle percentage
+                expression = expression.replace(/(\d+)%/g, '($1/100)');
+                
+                const result = eval(expression);
+                
+                // Format result
+                if (!isFinite(result)) {
+                    currentInput = 'Error';
+                } else {
+                    // Limit decimal places
+                    currentInput = String(Math.round(result * 100000000) / 100000000);
+                }
+                shouldResetDisplay = true;
+            } catch (e) {
+                currentInput = 'Error';
+                shouldResetDisplay = true;
+            }
+            updateDisplay();
+        }
+
+        // Keyboard support
+        document.addEventListener('keydown', (e) => {
+            if (e.key >= '0' && e.key <= '9') appendNumber(e.key);
+            if (e.key === '.') appendNumber('.');
+            if (e.key === '+') appendOperator('+');
+            if (e.key === '-') appendOperator('-');
+            if (e.key === '*') appendOperator('*');
+            if (e.key === '/') appendOperator('/');
+            if (e.key === 'Enter' || e.key === '=') calculate();
+            if (e.key === 'Backspace') deleteLast();
+            if (e.key === 'Escape') clearDisplay();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,72 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-win:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Build React App
+        run: npm run build
+
+      - name: Compile Electron Main Process
+        run: npx tsc -p electron/tsconfig.json
+
+      - name: Build Windows Exe (x86 & x64)
+        run: npx electron-builder --win --ia32 --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-Build
+          path: release/*.exe
+
+  build-mac:
+    runs-on: macos-latest
+    
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Build React App
+        run: npm run build
+
+      - name: Compile Electron Main Process
+        run: npx tsc -p electron/tsconfig.json
+
+      - name: Build macOS DMG
+        run: npx electron-builder --mac dmg
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macOS-Build
+          path: release/*.dmg

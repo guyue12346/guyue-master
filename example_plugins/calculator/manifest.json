@@ -1,0 +1,9 @@
+{
+  "id": "simple-calculator",
+  "name": "简易计算器",
+  "version": "1.0.0",
+  "description": "一个美观实用的标准计算器",
+  "icon": "Calculator",
+  "entry": "index.html",
+  "author": "Guyue Master AI"
+}
