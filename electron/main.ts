@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
-// import pty from 'node-pty';
+import pty from 'node-pty';
 import os from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -384,38 +384,38 @@ ipcMain.handle('delete-plugin', async (event, pluginId) => {
 const ptyProcesses: Record<string, any> = {};
 
 ipcMain.handle('terminal-create', (event, options) => {
-  // const shell = process.env[os.platform() === 'win32' ? 'COMSPEC' : 'SHELL'] || '/bin/zsh';
+  const shell = process.env[os.platform() === 'win32' ? 'COMSPEC' : 'SHELL'] || '/bin/zsh';
   const id = options?.id || Math.random().toString(36).substring(7);
   
-  // if (ptyProcesses[id]) {
-  //   try {
-  //       ptyProcesses[id].kill();
-  //   } catch(e) {}
-  // }
+  if (ptyProcesses[id]) {
+    try {
+        ptyProcesses[id].kill();
+    } catch(e) {}
+  }
 
   try {
     // Use login shell to ensure user's profile (and PATH) is loaded
-    // const args = os.platform() === 'win32' ? [] : ['-l'];
+    const args = os.platform() === 'win32' ? [] : ['-l'];
     
-    // const ptyProcess = pty.spawn(shell, args, {
-    //   name: 'xterm-256color',
-    //   cols: 80,
-    //   rows: 30,
-    //   cwd: process.env.HOME,
-    //   env: {
-    //     ...process.env,
-    //     LANG: 'en_US.UTF-8',
-    //     LC_ALL: 'en_US.UTF-8',
-    //   } as any
-    // });
+    const ptyProcess = pty.spawn(shell, args, {
+      name: 'xterm-256color',
+      cols: 80,
+      rows: 30,
+      cwd: process.env.HOME,
+      env: {
+        ...process.env,
+        LANG: 'en_US.UTF-8',
+        LC_ALL: 'en_US.UTF-8',
+      } as any
+    });
 
-    // ptyProcess.onData((data: any) => {
-    //   if (mainWindow && !mainWindow.isDestroyed()) {
-    //     mainWindow.webContents.send('terminal-incoming-data', { id, data });
-    //   }
-    // });
+    ptyProcess.onData((data: any) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('terminal-incoming-data', { id, data });
+      }
+    });
 
-    // ptyProcesses[id] = ptyProcess;
+    ptyProcesses[id] = ptyProcess;
     return id;
   } catch (e) {
     console.error('Failed to spawn terminal:', e);
@@ -424,27 +424,27 @@ ipcMain.handle('terminal-create', (event, options) => {
 });
 
 ipcMain.on('terminal-write', (event, { id, data }) => {
-  // if (ptyProcesses[id]) {
-  //   ptyProcesses[id].write(data);
-  // }
+  if (ptyProcesses[id]) {
+    ptyProcesses[id].write(data);
+  }
 });
 
 ipcMain.on('terminal-resize', (event, { id, cols, rows }) => {
-  // if (ptyProcesses[id]) {
-  //   try {
-  //     ptyProcesses[id].resize(cols, rows);
-  //   } catch (e) {
-  //     console.error('Failed to resize terminal:', e);
-  //   }
-  // }
+  if (ptyProcesses[id]) {
+    try {
+      ptyProcesses[id].resize(cols, rows);
+    } catch (e) {
+      console.error('Failed to resize terminal:', e);
+    }
+  }
 });
 
 ipcMain.on('terminal-close', (event, id) => {
-  // if (ptyProcesses[id]) {
-  //   try {
-  //     ptyProcesses[id].kill();
-  //   } catch (e) {}
-  //   delete ptyProcesses[id];
-  // }
+  if (ptyProcesses[id]) {
+    try {
+      ptyProcesses[id].kill();
+    } catch (e) {}
+    delete ptyProcesses[id];
+  }
 });
 

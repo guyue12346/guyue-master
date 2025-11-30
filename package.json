@@ -14,7 +14,6 @@
     "electron:dev": "concurrently \"cross-env NODE_ENV=development npm run dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .\"",
     "electron:build": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder",
     "electron:build:mac": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder --mac",
-    "electron:build:win": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder --win",
     "electron:build:dmg": "node scripts/backup_dmg.js && npm run build && npx tsc -p electron/tsconfig.json && electron-builder --mac dmg"
   },
   "dependencies": {
@@ -22,6 +21,7 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "katex": "^0.16.25",
     "lucide-react": "^0.554.0",
+    "node-pty": "^1.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
@@ -33,9 +33,6 @@
     "remark-math": "^6.0.0",
     "xterm": "^5.3.0",
     "xterm-addon-fit": "^0.8.0"
-  },
-  "optionalDependencies": {
-    "node-pty": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
@@ -80,18 +77,6 @@
       "category": "public.app-category.productivity",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "darkModeSupport": true
-    },
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "ia32",
-            "x64"
-          ]
-        }
-      ],
-      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
     },
     "dmg": {
       "title": "${productName} ${version}",
