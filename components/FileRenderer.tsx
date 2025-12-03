@@ -9,18 +9,20 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import 'katex/dist/katex.min.css';
 import { FileRecord } from '../types';
-import { FileText, Maximize2, Minimize2, Info, Lightbulb, AlertCircle, AlertTriangle, ShieldAlert } from 'lucide-react';
+import { FileText, Maximize2, Minimize2, Info, Lightbulb, AlertCircle, AlertTriangle, ShieldAlert, Edit } from 'lucide-react';
 
 interface FileRendererProps {
   file: FileRecord | null;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
+  onEdit?: () => void;
 }
 
 export const FileRenderer: React.FC<FileRendererProps> = ({ 
   file,
   isFullscreen,
-  onToggleFullscreen
+  onToggleFullscreen,
+  onEdit
 }) => {
   const [content, setContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
@@ -34,7 +36,7 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
 
       const ext = file.type.toLowerCase().replace('.', '');
       
-      if (['md', 'txt', 'json', 'js', 'ts', 'tsx', 'jsx', 'css', 'html', 'py'].includes(ext)) {
+      if (['md', 'markdown', 'txt', 'json', 'js', 'ts', 'tsx', 'jsx', 'css', 'html', 'py'].includes(ext)) {
         setLoading(true);
         try {
           if (window.electronAPI && window.electronAPI.readFile) {
@@ -76,13 +78,24 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
            </h1>
         </div>
         
-        <button 
-          onClick={onToggleFullscreen}
-          className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-colors shrink-0 ml-4"
-          title={isFullscreen ? "退出全屏" : "全屏阅读"}
-        >
-          {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
-        </button>
+        <div className="flex items-center gap-2 ml-4 shrink-0">
+          {onEdit && ['md', 'markdown'].includes(file.type.toLowerCase().replace('.', '')) && (
+            <button 
+              onClick={onEdit}
+              className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+              title="编辑文件"
+            >
+              <Edit className="w-5 h-5" />
+            </button>
+          )}
+          <button 
+            onClick={onToggleFullscreen}
+            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
+            title={isFullscreen ? "退出全屏" : "全屏阅读"}
+          >
+            {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
+          </button>
+        </div>
       </div>
 
       {/* Content Area */}

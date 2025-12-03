@@ -64,11 +64,16 @@ export interface ElectronAPI {
   listDir: (path: string) => Promise<Array<{ name: string; isDirectory: boolean; path: string }>>;
   getUserInfo: () => Promise<{ username: string; hostname: string }>;
   uploadImage: (params: { accessToken: string; owner: string; repo: string; path: string; content: string; message: string }) => Promise<any>;
+  // Plugins
+  getPlugins: () => Promise<any[]>;
+  installPlugin: () => Promise<boolean>;
+  deletePlugin: (id: string) => Promise<boolean>;
+  // Terminal
+  createTerminal: (options?: any) => Promise<string>;
+  onTerminalData: (callback: (event: any, payload: { id: string, data: string }) => void) => void;
+  writeTerminal: (id: string, data: string) => void;
+  resizeTerminal: (id: string, cols: number, rows: number) => void;
+  closeTerminal: (id: string) => void;
 }
 
-declare global {
-  interface Window {
-    electronAPI: ElectronAPI;
-  }
-}
 

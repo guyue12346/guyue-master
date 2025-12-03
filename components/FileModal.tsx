@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { FileRecord } from '../types';
-import { X, Upload, File as FileIcon, Tag, AlertTriangle, FileText, HardDrive, Cloud, Link as LinkIcon } from 'lucide-react';
+import { X, Upload, File as FileIcon, Tag, AlertTriangle, FileText, HardDrive, Cloud, Link as LinkIcon, FolderOpen } from 'lucide-react';
 
 interface FileModalProps {
   isOpen: boolean;
@@ -9,11 +9,13 @@ interface FileModalProps {
   onSave: (record: Partial<FileRecord>) => void;
   initialData?: FileRecord | null;
   categories: string[];
+  mode?: 'file' | 'note';
+  defaultCategory?: string;
 }
 
 type StorageType = 'reference' | 'local_archive' | 'cloud';
 
-export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, initialData, categories }) => {
+export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, initialData, categories, mode = 'file', defaultCategory }) => {
   const [name, setName] = useState('');
   const [path, setPath] = useState('');
   const [size, setSize] = useState('');
@@ -38,8 +40,16 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
       setStorageType('reference'); // Default to reference for existing items
     } else {
       resetForm();
+      if (defaultCategory) {
+        setCategory(defaultCategory);
+      }
+      if (mode === 'note') {
+        setType('MARKDOWN');
+        setSize('0 B');
+        setPath('internal://new');
+      }
     }
-  }, [initialData, isOpen]);
+  }, [initialData, isOpen, mode, defaultCategory]);
 
   const resetForm = () => {
     setName('');
@@ -93,8 +103,8 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
 
     let finalPath = path;
 
-    // Handle Local Archive Logic
-    if (storageType === 'local_archive' && window.electronAPI) {
+    // Handle Local Archive Logic or New Note Creation
+    if ((storageType === 'local_archive' || mode === 'note') && window.electronAPI) {
       const archiveRoot = localStorage.getItem('linkmaster_archive_path');
       if (!archiveRoot) {
         alert('请先在设置中配置本地归档根目录');
@@ -115,15 +125,27 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
         if (!dirCreated) throw new Error('无法创建目标文件夹');
 
         // 3. Construct target file path
-        const targetPath = await window.electronAPI.pathJoin(targetDir, name);
+        // Ensure filename has extension
+        let fileName = name;
+        if (mode === 'note' && !fileName.toLowerCase().endsWith('.md')) {
+            fileName += '.md';
+        }
+        const targetPath = await window.electronAPI.pathJoin(targetDir, fileName);
 
-        // 4. Copy file
-        const copySuccess = await window.electronAPI.copyFile(path, targetPath);
-        if (!copySuccess) throw new Error('文件复制失败');
+        // 4. Create or Copy file
+        if (mode === 'note') {
+            // Create new empty file
+            const writeSuccess = await window.electronAPI.writeFile(targetPath, '');
+            if (!writeSuccess) throw new Error('文件创建失败');
+        } else {
+            // Copy existing file
+            const copySuccess = await window.electronAPI.copyFile(path, targetPath);
+            if (!copySuccess) throw new Error('文件复制失败');
+        }
 
         finalPath = targetPath;
       } catch (err) {
-        alert(`归档失败: ${(err as Error).message}`);
+        alert(`操作失败: ${(err as Error).message}`);
         setIsProcessing(false);
         return;
       }
@@ -146,14 +168,11 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/20 backdrop-blur-sm transition-opacity" onClick={onClose} />
-
-      <div className="relative bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl w-full max-w-lg border border-white/50 overflow-hidden transform transition-all scale-100">
-        
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm p-4">
+      <div className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-2xl w-full max-w-lg border border-white/50 overflow-hidden animate-in fade-in zoom-in duration-200">
         <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-white/50">
           <h2 className="text-lg font-semibold text-gray-800">
-            {initialData ? '编辑文件记录' : '添加重要文件'}
+            {initialData ? '编辑文件记录' : (mode === 'note' ? '创建 Markdown 笔记' : '添加重要文件')}
           </h2>
           <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-200/50 transition-colors">
             <X className="w-5 h-5 text-gray-500" />
@@ -162,8 +181,8 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
 
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
           
-          {/* File Selector */}
-          {!initialData && (
+          {/* File Selector - Only for 'file' mode */}
+          {!initialData && mode === 'file' && (
              <div 
                onClick={handleSelectFile}
                className="border-2 border-dashed border-gray-300 rounded-xl p-6 flex flex-col items-center justify-center text-gray-500 hover:border-blue-400 hover:bg-blue-50/30 hover:text-blue-500 cursor-pointer transition-all"
@@ -182,7 +201,7 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
           )}
 
           {/* Storage Options (Only for new files) */}
-          {!initialData && path && (
+          {!initialData && path && mode === 'file' && (
             <div className="space-y-2">
               <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wide">存储方式</label>
               <div className="grid grid-cols-3 gap-2">
@@ -270,16 +289,18 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
           {/* Category & Importance */}
           <div className="grid grid-cols-2 gap-4">
              <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wide">分类</label>
+              <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wide">
+                {mode ? '文件夹' : '分类'}
+              </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Tag className="h-4 w-4 text-gray-400" />
+                  {mode ? <FolderOpen className="h-4 w-4 text-gray-400" /> : <Tag className="h-4 w-4 text-gray-400" />}
                 </div>
                 <input
                   list="categories"
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  placeholder="选择或输入"
+                  placeholder={mode ? "选择或输入文件夹" : "选择或输入分类"}
                   className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm"
                 />
                 <datalist id="categories">

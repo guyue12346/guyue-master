@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Category, AVAILABLE_ICONS } from '../types';
 import { X, Plus, Trash2, Check, Edit2, ArrowUp, ArrowDown } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
@@ -9,6 +9,7 @@ interface CategoryManagerModalProps {
   categories: Category[];
   onUpdateCategories: (categories: Category[]) => void;
   onDeleteCategory: (id: string) => void;
+  initialEditId?: string | null;
 }
 
 export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
@@ -17,11 +18,21 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   categories,
   onUpdateCategories,
   onDeleteCategory,
+  initialEditId
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editIcon, setEditIcon] = useState('');
   const [isAdding, setIsAdding] = useState(false);
+
+  useEffect(() => {
+    if (isOpen && initialEditId) {
+      const cat = categories.find(c => c.id === initialEditId);
+      if (cat) {
+        startEdit(cat);
+      }
+    }
+  }, [isOpen, initialEditId]);
 
   // Dynamic Icon Renderer
   const IconRender = ({ name, className }: { name: string; className?: string }) => {

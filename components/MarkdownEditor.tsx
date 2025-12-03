@@ -9,15 +9,17 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import 'katex/dist/katex.min.css';
 import { MarkdownNote } from '../types';
-import { Save, Edit3, Maximize2, Minimize2, Info, Lightbulb, AlertCircle, AlertTriangle, ShieldAlert } from 'lucide-react';
+import { Save, Edit3, Maximize2, Minimize2, Info, Lightbulb, AlertCircle, AlertTriangle, ShieldAlert, Book } from 'lucide-react';
 
 interface MarkdownEditorProps {
   note: MarkdownNote | null;
-  onUpdate: (id: string, updates: Partial<MarkdownNote>) => void;
+  onUpdate: (id: string, updates: Partial<MarkdownNote>) => Promise<void> | void;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
   viewMode?: 'split' | 'single';
   showViewToggle?: boolean;
+  hideMetadata?: boolean;
+  onExitEdit?: () => void;
 }
 
 export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ 
@@ -26,7 +28,9 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   isFullscreen,
   onToggleFullscreen,
   viewMode = 'split',
-  showViewToggle = false
+  showViewToggle = false,
+  hideMetadata = false,
+  onExitEdit
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [activeTab, setActiveTab] = useState<'edit' | 'preview'>('edit');
@@ -39,12 +43,17 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       setContent(note.content);
       setTitle(note.title);
       setCategory(note.category);
+      // If onExitEdit is provided, we assume we start in edit mode (File Management)
+      // Otherwise default to false (Markdown Note)
+      if (onExitEdit) {
+        setIsEditing(true);
+      }
     } else {
       setContent('');
       setTitle('');
       setCategory('');
     }
-  }, [note]);
+  }, [note, onExitEdit]);
 
   if (!note) {
     return (
@@ -54,8 +63,8 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     );
   }
 
-  const handleSave = () => {
-    onUpdate(note.id, { content, title, category, updatedAt: Date.now() });
+  const handleSave = async () => {
+    await onUpdate(note.id, { content, title, category, updatedAt: Date.now() });
     setIsEditing(false);
   };
 
@@ -266,39 +275,40 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
 
   return (
     <div className="relative h-full flex flex-col bg-white">
-      {showViewToggle && (
-        <button
-          onClick={() => setIsEditing(prev => !prev)}
-          className="absolute top-4 right-4 z-20 px-3 py-1 text-xs font-medium rounded-full border border-gray-200 bg-white/90 text-gray-600 shadow-sm hover:text-blue-600 hover:border-blue-200 transition-colors"
-        >
-          {isEditing ? '切换至预览' : '切换至编辑'}
-        </button>
-      )}
       {/* Toolbar */}
       <div className="h-14 border-b border-gray-100 flex items-center justify-between px-6 shrink-0">
         {isEditing ? (
           <div className="flex items-center gap-4 w-full mr-4">
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="text-xl font-bold text-gray-800 bg-transparent border-none focus:ring-0 placeholder-gray-300 flex-1"
-              placeholder="笔记标题"
-            />
-            <input
-              type="text"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded px-2 py-1 w-32 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-              placeholder="分类"
-            />
+            {!hideMetadata && (
+              <>
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="text-xl font-bold text-gray-800 bg-transparent border-none focus:ring-0 placeholder-gray-300 flex-1"
+                  placeholder="笔记标题"
+                />
+                <input
+                  type="text"
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded px-2 py-1 w-32 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="分类"
+                />
+              </>
+            )}
+            {hideMetadata && (
+               <span className="text-xl font-bold text-gray-800 flex-1">{title}</span>
+            )}
           </div>
         ) : (
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold text-gray-800">{note.title}</h1>
-            <span className="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full">
-              {note.category || '未分类'}
-            </span>
+            {!hideMetadata && (
+              <span className="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full">
+                {note.category || '未分类'}
+              </span>
+            )}
           </div>
         )}
 
@@ -325,15 +335,24 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           )}
 
           <button
-            onClick={isEditing ? handleSave : () => setIsEditing(true)}
+            onClick={async () => {
+              if (onExitEdit) {
+                // If external exit handler provided (File Management mode)
+                await handleSave(); // Save first
+                onExitEdit();
+              } else {
+                // Default behavior (Markdown Note mode)
+                isEditing ? handleSave() : setIsEditing(true);
+              }
+            }}
             className={`p-2 rounded-lg transition-colors shrink-0 ${
-              isEditing 
+              (isEditing || onExitEdit)
                 ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm' 
                 : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
             }`}
-            title={isEditing ? "保存" : "编辑"}
+            title={onExitEdit ? "退出编辑 (阅读模式)" : (isEditing ? "保存" : "编辑")}
           >
-            {isEditing ? <Save className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />}
+            {onExitEdit ? <Book className="w-4 h-4" /> : (isEditing ? <Save className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />)}
           </button>
 
           <button 

@@ -14,6 +14,7 @@ const FileList = React.lazy(() => import('./components/FileList').then(m => ({ d
 const PromptList = React.lazy(() => import('./components/PromptList').then(m => ({ default: m.PromptList })));
 const MarkdownSidebar = React.lazy(() => import('./components/MarkdownSidebar').then(m => ({ default: m.MarkdownSidebar })));
 const FileSidebar = React.lazy(() => import('./components/FileSidebar').then(m => ({ default: m.FileSidebar })));
+const ArchiveSidebar = React.lazy(() => import('./components/ArchiveSidebar').then(m => ({ default: m.ArchiveSidebar })));
 const MarkdownEditor = React.lazy(() => import('./components/MarkdownEditor').then(m => ({ default: m.MarkdownEditor })));
 const FileRenderer = React.lazy(() => import('./components/FileRenderer').then(m => ({ default: m.FileRenderer })));
 const Terminal = React.lazy(() => import('./components/Terminal').then(m => ({ default: m.Terminal })));
@@ -149,6 +150,7 @@ const App: React.FC = () => {
   const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
   
   const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
+  const [initialCategoryEditId, setInitialCategoryEditId] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
   const [editingBookmark, setEditingBookmark] = useState<Bookmark | null>(null);
@@ -157,7 +159,12 @@ const App: React.FC = () => {
   const [editingAPI, setEditingAPI] = useState<APIRecord | null>(null);
   const [editingTodo, setEditingTodo] = useState<TodoItem | null>(null);
   const [editingFile, setEditingFile] = useState<FileRecord | null>(null);
+  const [fileModalMode, setFileModalMode] = useState<'file' | 'note'>('file');
   const [editingPrompt, setEditingPrompt] = useState<PromptRecord | null>(null);
+  
+  // File Editing State
+  const [isEditingFile, setIsEditingFile] = useState(false);
+  const [editingFileContent, setEditingFileContent] = useState('');
 
   // Shortcut handling
   const isTabPressed = React.useRef(false);
@@ -383,6 +390,7 @@ const App: React.FC = () => {
   useEffect(() => {
     setSelectedCategory('全部');
     setSearchQuery('');
+    setIsEditingFile(false); // Reset editing state
     if (appMode !== 'terminal') {
       setInitialTerminalCommand(undefined);
       setInitialTerminalTitle(undefined);
@@ -918,6 +926,7 @@ const App: React.FC = () => {
 
   const handleEditFile = (file: FileRecord) => {
     setEditingFile(file);
+    setFileModalMode('file');
     setIsFileModalOpen(true);
   };
 
@@ -1000,6 +1009,67 @@ const App: React.FC = () => {
     }
   };
 
+  const handleCreateNoteInFolder = async (categoryName: string) => {
+    if (!window.electronAPI) return;
+    const archiveRoot = localStorage.getItem('linkmaster_archive_path');
+    if (!archiveRoot) {
+        alert('请先在设置中配置本地归档根目录');
+        return;
+    }
+    
+    try {
+      // 1. Generate unique name
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const fileName = `Note-${timestamp}.md`;
+      
+      // 2. Construct path
+      const safeCategory = categoryName.replace(/[\\/:*?"<>|]/g, '_');
+      const targetDir = await window.electronAPI.pathJoin(archiveRoot, safeCategory, 'MARKDOWN');
+      await window.electronAPI.ensureDir(targetDir);
+      const targetPath = await window.electronAPI.pathJoin(targetDir, fileName);
+      
+      // 3. Create file
+      await window.electronAPI.writeFile(targetPath, '');
+      
+      // 4. Update state
+      const newFile: FileRecord = {
+         id: crypto.randomUUID(),
+         name: fileName,
+         path: targetPath,
+         size: '0 B',
+         type: 'MARKDOWN',
+         importance: 50,
+         category: categoryName,
+         note: '',
+         createdAt: Date.now(),
+       };
+       setFileRecords(prev => [newFile, ...prev]);
+       setActiveRenderFileId(newFile.id);
+    } catch (e) {
+      console.error('Failed to create note:', e);
+      alert('创建笔记失败');
+    }
+  };
+
+  const handleEditCategory = (category: Category) => {
+    setInitialCategoryEditId(category.id);
+    setIsCategoryManagerOpen(true);
+  };
+
+  const handleDeleteCategory = (id: string) => {
+    if (window.confirm('确定要删除这个分类吗？注意：分类下的文件将被移动到"未分类"。')) {
+      setCategoriesMap(prev => ({
+        ...prev,
+        [appMode]: prev[appMode].filter(c => c.id !== id)
+      }));
+      
+      // Move files to Uncategorized
+      if (appMode === 'files') {
+        setFileRecords(prev => prev.map(f => f.category === id ? { ...f, category: '未分类' } : f));
+      }
+    }
+  };
+
   return (
     <div className="fixed inset-0 flex overflow-hidden bg-gray-50 select-none">
       {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && isSidebarVisible && (
@@ -1022,23 +1092,43 @@ const App: React.FC = () => {
             onDeleteNote={handleDeleteMarkdownNote}
           />
         </Suspense>
-      ) : appMode === 'files' && !isRendererFullscreen ? (
-        <Suspense fallback={<div className="w-64 bg-gray-50 border-r border-gray-200" />}>
-          <FileSidebar
-            files={filteredFileRecords}
-            categories={categoriesMap[appMode] || DEFAULT_CATEGORIES}
-            selectedFileId={activeRenderFileId}
-            onSelectFile={setActiveRenderFileId}
-            onAddFile={() => {
-              setEditingFile(null);
-              setIsFileModalOpen(true);
+      ) : appMode === 'files' ? (
+        !isRendererFullscreen && (
+          <Suspense fallback={<div className="w-64 bg-gray-50 border-r border-gray-200" />}>
+            <ArchiveSidebar
+              archives={filteredFileRecords}
+              categories={categoriesMap[appMode] || DEFAULT_CATEGORIES}
+              activeFileId={activeRenderFileId}
+              onOpen={(file) => {
+              setActiveRenderFileId(file.id);
+              setIsEditingFile(false);
             }}
-            onDeleteFile={(id, e) => {
-              e.stopPropagation();
-              handleDeleteFile(id);
-            }}
-          />
-        </Suspense>
+              onCreateFolder={() => {
+                setInitialCategoryEditId(null);
+                setIsCategoryManagerOpen(true);
+              }}
+              onUploadFile={() => {
+                setEditingFile(null);
+                setFileModalMode('file');
+                setIsFileModalOpen(true);
+              }}
+              onCreateNote={() => {
+                setEditingFile(null);
+                setFileModalMode('note');
+                setIsFileModalOpen(true);
+              }}
+              onCreateNoteInFolder={handleCreateNoteInFolder}
+              onDelete={(id) => handleDeleteFile(id)}
+              onEdit={(file) => {
+                setEditingFile(file);
+                setFileModalMode('file');
+                setIsFileModalOpen(true);
+              }}
+              onEditCategory={handleEditCategory}
+              onDeleteCategory={handleDeleteCategory}
+            />
+          </Suspense>
+        )
       ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'vscode' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
         <Sidebar 
           appMode={appMode}  
@@ -1049,7 +1139,10 @@ const App: React.FC = () => {
           totalCount={getCurrentCount()}
           files={appMode === 'renderer' ? filteredFileRecords : undefined}
           activeFileId={activeRenderFileId}
-          onSelectFile={setActiveRenderFileId}
+          onSelectFile={(id) => {
+            setActiveRenderFileId(id);
+            setIsEditingFile(false);
+          }}
         />
       ) : null}
 
@@ -1091,6 +1184,7 @@ const App: React.FC = () => {
                       break;
                     case 'files': 
                       setEditingFile(null);
+                      setFileModalMode('file');
                       setIsFileModalOpen(true); 
                       break;
                     case 'prompts': 
@@ -1130,11 +1224,53 @@ const App: React.FC = () => {
             
             {appMode === 'files' && (
                activeRenderFileId ? (
-                  <FileRenderer 
-                    file={fileRecords.find(f => f.id === activeRenderFileId)!} 
-                    isFullscreen={isRendererFullscreen}
-                    onToggleFullscreen={() => setIsRendererFullscreen(!isRendererFullscreen)}
-                  />
+                  isEditingFile ? (
+                    <MarkdownEditor
+                      note={{
+                        id: activeRenderFileId,
+                        title: fileRecords.find(f => f.id === activeRenderFileId)?.name || '',
+                        content: editingFileContent,
+                        category: fileRecords.find(f => f.id === activeRenderFileId)?.category || '',
+                        createdAt: 0,
+                        updatedAt: 0
+                      }}
+                      onUpdate={async (id, updates) => {
+                        if (updates.content !== undefined && window.electronAPI) {
+                          const file = fileRecords.find(f => f.id === id);
+                          if (file) {
+                            await window.electronAPI.writeFile(file.path, updates.content);
+                            setEditingFileContent(updates.content);
+                            // Force update file record to ensure FileRenderer re-reads content
+                            setFileRecords(prev => prev.map(f => f.id === id ? { ...f } : f));
+                          }
+                        }
+                      }}
+                      isFullscreen={isRendererFullscreen}
+                      onToggleFullscreen={() => setIsRendererFullscreen(!isRendererFullscreen)}
+                      hideMetadata={true}
+                      showViewToggle={true}
+                      onExitEdit={() => setIsEditingFile(false)}
+                    />
+                  ) : (
+                    <FileRenderer 
+                      file={fileRecords.find(f => f.id === activeRenderFileId)!} 
+                      isFullscreen={isRendererFullscreen}
+                      onToggleFullscreen={() => setIsRendererFullscreen(!isRendererFullscreen)}
+                      onEdit={async () => {
+                        const file = fileRecords.find(f => f.id === activeRenderFileId);
+                        if (file && window.electronAPI) {
+                           try {
+                             const content = await window.electronAPI.readFile(file.path);
+                             setEditingFileContent(content);
+                             setIsEditingFile(true);
+                           } catch (e) {
+                             console.error('Failed to read file for editing', e);
+                             alert('无法读取文件内容');
+                           }
+                        }
+                      }}
+                    />
+                  )
                ) : (
                  <div className="flex flex-col items-center justify-center h-full text-gray-400">
                    <p>请从左侧选择文件查看</p>
@@ -1215,11 +1351,51 @@ const App: React.FC = () => {
             )}
 
             {appMode === 'renderer' && activeRenderFileId && (
-              <FileRenderer 
-                file={fileRecords.find(f => f.id === activeRenderFileId)!} 
-                isFullscreen={isRendererFullscreen}
-                onToggleFullscreen={() => setIsRendererFullscreen(!isRendererFullscreen)}
-              />
+              isEditingFile ? (
+                <MarkdownEditor
+                  note={{
+                    id: activeRenderFileId,
+                    title: fileRecords.find(f => f.id === activeRenderFileId)?.name || '',
+                    content: editingFileContent,
+                    category: fileRecords.find(f => f.id === activeRenderFileId)?.category || '',
+                    createdAt: 0,
+                    updatedAt: 0
+                  }}
+                  onUpdate={async (id, updates) => {
+                    if (updates.content !== undefined && window.electronAPI) {
+                      const file = fileRecords.find(f => f.id === id);
+                      if (file) {
+                        await window.electronAPI.writeFile(file.path, updates.content);
+                        setEditingFileContent(updates.content);
+                      }
+                    }
+                  }}
+                  isFullscreen={isRendererFullscreen}
+                  onToggleFullscreen={() => setIsRendererFullscreen(!isRendererFullscreen)}
+                  hideMetadata={true}
+                  showViewToggle={true}
+                  onExitEdit={() => setIsEditingFile(false)}
+                />
+              ) : (
+                <FileRenderer 
+                  file={fileRecords.find(f => f.id === activeRenderFileId)!} 
+                  isFullscreen={isRendererFullscreen}
+                  onToggleFullscreen={() => setIsRendererFullscreen(!isRendererFullscreen)}
+                  onEdit={async () => {
+                     const file = fileRecords.find(f => f.id === activeRenderFileId);
+                     if (file && window.electronAPI) {
+                        try {
+                          const content = await window.electronAPI.readFile(file.path);
+                          setEditingFileContent(content);
+                          setIsEditingFile(true);
+                        } catch (e) {
+                          console.error('Failed to read file for editing', e);
+                          alert('无法读取文件内容');
+                        }
+                     }
+                  }}
+                />
+              )
             )}
           </Suspense>
         </div>
@@ -1272,6 +1448,7 @@ const App: React.FC = () => {
           onSave={handleSaveFile}
           initialData={editingFile}
           categories={(categoriesMap[appMode] || DEFAULT_CATEGORIES).map(c => c.name)}
+          mode={fileModalMode}
         />
 
         <PromptModal
@@ -1284,8 +1461,12 @@ const App: React.FC = () => {
 
         <CategoryManagerModal
           isOpen={isCategoryManagerOpen}
-          onClose={() => setIsCategoryManagerOpen(false)}
+          onClose={() => {
+            setIsCategoryManagerOpen(false);
+            setInitialCategoryEditId(null);
+          }}
           categories={categoriesMap[appMode] || DEFAULT_CATEGORIES}
+          initialEditId={initialCategoryEditId}
           onUpdateCategories={newCategories => {
             setCategoriesMap(prev => ({ ...prev, [appMode]: newCategories }));
             setSelectedCategory('全部');

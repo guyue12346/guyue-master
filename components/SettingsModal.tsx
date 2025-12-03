@@ -488,7 +488,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* Section: File Archive */}
           <div className="space-y-4">
             <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
-              文件归档
+              文件阅读
             </h3>
             
             <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
