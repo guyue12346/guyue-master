@@ -1,0 +1,788 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { GraduationCap, Search, ArrowLeft, ArrowRight, RotateCw, ExternalLink, Maximize2, Minimize2, X, PlayCircle, FileText, Columns, Square, MousePointerClick, TerminalSquare, ChevronLeft, Brain, Cpu, Server, Code, BookOpen, FolderOpen } from 'lucide-react';
+import { LearningList } from './LearningList';
+import { CS336_DATA, CourseData, Lecture, COURSE_CATEGORIES, CourseCategory } from './LearningData';
+import { MarkdownEditor } from './MarkdownEditor';
+import { Terminal } from './Terminal';
+import { MarkdownNote } from '../types';
+
+// All courses
+const COURSES: CourseData[] = [CS336_DATA];
+
+const STORAGE_KEY_PROGRESS = 'learning_progress';
+
+// Helper Component for Internal Browser
+const MiniBrowser: React.FC<{ url: string; title?: string; onClose?: () => void }> = ({ url, title, onClose }) => {
+  const [currentUrl, setCurrentUrl] = useState(url);
+  const [isLoading, setIsLoading] = useState(false);
+  const [canGoBack, setCanGoBack] = useState(false);
+  const [canGoForward, setCanGoForward] = useState(false);
+  const webviewRef = useRef<any>(null);
+
+  // Reset state when url prop changes
+  useEffect(() => {
+    setCurrentUrl(url);
+  }, [url]);
+
+  const handleReload = () => {
+    if (webviewRef.current) webviewRef.current.reload();
+  };
+
+  const handleGoBack = () => {
+    if (webviewRef.current && webviewRef.current.canGoBack()) webviewRef.current.goBack();
+  };
+
+  const handleGoForward = () => {
+    if (webviewRef.current && webviewRef.current.canGoForward()) webviewRef.current.goForward();
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-white relative border-b border-gray-200">
+       {/* Toolbar */}
+       <div className="h-10 border-b border-gray-200 flex items-center px-2 gap-2 bg-gray-50">
+          <div className="flex items-center gap-1">
+            <button 
+              onClick={handleGoBack}
+              disabled={!canGoBack}
+              className={`p-1 rounded-md transition-colors ${canGoBack ? 'hover:bg-gray-200 text-gray-700' : 'text-gray-300 cursor-not-allowed'}`}
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={handleGoForward}
+              disabled={!canGoForward}
+              className={`p-1 rounded-md transition-colors ${canGoForward ? 'hover:bg-gray-200 text-gray-700' : 'text-gray-300 cursor-not-allowed'}`}
+            >
+              <ArrowRight className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={handleReload}
+              className="p-1 rounded-md hover:bg-gray-200 text-gray-700 transition-colors"
+            >
+              <RotateCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+          
+          <div className="flex-1 px-2 py-1 bg-white border border-gray-200 rounded text-xs text-gray-500 truncate font-mono">
+            {currentUrl}
+          </div>
+
+          <button 
+            onClick={() => window.electronAPI?.openPath(currentUrl)}
+            className="p-1 rounded-md hover:bg-gray-200 text-gray-500 transition-colors"
+            title="在默认浏览器中打开"
+          >
+            <ExternalLink className="w-4 h-4" />
+          </button>
+          
+          {onClose && (
+             <button onClick={onClose} className="p-1 rounded-md hover:bg-red-100 text-gray-500 hover:text-red-600 transition-colors">
+               <X className="w-4 h-4" />
+             </button>
+          )}
+       </div>
+
+       {/* Webview */}
+       <div className="flex-1 relative bg-white">
+          {/* 
+            // @ts-ignore 
+          */}
+          <webview
+            ref={(el: any) => {
+              if (el) {
+                webviewRef.current = el;
+                if (!el.dataset.listenersAttached) {
+                  el.dataset.listenersAttached = 'true';
+                  el.addEventListener('did-start-loading', () => setIsLoading(true));
+                  el.addEventListener('did-stop-loading', () => {
+                    setIsLoading(false);
+                    setCanGoBack(el.canGoBack());
+                    setCanGoForward(el.canGoForward());
+                    setCurrentUrl(el.getURL());
+                  });
+                  el.addEventListener('new-window', (e: any) => {
+                    e.preventDefault();
+                    el.loadURL(e.url);
+                  });
+                }
+              }
+            }}
+            src={url}
+            className="w-full h-full"
+            // @ts-ignore
+            allowpopups="true"
+            useragent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          />
+       </div>
+    </div>
+  );
+};
+interface PaneContent {
+  type: 'video' | 'note' | 'assignment' | 'intro' | 'custom-note' | 'personal-resource' | 'terminal';
+  id: string;
+  url?: string;
+  data?: any;
+  origin?: 'course' | 'personal';
+}
+
+export const LearningManager: React.FC = () => {
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
+  
+  // Split View State
+  const [layoutMode, setLayoutMode] = useState<'single' | 'split'>('single');
+  const [activePane, setActivePane] = useState<'primary' | 'secondary'>('primary');
+  
+  const [primaryContent, setPrimaryContent] = useState<PaneContent | null>(null);
+  const [secondaryContent, setSecondaryContent] = useState<PaneContent | null>(null);
+  
+  const [isImmersive, setIsImmersive] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  const [progress, setProgress] = useState<Record<string, boolean>>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_PROGRESS);
+    return saved ? JSON.parse(saved) : {};
+  });
+
+  // Custom Note State
+  const [currentNote, setCurrentNote] = useState<MarkdownNote | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_PROGRESS, JSON.stringify(progress));
+  }, [progress]);
+
+  const handleToggleProgress = (id: string) => {
+    setProgress(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const selectedCourse = COURSES.find(c => c.id === selectedCourseId);
+  const selectedCategory = COURSE_CATEGORIES.find(c => c.id === selectedCategoryId);
+  
+  // Get courses in selected category
+  const coursesInCategory = selectedCategoryId 
+    ? COURSES.filter(c => c.categoryId === selectedCategoryId)
+    : [];
+
+  // Helper to get category icon component
+  const getCategoryIcon = (iconName: string) => {
+    const icons: Record<string, any> = { Brain, Cpu, Server, Code, BookOpen, FolderOpen };
+    return icons[iconName] || BookOpen;
+  };
+
+  // Helper to find lecture by ID across modules
+  const findLecture = (id: string): Lecture | undefined => {
+    if (!selectedCourse) return undefined;
+    for (const module of selectedCourse.modules) {
+      const found = module.lectures.find(l => l.id === id);
+      if (found) return found;
+    }
+    return undefined;
+  };
+
+  const handleSelectItem = async (type: 'video' | 'note' | 'assignment' | 'intro' | 'custom-note' | 'personal-resource', id: string) => {
+    let content: PaneContent | null = null;
+
+    if (type === 'intro') {
+      content = { type: 'intro', id: 'intro' };
+    } else if (type === 'custom-note') {
+      // Load note content
+      if (window.electronAPI) {
+        const fileContent = await window.electronAPI.readFile(id);
+        const noteData: MarkdownNote = {
+          id: id,
+          title: id.split('/').pop()?.replace('.md', '') || 'Untitled',
+          content: fileContent || '',
+          category: 'My Notes',
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        setCurrentNote(noteData);
+        content = { type: 'custom-note', id: id, data: noteData, origin: 'course' };
+      }
+    } else if (type === 'personal-resource') {
+      // Handle Personal Resource
+      if (id.toLowerCase().endsWith('.md')) {
+        // Treat as markdown note
+        if (window.electronAPI) {
+          const fileContent = await window.electronAPI.readFile(id);
+          const noteData: MarkdownNote = {
+            id: id,
+            title: id.split('/').pop()?.replace('.md', '') || 'Untitled',
+            content: fileContent || '',
+            category: 'Personal Resource',
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+          };
+          setCurrentNote(noteData);
+          content = { type: 'custom-note', id: id, data: noteData, origin: 'personal' };
+        }
+      } else {
+        // Treat as external file (PDF, etc)
+        content = { type: 'personal-resource', id: id, url: `file://${id}` };
+      }
+    } else if (type === 'video') {
+      const lecture = findLecture(id);
+      if (lecture && lecture.videoUrl) {
+        content = { type: 'video', id, url: lecture.videoUrl };
+      } else if (lecture) {
+        content = { type: 'video', id }; // No URL, show placeholder
+      }
+    } else if (type === 'note') {
+      const lecture = findLecture(id);
+      if (lecture) {
+        const resourceUrl = lecture.materials 
+          ? (lecture.materials.endsWith('.pdf') 
+              ? `https://github.com/stanford-cs336/spring2025-lectures/blob/main/nonexecutable/${encodeURIComponent(lecture.materials)}`
+              : `https://github.com/stanford-cs336/spring2025-lectures/blob/main/${encodeURIComponent(lecture.materials)}`)
+          : 'https://github.com/stanford-cs336/spring2025-lectures';
+        content = { type: 'note', id, url: resourceUrl };
+      }
+    } else if (type === 'assignment') {
+      const assignment = selectedCourse?.assignments.find(a => a.id === id);
+      if (assignment) {
+        content = { type: 'assignment', id, url: assignment.link };
+      }
+    }
+
+    if (content) {
+      if (activePane === 'primary') {
+        setPrimaryContent(content);
+      } else {
+        setSecondaryContent(content);
+      }
+    }
+  };
+
+  const handleUpdateNote = async (id: string, updates: Partial<MarkdownNote>) => {
+    if (window.electronAPI && updates.content !== undefined) {
+      await window.electronAPI.writeFile(id, updates.content);
+      // Update local state if needed
+      setCurrentNote(prev => prev ? { ...prev, ...updates } : null);
+    }
+  };
+
+  // Color mapping for categories
+  const colorMap: Record<string, { bg: string; text: string; border: string; hover: string }> = {
+    purple: { bg: 'bg-purple-50', text: 'text-purple-600', border: 'border-purple-200', hover: 'hover:border-purple-500 hover:shadow-purple-500/10' },
+    blue: { bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-200', hover: 'hover:border-blue-500 hover:shadow-blue-500/10' },
+    green: { bg: 'bg-green-50', text: 'text-green-600', border: 'border-green-200', hover: 'hover:border-green-500 hover:shadow-green-500/10' },
+    orange: { bg: 'bg-orange-50', text: 'text-orange-600', border: 'border-orange-200', hover: 'hover:border-orange-500 hover:shadow-orange-500/10' },
+    gray: { bg: 'bg-gray-50', text: 'text-gray-600', border: 'border-gray-200', hover: 'hover:border-gray-500 hover:shadow-gray-500/10' },
+  };
+
+  // View 1: Category Selection
+  if (!selectedCategoryId) {
+    const filteredCategories = COURSE_CATEGORIES.filter(cat => {
+      if (!searchQuery) return true;
+      const q = searchQuery.toLowerCase();
+      const coursesInCat = COURSES.filter(c => c.categoryId === cat.id);
+      return cat.name.toLowerCase().includes(q) || 
+             cat.description.toLowerCase().includes(q) ||
+             coursesInCat.some(c => c.title.toLowerCase().includes(q));
+    });
+
+    return (
+      <div className="flex flex-col h-full bg-white p-6">
+        <div className="max-w-5xl mx-auto w-full">
+          <div className="flex items-center justify-between mb-8">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+                <GraduationCap className="w-8 h-8 text-blue-600" />
+                学习中心
+              </h1>
+              <p className="text-gray-500 mt-1">选择一个学习方向</p>
+            </div>
+            <div className="relative w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input 
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="搜索分类或课程..."
+                className="w-full pl-10 pr-4 py-2 bg-gray-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredCategories.map(cat => {
+              const IconComponent = getCategoryIcon(cat.icon);
+              const colors = colorMap[cat.color] || colorMap.gray;
+              const courseCount = COURSES.filter(c => c.categoryId === cat.id).length;
+
+              return (
+                <button
+                  key={cat.id}
+                  onClick={() => setSelectedCategoryId(cat.id)}
+                  className={`group flex flex-col text-left bg-white border ${colors.border} rounded-xl p-6 ${colors.hover} hover:shadow-lg transition-all duration-300`}
+                >
+                  <div className={`w-14 h-14 ${colors.bg} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+                    <IconComponent className={`w-7 h-7 ${colors.text}`} />
+                  </div>
+                  <h3 className="text-lg font-bold text-gray-800 mb-2">{cat.name}</h3>
+                  <p className="text-sm text-gray-500 line-clamp-2 flex-1">{cat.description}</p>
+                  <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-400">
+                    {courseCount} 门课程
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // View 2: Course Selection (within category)
+  if (!selectedCourseId) {
+    const filteredCourses = coursesInCategory.filter(c => 
+      c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.description.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+
+    const colors = colorMap[selectedCategory?.color || 'gray'] || colorMap.gray;
+    const IconComponent = getCategoryIcon(selectedCategory?.icon || 'BookOpen');
+
+    return (
+      <div className="flex flex-col h-full bg-white p-6">
+        <div className="max-w-5xl mx-auto w-full">
+          <div className="flex items-center justify-between mb-8">
+            <div>
+              <button
+                onClick={() => { setSelectedCategoryId(null); setSearchQuery(''); }}
+                className="flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600 transition-colors mb-2"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                返回分类
+              </button>
+              <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+                <div className={`w-10 h-10 ${colors.bg} rounded-lg flex items-center justify-center`}>
+                  <IconComponent className={`w-5 h-5 ${colors.text}`} />
+                </div>
+                {selectedCategory?.name}
+              </h1>
+              <p className="text-gray-500 mt-1">{selectedCategory?.description}</p>
+            </div>
+            <div className="relative w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input 
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="搜索课程..."
+                className="w-full pl-10 pr-4 py-2 bg-gray-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all"
+              />
+            </div>
+          </div>
+
+          {filteredCourses.length === 0 ? (
+            <div className="text-center py-16 text-gray-400">
+              <FolderOpen className="w-16 h-16 mx-auto mb-4 opacity-30" />
+              <p className="text-lg">该分类下暂无课程</p>
+              <p className="text-sm mt-2">敬请期待更多内容</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filteredCourses.map(course => (
+                <button
+                  key={course.id}
+                  onClick={() => setSelectedCourseId(course.id)}
+                  className={`group flex flex-col text-left bg-white border ${colors.border} rounded-xl p-6 ${colors.hover} hover:shadow-lg transition-all duration-300`}
+                >
+                  <div className={`w-12 h-12 ${colors.bg} rounded-lg flex items-center justify-center mb-4 group-hover:scale-105 transition-transform`}>
+                    <GraduationCap className={`w-6 h-6 ${colors.text}`} />
+                  </div>
+                  <h3 className="text-lg font-bold text-gray-800 mb-2 group-hover:text-gray-900 transition-colors">{course.title}</h3>
+                  <p className="text-sm text-gray-500 line-clamp-2 flex-1">{course.description}</p>
+                  <div className="mt-4 pt-4 border-t border-gray-100 flex items-center justify-between text-xs text-gray-400">
+                    <span>{course.modules.length} 个模块</span>
+                    <span>{course.assignments.length} 个作业</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const renderContent = (content: PaneContent | null, paneId: 'primary' | 'secondary') => {
+    if (!content) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-gray-400 bg-gray-50">
+          <GraduationCap className="w-16 h-16 opacity-20 mb-4" />
+          <p>请从左侧选择内容</p>
+          <p className="text-sm mt-2 opacity-60">点击上方“选定”按钮以在此区域显示</p>
+        </div>
+      );
+    }
+
+    if (content.type === 'intro') {
+      return (
+        <div className="p-8 overflow-y-auto h-full bg-white">
+          <div className="max-w-4xl mx-auto">
+            <div className="mb-8 border-b border-gray-100 pb-8">
+              <h1 className="text-4xl font-bold text-gray-900 mb-4">{selectedCourse?.title}</h1>
+              <p className="text-xl text-gray-600 leading-relaxed mb-6">
+                Language models serve as the cornerstone of modern natural language processing (NLP) applications and open up a new paradigm of having a single general purpose system address a range of downstream tasks.
+              </p>
+              <div className="flex flex-wrap gap-4">
+                <a 
+                  href="#"
+                  onClick={(e) => { e.preventDefault(); window.electronAPI?.openPath('https://stanford-cs336.github.io/spring2025/'); }}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  访问课程主页
+                </a>
+                <div className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg">
+                  <GraduationCap className="w-4 h-4" />
+                  Instructors: Tatsunori Hashimoto, Percy Liang
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+              <div className="p-6 bg-blue-50 rounded-xl border border-blue-100">
+                <h3 className="text-lg font-bold text-blue-900 mb-2">Course Content</h3>
+                <p className="text-blue-800/80 text-sm leading-relaxed">
+                  This course is designed to provide students with a comprehensive understanding of language models by walking them through the entire process of developing their own. We will lead students through every aspect of language model creation, including data collection, model construction, training, and evaluation.
+                </p>
+              </div>
+              <div className="p-6 bg-purple-50 rounded-xl border border-purple-100">
+                <h3 className="text-lg font-bold text-purple-900 mb-2">Logistics</h3>
+                <ul className="space-y-2 text-sm text-purple-800/80">
+                  <li className="flex items-start gap-2">
+                    <span className="font-semibold min-w-[4rem]">Lectures:</span>
+                    <span>Tuesday/Thursday 3:00-4:20pm</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="font-semibold min-w-[4rem]">Location:</span>
+                    <span>NVIDIA Auditorium</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <div className="text-2xl font-bold text-gray-900 mb-1">{selectedCourse?.modules.length}</div>
+                <div className="text-sm text-gray-600">Course Modules</div>
+              </div>
+              <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <div className="text-2xl font-bold text-gray-900 mb-1">{selectedCourse?.assignments.length}</div>
+                <div className="text-sm text-gray-600">Assignments</div>
+              </div>
+            </div>
+
+            <div className="mt-10 space-y-8">
+              <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+                <h3 className="text-lg font-bold text-gray-900 mb-4">核心资源入口 (Quick Links)</h3>
+                <ul className="space-y-3 text-sm text-gray-700">
+                  <li>
+                    <span className="font-semibold">Course GitHub Organization:</span>{' '}
+                    <a href="https://github.com/stanford-cs336" className="text-blue-600 hover:underline" onClick={(e) => { e.preventDefault(); window.electronAPI?.openPath('https://github.com/stanford-cs336'); }}>
+                      github.com/stanford-cs336
+                    </a>
+                    <span className="text-gray-500">（所有作业和课件的根目录）</span>
+                  </li>
+                  <li>
+                    <span className="font-semibold">Lectures Repo:</span>{' '}
+                    <a href="https://github.com/stanford-cs336/spring2025-lectures" className="text-blue-600 hover:underline" onClick={(e) => { e.preventDefault(); window.electronAPI?.openPath('https://github.com/stanford-cs336/spring2025-lectures'); }}>
+                      spring2025-lectures
+                    </a>
+                    <span className="text-gray-500">（包含所有的 .py 和 .pdf 课件）</span>
+                  </li>
+                  <li>
+                    <span className="font-semibold">YouTube Playlist:</span>{' '}
+                    <a href="https://www.youtube.com/playlist?list=PLoROMvodv4rOY23Y0BoGoBGgQ1zmU_MT_" className="text-blue-600 hover:underline" onClick={(e) => { e.preventDefault(); window.electronAPI?.openPath('https://www.youtube.com/playlist?list=PLoROMvodv4rOY23Y0BoGoBGgQ1zmU_MT_'); }}>
+                      Spring 2025 Lecture Videos
+                    </a>
+                    <span className="text-gray-500">（官方录播视频）</span>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+                <h3 className="text-lg font-bold text-gray-900 mb-2">详细课程表与资源下载 (Schedule with Links)</h3>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm text-left text-gray-600 border border-gray-200 rounded-lg">
+                    <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                      <tr>
+                        <th className="px-3 py-2"></th>
+                        <th className="px-3 py-2">Date</th>
+                        <th className="px-3 py-2">Topic</th>
+                        <th className="px-3 py-2">Course Materials</th>
+                        <th className="px-3 py-2">Assignments</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {[
+                        { id: '1', date: 'Apr 1', topic: 'Overview, Tokenization', material: { label: 'lecture_01.py', url: 'https://github.com/stanford-cs336/spring2025-lectures/blob/main/lecture_01.py' }, assignment: { title: 'Assignment 1: Basics', code: 'https://github.com/stanford-cs336/assignment1-basics', leaderboard: 'https://github.com/stanford-cs336/assignment1-basics-leaderboard' } },
+                        { id: '2', date: 'Apr 3', topic: 'PyTorch, Resource Accounting', material: { label: 'lecture_02.py', url: 'https://github.com/stanford-cs336/spring2025-lectures/blob/main/lecture_02.py' } },
+                        { id: '3', date: 'Apr 8', topic: 'Architectures', material: { label: 'lecture_03.pdf', url: 'https://github.com/stanford-cs336/spring2025-lectures/tree/main/nonexecutable' } },
+                        { id: '4', date: 'Apr 10', topic: 'Mixture of Experts (MoE)', material: { label: 'lecture_04.pdf', url: 'https://github.com/stanford-cs336/spring2025-lectures/tree/main/nonexecutable' } },
+                        { id: '5', date: 'Apr 15', topic: 'GPUs', material: { label: 'lecture_05.pdf', url: 'https://github.com/stanford-cs336/spring2025-lectures/tree/main/nonexecutable' }, assignment: { title: 'Assignment 2: Systems', code: 'https://github.com/stanford-cs336/assignment2-systems', leaderboard: 'https://github.com/stanford-cs336/assignment2-systems-leaderboard' } },
+                        { id: '6', date: 'Apr 17', topic: 'Kernels, Triton', material: { label: 'lecture_06.py', url: 'https://github.com/stanford-cs336/spring2025-lectures/blob/main/lecture_06.py' } },
+                        { id: '7', date: 'Apr 22', topic: 'Parallelism 1', material: { label: 'lecture_07.pdf', url: 'https://github.com/stanford-cs336/spring2025-lectures/tree/main/nonexecutable' } },
+                        { id: '8', date: 'Apr 24', topic: 'Parallelism 2', material: { label: 'lecture_08.py', url: 'https://github.com/stanford-cs336/spring2025-lectures/blob/main/lecture_08.py' } },
+                        { id: '9', date: 'Apr 29', topic: 'Scaling Laws 1', material: { label: 'lecture_09.pdf', url: 'https://github.com/stanford-cs336/spring2025-lectures/tree/main/nonexecutable' }, assignment: { title: 'Assignment 3: Scaling', code: 'https://github.com/stanford-cs336/assignment3-scaling' } },
+                        { id: '10', date: 'May 1', topic: 'Inference', material: { label: 'lecture_10.py', url: 'https://github.com/stanford-cs336/spring2025-lectures/blob/main/lecture_10.py' } },
+                        { id: '11', date: 'May 6', topic: 'Scaling Laws 2', material: { label: 'lecture_11.pdf', url: 'https://github.com/stanford-cs336/spring2025-lectures/tree/main/nonexecutable' }, assignment: { title: 'Assignment 4: Data', code: 'https://github.com/stanford-cs336/assignment4-data' } },
+                        { id: '12', date: 'May 8', topic: 'Evaluation', material: { label: 'lecture_12.py', url: 'https://github.com/stanford-cs336/spring2025-lectures/blob/main/lecture_12.py' } },
+                        { id: '13', date: 'May 13', topic: 'Data (Pre-training)', material: { label: 'lecture_13.py', url: 'https://github.com/stanford-cs336/spring2025-lectures/blob/main/lecture_13.py' } },
+                        { id: '14', date: 'May 15', topic: 'Data (Filtering)', material: { label: 'lecture_14.py', url: 'https://github.com/stanford-cs336/spring2025-lectures/blob/main/lecture_14.py' } },
+                        { id: '15', date: 'May 20', topic: 'Alignment (SFT)', material: { label: 'lecture_15.pdf', url: 'https://github.com/stanford-cs336/spring2025-lectures/tree/main/nonexecutable' }, assignment: { title: 'Assignment 5: Alignment', code: 'https://github.com/stanford-cs336/assignment5-alignment' } },
+                        { id: '16', date: 'May 22', topic: 'Alignment (RL)', material: { label: 'lecture_16.pdf', url: 'https://github.com/stanford-cs336/spring2025-lectures/tree/main/nonexecutable' } },
+                        { id: '17', date: 'May 27', topic: 'Alignment (DPO)', material: { label: 'lecture_17.py', url: 'https://github.com/stanford-cs336/spring2025-lectures/blob/main/lecture_17.py' } }
+                      ].map((row) => (
+                        <tr key={row.id} className="align-top">
+                          <td className="px-3 py-2 font-semibold text-gray-900">{row.id}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{row.date}</td>
+                          <td className="px-3 py-2 font-medium text-gray-800">{row.topic}</td>
+                          <td className="px-3 py-2">
+                            <a
+                              href={row.material.url}
+                              className="text-blue-600 hover:underline"
+                              onClick={(e) => { e.preventDefault(); window.electronAPI?.openPath(row.material.url); }}
+                            >
+                              {row.material.label}
+                            </a>
+                          </td>
+                          <td className="px-3 py-2 space-y-1">
+                            {row.assignment ? (
+                              <div>
+                                <div className="font-medium text-gray-800">{row.assignment.title}</div>
+                                <div className="text-xs text-blue-600 space-x-2">
+                                  <a href={row.assignment.code} onClick={(e) => { e.preventDefault(); window.electronAPI?.openPath(row.assignment.code); }} className="hover:underline">[Code]</a>
+                                  {row.assignment.leaderboard && (
+                                    <a href={row.assignment.leaderboard} onClick={(e) => { e.preventDefault(); window.electronAPI?.openPath(row.assignment.leaderboard); }} className="hover:underline">[Leaderboard]</a>
+                                  )}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-gray-400">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+                <h3 className="text-lg font-bold text-gray-900 mb-4">如何使用这些资源？</h3>
+                <ol className="space-y-4 text-sm text-gray-700 list-decimal list-inside">
+                  <li className="space-y-1">
+                    <span className="font-semibold text-gray-900">课件 (.py / .pdf)</span>
+                    <ul className="ml-5 mt-1 space-y-1 text-gray-600 list-disc">
+                      <li>访问 <a className="text-blue-600 hover:underline" href="https://github.com/stanford-cs336/spring2025-lectures" onClick={(e) => { e.preventDefault(); window.electronAPI?.openPath('https://github.com/stanford-cs336/spring2025-lectures'); }}>spring2025-lectures</a> 仓库</li>
+                      <li>.py 文件位于根目录；.pdf 文件在 <code className="px-1 py-0.5 bg-gray-100 rounded">nonexecutable</code> 文件夹内</li>
+                    </ul>
+                  </li>
+                  <li className="space-y-1">
+                    <span className="font-semibold text-gray-900">作业 (Assignments)</span>
+                    <ul className="ml-5 mt-1 space-y-1 text-gray-600 list-disc">
+                      <li>每个作业都是独立仓库，点击 [Code] 访问</li>
+                      <li>按仓库中的 README（通常使用 conda 或 uv）完成环境配置</li>
+                      <li>作业说明文档通常在 README 或附带的 writeup.pdf 中</li>
+                    </ul>
+                  </li>
+                  <li className="space-y-1">
+                    <span className="font-semibold text-gray-900">排行榜 (Leaderboard)</span>
+                    <ul className="ml-5 mt-1 space-y-1 text-gray-600 list-disc">
+                      <li>专用仓库展示匿名提交成绩，可用作性能参考</li>
+                      <li>关注最新提交，给自己的实现设定目标</li>
+                    </ul>
+                  </li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (content.type === 'terminal') {
+      return (
+        <Terminal 
+          isVisible={true} 
+          initialTitle="Terminal"
+        />
+      );
+    }
+
+    if (content.type === 'custom-note') {
+      return (
+        <MarkdownEditor 
+          note={content.data} 
+          onUpdate={handleUpdateNote}
+          isFullscreen={false}
+          onToggleFullscreen={() => {}}
+          showViewToggle={content.origin === 'personal'}
+          viewMode="single"
+        />
+      );
+    }
+
+    if (content.url) {
+      return (
+        <MiniBrowser 
+          url={content.url} 
+          title={content.id} 
+          onClose={() => {
+            if (paneId === 'primary') setPrimaryContent(null);
+            else setSecondaryContent(null);
+          }} 
+        />
+      );
+    }
+
+    if (content.type === 'personal-resource') {
+      // Fallback for personal resource if no URL (shouldn't happen if logic is correct)
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-gray-400 bg-gray-50">
+          <FileText className="w-16 h-16 opacity-20 mb-4" />
+          <p>无法预览此文件</p>
+          <p className="text-sm mt-2 opacity-60">{content.id}</p>
+        </div>
+      );
+    }
+
+    // Fallback for video without URL
+    if (content.type === 'video') {
+      const lecture = findLecture(content.id);
+      return (
+        <div className="flex flex-col h-full bg-black text-white overflow-hidden relative group">
+          <div className="flex-1 flex flex-col items-center justify-center bg-gray-900 p-8 text-center">
+            <div className="w-24 h-24 bg-red-600 rounded-full flex items-center justify-center mb-6 shadow-lg shadow-red-900/50">
+              <PlayCircle className="w-12 h-12 text-white" />
+            </div>
+            <h2 className="text-2xl font-bold mb-2">{lecture?.title}</h2>
+            <p className="text-gray-400 mb-8">{lecture?.lecturer} • {lecture?.date}</p>
+            <p className="text-gray-500">暂无视频源</p>
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  return (
+    <div className="flex h-full bg-white overflow-hidden relative">
+      {/* Left Sidebar: Course Content List */}
+      {!isImmersive && (
+        <div className="flex flex-col border-r border-gray-200 h-full w-80 flex-shrink-0 transition-all duration-300">
+          <div className="h-12 flex items-center px-4 border-b border-gray-200 bg-gray-50">
+            <button 
+              onClick={() => { setSelectedCourseId(null); setSearchQuery(''); }}
+              className="flex items-center gap-1 text-sm text-gray-600 hover:text-blue-600 transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              返回 {selectedCategory?.name || '课程列表'}
+            </button>
+          </div>
+          <LearningList 
+            course={selectedCourse!}
+            selectedItemId={null} 
+            activeVideoId={primaryContent?.type === 'video' ? primaryContent.id : (secondaryContent?.type === 'video' ? secondaryContent.id : null)}
+            activeNoteId={primaryContent?.type === 'note' ? primaryContent.id : (secondaryContent?.type === 'note' ? secondaryContent.id : null)}
+            activeCustomNotePath={primaryContent?.type === 'custom-note' ? primaryContent.id : (secondaryContent?.type === 'custom-note' ? secondaryContent.id : null)}
+            onSelectItem={handleSelectItem}
+            progress={progress}
+            onToggleProgress={handleToggleProgress}
+          />
+        </div>
+      )}
+
+      {/* Toolbar - Split Screen Toggle (Bottom Left) */}
+      <div className="absolute bottom-4 left-4 z-50 flex gap-2">
+        <button 
+          onClick={() => setLayoutMode(layoutMode === 'single' ? 'split' : 'single')}
+          className="p-2 bg-white shadow-md rounded-lg text-gray-600 hover:text-blue-600 transition-colors"
+          title={layoutMode === 'single' ? "开启分屏" : "关闭分屏"}
+        >
+          {layoutMode === 'single' ? <Columns className="w-5 h-5" /> : <Square className="w-5 h-5" />}
+        </button>
+        <button 
+          onClick={() => {
+            const terminalContent: PaneContent = { type: 'terminal', id: `term-${Date.now()}` };
+            if (activePane === 'primary') setPrimaryContent(terminalContent);
+            else setSecondaryContent(terminalContent);
+          }}
+          className="p-2 bg-white shadow-md rounded-lg text-gray-600 hover:text-blue-600 transition-colors"
+          title="新建终端"
+        >
+          <TerminalSquare className="w-5 h-5" />
+        </button>
+      </div>
+
+      {/* Fullscreen Button (Bottom Right) */}
+      <div className="absolute bottom-4 right-4 z-50">
+        <button 
+          onClick={() => setIsImmersive(!isImmersive)}
+          className="p-2 bg-white shadow-md rounded-lg text-gray-600 hover:text-blue-600 transition-colors"
+          title={isImmersive ? "退出沉浸模式" : "进入沉浸模式"}
+        >
+          {isImmersive ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
+        </button>
+      </div>
+
+      {/* Split View Container */}
+      <div className="flex-1 flex overflow-hidden">
+          {/* Primary Pane */}
+          <div className={`${layoutMode === 'split' ? 'w-1/2 border-r border-gray-200' : 'w-full'} h-full relative flex flex-col transition-all duration-300`}>
+             {/* Selection Overlay/Button (Top Right) */}
+             {layoutMode === 'split' && (
+               <div className={`absolute top-2 right-2 z-40 transition-opacity ${activePane === 'primary' ? 'opacity-100' : 'opacity-50 hover:opacity-100'}`}>
+                 <button 
+                   onClick={() => setActivePane('primary')}
+                   className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium shadow-sm backdrop-blur-sm border transition-colors
+                     ${activePane === 'primary' 
+                       ? 'bg-blue-600 text-white border-blue-600' 
+                       : 'bg-white/80 text-gray-600 border-gray-200 hover:bg-white'}
+                   `}
+                 >
+                   <MousePointerClick className="w-3 h-3" />
+                   {activePane === 'primary' ? '当前选定' : '点击选定'}
+                 </button>
+               </div>
+             )}
+             
+             {/* Active Indicator Border */}
+             <div className={`flex-1 relative overflow-hidden ${layoutMode === 'split' && activePane === 'primary' ? 'ring-2 ring-inset ring-blue-500/20' : ''}`}>
+               {renderContent(primaryContent, 'primary')}
+             </div>
+          </div>
+
+          {/* Secondary Pane */}
+          {layoutMode === 'split' && (
+            <div className="w-1/2 h-full relative flex flex-col transition-all duration-300">
+               {/* Selection Overlay/Button (Top Right) */}
+               <div className={`absolute top-2 right-2 z-40 transition-opacity ${activePane === 'secondary' ? 'opacity-100' : 'opacity-50 hover:opacity-100'}`}>
+                 <button 
+                   onClick={() => setActivePane('secondary')}
+                   className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium shadow-sm backdrop-blur-sm border transition-colors
+                     ${activePane === 'secondary' 
+                       ? 'bg-blue-600 text-white border-blue-600' 
+                       : 'bg-white/80 text-gray-600 border-gray-200 hover:bg-white'}
+                   `}
+                 >
+                   <MousePointerClick className="w-3 h-3" />
+                   {activePane === 'secondary' ? '当前选定' : '点击选定'}
+                 </button>
+               </div>
+
+               {/* Active Indicator Border */}
+               <div className={`flex-1 relative overflow-hidden ${activePane === 'secondary' ? 'ring-2 ring-inset ring-blue-500/20' : ''}`}>
+                 {renderContent(secondaryContent, 'secondary')}
+               </div>
+            </div>
+          )}
+      </div>
+    </div>
+  );
+};

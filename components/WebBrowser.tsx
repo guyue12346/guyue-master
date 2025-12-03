@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ArrowLeft, ArrowRight, RotateCw, Search, X, Plus, Globe, Layout } from 'lucide-react';
 
 interface WebBrowserProps {
@@ -30,6 +30,30 @@ export const WebBrowser: React.FC<WebBrowserProps> = ({ initialUrl = 'https://ww
   
   const webviewRefs = useRef<{ [key: string]: any }>({});
   const lastUrlRef = useRef(initialUrl);
+  
+  // 用于存储新窗口处理函数的引用，这样事件监听器可以访问最新的状态
+  const openNewTabRef = useRef<(url: string) => void>(() => {});
+  
+  // 打开新标签页的函数
+  const openNewTab = useCallback((url: string) => {
+    const newTabId = Date.now().toString();
+    const newTab: BrowserTab = {
+      id: newTabId,
+      url: url,
+      title: 'Loading...',
+      isLoading: true,
+      canGoBack: false,
+      canGoForward: false
+    };
+    setTabs(prev => [...prev, newTab]);
+    setActiveTabId(newTabId);
+    setInputUrl(url);
+  }, []);
+  
+  // 保持 ref 与最新的函数同步
+  useEffect(() => {
+    openNewTabRef.current = openNewTab;
+  }, [openNewTab]);
 
   // Handle external URL updates (e.g. from Bookmarks)
   useEffect(() => {
@@ -279,8 +303,8 @@ export const WebBrowser: React.FC<WebBrowserProps> = ({ initialUrl = 'https://ww
 
                       el.addEventListener('new-window', (e: any) => {
                         e.preventDefault();
-                        // Load in the same webview (cover original page) instead of new tab
-                        el.loadURL(e.url);
+                        // 在新标签页中打开链接，而不是跳出应用
+                        openNewTabRef.current(e.url);
                       });
                     }
                   }

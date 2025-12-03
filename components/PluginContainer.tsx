@@ -4,9 +4,10 @@ import { RotateCw, ArrowLeft, ArrowRight } from 'lucide-react';
 interface PluginContainerProps {
   entryPath: string;
   pluginId: string;
+  onOpenInBrowser?: (url: string) => void;
 }
 
-export const PluginContainer: React.FC<PluginContainerProps> = ({ entryPath, pluginId }) => {
+export const PluginContainer: React.FC<PluginContainerProps> = ({ entryPath, pluginId, onOpenInBrowser }) => {
   const webviewRef = useRef<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [canGoBack, setCanGoBack] = useState(false);
@@ -56,9 +57,25 @@ export const PluginContainer: React.FC<PluginContainerProps> = ({ entryPath, plu
                 });
                 
                 // Open external links in browser
+                const handleLink = (url: string) => {
+                  if (onOpenInBrowser) {
+                    onOpenInBrowser(url);
+                  } else {
+                    window.electronAPI.openPath(url);
+                  }
+                };
+
                 el.addEventListener('new-window', (e: any) => {
                   e.preventDefault();
-                  window.electronAPI.openPath(e.url);
+                  handleLink(e.url);
+                });
+
+                // Also catch will-navigate for top-level navigations that might escape
+                el.addEventListener('will-navigate', (e: any) => {
+                  if (e.url !== src) {
+                    e.preventDefault();
+                    handleLink(e.url);
+                  }
                 });
               }
             }
@@ -67,8 +84,7 @@ export const PluginContainer: React.FC<PluginContainerProps> = ({ entryPath, plu
           className="w-full h-full"
           partition={`persist:plugin-${pluginId}`}
           // @ts-ignore
-          allowpopups="true"
-          webpreferences="contextIsolation=false, nodeIntegration=true" // Be careful with this in production! For plugins, maybe we want a preload script bridge.
+          webpreferences="contextIsolation=false, nodeIntegration=true"
         />
         
         {isLoading && (

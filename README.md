@@ -103,6 +103,12 @@ guyue-master/
 └── vite.config.ts        # Vite 构建配置
 ```
 
+## 🧩 插件开发
+
+Guyue Master 支持插件扩展。您可以开发自己的插件来增强应用功能。
+
+👉 **[查看插件开发指南](PLUGIN_GUIDE.md)**
+
 ## 🤝 贡献指南
 
 欢迎提交 Issue 和 Pull Request！

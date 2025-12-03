@@ -2,7 +2,7 @@
   "name": "guyue-master",
   "productName": "Guyue Master",
   "private": true,
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "macOS 风格的多功能生产力工具",
   "author": "Guyue",
   "main": "dist-electron/main.js",
@@ -14,13 +14,15 @@
     "electron:dev": "concurrently \"cross-env NODE_ENV=development npm run dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .\"",
     "electron:build": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder",
     "electron:build:mac": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder --mac",
-    "electron:build:dmg": "node scripts/backup_dmg.js && npm run build && npx tsc -p electron/tsconfig.json && electron-builder --mac dmg"
+    "electron:build:dmg": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder --mac dmg"
   },
   "dependencies": {
     "@google/genai": "^1.30.0",
+    "@monaco-editor/react": "^4.7.0",
     "@types/react-syntax-highlighter": "^15.5.13",
     "katex": "^0.16.25",
     "lucide-react": "^0.554.0",
+    "monaco-editor": "^0.55.1",
     "node-pty": "^1.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

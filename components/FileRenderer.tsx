@@ -34,7 +34,7 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
 
       const ext = file.type.toLowerCase().replace('.', '');
       
-      if (['md', 'txt', 'json', 'js', 'ts', 'tsx', 'jsx', 'css', 'html'].includes(ext)) {
+      if (['md', 'txt', 'json', 'js', 'ts', 'tsx', 'jsx', 'css', 'html', 'py'].includes(ext)) {
         setLoading(true);
         try {
           if (window.electronAPI && window.electronAPI.readFile) {
@@ -354,10 +354,44 @@ const renderFileContent = (file: FileRecord, content: string) => {
     );
   }
 
-  if (['txt', 'json', 'js', 'ts', 'tsx', 'jsx', 'css', 'html'].includes(ext)) {
+  if (['py', 'js', 'ts', 'tsx', 'jsx', 'css', 'html', 'json', 'java', 'cpp', 'c', 'h', 'sql', 'sh', 'yaml', 'yml', 'xml'].includes(ext)) {
+    let lang = ext;
+    if (lang === 'py') lang = 'python';
+    if (lang === 'js') lang = 'javascript';
+    if (lang === 'ts') lang = 'typescript';
+    if (lang === 'sh') lang = 'bash';
+    if (lang === 'yml') lang = 'yaml';
+
     return (
-      <div className="h-full overflow-y-auto p-4 bg-white">
-        <pre className="font-mono text-sm text-gray-800 whitespace-pre-wrap break-words">
+      <div className="h-full overflow-y-auto bg-white">
+        <SyntaxHighlighter
+          style={oneLight}
+          language={lang}
+          showLineNumbers={true}
+          customStyle={{ 
+            margin: 0, 
+            height: '100%', 
+            backgroundColor: '#fff',
+            fontSize: '0.9rem',
+            lineHeight: '1.5'
+          }}
+          lineNumberStyle={{
+            minWidth: '3em',
+            paddingRight: '1em',
+            color: '#ccc',
+            textAlign: 'right'
+          }}
+        >
+          {content}
+        </SyntaxHighlighter>
+      </div>
+    );
+  }
+
+  if (['txt'].includes(ext)) {
+    return (
+      <div className="h-full overflow-y-auto p-8 bg-white">
+        <pre className="font-mono text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed">
           {content}
         </pre>
       </div>

@@ -89,6 +89,11 @@ ipcMain.handle('get-user-data-path', () => {
   return app.getPath('userData');
 });
 
+// IPC: Get App Path
+ipcMain.handle('get-app-path', () => {
+  return app.getAppPath();
+});
+
 // IPC 通信：打开文件或路径
 ipcMain.handle('open-path', async (event, filePath) => {
   try {
@@ -206,6 +211,43 @@ ipcMain.handle('read-file-base64', async (_, filePath) => {
   } catch (error) {
     console.error('Failed to read file as base64:', error);
     return null;
+  }
+});
+
+// IPC: 写入文件
+ipcMain.handle('write-file', async (_, filePath, content) => {
+  try {
+    await fs.writeFile(filePath, content, 'utf-8');
+    return true;
+  } catch (error) {
+    console.error('Failed to write file:', error);
+    return false;
+  }
+});
+
+// IPC: 删除文件
+ipcMain.handle('delete-file', async (_, filePath) => {
+  try {
+    await fs.unlink(filePath);
+    return true;
+  } catch (error) {
+    console.error('Failed to delete file:', error);
+    return false;
+  }
+});
+
+// IPC: 列出目录内容 (用于笔记文件树)
+ipcMain.handle('list-dir', async (_, dirPath) => {
+  try {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    return entries.map(entry => ({
+      name: entry.name,
+      isDirectory: entry.isDirectory(),
+      path: path.join(dirPath, entry.name)
+    }));
+  } catch (error) {
+    console.error('Failed to list directory:', error);
+    return [];
   }
 });
 

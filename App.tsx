@@ -13,12 +13,16 @@ const TodoList = React.lazy(() => import('./components/TodoList').then(m => ({ d
 const FileList = React.lazy(() => import('./components/FileList').then(m => ({ default: m.FileList })));
 const PromptList = React.lazy(() => import('./components/PromptList').then(m => ({ default: m.PromptList })));
 const MarkdownSidebar = React.lazy(() => import('./components/MarkdownSidebar').then(m => ({ default: m.MarkdownSidebar })));
+const FileSidebar = React.lazy(() => import('./components/FileSidebar').then(m => ({ default: m.FileSidebar })));
 const MarkdownEditor = React.lazy(() => import('./components/MarkdownEditor').then(m => ({ default: m.MarkdownEditor })));
 const FileRenderer = React.lazy(() => import('./components/FileRenderer').then(m => ({ default: m.FileRenderer })));
 const Terminal = React.lazy(() => import('./components/Terminal').then(m => ({ default: m.Terminal })));
 const WebBrowser = React.lazy(() => import('./components/WebBrowser').then(m => ({ default: m.WebBrowser })));
 const LeetCodeManager = React.lazy(() => import('./components/LeetCodeManager').then(m => ({ default: m.LeetCodeManager })));
+const LearningManager = React.lazy(() => import('./components/LearningManager').then(m => ({ default: m.LearningManager })));
 const ImageHosting = React.lazy(() => import('./components/ImageHosting').then(m => ({ default: m.ImageHosting })));
+const ChatManager = React.lazy(() => import('./components/ChatManager').then(m => ({ default: m.ChatManager })));
+const CodeEditorManager = React.lazy(() => import('./components/CodeEditor/CodeEditorManager').then(m => ({ default: m.CodeEditorManager })));
 const PluginContainer = React.lazy(() => import('./components/PluginContainer').then(m => ({ default: m.PluginContainer })));
 
 // Lazy load modals
@@ -83,6 +87,9 @@ const App: React.FC = () => {
   const [hasTerminalMounted, setHasTerminalMounted] = useState(false);
   const [hasBrowserMounted, setHasBrowserMounted] = useState(false);
   const [hasLeetCodeMounted, setHasLeetCodeMounted] = useState(false);
+  const [hasLearningMounted, setHasLearningMounted] = useState(false);
+  const [hasChatMounted, setHasChatMounted] = useState(false);
+  const [hasVSCodeMounted, setHasVSCodeMounted] = useState(false);
 
   // Prevent body scroll to fix layout shifts on focus
   useEffect(() => {
@@ -106,7 +113,16 @@ const App: React.FC = () => {
     if (appMode === 'leetcode' && !hasLeetCodeMounted) {
       setHasLeetCodeMounted(true);
     }
-  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasLeetCodeMounted]);
+    if (appMode === 'learning' && !hasLearningMounted) {
+      setHasLearningMounted(true);
+    }
+    if (appMode === 'chat' && !hasChatMounted) {
+      setHasChatMounted(true);
+    }
+    if (appMode === 'vscode' && !hasVSCodeMounted) {
+      setHasVSCodeMounted(true);
+    }
+  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasLeetCodeMounted, hasLearningMounted, hasChatMounted, hasVSCodeMounted]);
   
   // Categories now managed per app mode
   const [categoriesMap, setCategoriesMap] = useState<Record<string, Category[]>>({
@@ -1006,7 +1022,24 @@ const App: React.FC = () => {
             onDeleteNote={handleDeleteMarkdownNote}
           />
         </Suspense>
-      ) : appMode !== 'markdown' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
+      ) : appMode === 'files' && !isRendererFullscreen ? (
+        <Suspense fallback={<div className="w-64 bg-gray-50 border-r border-gray-200" />}>
+          <FileSidebar
+            files={filteredFileRecords}
+            categories={categoriesMap[appMode] || DEFAULT_CATEGORIES}
+            selectedFileId={activeRenderFileId}
+            onSelectFile={setActiveRenderFileId}
+            onAddFile={() => {
+              setEditingFile(null);
+              setIsFileModalOpen(true);
+            }}
+            onDeleteFile={(id, e) => {
+              e.stopPropagation();
+              handleDeleteFile(id);
+            }}
+          />
+        </Suspense>
+      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'vscode' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
         <Sidebar 
           appMode={appMode}  
           categories={activeCategories} 
@@ -1021,7 +1054,7 @@ const App: React.FC = () => {
       ) : null}
 
       <div className="flex-1 flex flex-col min-w-0 bg-white">
-        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'image-hosting' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
+        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'vscode' && appMode !== 'files' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
         <div className="h-16 border-b border-gray-200 flex items-center justify-between px-6 bg-white shrink-0">
            <div className="flex items-center gap-4 flex-1 max-w-xl">
               <div className="relative flex-1">
@@ -1040,14 +1073,36 @@ const App: React.FC = () => {
               <button 
                 onClick={() => {
                   switch (appMode) {
-                    case 'notes': setIsNoteModalOpen(true); break;
-                    case 'ssh': setIsSSHModalOpen(true); break;
-                    case 'api': setIsAPIModalOpen(true); break;
-                    case 'todo': setIsTodoModalOpen(true); break;
-                    case 'files': setIsFileModalOpen(true); break;
-                    case 'prompts': setIsPromptModalOpen(true); break;
-                    case 'markdown': handleAddMarkdownNote(); break;
-                    default: setIsAddModalOpen(true);
+                    case 'notes': 
+                      setEditingNote(null);
+                      setIsNoteModalOpen(true); 
+                      break;
+                    case 'ssh': 
+                      setEditingSSH(null);
+                      setIsSSHModalOpen(true); 
+                      break;
+                    case 'api': 
+                      setEditingAPI(null);
+                      setIsAPIModalOpen(true); 
+                      break;
+                    case 'todo': 
+                      setEditingTodo(null);
+                      setIsTodoModalOpen(true); 
+                      break;
+                    case 'files': 
+                      setEditingFile(null);
+                      setIsFileModalOpen(true); 
+                      break;
+                    case 'prompts': 
+                      setEditingPrompt(null);
+                      setIsPromptModalOpen(true); 
+                      break;
+                    case 'markdown': 
+                      handleAddMarkdownNote(); 
+                      break;
+                    default: 
+                      setEditingBookmark(null);
+                      setIsAddModalOpen(true);
                   }
                 }}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/30"
@@ -1060,7 +1115,7 @@ const App: React.FC = () => {
         </div>
         )}
 
-        <div className={`flex-1 overflow-auto ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'image-hosting' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : 'p-6'}`}>
+        <div className={`flex-1 overflow-auto ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'chat' || appMode === 'vscode' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : 'p-6'}`}>
           <Suspense fallback={
             <div className="flex items-center justify-center h-full text-gray-400 gap-2">
               <Loader2 className="w-6 h-6 animate-spin" />
@@ -1072,7 +1127,21 @@ const App: React.FC = () => {
             {appMode === 'ssh' && <SSHList records={filteredSSHRecords} onDelete={handleDeleteSSH} onEdit={handleEditSSH} onOpenInTerminal={handleOpenSSHInTerminal} />}
             {appMode === 'api' && <APIList records={filteredAPIRecords} onDelete={handleDeleteAPI} onEdit={handleEditAPI} />}
             {appMode === 'todo' && <TodoList todos={filteredTodos} onDelete={handleDeleteTodo} onEdit={handleEditTodo} onToggle={handleToggleTodo} />}
-            {appMode === 'files' && <FileList files={filteredFileRecords} onDelete={handleDeleteFile} onEdit={handleEditFile} />}
+            
+            {appMode === 'files' && (
+               activeRenderFileId ? (
+                  <FileRenderer 
+                    file={fileRecords.find(f => f.id === activeRenderFileId)!} 
+                    isFullscreen={isRendererFullscreen}
+                    onToggleFullscreen={() => setIsRendererFullscreen(!isRendererFullscreen)}
+                  />
+               ) : (
+                 <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                   <p>请从左侧选择文件查看</p>
+                 </div>
+               )
+            )}
+
             {appMode === 'prompts' && <PromptList prompts={filteredPrompts} onDelete={handleDeletePrompt} onEdit={handleEditPrompt} />}
             
             {appMode === 'image-hosting' && (
@@ -1090,6 +1159,7 @@ const App: React.FC = () => {
               <PluginContainer 
                 entryPath={moduleConfig.find(m => m.id === appMode)?.pluginPath || ''} 
                 pluginId={appMode}
+                onOpenInBrowser={handleOpenInBrowser}
               />
             )}
 
@@ -1114,6 +1184,24 @@ const App: React.FC = () => {
             {(hasLeetCodeMounted || appMode === 'leetcode') && (
               <div className={appMode === 'leetcode' ? 'h-full' : 'hidden'}>
                 <LeetCodeManager />
+              </div>
+            )}
+
+            {(hasLearningMounted || appMode === 'learning') && (
+              <div className={appMode === 'learning' ? 'h-full' : 'hidden'}>
+                <LearningManager />
+              </div>
+            )}
+
+            {(hasChatMounted || appMode === 'chat') && (
+              <div className={appMode === 'chat' ? 'h-full' : 'hidden'}>
+                <ChatManager />
+              </div>
+            )}
+
+            {(hasVSCodeMounted || appMode === 'vscode') && (
+              <div className={appMode === 'vscode' ? 'h-full' : 'hidden'}>
+                <CodeEditorManager />
               </div>
             )}
 

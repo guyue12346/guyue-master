@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 获取用户数据路径
   getUserDataPath: () => ipcRenderer.invoke('get-user-data-path'),
+  getAppPath: () => ipcRenderer.invoke('get-app-path'),
 
   // 打开文件或路径
   openPath: (path: string) => ipcRenderer.invoke('open-path', path),
@@ -22,6 +23,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectFile: () => ipcRenderer.invoke('select-file'),
   readFile: (path: string) => ipcRenderer.invoke('read-file', path),
   readFileBase64: (path: string) => ipcRenderer.invoke('read-file-base64', path),
+  writeFile: (path: string, content: string) => ipcRenderer.invoke('write-file', path, content),
+  deleteFile: (path: string) => ipcRenderer.invoke('delete-file', path),
+  listDir: (path: string) => ipcRenderer.invoke('list-dir', path),
   getUserInfo: () => ipcRenderer.invoke('get-user-info'),
   uploadImage: (params: any) => ipcRenderer.invoke('upload-image', params),
 
@@ -46,6 +50,7 @@ export interface ElectronAPI {
   getAppVersion: () => Promise<string>;
   getPlatform: () => Promise<string>;
   getUserDataPath: () => Promise<string>;
+  getAppPath: () => Promise<string>;
   openPath: (path: string) => Promise<string>;
   selectDirectory: () => Promise<string | null>;
   ensureDir: (path: string) => Promise<boolean>;
@@ -54,6 +59,9 @@ export interface ElectronAPI {
   selectFile: () => Promise<{ path: string; name: string; size: number; type: string } | null>;
   readFile: (path: string) => Promise<string>;
   readFileBase64: (path: string) => Promise<string>;
+  writeFile: (path: string, content: string) => Promise<boolean>;
+  deleteFile: (path: string) => Promise<boolean>;
+  listDir: (path: string) => Promise<Array<{ name: string; isDirectory: boolean; path: string }>>;
   getUserInfo: () => Promise<{ username: string; hostname: string }>;
   uploadImage: (params: { accessToken: string; owner: string; repo: string; path: string; content: string; message: string }) => Promise<any>;
 }

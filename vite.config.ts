@@ -6,6 +6,7 @@ export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
       base: './', // Electron 需要相对路径
+      publicDir: false, // Do not package public folder
       server: {
         port: 3000,
         host: '0.0.0.0',

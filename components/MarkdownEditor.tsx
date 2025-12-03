@@ -16,15 +16,20 @@ interface MarkdownEditorProps {
   onUpdate: (id: string, updates: Partial<MarkdownNote>) => void;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
+  viewMode?: 'split' | 'single';
+  showViewToggle?: boolean;
 }
 
 export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ 
   note, 
   onUpdate,
   isFullscreen,
-  onToggleFullscreen
+  onToggleFullscreen,
+  viewMode = 'split',
+  showViewToggle = false
 }) => {
   const [isEditing, setIsEditing] = useState(false);
+  const [activeTab, setActiveTab] = useState<'edit' | 'preview'>('edit');
   const [content, setContent] = useState('');
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('');
@@ -260,7 +265,15 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   );
 
   return (
-    <div className="h-full flex flex-col bg-white">
+    <div className="relative h-full flex flex-col bg-white">
+      {showViewToggle && (
+        <button
+          onClick={() => setIsEditing(prev => !prev)}
+          className="absolute top-4 right-4 z-20 px-3 py-1 text-xs font-medium rounded-full border border-gray-200 bg-white/90 text-gray-600 shadow-sm hover:text-blue-600 hover:border-blue-200 transition-colors"
+        >
+          {isEditing ? '切换至预览' : '切换至编辑'}
+        </button>
+      )}
       {/* Toolbar */}
       <div className="h-14 border-b border-gray-100 flex items-center justify-between px-6 shrink-0">
         {isEditing ? (
@@ -288,8 +301,41 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
             </span>
           </div>
         )}
-        
+
         <div className="flex items-center gap-2">
+          {isEditing && viewMode === 'single' && (
+            <div className="flex bg-gray-100 rounded-lg p-0.5 mr-2">
+              <button
+                onClick={() => setActiveTab('edit')}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+                  activeTab === 'edit' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                编辑
+              </button>
+              <button
+                onClick={() => setActiveTab('preview')}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+                  activeTab === 'preview' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                预览
+              </button>
+            </div>
+          )}
+
+          <button
+            onClick={isEditing ? handleSave : () => setIsEditing(true)}
+            className={`p-2 rounded-lg transition-colors shrink-0 ${
+              isEditing 
+                ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm' 
+                : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
+            }`}
+            title={isEditing ? "保存" : "编辑"}
+          >
+            {isEditing ? <Save className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />}
+          </button>
+
           <button 
             onClick={onToggleFullscreen}
             className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-colors shrink-0"
@@ -297,46 +343,48 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           >
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
-
-          {isEditing ? (
-            <button
-              onClick={handleSave}
-              className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm font-medium whitespace-nowrap"
-            >
-              <Save className="w-4 h-4" />
-              保存
-            </button>
-          ) : (
-            <button
-              onClick={() => setIsEditing(true)}
-              className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors text-sm font-medium whitespace-nowrap"
-            >
-              <Edit3 className="w-4 h-4" />
-              编辑
-            </button>
-          )}
         </div>
       </div>
 
       {/* Editor / Preview Area */}
       <div className="flex-1 overflow-hidden flex">
         {isEditing ? (
-          <>
-            {/* Edit Mode: Split View */}
-            <div className="w-1/2 h-full border-r border-gray-200 flex flex-col">
-              <textarea
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                className="flex-1 w-full p-6 resize-none focus:outline-none font-mono text-sm leading-relaxed text-gray-800 bg-gray-50/50"
-                placeholder="在此输入 Markdown 内容..."
-              />
-            </div>
-            <div className="w-1/2 h-full overflow-y-auto bg-white p-6">
-               <div className="prose prose-slate max-w-none">
-                {renderMarkdown(content)}
+          viewMode === 'single' ? (
+            // Single Pane Mode
+            activeTab === 'edit' ? (
+              <div className="w-full h-full flex flex-col">
+                <textarea
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  className="flex-1 w-full p-6 resize-none focus:outline-none font-mono text-sm leading-relaxed text-gray-800 bg-gray-50/50"
+                  placeholder="在此输入 Markdown 内容..."
+                />
               </div>
-            </div>
-          </>
+            ) : (
+              <div className="w-full h-full overflow-y-auto bg-white p-6">
+                 <div className="prose prose-slate max-w-none mx-auto">
+                  {renderMarkdown(content)}
+                </div>
+              </div>
+            )
+          ) : (
+            // Split View Mode
+            <>
+              <div className="w-1/2 h-full border-r border-gray-200 flex flex-col">
+                <textarea
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  className="flex-1 w-full p-6 resize-none focus:outline-none font-mono text-sm leading-relaxed text-gray-800 bg-gray-50/50"
+                  placeholder="在此输入 Markdown 内容..."
+                />
+              </div>
+              <div className="w-1/2 h-full overflow-y-auto bg-white p-6">
+                 <div className="prose prose-slate max-w-none">
+                  {renderMarkdown(content)}
+                </div>
+              </div>
+            </>
+          )
         ) : (
           /* View Mode: Full Width Preview */
           <div className="w-full h-full overflow-y-auto bg-white p-8 md:p-12 lg:p-16">
