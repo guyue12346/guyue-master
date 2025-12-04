@@ -448,6 +448,7 @@ ipcMain.handle('terminal-create', (event, options) => {
         ...process.env,
         LANG: 'en_US.UTF-8',
         LC_ALL: 'en_US.UTF-8',
+        ...options?.env
       } as any
     });
 

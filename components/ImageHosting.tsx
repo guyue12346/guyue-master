@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ImageRecord, ImageHostingConfig } from '../types';
-import { Upload, Settings, Copy, Trash2, ExternalLink, Image as ImageIcon, Loader2, X } from 'lucide-react';
+import { Upload, Settings, Copy, Trash2, ExternalLink, Image as ImageIcon, Loader2, X, FileText } from 'lucide-react';
 
 interface ImageHostingProps {
   records: ImageRecord[];
@@ -14,6 +14,12 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Name Modal State
+  const [isNameModalOpen, setIsNameModalOpen] = useState(false);
+  const [pendingFile, setPendingFile] = useState<{ path: string; name: string } | null>(null);
+  const [customName, setCustomName] = useState('');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Settings State
   const [tempConfig, setTempConfig] = useState<ImageHostingConfig>(config);
@@ -38,9 +44,24 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
       const file = await window.electronAPI.selectFile();
       if (!file) return;
 
-      setIsUploading(true);
-      setUploadError(null);
+      const defaultName = file.name.substring(0, file.name.lastIndexOf('.'));
+      setPendingFile(file);
+      setCustomName(defaultName);
+      setIsNameModalOpen(true);
+    } catch (error: any) {
+      console.error('File selection error:', error);
+    }
+  };
 
+  const confirmUpload = async () => {
+    if (!pendingFile) return;
+    
+    setIsNameModalOpen(false);
+    setIsUploading(true);
+    setUploadError(null);
+
+    try {
+      const file = pendingFile;
       const base64Content = await window.electronAPI.readFileBase64(file.path);
       
       // Generate a unique filename to avoid conflicts
@@ -58,9 +79,11 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
         message: `Upload ${filename} via Guyue Master`
       });
 
+      const defaultName = file.name.substring(0, file.name.lastIndexOf('.'));
       const newRecord: ImageRecord = {
         id: timestamp.toString(),
         filename: filename,
+        name: customName || defaultName,
         url: data.content.download_url,
         sha: data.content.sha,
         path: data.content.path,
@@ -75,6 +98,7 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
       setUploadError(error.message || '上传失败，请检查配置或网络');
     } finally {
       setIsUploading(false);
+      setPendingFile(null);
     }
   };
 
@@ -87,7 +111,8 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
-    // You might want to show a toast here
+    setToastMessage('已复制到剪贴板');
+    setTimeout(() => setToastMessage(null), 2000);
   };
 
   return (
@@ -147,7 +172,7 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
                 <div className="aspect-video bg-gray-100 rounded-lg mb-3 overflow-hidden relative flex items-center justify-center">
                   <img 
                     src={record.url} 
-                    alt={record.filename} 
+                    alt={record.name || record.filename} 
                     className="max-w-full max-h-full object-contain"
                     onError={(e) => {
                         (e.target as HTMLImageElement).src = 'https://via.placeholder.com/300x200?text=Image+Load+Error';
@@ -158,23 +183,23 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
                 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <h3 className="font-medium text-gray-800 truncate text-sm" title={record.filename}>
-                      {record.filename}
+                    <h3 className="font-medium text-gray-800 truncate text-sm" title={record.name || record.filename}>
+                      {record.name || record.filename}
                     </h3>
                     <span className="text-xs text-gray-400">
                       {new Date(record.createdAt).toLocaleDateString()}
                     </span>
                   </div>
                   
-                  <div className="flex items-center gap-2 pt-2 border-t border-gray-50">
-                    <div className="flex-1 flex bg-gray-50 rounded-md px-2 py-1.5 items-center">
-                      <input 
-                        type="text" 
-                        value={record.url} 
-                        readOnly 
-                        className="bg-transparent border-none text-xs text-gray-500 w-full focus:ring-0 p-0 truncate"
-                      />
-                    </div>
+                  <div className="flex items-center gap-2 pt-2 border-t border-gray-50 justify-end">
+                    <button 
+                      onClick={() => copyToClipboard(`![${record.name || record.filename}](${record.url})`)}
+                      className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors"
+                      title="复制 Markdown 格式"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>MD</span>
+                    </button>
                     <button 
                       onClick={() => copyToClipboard(record.url)}
                       className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
@@ -203,6 +228,58 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
           </div>
         )}
       </div>
+
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-gray-800/90 text-white px-4 py-2 rounded-full shadow-lg text-sm backdrop-blur-sm animate-in fade-in slide-in-from-bottom-4 z-50">
+          {toastMessage}
+        </div>
+      )}
+
+      {/* Name Input Modal */}
+      {isNameModalOpen && (
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+              <h3 className="text-lg font-semibold text-gray-800">输入图片名称</h3>
+              <button onClick={() => setIsNameModalOpen(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6">
+              <label className="block text-sm font-medium text-gray-700 mb-1">图片名称</label>
+              <input
+                type="text"
+                value={customName}
+                onChange={e => setCustomName(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
+                placeholder="请输入图片名称"
+                autoFocus
+                onKeyDown={e => {
+                  if (e.key === 'Enter') confirmUpload();
+                  if (e.key === 'Escape') setIsNameModalOpen(false);
+                }}
+              />
+            </div>
+
+            <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-3">
+              <button
+                onClick={() => setIsNameModalOpen(false)}
+                className="px-4 py-2 text-gray-600 hover:bg-gray-200 rounded-lg text-sm font-medium transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={confirmUpload}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/30"
+              >
+                确认上传
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Settings Modal */}
       {isSettingsOpen && (

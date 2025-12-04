@@ -3,7 +3,6 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import remarkBreaks from 'remark-breaks';
-import { remarkAlert } from 'remark-github-blockquote-alert';
 import rehypeKatex from 'rehype-katex';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -19,6 +18,8 @@ interface MarkdownEditorProps {
   viewMode?: 'split' | 'single';
   showViewToggle?: boolean;
   hideMetadata?: boolean;
+  hideCategory?: boolean;
+  initialEditMode?: boolean;
   onExitEdit?: () => void;
 }
 
@@ -30,6 +31,8 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   viewMode = 'split',
   showViewToggle = false,
   hideMetadata = false,
+  hideCategory = false,
+  initialEditMode = false,
   onExitEdit
 }) => {
   const [isEditing, setIsEditing] = useState(false);
@@ -44,8 +47,8 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       setTitle(note.title);
       setCategory(note.category);
       // If onExitEdit is provided, we assume we start in edit mode (File Management)
-      // Otherwise default to false (Markdown Note)
-      if (onExitEdit) {
+      // Or if initialEditMode is true
+      if (onExitEdit || initialEditMode) {
         setIsEditing(true);
       }
     } else {
@@ -53,7 +56,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       setTitle('');
       setCategory('');
     }
-  }, [note, onExitEdit]);
+  }, [note, onExitEdit, initialEditMode]);
 
   if (!note) {
     return (
@@ -133,7 +136,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         .markdown-alert-caution .markdown-alert-title { color: #d1242f; }
       `}</style>
       <ReactMarkdown 
-        remarkPlugins={[remarkGfm, remarkMath, remarkBreaks, remarkAlert]}
+        remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
         rehypePlugins={[rehypeKatex]}
         components={{
           blockquote: ({node, children, ...props}) => {
@@ -146,10 +149,12 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
               const firstText = pChildren[0];
               
               if (typeof firstText === 'string') {
-                const match = firstText.match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*?)(\n|$)/i);
+                // Match [!NOTE] Title or [!NOTE]
+                const match = firstText.match(/^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:[ \t]+)?(.*?)(\n|$)/i);
                 if (match) {
                   const type = match[1].toLowerCase();
-                  const title = match[2] || type.charAt(0).toUpperCase() + type.slice(1);
+                  // If title group is empty, use type as title
+                  const title = match[2]?.trim() || type.charAt(0).toUpperCase() + type.slice(1);
                   const remainingText = firstText.substring(match[0].length);
                   
                   const getAlertIcon = (t: string) => {
@@ -188,34 +193,51 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           img: ({src, alt, ...props}) => {
             if (!src) return null;
             
-            let width: number | undefined;
-            let realAlt = alt;
+            // Parse alt text for width and border
+            const altText = alt || '';
+            let width: string | undefined = undefined;
+            let hasBorder = false;
+            let realAlt = altText;
 
-            if (alt) {
-              // Try to parse "alt|width" format (e.g. "test|50")
-              const parts = alt.split('|');
-              if (parts.length > 1) {
-                const lastPart = parts[parts.length - 1].trim();
-                const possibleWidth = Number(lastPart);
-                if (!isNaN(possibleWidth) && lastPart !== '') {
-                  width = possibleWidth;
-                  realAlt = parts.slice(0, -1).join('|');
+            // Split by pipe (support both half-width | and full-width ｜)
+            const parts = altText.split(/\||｜/);
+            
+            if (parts.length > 1) {
+                realAlt = parts[0];
+                for (let i = 1; i < parts.length; i++) {
+                    const part = parts[i].trim().toLowerCase();
+                    if (part === 'border') {
+                        hasBorder = true;
+                    } else if (/^\d+(%|px)?$/.test(part)) {
+                            if (!isNaN(Number(part))) {
+                                width = `${part}px`;
+                            } else {
+                                width = part;
+                            }
+                    }
                 }
-              }
-              
-              // Fallback: check if the whole alt is a number (e.g. "50")
-              if (width === undefined && !isNaN(Number(alt)) && alt.trim() !== '') {
-                width = Number(alt);
-              }
+            } else {
+                if (!isNaN(Number(altText)) && altText.trim() !== '') {
+                    width = `${altText}px`;
+                }
             }
 
-            const style = width ? { width: `${width}px`, maxWidth: '100%' } : { maxWidth: '100%' };
+            const style: React.CSSProperties = { 
+                width: width,
+                maxWidth: '100%' 
+            };
+
+            let className = "mx-auto my-4"; 
+            if (hasBorder) {
+                className += " rounded-lg shadow-md";
+            }
+
             return (
               <img 
                 src={src} 
                 alt={realAlt} 
                 style={style}
-                className="mx-auto rounded-lg shadow-md my-4"
+                className={className}
                 {...props} 
               />
             );
@@ -288,13 +310,15 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                   className="text-xl font-bold text-gray-800 bg-transparent border-none focus:ring-0 placeholder-gray-300 flex-1"
                   placeholder="笔记标题"
                 />
-                <input
-                  type="text"
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded px-2 py-1 w-32 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="分类"
-                />
+                {!hideCategory && (
+                  <input
+                    type="text"
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded px-2 py-1 w-32 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="分类"
+                  />
+                )}
               </>
             )}
             {hideMetadata && (
@@ -304,7 +328,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         ) : (
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold text-gray-800">{note.title}</h1>
-            {!hideMetadata && (
+            {!hideMetadata && !hideCategory && (
               <span className="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full">
                 {note.category || '未分类'}
               </span>
@@ -406,7 +430,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           )
         ) : (
           /* View Mode: Full Width Preview */
-          <div className="w-full h-full overflow-y-auto bg-white p-8 md:p-12 lg:p-16">
+          <div className="w-full h-full overflow-y-auto bg-white p-8 md:p-12 lg:p-16 select-text">
             <div className="prose prose-slate max-w-4xl mx-auto">
               {renderMarkdown(content)}
             </div>

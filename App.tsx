@@ -177,9 +177,9 @@ const App: React.FC = () => {
 
       // Check for shortcuts
       if (isTabPressed.current) {
-        // Check if a number key is pressed
-        if (/^\d$/.test(e.key)) {
-          const key = e.key;
+        // Check if a number or letter key is pressed
+        if (/^[\da-zA-Z]$/.test(e.key)) {
+          const key = e.key.toLowerCase();
           // Find module with matching shortcut
           const targetModule = moduleConfig.find(m => {
             if (!m.shortcut) return false;
@@ -347,7 +347,13 @@ const App: React.FC = () => {
           // Force name from default config to ensure updates propagate, as renaming is not supported in UI yet
           return existing ? { ...defaultModule, ...existing, name: defaultModule.name } : defaultModule;
         });
-        const legacyExtras = parsed.filter(m => !merged.find(item => item.id === m.id) && (m.id as string) !== 'tips');
+        const legacyExtras = parsed.filter(m => 
+          !merged.find(item => item.id === m.id) && 
+          (m.id as string) !== 'tips' &&
+          (m.id as string) !== 'renderer' &&
+          (m.id as string) !== 'markdown' &&
+          m.name !== '文件归档'
+        );
         setModuleConfig([...merged, ...legacyExtras]);
       } catch (e) {
         setModuleConfig(DEFAULT_MODULE_CONFIG);

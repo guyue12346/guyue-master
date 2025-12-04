@@ -88,6 +88,7 @@ export interface MarkdownNote {
 export interface ImageRecord {
   id: string;
   filename: string;
+  name?: string; // Display name
   url: string;
   sha: string; // Gitee SHA for deletion/update
   path: string; // Path in repo
@@ -134,9 +135,7 @@ export const DEFAULT_MODULE_CONFIG: ModuleConfig[] = [
   { id: 'api', name: 'API管理', enabled: true, priority: 3, icon: 'Webhook', shortcut: 'Tab+4' },
   { id: 'todo', name: '待办事项', enabled: true, priority: 4, icon: 'ListTodo', shortcut: 'Tab+5' },
   { id: 'files', name: '文件管理', enabled: true, priority: 5, icon: 'FolderOpen', shortcut: 'Tab+6' },
-  { id: 'renderer', name: '文件其它', enabled: true, priority: 6, icon: 'Book', shortcut: 'Tab+7' },
   { id: 'prompts', name: 'Prompt管理', enabled: true, priority: 7, icon: 'Sparkles', shortcut: 'Tab+8' },
-  { id: 'markdown', name: 'Markdown笔记', enabled: true, priority: 8, icon: 'BookOpen', shortcut: 'Tab+9' },
   { id: 'terminal', name: '本地终端', enabled: true, priority: 9, icon: 'Command', shortcut: 'Tab+0' },
   { id: 'browser', name: '内置浏览器', enabled: true, priority: 10, icon: 'Globe', shortcut: 'Tab+B' },
   { id: 'leetcode', name: 'Code', enabled: true, priority: 11, icon: 'Code2', shortcut: 'Tab+L' },

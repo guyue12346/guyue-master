@@ -1,15 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { GraduationCap, Search, ArrowLeft, ArrowRight, RotateCw, ExternalLink, Maximize2, Minimize2, X, PlayCircle, FileText, Columns, Square, MousePointerClick, TerminalSquare, ChevronLeft, Brain, Cpu, Server, Code, BookOpen, FolderOpen } from 'lucide-react';
+import { GraduationCap, Search, ArrowLeft, ArrowRight, RotateCw, ExternalLink, Maximize2, Minimize2, X, PlayCircle, FileText, Columns, Square, MousePointerClick, TerminalSquare, ChevronLeft, Brain, Cpu, Server, Code, BookOpen, FolderOpen, Plus, MoreVertical, Edit2, Trash2, Wrench, Globe, Database, Cloud, Terminal, Layout, Layers, Box, Circle, Disc } from 'lucide-react';
 import { LearningList } from './LearningList';
-import { CS336_DATA, CourseData, Lecture, COURSE_CATEGORIES, CourseCategory } from './LearningData';
+import { CS336_DATA, DOCKER_DATA, GIT_DATA, CourseData, Lecture, COURSE_CATEGORIES, CourseCategory } from './LearningData';
 import { MarkdownEditor } from './MarkdownEditor';
-import { Terminal } from './Terminal';
+import { Terminal as TerminalComponent } from './Terminal';
 import { MarkdownNote } from '../types';
+import { LearningCategoryModal } from './LearningCategoryModal';
+import { LearningCourseModal } from './LearningCourseModal';
 
 // All courses
-const COURSES: CourseData[] = [CS336_DATA];
+const DEFAULT_COURSES: CourseData[] = [CS336_DATA, DOCKER_DATA, GIT_DATA];
 
 const STORAGE_KEY_PROGRESS = 'learning_progress';
+const STORAGE_KEY_DATA = 'learning_data_v1'; // Combined data storage
+const STORAGE_KEY_COURSES = 'learning_courses_v1';
 
 // Helper Component for Internal Browser
 const MiniBrowser: React.FC<{ url: string; title?: string; onClose?: () => void }> = ({ url, title, onClose }) => {
@@ -126,6 +130,78 @@ interface PaneContent {
 }
 
 export const LearningManager: React.FC = () => {
+  const [categories, setCategories] = useState<CourseCategory[]>(() => {
+    const saved = localStorage.getItem('learning_categories_v1');
+    return saved ? JSON.parse(saved) : COURSE_CATEGORIES;
+  });
+
+  const [courses, setCourses] = useState<CourseData[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_COURSES);
+    return saved ? JSON.parse(saved) : DEFAULT_COURSES;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('learning_categories_v1', JSON.stringify(categories));
+  }, [categories]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_COURSES, JSON.stringify(courses));
+  }, [courses]);
+
+  // Modal States
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<CourseCategory | undefined>(undefined);
+
+  const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
+  const [editingCourse, setEditingCourse] = useState<CourseData | undefined>(undefined);
+
+  const handleSaveCategory = (category: CourseCategory) => {
+    if (editingCategory) {
+      setCategories(prev => prev.map(c => c.id === category.id ? category : c));
+    } else {
+      setCategories(prev => [...prev, category]);
+    }
+    setEditingCategory(undefined);
+  };
+
+  const handleDeleteCategory = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (confirm('确定要删除该学习方向吗？这将同时删除该方向下的所有课程。')) {
+      setCategories(prev => prev.filter(c => c.id !== id));
+      setCourses(prev => prev.filter(c => c.categoryId !== id));
+      if (selectedCategoryId === id) setSelectedCategoryId(null);
+    }
+  };
+
+  const handleSaveCourse = (courseData: Partial<CourseData>) => {
+    if (editingCourse) {
+      setCourses(prev => prev.map(c => c.id === courseData.id ? { ...c, ...courseData } as CourseData : c));
+    } else {
+      // Create new course with default structure
+      const newCourse: CourseData = {
+        ...courseData,
+        id: `course_${Date.now()}`,
+        title: courseData.title!,
+        description: courseData.description || '',
+        categoryId: selectedCategoryId!,
+        modules: [],
+        assignments: [],
+        introMarkdown: '# 课程介绍\n\n在这里编写课程介绍...',
+      };
+      console.log('Creating new course:', newCourse);
+      setCourses(prev => [...prev, newCourse]);
+    }
+    setEditingCourse(undefined);
+  };
+
+  const handleDeleteCourse = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (confirm('确定要删除该课程吗？')) {
+      setCourses(prev => prev.filter(c => c.id !== id));
+      if (selectedCourseId === id) setSelectedCourseId(null);
+    }
+  };
+
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   
@@ -139,6 +215,14 @@ export const LearningManager: React.FC = () => {
   const [isImmersive, setIsImmersive] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
+  // Auto-open Intro when entering a course
+  useEffect(() => {
+    if (selectedCourseId) {
+      setPrimaryContent({ type: 'intro', id: 'intro' });
+      setSecondaryContent(null);
+    }
+  }, [selectedCourseId]);
+
   const [progress, setProgress] = useState<Record<string, boolean>>(() => {
     const saved = localStorage.getItem(STORAGE_KEY_PROGRESS);
     return saved ? JSON.parse(saved) : {};
@@ -155,17 +239,24 @@ export const LearningManager: React.FC = () => {
     setProgress(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const selectedCourse = COURSES.find(c => c.id === selectedCourseId);
-  const selectedCategory = COURSE_CATEGORIES.find(c => c.id === selectedCategoryId);
+  const handleUpdateCourse = (updatedCourse: CourseData) => {
+    setCourses(prev => prev.map(c => c.id === updatedCourse.id ? updatedCourse : c));
+  };
+
+  const selectedCourse = courses.find(c => c.id === selectedCourseId);
+  const selectedCategory = categories.find(c => c.id === selectedCategoryId);
   
   // Get courses in selected category
   const coursesInCategory = selectedCategoryId 
-    ? COURSES.filter(c => c.categoryId === selectedCategoryId)
+    ? courses.filter(c => c.categoryId === selectedCategoryId)
     : [];
 
   // Helper to get category icon component
   const getCategoryIcon = (iconName: string) => {
-    const icons: Record<string, any> = { Brain, Cpu, Server, Code, BookOpen, FolderOpen };
+    const icons: Record<string, any> = { 
+      Brain, Cpu, Server, Code, BookOpen, FolderOpen, GraduationCap, Wrench, 
+      Globe, Database, Cloud, Terminal, Layout, Layers, Box, Circle, Disc 
+    };
     return icons[iconName] || BookOpen;
   };
 
@@ -200,25 +291,29 @@ export const LearningManager: React.FC = () => {
         content = { type: 'custom-note', id: id, data: noteData, origin: 'course' };
       }
     } else if (type === 'personal-resource') {
-      // Handle Personal Resource
-      if (id.toLowerCase().endsWith('.md')) {
+      // Handle Personal Resource - id is the link (URL or file path)
+      const link = id;
+      if (link.startsWith('http://') || link.startsWith('https://')) {
+        // It's a URL, open in browser pane
+        content = { type: 'personal-resource', id: link, url: link };
+      } else if (link.toLowerCase().endsWith('.md')) {
         // Treat as markdown note
         if (window.electronAPI) {
-          const fileContent = await window.electronAPI.readFile(id);
+          const fileContent = await window.electronAPI.readFile(link);
           const noteData: MarkdownNote = {
-            id: id,
-            title: id.split('/').pop()?.replace('.md', '') || 'Untitled',
+            id: link,
+            title: link.split('/').pop()?.replace('.md', '') || 'Untitled',
             content: fileContent || '',
             category: 'Personal Resource',
             createdAt: Date.now(),
             updatedAt: Date.now()
           };
           setCurrentNote(noteData);
-          content = { type: 'custom-note', id: id, data: noteData, origin: 'personal' };
+          content = { type: 'custom-note', id: link, data: noteData, origin: 'personal' };
         }
       } else {
         // Treat as external file (PDF, etc)
-        content = { type: 'personal-resource', id: id, url: `file://${id}` };
+        content = { type: 'personal-resource', id: link, url: `file://${link}` };
       }
     } else if (type === 'video') {
       const lecture = findLecture(id);
@@ -230,17 +325,98 @@ export const LearningManager: React.FC = () => {
     } else if (type === 'note') {
       const lecture = findLecture(id);
       if (lecture) {
-        const resourceUrl = lecture.materials 
-          ? (lecture.materials.endsWith('.pdf') 
-              ? `https://github.com/stanford-cs336/spring2025-lectures/blob/main/nonexecutable/${encodeURIComponent(lecture.materials)}`
-              : `https://github.com/stanford-cs336/spring2025-lectures/blob/main/${encodeURIComponent(lecture.materials)}`)
-          : 'https://github.com/stanford-cs336/spring2025-lectures';
-        content = { type: 'note', id, url: resourceUrl };
+        // Check if it is a local absolute path (starts with /)
+        const isLocal = lecture.materials && lecture.materials.startsWith('/');
+        
+        if (isLocal) {
+           // It is a local file
+           if (lecture.materials.toLowerCase().endsWith('.md')) {
+             // Handle as markdown note
+             if (window.electronAPI) {
+                const fileContent = await window.electronAPI.readFile(lecture.materials);
+                const noteData: MarkdownNote = {
+                  id: lecture.materials,
+                  title: lecture.title,
+                  content: fileContent || '',
+                  category: 'Course Note',
+                  createdAt: Date.now(),
+                  updatedAt: Date.now()
+                };
+                setCurrentNote(noteData);
+                content = { type: 'custom-note', id: lecture.materials, data: noteData, origin: 'course' };
+             }
+           } else {
+             // Handle as external file (PDF, etc)
+             content = { type: 'personal-resource', id: lecture.materials, url: `file://${lecture.materials}` };
+           }
+        } else if (lecture.materials && (lecture.materials.startsWith('http://') || lecture.materials.startsWith('https://'))) {
+           // It is a direct URL
+           content = { type: 'note', id, url: lecture.materials };
+        } else {
+           // Legacy GitHub logic
+           const resourceUrl = lecture.materials 
+            ? (lecture.materials.endsWith('.pdf') 
+                ? `https://github.com/stanford-cs336/spring2025-lectures/blob/main/nonexecutable/${encodeURIComponent(lecture.materials)}`
+                : `https://github.com/stanford-cs336/spring2025-lectures/blob/main/${encodeURIComponent(lecture.materials)}`)
+            : 'https://github.com/stanford-cs336/spring2025-lectures';
+           content = { type: 'note', id, url: resourceUrl };
+        }
       }
     } else if (type === 'assignment') {
-      const assignment = selectedCourse?.assignments.find(a => a.id === id);
-      if (assignment) {
-        content = { type: 'assignment', id, url: assignment.link };
+      // For new assignmentModules structure, id is the link (URL or file path)
+      const link = id;
+      
+      if (link.startsWith('http://') || link.startsWith('https://')) {
+        // It's a URL, open in browser pane
+        content = { type: 'assignment', id: link, url: link };
+      } else if (link.startsWith('/')) {
+        // It is a local file path
+        if (link.toLowerCase().endsWith('.md')) {
+          // Handle as markdown note
+          if (window.electronAPI) {
+            const fileContent = await window.electronAPI.readFile(link);
+            const noteData: MarkdownNote = {
+              id: link,
+              title: link.split('/').pop()?.replace('.md', '') || 'Untitled',
+              content: fileContent || '',
+              category: 'Course Assignment',
+              createdAt: Date.now(),
+              updatedAt: Date.now()
+            };
+            setCurrentNote(noteData);
+            content = { type: 'custom-note', id: link, data: noteData, origin: 'course' };
+          }
+        } else {
+          // Handle as external file (PDF, etc)
+          content = { type: 'personal-resource', id: link, url: `file://${link}` };
+        }
+      } else {
+        // Fallback: try old assignments array for backward compatibility
+        const assignment = selectedCourse?.assignments.find(a => a.id === id);
+        if (assignment) {
+          const isLocal = assignment.link && assignment.link.startsWith('/');
+          if (isLocal) {
+            if (assignment.link.toLowerCase().endsWith('.md')) {
+              if (window.electronAPI) {
+                const fileContent = await window.electronAPI.readFile(assignment.link);
+                const noteData: MarkdownNote = {
+                  id: assignment.link,
+                  title: assignment.title,
+                  content: fileContent || '',
+                  category: 'Course Assignment',
+                  createdAt: Date.now(),
+                  updatedAt: Date.now()
+                };
+                setCurrentNote(noteData);
+                content = { type: 'custom-note', id: assignment.link, data: noteData, origin: 'course' };
+              }
+            } else {
+              content = { type: 'personal-resource', id: assignment.link, url: `file://${assignment.link}` };
+            }
+          } else {
+            content = { type: 'assignment', id, url: assignment.link };
+          }
+        }
       }
     }
 
@@ -272,10 +448,10 @@ export const LearningManager: React.FC = () => {
 
   // View 1: Category Selection
   if (!selectedCategoryId) {
-    const filteredCategories = COURSE_CATEGORIES.filter(cat => {
+    const filteredCategories = categories.filter(cat => {
       if (!searchQuery) return true;
       const q = searchQuery.toLowerCase();
-      const coursesInCat = COURSES.filter(c => c.categoryId === cat.id);
+      const coursesInCat = courses.filter(c => c.categoryId === cat.id);
       return cat.name.toLowerCase().includes(q) || 
              cat.description.toLowerCase().includes(q) ||
              coursesInCat.some(c => c.title.toLowerCase().includes(q));
@@ -292,43 +468,71 @@ export const LearningManager: React.FC = () => {
               </h1>
               <p className="text-gray-500 mt-1">选择一个学习方向</p>
             </div>
-            <div className="relative w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input 
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="搜索分类或课程..."
-                className="w-full pl-10 pr-4 py-2 bg-gray-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all"
-              />
-            </div>
+            <button
+              onClick={() => {
+                setEditingCategory(undefined);
+                setIsCategoryModalOpen(true);
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              新建方向
+            </button>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredCategories.map(cat => {
               const IconComponent = getCategoryIcon(cat.icon);
               const colors = colorMap[cat.color] || colorMap.gray;
-              const courseCount = COURSES.filter(c => c.categoryId === cat.id).length;
+              const courseCount = courses.filter(c => c.categoryId === cat.id).length;
 
               return (
-                <button
-                  key={cat.id}
-                  onClick={() => setSelectedCategoryId(cat.id)}
-                  className={`group flex flex-col text-left bg-white border ${colors.border} rounded-xl p-6 ${colors.hover} hover:shadow-lg transition-all duration-300`}
-                >
-                  <div className={`w-14 h-14 ${colors.bg} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
-                    <IconComponent className={`w-7 h-7 ${colors.text}`} />
+                <div key={cat.id} className="relative group">
+                  <button
+                    onClick={() => setSelectedCategoryId(cat.id)}
+                    className={`w-full flex flex-col text-left bg-white border ${colors.border} rounded-xl p-6 ${colors.hover} hover:shadow-lg transition-all duration-300`}
+                  >
+                    <div className={`w-14 h-14 ${colors.bg} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+                      <IconComponent className={`w-7 h-7 ${colors.text}`} />
+                    </div>
+                    <h3 className="text-lg font-bold text-gray-800 mb-2">{cat.name}</h3>
+                    <p className="text-sm text-gray-500 line-clamp-2 flex-1">{cat.description}</p>
+                    <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-400">
+                      {courseCount} 门课程
+                    </div>
+                  </button>
+                  
+                  <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingCategory(cat);
+                        setIsCategoryModalOpen(true);
+                      }}
+                      className="p-2 bg-white/80 backdrop-blur rounded-lg hover:bg-blue-50 text-gray-500 hover:text-blue-600 border border-gray-200 shadow-sm"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={(e) => handleDeleteCategory(cat.id, e)}
+                      className="p-2 bg-white/80 backdrop-blur rounded-lg hover:bg-red-50 text-gray-500 hover:text-red-600 border border-gray-200 shadow-sm"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
-                  <h3 className="text-lg font-bold text-gray-800 mb-2">{cat.name}</h3>
-                  <p className="text-sm text-gray-500 line-clamp-2 flex-1">{cat.description}</p>
-                  <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-400">
-                    {courseCount} 门课程
-                  </div>
-                </button>
+                </div>
               );
             })}
           </div>
         </div>
+
+        <LearningCategoryModal
+          isOpen={isCategoryModalOpen}
+          onClose={() => setIsCategoryModalOpen(false)}
+          onSave={handleSaveCategory}
+          initialData={editingCategory}
+          isEditing={!!editingCategory}
+        />
       </div>
     );
   }
@@ -339,6 +543,10 @@ export const LearningManager: React.FC = () => {
       c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.description.toLowerCase().includes(searchQuery.toLowerCase())
     );
+
+    console.log('View 2 - coursesInCategory:', coursesInCategory);
+    console.log('View 2 - filteredCourses:', filteredCourses);
+    console.log('View 2 - selectedCategoryId:', selectedCategoryId);
 
     const colors = colorMap[selectedCategory?.color || 'gray'] || colorMap.gray;
     const IconComponent = getCategoryIcon(selectedCategory?.icon || 'BookOpen');
@@ -353,7 +561,7 @@ export const LearningManager: React.FC = () => {
                 className="flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600 transition-colors mb-2"
               >
                 <ChevronLeft className="w-4 h-4" />
-                返回分类
+                返回
               </button>
               <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
                 <div className={`w-10 h-10 ${colors.bg} rounded-lg flex items-center justify-center`}>
@@ -363,15 +571,27 @@ export const LearningManager: React.FC = () => {
               </h1>
               <p className="text-gray-500 mt-1">{selectedCategory?.description}</p>
             </div>
-            <div className="relative w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input 
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="搜索课程..."
-                className="w-full pl-10 pr-4 py-2 bg-gray-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all"
-              />
+            <div className="flex items-center gap-4">
+              <div className="relative w-64">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input 
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="搜索课程..."
+                  className="w-full pl-10 pr-4 py-2 bg-gray-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all"
+                />
+              </div>
+              <button
+                onClick={() => {
+                  setEditingCourse(undefined);
+                  setIsCourseModalOpen(true);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+              >
+                <Plus className="w-4 h-4" />
+                新建课程
+              </button>
             </div>
           </div>
 
@@ -384,25 +604,63 @@ export const LearningManager: React.FC = () => {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredCourses.map(course => (
-                <button
-                  key={course.id}
-                  onClick={() => setSelectedCourseId(course.id)}
-                  className={`group flex flex-col text-left bg-white border ${colors.border} rounded-xl p-6 ${colors.hover} hover:shadow-lg transition-all duration-300`}
+                <div 
+                  key={course.id} 
+                  className="relative group cursor-pointer"
+                  onClick={() => {
+                    console.log('=== CLICK EVENT ===');
+                    console.log('Clicking course:', course.id, course.title);
+                    console.log('All courses:', courses.map(c => ({ id: c.id, title: c.title })));
+                    console.log('Setting selectedCourseId to:', course.id);
+                    setSelectedCourseId(course.id);
+                  }}
                 >
-                  <div className={`w-12 h-12 ${colors.bg} rounded-lg flex items-center justify-center mb-4 group-hover:scale-105 transition-transform`}>
-                    <GraduationCap className={`w-6 h-6 ${colors.text}`} />
+                  <div
+                    className={`w-full flex flex-col text-left bg-white border ${colors.border} rounded-xl p-6 ${colors.hover} hover:shadow-lg transition-all duration-300 h-full`}
+                  >
+                    <div className={`w-12 h-12 ${colors.bg} rounded-lg flex items-center justify-center mb-4 group-hover:scale-105 transition-transform`}>
+                      {React.createElement(getCategoryIcon(course.icon || 'GraduationCap'), { className: `w-6 h-6 ${colors.text}` })}
+                    </div>
+                    <h3 className="text-lg font-bold text-gray-800 mb-2 group-hover:text-gray-900 transition-colors">{course.title}</h3>
+                    <p className="text-sm text-gray-500 line-clamp-2 flex-1">{course.description}</p>
+                    <div className="mt-4 pt-4 border-t border-gray-100 flex items-center justify-between text-xs text-gray-400 w-full">
+                      <span>{course.modules.length} 个模块</span>
+                      <span>{course.assignments.length} 个作业</span>
+                    </div>
                   </div>
-                  <h3 className="text-lg font-bold text-gray-800 mb-2 group-hover:text-gray-900 transition-colors">{course.title}</h3>
-                  <p className="text-sm text-gray-500 line-clamp-2 flex-1">{course.description}</p>
-                  <div className="mt-4 pt-4 border-t border-gray-100 flex items-center justify-between text-xs text-gray-400">
-                    <span>{course.modules.length} 个模块</span>
-                    <span>{course.assignments.length} 个作业</span>
+
+                  <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingCourse(course);
+                        setIsCourseModalOpen(true);
+                      }}
+                      className="p-2 bg-white/80 backdrop-blur rounded-lg hover:bg-blue-50 text-gray-500 hover:text-blue-600 border border-gray-200 shadow-sm"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={(e) => handleDeleteCourse(course.id, e)}
+                      className="p-2 bg-white/80 backdrop-blur rounded-lg hover:bg-red-50 text-gray-500 hover:text-red-600 border border-gray-200 shadow-sm"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
-                </button>
+                </div>
               ))}
             </div>
           )}
         </div>
+
+        <LearningCourseModal
+          isOpen={isCourseModalOpen}
+          onClose={() => setIsCourseModalOpen(false)}
+          onSave={handleSaveCourse}
+          initialData={editingCourse}
+          categoryId={selectedCategoryId}
+          isEditing={!!editingCourse}
+        />
       </div>
     );
   }
@@ -419,6 +677,36 @@ export const LearningManager: React.FC = () => {
     }
 
     if (content.type === 'intro') {
+      if (selectedCourse?.introMarkdown) {
+        return (
+          <MarkdownEditor 
+            note={{
+              id: selectedCourse.id,
+              title: '课程介绍',
+              content: selectedCourse.introMarkdown,
+              category: 'Intro',
+              createdAt: 0,
+              updatedAt: 0
+            }} 
+            onUpdate={(_id, updates) => {
+              if (updates.content !== undefined) {
+                setCourses(prev => prev.map(c => 
+                  c.id === selectedCourse.id 
+                    ? { ...c, introMarkdown: updates.content! } 
+                    : c
+                ));
+              }
+            }}
+            isFullscreen={false}
+            onToggleFullscreen={() => {}}
+            showViewToggle={false}
+            viewMode="single"
+            hideCategory={true}
+            initialEditMode={false}
+          />
+        );
+      }
+
       return (
         <div className="p-8 overflow-y-auto h-full bg-white">
           <div className="max-w-4xl mx-auto">
@@ -583,11 +871,11 @@ export const LearningManager: React.FC = () => {
                     </ul>
                   </li>
                   <li className="space-y-1">
-                    <span className="font-semibold text-gray-900">作业 (Assignments)</span>
+                    <span className="font-semibold text-gray-900">练习 (Exercises)</span>
                     <ul className="ml-5 mt-1 space-y-1 text-gray-600 list-disc">
-                      <li>每个作业都是独立仓库，点击 [Code] 访问</li>
+                      <li>每个练习都是独立仓库，点击 [Code] 访问</li>
                       <li>按仓库中的 README（通常使用 conda 或 uv）完成环境配置</li>
-                      <li>作业说明文档通常在 README 或附带的 writeup.pdf 中</li>
+                      <li>练习说明文档通常在 README 或附带的 writeup.pdf 中</li>
                     </ul>
                   </li>
                   <li className="space-y-1">
@@ -607,10 +895,12 @@ export const LearningManager: React.FC = () => {
 
     if (content.type === 'terminal') {
       return (
-        <Terminal 
-          isVisible={true} 
-          initialTitle="Terminal"
-        />
+        <div className="h-full w-full">
+          <TerminalComponent 
+            isVisible={true} 
+            initialTitle="Learning Terminal"
+          />
+        </div>
       );
     }
 
@@ -623,6 +913,8 @@ export const LearningManager: React.FC = () => {
           onToggleFullscreen={() => {}}
           showViewToggle={content.origin === 'personal'}
           viewMode="single"
+          hideCategory={true}
+          initialEditMode={true}
         />
       );
     }
@@ -682,26 +974,45 @@ export const LearningManager: React.FC = () => {
               className="flex items-center gap-1 text-sm text-gray-600 hover:text-blue-600 transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
-              返回 {selectedCategory?.name || '课程列表'}
+              返回
             </button>
           </div>
-          <LearningList 
-            course={selectedCourse!}
-            selectedItemId={null} 
-            activeVideoId={primaryContent?.type === 'video' ? primaryContent.id : (secondaryContent?.type === 'video' ? secondaryContent.id : null)}
-            activeNoteId={primaryContent?.type === 'note' ? primaryContent.id : (secondaryContent?.type === 'note' ? secondaryContent.id : null)}
-            activeCustomNotePath={primaryContent?.type === 'custom-note' ? primaryContent.id : (secondaryContent?.type === 'custom-note' ? secondaryContent.id : null)}
-            onSelectItem={handleSelectItem}
-            progress={progress}
-            onToggleProgress={handleToggleProgress}
-          />
+          {selectedCourse ? (
+            <LearningList 
+              course={selectedCourse}
+              selectedItemId={null} 
+              activeVideoId={primaryContent?.type === 'video' ? primaryContent.id : (secondaryContent?.type === 'video' ? secondaryContent.id : null)}
+              activeNoteId={primaryContent?.type === 'note' ? primaryContent.id : (secondaryContent?.type === 'note' ? secondaryContent.id : null)}
+              activeCustomNotePath={primaryContent?.type === 'custom-note' ? primaryContent.id : (secondaryContent?.type === 'custom-note' ? secondaryContent.id : null)}
+              onSelectItem={handleSelectItem}
+              progress={progress}
+              onToggleProgress={handleToggleProgress}
+              onUpdateCourse={handleUpdateCourse}
+            />
+          ) : (
+            <div className="p-4 text-gray-400 text-sm">
+              加载课程中...
+            </div>
+          )}
         </div>
       )}
 
       {/* Toolbar - Split Screen Toggle (Bottom Left) */}
       <div className="absolute bottom-4 left-4 z-50 flex gap-2">
         <button 
-          onClick={() => setLayoutMode(layoutMode === 'single' ? 'split' : 'single')}
+          onClick={() => {
+            if (layoutMode === 'single') {
+              setLayoutMode('split');
+            } else {
+              // When returning to single mode, keep the active pane's content
+              if (activePane === 'secondary' && secondaryContent) {
+                setPrimaryContent(secondaryContent);
+              }
+              setSecondaryContent(null);
+              setActivePane('primary');
+              setLayoutMode('single');
+            }
+          }}
           className="p-2 bg-white shadow-md rounded-lg text-gray-600 hover:text-blue-600 transition-colors"
           title={layoutMode === 'single' ? "开启分屏" : "关闭分屏"}
         >

@@ -44,6 +44,13 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
   const [tabs, setTabs] = useState<TerminalTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [fontSize, setFontSize] = useState(14);
+  const [showSeparator, setShowSeparator] = useState(() => {
+    return localStorage.getItem('terminal_show_separator') === 'true';
+  });
+  const [showGreenDot, setShowGreenDot] = useState(() => {
+    const saved = localStorage.getItem('terminal_show_green_dot');
+    return saved === null ? true : saved === 'true';
+  });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [defaultTitle, setDefaultTitle] = useState('Terminal');
   const defaultTitleRef = useRef('Terminal');
@@ -108,19 +115,41 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
       setTabs(prev => [...prev, newTab]);
       setActiveTabId(id);
 
-      // We need to wait for the DOM element to be rendered before initializing xterm
-      // We'll do this in a separate effect that watches `tabs`
-      
-      // If there's a command, we need to send it after initialization
-      if (command) {
-        // Store command to be executed after init
-        (newTab as any).initialCommand = command;
-      }
+      // Configure Shell Prompt (Zsh specific)
+      // We delay this slightly to ensure the shell has started and sourced .zshrc
+      setTimeout(() => {
+        // If neither feature is enabled, do not send any PROMPT command
+        if (!showSeparator && !showGreenDot) {
+          // Still need to send initial command if any
+          if (command) {
+            window.electronAPI.writeTerminal(id, `${command}\n`);
+          }
+          return;
+        }
+
+        // Construct PS1 parts
+        const separatorPart = showSeparator ? `%F{240}----------------------------------------------------------------%f\\n` : '';
+        const dotPart = showGreenDot ? `%F{green}●%f ` : '';
+        const basePart = `%n@%m %1~ %# `;
+        
+        // Use $'' string for newline support in zsh
+        const ps1Command = `export PROMPT=$'${separatorPart}${dotPart}${basePart}'`;
+        
+        // Send command with leading space to avoid history, then clear screen
+        window.electronAPI.writeTerminal(id, ` ${ps1Command}; clear\n`);
+        
+        // If there's a command, we need to send it after initialization
+        if (command) {
+          setTimeout(() => {
+             window.electronAPI.writeTerminal(id, `${command}\n`);
+          }, 100);
+        }
+      }, 600);
 
     } catch (error) {
       console.error('Failed to create terminal tab:', error);
     }
-  }, []);
+  }, [showSeparator, showGreenDot]);
 
   const closeTab = useCallback((id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -326,6 +355,42 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
                   onChange={(e) => setFontSize(parseInt(e.target.value))}
                   className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
                 />
+                
+                <div className="mt-4 pt-3 border-t border-gray-100 space-y-3">
+                  <label className="flex items-center justify-between cursor-pointer group">
+                    <span className="text-xs font-medium text-gray-600">Show Separator</span>
+                    <div className={`relative w-8 h-4 rounded-full transition-colors duration-200 ${showSeparator ? 'bg-blue-600' : 'bg-gray-200'}`}>
+                      <input 
+                        type="checkbox" 
+                        className="absolute opacity-0 w-full h-full cursor-pointer"
+                        checked={showSeparator}
+                        onChange={(e) => {
+                          const newVal = e.target.checked;
+                          setShowSeparator(newVal);
+                          localStorage.setItem('terminal_show_separator', String(newVal));
+                        }}
+                      />
+                      <span className={`absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full shadow transform transition-transform duration-200 ${showSeparator ? 'translate-x-4' : 'translate-x-0'}`} />
+                    </div>
+                  </label>
+
+                  <label className="flex items-center justify-between cursor-pointer group">
+                    <span className="text-xs font-medium text-gray-600">Show Green Dot</span>
+                    <div className={`relative w-8 h-4 rounded-full transition-colors duration-200 ${showGreenDot ? 'bg-blue-600' : 'bg-gray-200'}`}>
+                      <input 
+                        type="checkbox" 
+                        className="absolute opacity-0 w-full h-full cursor-pointer"
+                        checked={showGreenDot}
+                        onChange={(e) => {
+                          const newVal = e.target.checked;
+                          setShowGreenDot(newVal);
+                          localStorage.setItem('terminal_show_green_dot', String(newVal));
+                        }}
+                      />
+                      <span className={`absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full shadow transform transition-transform duration-200 ${showGreenDot ? 'translate-x-4' : 'translate-x-0'}`} />
+                    </div>
+                  </label>
+                </div>
               </div>
             )}
           </div>

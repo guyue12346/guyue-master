@@ -3,13 +3,12 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import remarkBreaks from 'remark-breaks';
-import { remarkAlert } from 'remark-github-blockquote-alert';
 import rehypeKatex from 'rehype-katex';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import 'katex/dist/katex.min.css';
 import { FileRecord } from '../types';
-import { FileText, Maximize2, Minimize2, Info, Lightbulb, AlertCircle, AlertTriangle, ShieldAlert, Edit } from 'lucide-react';
+import { FileText, Maximize2, Minimize2, Info, Lightbulb, AlertCircle, AlertTriangle, ShieldAlert, Edit, List } from 'lucide-react';
 
 interface FileRendererProps {
   file: FileRecord | null;
@@ -26,11 +25,14 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
 }) => {
   const [content, setContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
+  const [showTOC, setShowTOC] = useState(false);
+  const [toc, setToc] = useState<{ level: number; text: string; id: string }[]>([]);
 
   useEffect(() => {
     const loadContent = async () => {
       if (!file) {
         setContent('');
+        setToc([]);
         return;
       }
 
@@ -42,6 +44,33 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
           if (window.electronAPI && window.electronAPI.readFile) {
             const text = await window.electronAPI.readFile(file.path);
             setContent(text || '无法读取文件内容');
+            
+            // Generate TOC for markdown
+            if (['md', 'markdown'].includes(ext)) {
+              const headers: { level: number; text: string; id: string }[] = [];
+              const lines = (text || '').split('\n');
+              let inCodeBlock = false;
+              
+              lines.forEach(line => {
+                if (line.trim().startsWith('```')) {
+                  inCodeBlock = !inCodeBlock;
+                  return;
+                }
+                if (inCodeBlock) return;
+
+                const match = line.match(/^(#{1,6})\s+(.+)$/);
+                if (match) {
+                  const level = match[1].length;
+                  const text = match[2].trim();
+                  const id = text.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u4e00-\u9fa5-]/g, '');
+                  headers.push({ level, text, id });
+                }
+              });
+              setToc(headers);
+            } else {
+              setToc([]);
+            }
+
           } else {
             setContent('预览模式不支持读取本地文件 (Web Demo)');
           }
@@ -53,6 +82,7 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
         }
       } else {
         setContent('');
+        setToc([]);
       }
     };
 
@@ -79,6 +109,15 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
         </div>
         
         <div className="flex items-center gap-2 ml-4 shrink-0">
+          {['md', 'markdown'].includes(file.type.toLowerCase().replace('.', '')) && (
+            <button 
+              onClick={() => setShowTOC(!showTOC)}
+              className={`p-2 rounded-lg transition-colors ${showTOC ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'}`}
+              title="显示目录"
+            >
+              <List className="w-5 h-5" />
+            </button>
+          )}
           {onEdit && ['md', 'markdown'].includes(file.type.toLowerCase().replace('.', '')) && (
             <button 
               onClick={onEdit}
@@ -99,13 +138,47 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
       </div>
 
       {/* Content Area */}
-      <div className="flex-1 overflow-hidden relative">
+      <div className="flex-1 overflow-hidden relative flex">
         {loading ? (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
           </div>
         ) : (
-          renderFileContent(file, content)
+          <>
+            <div className={`flex-1 overflow-hidden relative ${showTOC ? 'mr-64' : ''}`}>
+               {renderFileContent(file, content)}
+            </div>
+            
+            {/* TOC Sidebar */}
+            {showTOC && ['md', 'markdown'].includes(file.type.toLowerCase().replace('.', '')) && (
+              <div className="absolute top-0 right-0 bottom-0 w-64 bg-gray-50 border-l border-gray-200 overflow-y-auto p-4 animate-in slide-in-from-right duration-200">
+                <h3 className="font-semibold text-gray-700 mb-4 px-2">目录</h3>
+                {toc.length === 0 ? (
+                  <p className="text-sm text-gray-400 px-2">暂无目录</p>
+                ) : (
+                  <nav className="space-y-1">
+                    {toc.map((item, index) => (
+                      <a
+                        key={index}
+                        href={`#${item.id}`}
+                        className="block text-sm text-gray-600 hover:text-blue-600 hover:bg-blue-50 px-2 py-1.5 rounded transition-colors truncate"
+                        style={{ paddingLeft: `${(item.level - 1) * 12 + 8}px` }}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          const element = document.getElementById(item.id);
+                          if (element) {
+                            element.scrollIntoView({ behavior: 'smooth' });
+                          }
+                        }}
+                      >
+                        {item.text}
+                      </a>
+                    ))}
+                  </nav>
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -136,7 +209,7 @@ const renderFileContent = (file: FileRecord, content: string) => {
     });
 
     return (
-      <div className="h-full overflow-y-auto p-8 md:p-12 lg:p-16 bg-white">
+      <div className="h-full overflow-y-auto p-8 md:p-12 lg:p-16 bg-white select-text">
         {/* Custom Styles for Math and Alerts */}
         <style>{`
           /* KaTeX Center Alignment */
@@ -193,9 +266,39 @@ const renderFileContent = (file: FileRecord, content: string) => {
         `}</style>
         <div className="prose prose-slate max-w-4xl mx-auto">
           <ReactMarkdown 
-            remarkPlugins={[remarkGfm, remarkMath, remarkBreaks, remarkAlert]}
+            remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
             rehypePlugins={[rehypeKatex]}
             components={{
+              h1: ({node, children, ...props}) => {
+                const text = String(children).replace(/\n/g, '');
+                const id = text.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u4e00-\u9fa5-]/g, '');
+                return <h1 id={id} {...props}>{children}</h1>;
+              },
+              h2: ({node, children, ...props}) => {
+                const text = String(children).replace(/\n/g, '');
+                const id = text.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u4e00-\u9fa5-]/g, '');
+                return <h2 id={id} {...props}>{children}</h2>;
+              },
+              h3: ({node, children, ...props}) => {
+                const text = String(children).replace(/\n/g, '');
+                const id = text.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u4e00-\u9fa5-]/g, '');
+                return <h3 id={id} {...props}>{children}</h3>;
+              },
+              h4: ({node, children, ...props}) => {
+                const text = String(children).replace(/\n/g, '');
+                const id = text.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u4e00-\u9fa5-]/g, '');
+                return <h4 id={id} {...props}>{children}</h4>;
+              },
+              h5: ({node, children, ...props}) => {
+                const text = String(children).replace(/\n/g, '');
+                const id = text.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u4e00-\u9fa5-]/g, '');
+                return <h5 id={id} {...props}>{children}</h5>;
+              },
+              h6: ({node, children, ...props}) => {
+                const text = String(children).replace(/\n/g, '');
+                const id = text.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u4e00-\u9fa5-]/g, '');
+                return <h6 id={id} {...props}>{children}</h6>;
+              },
               blockquote: ({node, children, ...props}) => {
                 const childrenArray = React.Children.toArray(children);
                 const firstChild = childrenArray[0];
@@ -206,10 +309,12 @@ const renderFileContent = (file: FileRecord, content: string) => {
                   const firstText = pChildren[0];
                   
                   if (typeof firstText === 'string') {
-                    const match = firstText.match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*?)(\n|$)/i);
+                    // Match [!NOTE] Title or [!NOTE]
+                    const match = firstText.match(/^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:[ \t]+)?(.*?)(\n|$)/i);
                     if (match) {
                       const type = match[1].toLowerCase();
-                      const title = match[2] || type.charAt(0).toUpperCase() + type.slice(1);
+                      // If title group is empty, use type as title
+                      const title = match[2]?.trim() || type.charAt(0).toUpperCase() + type.slice(1);
                       const remainingText = firstText.substring(match[0].length);
                       
                       const getAlertIcon = (t: string) => {
@@ -266,16 +371,55 @@ const renderFileContent = (file: FileRecord, content: string) => {
                   }
                 }
 
-                // Handle width from alt text (Obsidian style: ![[file|100]])
-                const width = !isNaN(Number(alt)) ? Number(alt) : undefined;
-                const style = width ? { width: `${width}px`, maxWidth: '100%' } : { maxWidth: '100%' };
+                // Parse alt text for width and border
+                // Syntax: ![alt|width|border]
+                const altText = alt || '';
+                let width: string | undefined = undefined;
+                let hasBorder = false;
+                let realAlt = altText;
+
+                // Split by pipe (support both half-width | and full-width ｜)
+                const parts = altText.split(/\||｜/);
+                
+                if (parts.length > 1) {
+                    realAlt = parts[0];
+                    for (let i = 1; i < parts.length; i++) {
+                        const part = parts[i].trim().toLowerCase();
+                        if (part === 'border') {
+                            hasBorder = true;
+                        } else if (/^\d+(%|px)?$/.test(part)) {
+                             if (!isNaN(Number(part))) {
+                                 width = `${part}px`;
+                             } else {
+                                 width = part;
+                             }
+                        }
+                    }
+                } else {
+                    // Handle case where alt is just a number (Obsidian style from pre-processing)
+                    if (!isNaN(Number(altText)) && altText.trim() !== '') {
+                        width = `${altText}px`;
+                    }
+                }
+
+                const style: React.CSSProperties = { 
+                    width: width,
+                    maxWidth: '100%' 
+                };
+
+                // Default: no border, no shadow. 
+                let className = "mx-auto my-4"; 
+                
+                if (hasBorder) {
+                    className += " rounded-lg shadow-md";
+                }
 
                 return (
                   <img 
                     src={finalSrc} 
-                    alt={alt} 
+                    alt={realAlt} 
                     style={style}
-                    className="mx-auto rounded-lg shadow-md my-4"
+                    className={className}
                     onError={(e) => {
                       // Fallback for excalidraw: try .png if .svg failed
                       const target = e.target as HTMLImageElement;
