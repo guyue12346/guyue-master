@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Check, Brain, Cpu, Server, Code, Wrench, BookOpen, GraduationCap, Globe, Database, Cloud, Terminal, Layout, Layers, Box, Circle, Disc } from 'lucide-react';
+import { X, Check, Brain, Cpu, Server, Code, Wrench, BookOpen, GraduationCap, Globe, Database, Cloud, Terminal, Layout, Layers, Box, Circle, Disc, Rocket, Lightbulb, Target, Puzzle, Microscope, FlaskConical, Atom, Network, FileCode, GitBranch, Zap, Shield, Lock, Key, Monitor, Smartphone, Wifi, Radio, Sparkles, Star } from 'lucide-react';
 import { CourseCategory } from './LearningData';
 
 interface LearningCategoryModalProps {
@@ -27,6 +27,27 @@ const AVAILABLE_ICONS = [
   { name: 'Box', icon: Box },
   { name: 'Circle', icon: Circle },
   { name: 'Disc', icon: Disc },
+  // New icons
+  { name: 'Rocket', icon: Rocket },
+  { name: 'Lightbulb', icon: Lightbulb },
+  { name: 'Target', icon: Target },
+  { name: 'Puzzle', icon: Puzzle },
+  { name: 'Microscope', icon: Microscope },
+  { name: 'FlaskConical', icon: FlaskConical },
+  { name: 'Atom', icon: Atom },
+  { name: 'Network', icon: Network },
+  { name: 'FileCode', icon: FileCode },
+  { name: 'GitBranch', icon: GitBranch },
+  { name: 'Zap', icon: Zap },
+  { name: 'Shield', icon: Shield },
+  { name: 'Lock', icon: Lock },
+  { name: 'Key', icon: Key },
+  { name: 'Monitor', icon: Monitor },
+  { name: 'Smartphone', icon: Smartphone },
+  { name: 'Wifi', icon: Wifi },
+  { name: 'Radio', icon: Radio },
+  { name: 'Sparkles', icon: Sparkles },
+  { name: 'Star', icon: Star },
 ];
 
 const AVAILABLE_COLORS = [

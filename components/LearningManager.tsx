@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { GraduationCap, Search, ArrowLeft, ArrowRight, RotateCw, ExternalLink, Maximize2, Minimize2, X, PlayCircle, FileText, Columns, Square, MousePointerClick, TerminalSquare, ChevronLeft, Brain, Cpu, Server, Code, BookOpen, FolderOpen, Plus, MoreVertical, Edit2, Trash2, Wrench, Globe, Database, Cloud, Terminal, Layout, Layers, Box, Circle, Disc } from 'lucide-react';
+import { GraduationCap, Search, ArrowLeft, ArrowRight, RotateCw, ExternalLink, Maximize2, Minimize2, X, PlayCircle, FileText, Columns, Square, MousePointerClick, TerminalSquare, ChevronLeft, Brain, Cpu, Server, Code, BookOpen, FolderOpen, Plus, MoreVertical, Edit2, Trash2, Wrench, Globe, Database, Cloud, Terminal, Layout, Layers, Box, Circle, Disc, Rocket, Lightbulb, Target, Puzzle, Microscope, FlaskConical, Atom, Network, FileCode, GitBranch, Zap, Shield, Lock, Key, Monitor, Smartphone, Wifi, Radio, Sparkles, Star } from 'lucide-react';
 import { LearningList } from './LearningList';
 import { CS336_DATA, DOCKER_DATA, GIT_DATA, CourseData, Lecture, COURSE_CATEGORIES, CourseCategory } from './LearningData';
 import { MarkdownEditor } from './MarkdownEditor';
@@ -255,7 +255,9 @@ export const LearningManager: React.FC = () => {
   const getCategoryIcon = (iconName: string) => {
     const icons: Record<string, any> = { 
       Brain, Cpu, Server, Code, BookOpen, FolderOpen, GraduationCap, Wrench, 
-      Globe, Database, Cloud, Terminal, Layout, Layers, Box, Circle, Disc 
+      Globe, Database, Cloud, Terminal, Layout, Layers, Box, Circle, Disc,
+      Rocket, Lightbulb, Target, Puzzle, Microscope, FlaskConical, Atom, Network,
+      FileCode, GitBranch, Zap, Shield, Lock, Key, Monitor, Smartphone, Wifi, Radio, Sparkles, Star
     };
     return icons[iconName] || BookOpen;
   };
