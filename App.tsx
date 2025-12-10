@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import { NavRail } from './components/NavRail';
 import { Sidebar } from './components/Sidebar';
 import { SplashScreen } from './components/SplashScreen';
+import { FloatingChatWindow } from './components/FloatingChatWindow';
 import { Bookmark, Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata } from './types';
 import { Plus, Search, Command, Loader2 } from 'lucide-react';
 
@@ -56,6 +57,42 @@ const STORAGE_KEY_MODULES = 'linkmaster_modules_v1';
 const STORAGE_KEY_IMAGE_RECORDS = 'linkmaster_image_records_v1';
 const STORAGE_KEY_IMAGE_CONFIG = 'linkmaster_image_config_v1';
 const STORAGE_KEY_SPLASH_TEXT = 'linkmaster_splash_text_v1';
+
+const DEFAULT_SPLASH_QUOTES = [
+  '有善始者实繁，能克终者盖寡',
+  '行到水穷处，坐看云起时',
+  '不畏浮云遮望眼，自缘身在最高层'
+];
+
+const loadSplashQuotes = (): string[] => {
+  if (typeof window === 'undefined') return DEFAULT_SPLASH_QUOTES;
+  const raw = localStorage.getItem(STORAGE_KEY_SPLASH_TEXT);
+  if (!raw) return DEFAULT_SPLASH_QUOTES;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const cleaned = parsed
+        .map(item => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean);
+      if (cleaned.length > 0) {
+        return cleaned;
+      }
+    }
+  } catch (error) {
+    const single = raw.trim();
+    if (single) return [single];
+  }
+
+  const fallback = raw.trim();
+  return fallback ? [fallback] : DEFAULT_SPLASH_QUOTES;
+};
+
+const pickRandomSplashQuote = (quotes: string[]) => {
+  if (!quotes.length) return DEFAULT_SPLASH_QUOTES[0];
+  const index = Math.floor(Math.random() * quotes.length);
+  return quotes[index];
+};
 
 // Data migration utility
 const migrateStorageData = () => {
@@ -116,8 +153,9 @@ const App: React.FC = () => {
 
   // Splash screen state
   const [showSplash, setShowSplash] = useState(true);
-  const [splashText, setSplashText] = useState<string>(() => {
-    return localStorage.getItem(STORAGE_KEY_SPLASH_TEXT) || '有善始者实繁，能克终者盖寡';
+  const [splashText] = useState<string>(() => {
+    const quotes = loadSplashQuotes();
+    return pickRandomSplashQuote(quotes);
   });
   const [isAppReady, setIsAppReady] = useState(false);
   
@@ -190,6 +228,8 @@ const App: React.FC = () => {
   const [hasLearningMounted, setHasLearningMounted] = useState(false);
   const [hasChatMounted, setHasChatMounted] = useState(false);
   const [hasVSCodeMounted, setHasVSCodeMounted] = useState(false);
+  const [isFloatingChatOpen, setIsFloatingChatOpen] = useState(false);
+  const [floatingChatSource, setFloatingChatSource] = useState<'leetcode' | 'learning' | null>(null);
 
   // Prevent body scroll to fix layout shifts on focus
   useEffect(() => {
@@ -223,6 +263,13 @@ const App: React.FC = () => {
       setHasVSCodeMounted(true);
     }
   }, [appMode, hasTerminalMounted, hasBrowserMounted, hasLeetCodeMounted, hasLearningMounted, hasChatMounted, hasVSCodeMounted]);
+
+  useEffect(() => {
+    if (appMode === 'chat') {
+      setIsFloatingChatOpen(false);
+      setFloatingChatSource(null);
+    }
+  }, [appMode]);
   
   // Categories now managed per app mode
   const [categoriesMap, setCategoriesMap] = useState<Record<string, Category[]>>({
@@ -1195,6 +1242,11 @@ const App: React.FC = () => {
     setAppMode('browser');
   };
 
+  const handleOpenFloatingChat = (source: 'leetcode' | 'learning') => {
+    setFloatingChatSource(source);
+    setIsFloatingChatOpen(true);
+  };
+
   // Markdown Handlers
   const handleAddMarkdownNote = () => {
     const newNote: MarkdownNote = {
@@ -1590,13 +1642,13 @@ const App: React.FC = () => {
 
             {(hasLeetCodeMounted || appMode === 'leetcode') && (
               <div className={appMode === 'leetcode' ? 'h-full' : 'hidden'}>
-                <LeetCodeManager />
+                <LeetCodeManager onOpenChat={() => handleOpenFloatingChat('leetcode')} />
               </div>
             )}
 
             {(hasLearningMounted || appMode === 'learning') && (
               <div className={appMode === 'learning' ? 'h-full' : 'hidden'}>
-                <LearningManager />
+                <LearningManager onOpenChat={() => handleOpenFloatingChat('learning')} />
               </div>
             )}
 
@@ -1623,6 +1675,26 @@ const App: React.FC = () => {
           </Suspense>
         </div>
       </div>
+
+      <FloatingChatWindow
+        isOpen={isFloatingChatOpen}
+        onClose={() => {
+          setIsFloatingChatOpen(false);
+          setFloatingChatSource(null);
+        }}
+        title={floatingChatSource === 'leetcode' ? '刷题 AI 小窗' : '学习 AI 小窗'}
+      >
+        <Suspense
+          fallback={
+            <div className="flex items-center justify-center h-full text-gray-400 gap-2">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span>加载 AI 助手...</span>
+            </div>
+          }
+        >
+          <ChatManager compact />
+        </Suspense>
+      </FloatingChatWindow>
 
       {/* Modals */}
       <Suspense fallback={null}>

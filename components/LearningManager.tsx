@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { GraduationCap, Search, ArrowLeft, ArrowRight, RotateCw, ExternalLink, Maximize2, Minimize2, X, PlayCircle, FileText, Columns, Square, MousePointerClick, TerminalSquare, ChevronLeft, Brain, Cpu, Server, Code, BookOpen, FolderOpen, Plus, MoreVertical, Edit2, Trash2, Wrench, Globe, Database, Cloud, Terminal, Layout, Layers, Box, Circle, Disc, Rocket, Lightbulb, Target, Puzzle, Microscope, FlaskConical, Atom, Network, FileCode, GitBranch, Zap, Shield, Lock, Key, Monitor, Smartphone, Wifi, Radio, Sparkles, Star } from 'lucide-react';
+import { GraduationCap, Search, ArrowLeft, ArrowRight, RotateCw, ExternalLink, Maximize2, Minimize2, X, PlayCircle, FileText, Columns, Square, MousePointerClick, MessageSquare, TerminalSquare, ChevronLeft, Brain, Cpu, Server, Code, BookOpen, FolderOpen, Plus, MoreVertical, Edit2, Trash2, Wrench, Globe, Database, Cloud, Terminal, Layout, Layers, Box, Circle, Disc, Rocket, Lightbulb, Target, Puzzle, Microscope, FlaskConical, Atom, Network, FileCode, GitBranch, Zap, Shield, Lock, Key, Monitor, Smartphone, Wifi, Radio, Sparkles, Star } from 'lucide-react';
 import { LearningList } from './LearningList';
 import { CS336_DATA, DOCKER_DATA, GIT_DATA, CourseData, Lecture, COURSE_CATEGORIES, CourseCategory } from './LearningData';
 import { MarkdownEditor } from './MarkdownEditor';
@@ -131,7 +131,11 @@ interface PaneContent {
   origin?: 'course' | 'personal';
 }
 
-export const LearningManager: React.FC = () => {
+interface LearningManagerProps {
+  onOpenChat?: () => void;
+}
+
+export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) => {
   const [categories, setCategories] = useState<CourseCategory[]>(() => {
     const saved = localStorage.getItem('learning_categories_v1');
     return saved ? JSON.parse(saved) : COURSE_CATEGORIES;
@@ -1041,6 +1045,15 @@ export const LearningManager: React.FC = () => {
 
       {/* Toolbar - Split Screen Toggle (Bottom Left) */}
       <div className="absolute bottom-4 left-4 z-50 flex gap-2">
+        {onOpenChat && (
+          <button
+            onClick={onOpenChat}
+            className="p-2 bg-white shadow-md rounded-lg text-indigo-600 hover:text-indigo-700 border border-indigo-100 transition-colors"
+            title="AI 小窗"
+          >
+            <MessageSquare className="w-5 h-5" />
+          </button>
+        )}
         <button 
           onClick={() => {
             if (layoutMode === 'single') {

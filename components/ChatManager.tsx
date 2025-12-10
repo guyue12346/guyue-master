@@ -25,6 +25,10 @@ import {
 } from '../services/chatService';
 import { Terminal as TerminalComponent } from './Terminal';
 
+interface ChatManagerProps {
+  compact?: boolean;
+}
+
 // ==================== Code Block Component ====================
 
 const CodeBlock: React.FC<{ language?: string; children: string }> = ({ language, children }) => {
@@ -321,7 +325,7 @@ const SettingsPanel: React.FC<{
 
 // ==================== Main ChatManager Component ====================
 
-export const ChatManager: React.FC = () => {
+export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => {
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [config, setConfig] = useState<ChatConfig>(DEFAULT_CHAT_CONFIG);
@@ -333,9 +337,17 @@ export const ChatManager: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   
   const [showSettings, setShowSettings] = useState(false);
-  const [showSidebar, setShowSidebar] = useState(true);
+  const [showSidebar, setShowSidebar] = useState(() => !compact);
   const [layoutMode, setLayoutMode] = useState<'single' | 'split'>('single'); // single or split view
   const [showTerminal, setShowTerminal] = useState(false); // show terminal pane
+    useEffect(() => {
+      if (compact) {
+        setShowSidebar(false);
+        setLayoutMode('single');
+        setShowTerminal(false);
+      }
+    }, [compact]);
+
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -620,7 +632,7 @@ export const ChatManager: React.FC = () => {
 
           <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             {/* Web Search Toggle (Gemini only) */}
-            {config.provider === 'gemini' && (
+            {!compact && config.provider === 'gemini' && (
               <button
                 onClick={() => {
                   const newConfig = { ...config, enableWebSearch: !config.enableWebSearch };
@@ -639,36 +651,35 @@ export const ChatManager: React.FC = () => {
                 <span>{config.enableWebSearch ? '联网' : '离线'}</span>
               </button>
             )}
-            {/* Model Badge */}
-            <div className="px-3 py-1 bg-gray-100 rounded-full text-xs text-gray-600 font-medium">
-              {config.model}
-            </div>
-            
-            {/* Split View Toggle */}
-            <button
-              onClick={() => setLayoutMode(layoutMode === 'single' ? 'split' : 'single')}
-              className={`p-2 rounded-lg transition-colors ${
-                layoutMode === 'split'
-                  ? 'bg-blue-100 text-blue-600'
-                  : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-              }`}
-              title={layoutMode === 'split' ? '退出分屏' : '分屏模式'}
-            >
-              <Columns className="w-5 h-5" />
-            </button>
-
-            {/* Terminal Toggle */}
-            <button
-              onClick={() => setShowTerminal(!showTerminal)}
-              className={`p-2 rounded-lg transition-colors ${
-                showTerminal
-                  ? 'bg-blue-100 text-blue-600'
-                  : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-              }`}
-              title={showTerminal ? '隐藏终端' : '显示终端'}
-            >
-              <Square className="w-5 h-5" />
-            </button>
+            {!compact && (
+              <>
+                <div className="px-3 py-1 bg-gray-100 rounded-full text-xs text-gray-600 font-medium">
+                  {config.model}
+                </div>
+                <button
+                  onClick={() => setLayoutMode(layoutMode === 'single' ? 'split' : 'single')}
+                  className={`p-2 rounded-lg transition-colors ${
+                    layoutMode === 'split'
+                      ? 'bg-blue-100 text-blue-600'
+                      : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                  }`}
+                  title={layoutMode === 'split' ? '退出分屏' : '分屏模式'}
+                >
+                  <Columns className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={() => setShowTerminal(!showTerminal)}
+                  className={`p-2 rounded-lg transition-colors ${
+                    showTerminal
+                      ? 'bg-blue-100 text-blue-600'
+                      : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                  }`}
+                  title={showTerminal ? '隐藏终端' : '显示终端'}
+                >
+                  <Square className="w-5 h-5" />
+                </button>
+              </>
+            )}
           </div>
         </div>
 

@@ -1,16 +1,21 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { LeetCodeList } from './LeetCodeList';
 import { LeetCodeListModal } from './LeetCodeListModal';
-import { ArrowLeft, ArrowRight, RotateCw, ExternalLink } from 'lucide-react';
+import { ArrowLeft, ArrowRight, RotateCw, MessageSquare, Columns, Square, TerminalSquare } from 'lucide-react';
 import { LeetCodeList as ILeetCodeList, parseLeetCodeMarkdown } from '../utils/leetcodeParser';
 import { LEETCODE_DATA } from './LeetCodeData';
 import { LUOGU_9391_DATA } from './Luogu9391Data';
 import { LEETCODE_HOT100_DATA } from './LeetCodeHot100Data';
+import { Terminal as TerminalComponent } from './Terminal';
+
+interface LeetCodeManagerProps {
+  onOpenChat?: () => void;
+}
 
 const STORAGE_KEY_LISTS = 'leetcode_lists';
 const STORAGE_KEY_PROGRESS = 'leetcode_progress';
 
-export const LeetCodeManager: React.FC = () => {
+export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onOpenChat }) => {
   // addressBarUrl tracks the URL shown in the toolbar
   const [addressBarUrl, setAddressBarUrl] = useState('https://leetcode.cn/problemset/all/');
   // initialUrl is used for the webview src to prevent React from reloading the webview on state changes
@@ -19,6 +24,9 @@ export const LeetCodeManager: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
+  const [layoutMode, setLayoutMode] = useState<'single' | 'split'>('split');
+  const [isTerminalOpen, setIsTerminalOpen] = useState(false);
+  const [terminalInstanceKey, setTerminalInstanceKey] = useState(0);
   const webviewRef = useRef<any>(null);
 
   // Data State
@@ -227,20 +235,24 @@ export const LeetCodeManager: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full bg-white">
+    <div className="flex h-full bg-white relative">
       {/* Left Sidebar: Problem List */}
-      <LeetCodeList 
-        lists={lists}
-        progress={progress}
-        onSelectProblem={handleSelectProblem}
-        onToggleProblem={handleToggleProblem}
-        onAddList={handleAddList}
-        onDeleteList={handleDeleteList}
-        onEditList={handleEditList}
-      />
+      {layoutMode === 'split' && (
+        <div className="flex flex-col border-r border-gray-200 h-full w-80 flex-shrink-0 bg-white">
+          <LeetCodeList 
+            lists={lists}
+            progress={progress}
+            onSelectProblem={handleSelectProblem}
+            onToggleProblem={handleToggleProblem}
+            onAddList={handleAddList}
+            onDeleteList={handleDeleteList}
+            onEditList={handleEditList}
+          />
+        </div>
+      )}
 
-      {/* Right Content: Webview */}
-      <div className="flex-1 flex flex-col min-w-0 bg-white border-l border-gray-200">
+      {/* Right Content: Webview + Terminal */}
+      <div className={`flex-1 flex flex-col min-w-0 bg-white ${layoutMode === 'split' ? 'border-l border-gray-200' : ''}`}>
         {/* Toolbar */}
         <div className="h-12 border-b border-gray-200 flex items-center px-4 gap-2 bg-gray-50/50" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
           <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
@@ -270,13 +282,17 @@ export const LeetCodeManager: React.FC = () => {
             {addressBarUrl}
           </div>
 
-          <button 
-            onClick={() => window.open(addressBarUrl, '_blank')}
-            className="p-1.5 rounded-md hover:bg-gray-200 text-gray-500 transition-colors"
-            title="在默认浏览器中打开"
-          >
-            <ExternalLink className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            {onOpenChat && (
+              <button
+                onClick={onOpenChat}
+                className="p-1.5 rounded-md hover:bg-indigo-50 text-indigo-600 transition-colors border border-indigo-100"
+                title="AI 小窗"
+              >
+                <MessageSquare className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Webview Container */}
@@ -313,6 +329,12 @@ export const LeetCodeManager: React.FC = () => {
             useragent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
           />
         </div>
+
+        {isTerminalOpen && (
+          <div className="h-64 border-t border-gray-200 bg-gray-900/90">
+            <TerminalComponent key={terminalInstanceKey} isVisible={isTerminalOpen} />
+          </div>
+        )}
       </div>
 
       {/* Modal */}
@@ -322,6 +344,37 @@ export const LeetCodeManager: React.FC = () => {
         onSave={handleSaveList}
         initialData={editingList}
       />
+
+      {/* Floating Controls */}
+      <div className="absolute bottom-4 left-4 z-50 flex gap-2">
+        <button 
+          onClick={() => setLayoutMode(prev => prev === 'single' ? 'split' : 'single')}
+          className="p-2 bg-white shadow-md rounded-lg text-gray-600 hover:text-blue-600 transition-colors"
+          title={layoutMode === 'single' ? '开启分屏' : '关闭分屏'}
+        >
+          {layoutMode === 'single' ? <Columns className="w-5 h-5" /> : <Square className="w-5 h-5" />}
+        </button>
+        <button 
+          onClick={() => setIsTerminalOpen(prev => {
+            const next = !prev;
+            if (next) setTerminalInstanceKey(key => key + 1);
+            return next;
+          })}
+          className={`p-2 shadow-md rounded-lg transition-colors ${isTerminalOpen ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-white text-gray-600 hover:text-blue-600'}`}
+          title={isTerminalOpen ? '关闭终端' : '打开终端'}
+        >
+          <TerminalSquare className="w-5 h-5" />
+        </button>
+        {onOpenChat && (
+          <button
+            onClick={onOpenChat}
+            className="p-2 bg-white shadow-md rounded-lg text-indigo-600 hover:text-indigo-700 border border-indigo-100 transition-colors"
+            title="AI 小窗"
+          >
+            <MessageSquare className="w-5 h-5" />
+          </button>
+        )}
+      </div>
     </div>
   );
 };

@@ -4,6 +4,32 @@ import { X, FileDown, FolderOpen, ToggleLeft, ToggleRight, ChevronDown, Globe, P
 import { Bookmark, Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, ModuleConfig, AVAILABLE_ICONS, PluginMetadata } from '../types';
 import * as LucideIcons from 'lucide-react';
 
+const DEFAULT_SPLASH_QUOTE = '有善始者实繁，能克终者盖寡';
+
+const parseStoredSplashQuotes = () => {
+  if (typeof window === 'undefined') return [DEFAULT_SPLASH_QUOTE];
+  const raw = localStorage.getItem('linkmaster_splash_text_v1');
+  if (!raw) return [DEFAULT_SPLASH_QUOTE];
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const cleaned = parsed
+        .map(item => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean);
+      if (cleaned.length > 0) {
+        return cleaned;
+      }
+    }
+  } catch (error) {
+    const trimmed = raw.trim();
+    if (trimmed) return [trimmed];
+  }
+
+  const fallback = raw.trim();
+  return fallback ? [fallback] : [DEFAULT_SPLASH_QUOTE];
+};
+
 const sortByPriority = (modules: ModuleConfig[]) => [...modules].sort((a, b) => a.priority - b.priority);
 
 const normalizePriorities = (modules: ModuleConfig[]) =>
@@ -42,6 +68,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [browserStartPage, setBrowserStartPage] = useState<string>('');
   const [plugins, setPlugins] = useState<PluginMetadata[]>([]);
   const [draggingModuleId, setDraggingModuleId] = useState<string | null>(null);
+  const [splashQuotesInput, setSplashQuotesInput] = useState<string>('');
   const iconSelectorRef = useRef<HTMLDivElement>(null);
 
   // Sort modules by priority for display
@@ -67,6 +94,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const savedStartPage = localStorage.getItem('linkmaster_browser_start_page');
     if (savedStartPage) setBrowserStartPage(savedStartPage);
     else setBrowserStartPage('https://www.bing.com');
+
+    const splashQuotes = parseStoredSplashQuotes();
+    setSplashQuotesInput(splashQuotes.join('\n'));
 
     // Load plugins
     if (window.electronAPI) {
@@ -171,6 +201,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     } else {
       alert('此功能仅在桌面版应用中可用');
     }
+  };
+
+  const handleSplashQuotesChange = (value: string) => {
+    setSplashQuotesInput(value);
+    if (typeof window === 'undefined') return;
+    const quotes = value
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean);
+    const payload = quotes.length > 0 ? quotes : [DEFAULT_SPLASH_QUOTE];
+    localStorage.setItem('linkmaster_splash_text_v1', JSON.stringify(payload));
   };
   
   const handleExportMarkdown = () => {
@@ -487,16 +528,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
               <div className="flex flex-col gap-2">
                 <label className="text-sm font-medium text-gray-700">开屏文案</label>
-                <input 
-                  type="text" 
-                  value={localStorage.getItem('linkmaster_splash_text_v1') || '有善始者实繁，能克终者盖寡'}
-                  onChange={(e) => {
-                    localStorage.setItem('linkmaster_splash_text_v1', e.target.value);
-                  }}
-                  placeholder="有善始者实繁，能克终者盖寡"
-                  className="px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 bg-white"
+                <textarea
+                  value={splashQuotesInput}
+                  onChange={(e) => handleSplashQuotesChange(e.target.value)}
+                  placeholder={DEFAULT_SPLASH_QUOTE}
+                  rows={3}
+                  className="px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 bg-white resize-none"
                 />
-                <p className="text-xs text-gray-400">设置应用启动时开屏动画显示的文案（需重启应用生效）</p>
+                <p className="text-xs text-gray-400">支持多行输入，每行一句。应用启动时会从列表中随机展示一句（重启生效）。</p>
               </div>
             </div>
           </div>
