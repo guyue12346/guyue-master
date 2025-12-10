@@ -25,7 +25,6 @@ const LeetCodeManager = React.lazy(() => import('./components/LeetCodeManager').
 const LearningManager = React.lazy(() => import('./components/LearningManager').then(m => ({ default: m.LearningManager })));
 const ImageHosting = React.lazy(() => import('./components/ImageHosting').then(m => ({ default: m.ImageHosting })));
 const ChatManager = React.lazy(() => import('./components/ChatManager').then(m => ({ default: m.ChatManager })));
-const CodeEditorManager = React.lazy(() => import('./components/CodeEditor/CodeEditorManager').then(m => ({ default: m.CodeEditorManager })));
 const PluginContainer = React.lazy(() => import('./components/PluginContainer').then(m => ({ default: m.PluginContainer })));
 
 // Lazy load modals
@@ -181,6 +180,7 @@ const App: React.FC = () => {
           (m.id as string) !== 'tips' &&
           (m.id as string) !== 'renderer' &&
           (m.id as string) !== 'markdown' &&
+          (m.id as string) !== 'vscode' &&
           m.name !== '文件归档'
         );
         return [...merged, ...legacyExtras];
@@ -227,7 +227,6 @@ const App: React.FC = () => {
   const [hasLeetCodeMounted, setHasLeetCodeMounted] = useState(false);
   const [hasLearningMounted, setHasLearningMounted] = useState(false);
   const [hasChatMounted, setHasChatMounted] = useState(false);
-  const [hasVSCodeMounted, setHasVSCodeMounted] = useState(false);
   const [isFloatingChatOpen, setIsFloatingChatOpen] = useState(false);
   const [floatingChatSource, setFloatingChatSource] = useState<'leetcode' | 'learning' | null>(null);
 
@@ -259,10 +258,7 @@ const App: React.FC = () => {
     if (appMode === 'chat' && !hasChatMounted) {
       setHasChatMounted(true);
     }
-    if (appMode === 'vscode' && !hasVSCodeMounted) {
-      setHasVSCodeMounted(true);
-    }
-  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasLeetCodeMounted, hasLearningMounted, hasChatMounted, hasVSCodeMounted]);
+  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasLeetCodeMounted, hasLearningMounted, hasChatMounted]);
 
   useEffect(() => {
     if (appMode === 'chat') {
@@ -1451,7 +1447,7 @@ const App: React.FC = () => {
             />
           </Suspense>
         )
-      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'vscode' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
+      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
         <Sidebar 
           appMode={appMode}  
           categories={activeCategories} 
@@ -1469,7 +1465,7 @@ const App: React.FC = () => {
       ) : null}
 
       <div className="flex-1 flex flex-col min-w-0 bg-white">
-        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'vscode' && appMode !== 'files' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
+        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'files' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
         <div className="h-16 border-b border-gray-200 flex items-center justify-between px-6 bg-white shrink-0">
            <div className="flex items-center gap-4 flex-1 max-w-xl">
               <div className="relative flex-1">
@@ -1531,7 +1527,7 @@ const App: React.FC = () => {
         </div>
         )}
 
-        <div className={`flex-1 overflow-auto ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'chat' || appMode === 'vscode' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : 'p-6'}`}>
+        <div className={`flex-1 overflow-auto ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'chat' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : 'p-6'}`}>
           <Suspense fallback={
             <div className="flex items-center justify-center h-full text-gray-400 gap-2">
               <Loader2 className="w-6 h-6 animate-spin" />
@@ -1655,12 +1651,6 @@ const App: React.FC = () => {
             {(hasChatMounted || appMode === 'chat') && (
               <div className={appMode === 'chat' ? 'h-full' : 'hidden'}>
                 <ChatManager />
-              </div>
-            )}
-
-            {(hasVSCodeMounted || appMode === 'vscode') && (
-              <div className={appMode === 'vscode' ? 'h-full' : 'hidden'}>
-                <CodeEditorManager />
               </div>
             )}
 

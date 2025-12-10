@@ -141,8 +141,7 @@ export const DEFAULT_MODULE_CONFIG: ModuleConfig[] = [
   { id: 'leetcode', name: 'Code', enabled: true, priority: 11, icon: 'Code2', shortcut: 'Tab+L' },
   { id: 'learning', name: '学习中心', enabled: true, priority: 12, icon: 'GraduationCap', shortcut: 'Tab+K' },
   { id: 'image-hosting', name: '图床管理', enabled: true, priority: 13, icon: 'Image', shortcut: 'Tab+I' },
-  { id: 'chat', name: 'AI Chat', enabled: true, priority: 14, icon: 'MessageSquare', shortcut: 'Tab+C' },
-  { id: 'vscode', name: 'VS Code', enabled: true, priority: 15, icon: 'Code', shortcut: 'Tab+V' }
+  { id: 'chat', name: 'AI Chat', enabled: true, priority: 14, icon: 'MessageSquare', shortcut: 'Tab+C' }
 ];
 
 export interface Category {
