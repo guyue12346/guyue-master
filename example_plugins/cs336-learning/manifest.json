@@ -1,0 +1,9 @@
+{
+  "id": "cs336-learning-hub",
+  "name": "CS336 学习助手",
+  "version": "1.0.0",
+  "description": "Stanford CS336: Language Modeling from Scratch 课程学习辅助工具",
+  "icon": "GraduationCap",
+  "entry": "index.html",
+  "author": "Guyue Master AI"
+}

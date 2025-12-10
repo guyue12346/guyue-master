@@ -1,0 +1,1020 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CS336 Learning Hub</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --text: #1e293b;
+            --text-light: #64748b;
+            --border: #e2e8f0;
+            --success: #10b981;
+            --warning: #f59e0b;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        header {
+            background-color: var(--card-bg);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .brand h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .brand span {
+            background-color: #eff6ff;
+            color: var(--primary);
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.375rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        /* Main Layout */
+        main {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            overflow: hidden;
+        }
+
+        /* Sidebar */
+        aside {
+            background-color: var(--card-bg);
+            border-right: 1px solid var(--border);
+            padding: 1.5rem;
+            overflow-y: auto;
+        }
+
+        .nav-section {
+            margin-bottom: 2rem;
+        }
+
+        .nav-title {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-light);
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+        }
+
+        .nav-list {
+            list-style: none;
+        }
+
+        .nav-item {
+            margin-bottom: 0.25rem;
+        }
+
+        .nav-btn {
+            width: 100%;
+            text-align: left;
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.5rem;
+            border: none;
+            background: none;
+            color: var(--text);
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .nav-btn:hover {
+            background-color: #f1f5f9;
+        }
+
+        .nav-btn.active {
+            background-color: #eff6ff;
+            color: var(--primary);
+            font-weight: 500;
+        }
+
+        /* Content Area */
+        .content {
+            padding: 2rem;
+            overflow-y: auto;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .section-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        /* Cards */
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+
+        .card h3 {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        /* Progress Bar */
+        .progress-container {
+            margin-bottom: 2rem;
+        }
+        
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-light);
+        }
+
+        .progress-bar {
+            height: 0.5rem;
+            background-color: #e2e8f0;
+            border-radius: 999px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background-color: var(--primary);
+            width: 0%;
+            transition: width 0.5s ease;
+        }
+
+        /* Assignment List */
+        .task-list {
+            list-style: none;
+        }
+
+        .task-item {
+            display: flex;
+            align-items: center;
+            padding: 1rem;
+            border-bottom: 1px solid var(--border);
+            transition: background 0.2s;
+        }
+
+        .task-item:last-child {
+            border-bottom: none;
+        }
+
+        .task-item:hover {
+            background-color: #f8fafc;
+        }
+
+        .task-checkbox {
+            width: 1.25rem;
+            height: 1.25rem;
+            margin-right: 1rem;
+            cursor: pointer;
+            accent-color: var(--primary);
+        }
+
+        .task-content {
+            flex: 1;
+        }
+
+        .task-title {
+            font-weight: 500;
+            margin-bottom: 0.25rem;
+        }
+
+        .task-desc {
+            font-size: 0.875rem;
+            color: var(--text-light);
+        }
+
+        .task-tag {
+            font-size: 0.75rem;
+            padding: 0.125rem 0.5rem;
+            border-radius: 999px;
+            background-color: #f1f5f9;
+            color: var(--text-light);
+            margin-left: 0.5rem;
+        }
+
+        /* Schedule Timeline */
+        .timeline {
+            position: relative;
+            padding-left: 2rem;
+        }
+
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 0.5rem;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background-color: var(--border);
+        }
+
+        .timeline-item {
+            position: relative;
+            margin-bottom: 2rem;
+        }
+
+        .timeline-dot {
+            position: absolute;
+            left: -2rem;
+            top: 0.25rem;
+            width: 1rem;
+            height: 1rem;
+            background-color: var(--card-bg);
+            border: 2px solid var(--primary);
+            border-radius: 50%;
+            z-index: 1;
+        }
+
+        .timeline-dot.completed {
+            background-color: var(--primary);
+        }
+
+        .timeline-date {
+            font-size: 0.875rem;
+            color: var(--text-light);
+            margin-bottom: 0.25rem;
+        }
+
+        .timeline-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .timeline-desc {
+            font-size: 0.875rem;
+            color: var(--text-light);
+        }
+
+        /* Resources Grid */
+        .resource-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 1rem;
+        }
+
+        .resource-card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+            padding: 1rem;
+            text-decoration: none;
+            color: var(--text);
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .resource-card:hover {
+            border-color: var(--primary);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+
+        .resource-icon {
+            width: 2rem;
+            height: 2rem;
+            background-color: #eff6ff;
+            color: var(--primary);
+            border-radius: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 0.5rem;
+        }
+
+        /* Notes Area */
+        textarea {
+            width: 100%;
+            height: 300px;
+            padding: 1rem;
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+            resize: vertical;
+            font-family: monospace;
+            font-size: 0.875rem;
+            line-height: 1.6;
+            outline: none;
+        }
+
+        textarea:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+        }
+
+        /* Utility */
+        .hidden { display: none; }
+        
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }
+        
+        .btn-primary {
+            background-color: var(--primary);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background-color: var(--primary-hover);
+        }
+
+        /* Accordion Schedule */
+        .week-group {
+            border: 1px solid var(--border);
+            border-radius: 0.5rem;
+            margin-bottom: 1rem;
+            overflow: hidden;
+            background-color: var(--card-bg);
+        }
+        
+        .week-header {
+            background-color: #f8fafc;
+            padding: 1rem;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 600;
+            user-select: none;
+        }
+        
+        .week-header:hover {
+            background-color: #f1f5f9;
+        }
+        
+        .week-content {
+            display: none;
+            border-top: 1px solid var(--border);
+        }
+        
+        .week-content.open {
+            display: block;
+        }
+        
+        .lecture-item {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+        }
+        
+        .lecture-item:last-child {
+            border-bottom: none;
+        }
+        
+        .lecture-item:hover {
+            background-color: #f8fafc;
+        }
+
+        .lecture-status {
+            width: 1.25rem;
+            height: 1.25rem;
+            border-radius: 50%;
+            border: 2px solid #cbd5e1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 1rem;
+            color: transparent;
+            flex-shrink: 0;
+        }
+        
+        .lecture-status.completed {
+            background-color: var(--success);
+            border-color: var(--success);
+            color: white;
+        }
+
+        /* Lecture Detail */
+        .back-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-light);
+            cursor: pointer;
+            margin-bottom: 1rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+        
+        .back-btn:hover {
+            color: var(--primary);
+        }
+
+        .lecture-meta {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            font-size: 0.875rem;
+            color: var(--text-light);
+        }
+
+        .lecture-meta-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+    </style>
+</head>
+<body>
+    <header>
+        <div class="brand">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+            <h1>CS336 Learning Hub</h1>
+            <span>Spring 2024</span>
+        </div>
+        <div id="progress-summary" style="font-size: 0.875rem; color: var(--text-light);">
+            总进度: 0%
+        </div>
+    </header>
+
+    <main>
+        <aside>
+            <div class="nav-section">
+                <div class="nav-title">课程概览</div>
+                <ul class="nav-list">
+                    <li class="nav-item">
+                        <button class="nav-btn active" onclick="showSection('dashboard')">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                            仪表盘
+                        </button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-btn" onclick="showSection('schedule')">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                            课程表
+                        </button>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-title">学习任务</div>
+                <ul class="nav-list">
+                    <li class="nav-item">
+                        <button class="nav-btn" onclick="showSection('assignments')">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                            作业 (Assignments)
+                        </button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-btn" onclick="showSection('notes')">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                            学习笔记
+                        </button>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-title">资源</div>
+                <ul class="nav-list">
+                    <li class="nav-item">
+                        <button class="nav-btn" onclick="showSection('resources')">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                            参考资料
+                        </button>
+                    </li>
+                </ul>
+            </div>
+        </aside>
+
+        <div class="content">
+            <!-- Dashboard Section -->
+            <div id="dashboard" class="container">
+                <div class="section-title">
+                    <span>👋 欢迎学习 CS336</span>
+                </div>
+                
+                <div class="card">
+                    <h3>课程简介</h3>
+                    <p style="color: var(--text-light); margin-bottom: 1rem;">
+                        CS336: Language Modeling from Scratch (从零构建语言模型) 是斯坦福大学开设的一门深度学习进阶课程。
+                        本课程将带领你完整经历构建一个大型语言模型（LLM）的全过程，包括数据收集、模型架构、系统优化、训练、对齐和评估。
+                    </p>
+                    <div style="display: flex; gap: 1rem;">
+                        <div style="background: #f0f9ff; padding: 1rem; border-radius: 0.5rem; flex: 1;">
+                            <div style="font-weight: 600; color: #0369a1; margin-bottom: 0.25rem;">核心目标</div>
+                            <div style="font-size: 0.875rem; color: #0c4a6e;">掌握 Transformer、GPU 优化、Scaling Laws、RLHF 等 LLM 核心技术。</div>
+                        </div>
+                        <div style="background: #fdf2f8; padding: 1rem; border-radius: 0.5rem; flex: 1;">
+                            <div style="font-weight: 600; color: #be185d; margin-bottom: 0.25rem;">前置要求</div>
+                            <div style="font-size: 0.875rem; color: #831843;">熟练 Python、PyTorch，了解深度学习基础 (CS224N/CS229)。</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="progress-container">
+                    <div class="progress-header">
+                        <span>整体学习进度</span>
+                        <span id="progress-text">0%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="progress-fill" class="progress-fill"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>当前任务</h3>
+                    <ul class="task-list" id="dashboard-tasks">
+                        <!-- Populated by JS -->
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Schedule Section -->
+            <div id="schedule" class="container hidden">
+                <div class="section-title">课程表</div>
+                <div id="schedule-list">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Lecture Detail Section -->
+            <div id="lecture-detail" class="container hidden">
+                <div class="back-btn" onclick="showSection('schedule')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                    返回课程表
+                </div>
+                <div id="lecture-content">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Assignments Section -->
+            <div id="assignments" class="container hidden">
+                <div class="section-title">作业 (Assignments)</div>
+                <div class="card" style="margin-bottom: 1.5rem;">
+                    <p style="color: var(--text-light);">
+                        本课程包含 5 个核心作业，涵盖了 LLM 构建的各个环节。请按顺序完成。
+                    </p>
+                </div>
+                <div id="assignment-list" class="week-group" style="background: var(--card-bg);">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Assignment Detail Section -->
+            <div id="assignment-detail" class="container hidden">
+                <div class="back-btn" onclick="showSection('assignments')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                    返回作业列表
+                </div>
+                <div id="assignment-content">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Notes Section -->
+            <div id="notes" class="container hidden">
+                <div class="section-title">学习笔记</div>
+                <div class="card">
+                    <div style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
+                        <span style="color: var(--text-light); font-size: 0.875rem;">笔记会自动保存在本地</span>
+                        <button class="btn btn-primary" onclick="saveNotes()">保存笔记</button>
+                    </div>
+                    <textarea id="notes-area" placeholder="在这里记录你的学习心得、代码片段或遇到的问题..."></textarea>
+                </div>
+            </div>
+
+            <!-- Resources Section -->
+            <div id="resources" class="container hidden">
+                <div class="section-title">参考资料</div>
+                <div class="resource-grid">
+                    <a href="https://stanford-cs336.github.io/spring2024/" target="_blank" class="resource-card">
+                        <div class="resource-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                        </div>
+                        <div style="font-weight: 600;">课程官网</div>
+                        <div style="font-size: 0.875rem; color: var(--text-light);">Spring 2024 官方网站，包含课件和公告。</div>
+                    </a>
+                    <a href="https://github.com/stanford-cs336/spring2024-lectures" target="_blank" class="resource-card">
+                        <div class="resource-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+                        </div>
+                        <div style="font-weight: 600;">Lecture Code</div>
+                        <div style="font-size: 0.875rem; color: var(--text-light);">课程演示代码 (Python)。</div>
+                    </a>
+                    <a href="https://arxiv.org/abs/1706.03762" target="_blank" class="resource-card">
+                        <div class="resource-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                        </div>
+                        <div style="font-weight: 600;">Attention Is All You Need</div>
+                        <div style="font-size: 0.875rem; color: var(--text-light);">Transformer 原始论文。</div>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // Data
+        const assignments = [
+            { id: 'a1', title: 'Assignment 1: Basics', desc: '实现 Transformer 核心组件 (Tokenizer, Model, Optimizer) 并训练最小模型。', link: 'https://github.com/stanford-cs336/spring2024-assignment1-basics' },
+            { id: 'a2', title: 'Assignment 2: Systems', desc: '性能分析与优化，编写自定义 GPU Kernel，实现分布式训练。', link: 'https://github.com/stanford-cs336/spring2024-assignment2-systems' },
+            { id: 'a3', title: 'Assignment 3: Scaling', desc: '拟合 Scaling Laws，预测模型扩展性能。', link: 'https://github.com/stanford-cs336/spring2024-assignment3-scaling' },
+            { id: 'a4', title: 'Assignment 4: Data', desc: '处理 Common Crawl 数据，实现过滤和去重。', link: 'https://github.com/stanford-cs336/spring2024-assignment4-data' },
+            { id: 'a5', title: 'Assignment 5: Alignment', desc: '标注指令微调数据，实现 RLHF 对齐。', link: 'https://github.com/stanford-cs336/spring2024-assignment5-alignment' }
+        ];
+
+        const schedule = [
+            { week: 1, title: 'Overview, tokenization', lecturer: 'Percy', materials: 'lecture_01.py', events: 'Assignment 1 out', date: 'Mon April 1', desc: 'Overview of the course and tokenization.' },
+            { week: 1, title: 'Pytorch, resource accounting', lecturer: 'Percy', materials: 'lecture_02.py', events: '', date: 'Wed April 3', desc: 'Deep dive into Pytorch and resource accounting.' },
+            { week: 2, title: 'Architectures, hyperparameters', lecturer: 'Tatsu', materials: 'lecture 3.pdf', events: '', date: 'Mon April 8', desc: 'Transformer architectures and hyperparameters.' },
+            { week: 2, title: 'Mixture of experts', lecturer: 'Tatsu', materials: 'lecture 4.pdf', events: '', date: 'Wed April 10', desc: 'Mixture of Experts (MoE) models.' },
+            { week: 3, title: 'GPUs', lecturer: 'Tatsu', materials: 'lecture 5.pdf', events: 'Assignment 1 due', date: 'Mon April 15', desc: 'GPU architecture and optimization.' },
+            { week: 3, title: 'Kernels, Triton', lecturer: 'Percy', materials: 'lecture_06.py', events: 'Assignment 2 out', date: 'Wed April 17', desc: 'Writing GPU kernels with Triton.' },
+            { week: 4, title: 'Parallelism', lecturer: 'Tatsu', materials: 'lecture 7.pdf', events: '', date: 'Mon April 22', desc: 'Model and data parallelism.' },
+            { week: 4, title: 'Parallelism', lecturer: 'Percy', materials: 'lecture_08.py', events: '', date: 'Wed April 24', desc: 'Advanced parallelism techniques.' },
+            { week: 5, title: 'Scaling laws', lecturer: 'Tatsu', materials: 'lecture 9.pdf', events: '', date: 'Mon April 29', desc: 'Scaling laws for LLMs.' },
+            { week: 5, title: 'Scaling laws', lecturer: 'Tatsu', materials: 'lecture 10.pdf', events: 'Assignment 2 due, Assignment 3 out', date: 'Wed May 1', desc: 'More on scaling laws.' },
+            { week: 6, title: 'Data', lecturer: 'Percy', materials: 'lecture_11.py', events: '', date: 'Mon May 6', desc: 'Data collection and processing.' },
+            { week: 6, title: 'Data', lecturer: 'Percy', materials: 'lecture_12.py', events: 'Assignment 3 due', date: 'Wed May 8', desc: 'Data quality and filtering.' },
+            { week: 7, title: 'Data', lecturer: 'Percy', materials: 'lecture_13.py', events: 'Assignment 4 out (Sat May 11)', date: 'Mon May 13', desc: 'Advanced data topics.' },
+            { week: 7, title: 'Data', lecturer: 'Percy', materials: 'lecture_14.py', events: '', date: 'Wed May 15', desc: 'Data pipeline.' },
+            { week: 8, title: 'Alignment', lecturer: 'Tatsu', materials: 'lecture 15.pdf', events: '', date: 'Mon May 20', desc: 'RLHF and alignment.' },
+            { week: 8, title: 'Alignment', lecturer: 'Tatsu', materials: 'lecture 16.pdf', events: '', date: 'Wed May 22', desc: 'Alignment techniques.' },
+            { week: 9, title: 'Memorial Day', lecturer: '', materials: '', events: 'Assignment 4 due', date: 'Mon May 27', desc: 'No classes.' },
+            { week: 9, title: 'Evals', lecturer: 'Tatsu', materials: 'lecture 17.pdf', events: 'Assignment 5 out', date: 'Wed May 29', desc: 'Model evaluation.' },
+            { week: 10, title: 'Guest lecture', lecturer: 'Ce Zhang', materials: '', events: '', date: 'Mon June 3', desc: 'Guest lecture by Ce Zhang.' },
+            { week: 10, title: 'Guest lecture', lecturer: 'Aakanksha Chowdhery', materials: '', events: '', date: 'Wed June 5', desc: 'Guest lecture by Aakanksha Chowdhery.' }
+        ];
+
+        // State
+        let progress = JSON.parse(localStorage.getItem('cs336_progress') || '{}');
+        
+        // Init
+        function init() {
+            try {
+                renderAssignments();
+                renderSchedule();
+                renderDashboardTasks();
+                updateProgress();
+                
+                // Load notes
+                const savedNotes = localStorage.getItem('cs336_notes');
+                if (savedNotes) {
+                    document.getElementById('notes-area').value = savedNotes;
+                }
+            } catch (e) {
+                document.body.innerHTML = `<div style="padding: 2rem; color: red;">Error: ${e.message}<br><pre>${e.stack}</pre></div>`;
+                console.error(e);
+            }
+        }
+
+        // Navigation
+        function showSection(id) {
+            document.querySelectorAll('.container').forEach(el => el.classList.add('hidden'));
+            const target = document.getElementById(id);
+            if (target) target.classList.remove('hidden');
+            
+            document.querySelectorAll('.nav-btn').forEach(el => {
+                el.classList.remove('active');
+                if (el.getAttribute('onclick') && el.getAttribute('onclick').includes(`'${id}'`)) {
+                    el.classList.add('active');
+                }
+            });
+        }
+
+        // Renderers
+        function renderAssignments() {
+            const list = document.getElementById('assignment-list');
+            list.innerHTML = assignments.map((a, i) => {
+                const isDone = progress[a.id];
+                return `
+                <div class="lecture-item" onclick="openAssignment(${i})">
+                    <div class="lecture-status ${isDone ? 'completed' : ''}">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+                    </div>
+                    <div style="flex:1;">
+                        <div style="font-weight:500;">${a.title}</div>
+                        <div style="font-size:0.875rem; color:var(--text-light);">${a.desc}</div>
+                    </div>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:1rem; color:var(--border);"><path d="M9 18l6-6-6-6"/></svg>
+                </div>
+                `;
+            }).join('');
+        }
+
+        function openAssignment(index) {
+            const a = assignments[index];
+            const isDone = progress[a.id];
+            
+            const content = document.getElementById('assignment-content');
+            content.innerHTML = `
+                <div class="section-title">${a.title}</div>
+                
+                <div class="card">
+                    <h3>作业说明</h3>
+                    <p style="margin-bottom: 1.5rem; color: var(--text-light);">${a.desc}</p>
+                    
+                    <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
+                        <a href="${a.link}" target="_blank" class="btn btn-primary" style="text-decoration:none; display:inline-flex; align-items:center; gap:0.5rem;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+                            前往 GitHub 仓库
+                        </a>
+                        <button class="btn" style="border: 1px solid var(--border); background: ${isDone ? 'var(--success)' : 'white'}; color: ${isDone ? 'white' : 'var(--text)'};" onclick="toggleAssignmentStatus('${a.id}', this)">
+                            ${isDone ? '✅ 已完成' : '标记为完成'}
+                        </button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>作业笔记</h3>
+                    <textarea id="assignment-note-${index}" placeholder="记录作业思路、遇到的 bug 或解决方案..." oninput="saveAssignmentNote(${index}, this.value)">${localStorage.getItem(`cs336_assignment_note_${index}`) || ''}</textarea>
+                </div>
+            `;
+
+            showSection('assignment-detail');
+        }
+
+        function toggleAssignmentStatus(id, btn) {
+            progress[id] = !progress[id];
+            localStorage.setItem('cs336_progress', JSON.stringify(progress));
+            updateProgress();
+            renderAssignments();
+            renderDashboardTasks();
+            
+            const isDone = progress[id];
+            if (isDone) {
+                btn.innerHTML = '✅ 已完成';
+                btn.style.background = 'var(--success)';
+                btn.style.color = 'white';
+            } else {
+                btn.innerHTML = '标记为完成';
+                btn.style.background = 'white';
+                btn.style.color = 'var(--text)';
+            }
+        }
+
+        function saveAssignmentNote(index, content) {
+            localStorage.setItem(`cs336_assignment_note_${index}`, content);
+        }
+
+        function renderSchedule() {
+            const list = document.getElementById('schedule-list');
+            
+            // Group by week
+            const weeks = {};
+            schedule.forEach((s, i) => {
+                if (!weeks[s.week]) weeks[s.week] = [];
+                weeks[s.week].push({ ...s, index: i });
+            });
+
+            list.innerHTML = Object.keys(weeks).map(weekNum => {
+                const lectures = weeks[weekNum];
+                const isOpen = true; // Default open
+                
+                return `
+                <div class="week-group">
+                    <div class="week-header" onclick="toggleWeek(this)">
+                        <span>Week ${weekNum}</span>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transform: ${isOpen ? 'rotate(180deg)' : 'rotate(0)'}; transition: transform 0.2s;"><path d="M6 9l6 6 6-6"/></svg>
+                    </div>
+                    <div class="week-content ${isOpen ? 'open' : ''}">
+                        ${lectures.map(lec => {
+                            const id = `lec_${lec.index}`;
+                            const isDone = progress[id];
+                            return `
+                            <div class="lecture-item" onclick="openLecture(${lec.index})">
+                                <div class="lecture-status ${isDone ? 'completed' : ''}">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+                                </div>
+                                <div style="flex:1;">
+                                    <div style="display:flex; justify-content:space-between; margin-bottom:0.25rem;">
+                                        <div style="font-weight:500;">${lec.title}</div>
+                                        <div style="font-size:0.75rem; color:var(--text-light); background:#f1f5f9; padding:0.125rem 0.5rem; border-radius:999px;">${lec.date}</div>
+                                    </div>
+                                    <div style="font-size:0.875rem; color:var(--text-light);">
+                                        <span style="font-weight:500; color:var(--text);">${lec.lecturer}</span> • ${lec.desc}
+                                    </div>
+                                    ${lec.events ? `<div style="margin-top:0.5rem; font-size:0.75rem; color:#be185d; background:#fdf2f8; display:inline-block; padding:0.125rem 0.5rem; border-radius:0.25rem;">📢 ${lec.events}</div>` : ''}
+                                </div>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:1rem; color:var(--border);"><path d="M9 18l6-6-6-6"/></svg>
+                            </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+                `;
+            }).join('');
+        }
+
+        function toggleWeek(header) {
+            const content = header.nextElementSibling;
+            const icon = header.querySelector('svg');
+            content.classList.toggle('open');
+            icon.style.transform = content.classList.contains('open') ? 'rotate(180deg)' : 'rotate(0)';
+        }
+
+        function openLecture(index) {
+            const lec = schedule[index];
+            const id = `lec_${index}`;
+            const isDone = progress[id];
+            
+            const content = document.getElementById('lecture-content');
+            content.innerHTML = `
+                <div class="section-title">${lec.title}</div>
+                
+                <div class="lecture-meta">
+                    <div class="lecture-meta-item">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                        ${lec.date} (Week ${lec.week})
+                    </div>
+                    <div class="lecture-meta-item">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                        Lecturer: ${lec.lecturer}
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>课程内容</h3>
+                    <p style="margin-bottom: 1.5rem; color: var(--text-light);">${lec.desc}</p>
+                    
+                    ${lec.events ? `
+                    <div style="margin-bottom: 1.5rem; padding: 1rem; background-color: #fff1f2; border: 1px solid #fecdd3; border-radius: 0.5rem; color: #be123c;">
+                        <strong>📢 Important:</strong> ${lec.events}
+                    </div>
+                    ` : ''}
+                    
+                    <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
+                        <button class="btn" style="border: 1px solid var(--border); background: ${isDone ? 'var(--success)' : 'white'}; color: ${isDone ? 'white' : 'var(--text)'};" onclick="toggleLectureStatus('${id}', this)">
+                            ${isDone ? '✅ 已完成' : '标记为完成'}
+                        </button>
+                    </div>
+
+                    <h3>学习资源</h3>
+                    <div class="resource-grid" style="margin-top: 1rem;">
+                        ${lec.materials ? `
+                        <a href="https://github.com/stanford-cs336/spring2024-lectures/blob/main/${lec.materials}" target="_blank" class="resource-card">
+                            <div class="resource-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                            </div>
+                            <div style="font-weight: 600;">${lec.materials}</div>
+                            <div style="font-size: 0.875rem; color: var(--text-light);">本节课代码/课件</div>
+                        </a>
+                        ` : ''}
+                        <a href="https://stanford-cs336.github.io/spring2024/" target="_blank" class="resource-card">
+                            <div class="resource-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                            </div>
+                            <div style="font-weight: 600;">课程官网</div>
+                        </a>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>本课笔记</h3>
+                    <textarea id="lecture-note-${index}" placeholder="记录本节课的重点..." oninput="saveLectureNote(${index}, this.value)">${localStorage.getItem(`cs336_note_${index}`) || ''}</textarea>
+                </div>
+            `;
+
+            showSection('lecture-detail');
+        }
+
+        function toggleLectureStatus(id, btn) {
+            progress[id] = !progress[id];
+            localStorage.setItem('cs336_progress', JSON.stringify(progress));
+            updateProgress();
+            renderSchedule();
+            renderDashboardTasks();
+            
+            const isDone = progress[id];
+            if (isDone) {
+                btn.innerHTML = '✅ 已完成';
+                btn.style.background = 'var(--success)';
+                btn.style.color = 'white';
+            } else {
+                btn.innerHTML = '标记为完成';
+                btn.style.background = 'white';
+                btn.style.color = 'var(--text)';
+            }
+        }
+
+        function saveLectureNote(index, content) {
+            localStorage.setItem(`cs336_note_${index}`, content);
+        }
+
+        function renderDashboardTasks() {
+            // Show next 3 uncompleted items
+            const allTasks = [
+                ...schedule.map((s, i) => ({ id: `lec_${i}`, title: `Lecture: ${s.title}`, type: 'Lecture' })),
+                ...assignments.map(a => ({ id: a.id, title: a.title, type: 'Assignment' }))
+            ];
+            
+            const pending = allTasks.filter(t => !progress[t.id]).slice(0, 3);
+            const list = document.getElementById('dashboard-tasks');
+            
+            if (pending.length === 0) {
+                list.innerHTML = '<li class="task-item" style="color:var(--success);">🎉 恭喜！你已完成所有学习任务。</li>';
+                return;
+            }
+
+            list.innerHTML = pending.map(t => `
+                <li class="task-item">
+                    <input type="checkbox" class="task-checkbox" onchange="toggleTask('${t.id}')">
+                    <div class="task-content">
+                        <div class="task-title">${t.title} <span class="task-tag">${t.type}</span></div>
+                    </div>
+                </li>
+            `).join('');
+        }
+
+        // Actions
+        function toggleTask(id) {
+            progress[id] = !progress[id];
+            localStorage.setItem('cs336_progress', JSON.stringify(progress));
+            updateProgress();
+            renderAssignments(); // Re-render to update checkboxes
+            renderSchedule();    // Re-render to update dots
+            renderDashboardTasks(); // Update dashboard
+        }
+
+        function updateProgress() {
+            const total = assignments.length + schedule.length;
+            const completed = Object.values(progress).filter(Boolean).length;
+            const percent = Math.round((completed / total) * 100);
+            
+            document.getElementById('progress-fill').style.width = `${percent}%`;
+            document.getElementById('progress-text').innerText = `${percent}%`;
+            document.getElementById('progress-summary').innerText = `总进度: ${percent}%`;
+        }
+
+        function saveNotes() {
+            const content = document.getElementById('notes-area').value;
+            localStorage.setItem('cs336_notes', content);
+            
+            const btn = document.querySelector('#notes .btn-primary');
+            const originalText = btn.innerText;
+            btn.innerText = '已保存!';
+            btn.style.backgroundColor = 'var(--success)';
+            setTimeout(() => {
+                btn.innerText = originalText;
+                btn.style.backgroundColor = '';
+            }, 2000);
+        }
+
+        // Start
+        init();
+    </script>
+</body>
+</html>
