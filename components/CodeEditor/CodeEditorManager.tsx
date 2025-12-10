@@ -152,7 +152,7 @@ export const CodeEditorManager: React.FC = () => {
         </div>
 
         {/* Terminal Toggle & Status Bar */}
-        <div className="h-6 bg-[#007acc] text-white flex items-center justify-between px-2 text-xs select-none">
+        <div className="h-6 bg-[#007acc] text-white flex items-center justify-between px-2 text-xs">
           <div className="flex items-center gap-2">
             {activeTab && (
               <>

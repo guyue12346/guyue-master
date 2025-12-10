@@ -1,8 +1,13 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { X, FileDown, FolderOpen, ToggleLeft, ToggleRight, AlertCircle, ChevronDown, Globe, Package, Plus, Trash2 } from 'lucide-react';
+import { X, FileDown, FolderOpen, ToggleLeft, ToggleRight, ChevronDown, Globe, Package, Plus, Trash2, GripVertical } from 'lucide-react';
 import { Bookmark, Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, ModuleConfig, AVAILABLE_ICONS, PluginMetadata } from '../types';
 import * as LucideIcons from 'lucide-react';
+
+const sortByPriority = (modules: ModuleConfig[]) => [...modules].sort((a, b) => a.priority - b.priority);
+
+const normalizePriorities = (modules: ModuleConfig[]) =>
+  modules.map((module, index) => ({ ...module, priority: index }));
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -33,16 +38,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const [archivePath, setArchivePath] = useState<string>('');
   const [localModules, setLocalModules] = useState<ModuleConfig[]>([]);
-  const [priorityError, setPriorityError] = useState<string | null>(null);
   const [openIconSelectorId, setOpenIconSelectorId] = useState<string | null>(null);
   const [browserStartPage, setBrowserStartPage] = useState<string>('');
   const [plugins, setPlugins] = useState<PluginMetadata[]>([]);
+  const [draggingModuleId, setDraggingModuleId] = useState<string | null>(null);
   const iconSelectorRef = useRef<HTMLDivElement>(null);
 
   // Sort modules by priority for display
-  const sortedModules = useMemo(() => {
-    return [...localModules].sort((a, b) => a.priority - b.priority);
-  }, [localModules]);
+  const sortedModules = useMemo(() => sortByPriority(localModules), [localModules]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -83,64 +86,74 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   useEffect(() => {
-    if (moduleConfig.length > 0) {
-      setLocalModules(JSON.parse(JSON.stringify(moduleConfig)));
+    if (moduleConfig.length > 0 && isOpen) {
+      const cloned = JSON.parse(JSON.stringify(moduleConfig)) as ModuleConfig[];
+      setLocalModules(normalizePriorities(sortByPriority(cloned)));
     }
   }, [moduleConfig, isOpen]);
 
-  const handleModuleToggle = (id: string) => {
-    const updated = localModules.map(m => 
-      m.id === id ? { ...m, enabled: !m.enabled } : m
-    );
-    setLocalModules(updated);
-    validateAndSave(updated);
+  const persistModules = (modules: ModuleConfig[]) => {
+    if (onUpdateModules) {
+      onUpdateModules(modules);
+    }
   };
 
-  const handlePriorityChange = (id: string, newPriority: number) => {
-    const safeValue = Number.isFinite(newPriority) ? Math.min(100, Math.max(1, newPriority)) : 1;
-    const updated = localModules.map(m => 
-      m.id === id ? { ...m, priority: safeValue } : m
-    );
-    setLocalModules(updated);
-    validateAndSave(updated);
+  const updateModules = (updater: (modules: ModuleConfig[]) => ModuleConfig[]) => {
+    setLocalModules(prev => {
+      const next = updater(prev);
+      persistModules(next);
+      return next;
+    });
+  };
+
+  const handleModuleToggle = (id: string) => {
+    updateModules(prev => prev.map(m => 
+      m.id === id ? { ...m, enabled: !m.enabled } : m
+    ));
   };
 
   const handleShortcutChange = (id: string, newShortcut: string) => {
-    const updated = localModules.map(m => 
+    updateModules(prev => prev.map(m => 
       m.id === id ? { ...m, shortcut: newShortcut } : m
-    );
-    setLocalModules(updated);
-    validateAndSave(updated);
+    ));
   };
 
   const handleIconChange = (id: string, newIcon: string) => {
-    const updated = localModules.map(m => 
+    updateModules(prev => prev.map(m => 
       m.id === id ? { ...m, icon: newIcon } : m
-    );
-    setLocalModules(updated);
-    validateAndSave(updated);
+    ));
     setOpenIconSelectorId(null);
   };
 
-  const validateAndSave = (modules: ModuleConfig[]) => {
-    // Check for duplicate priorities among ENABLED modules
-    const enabledModules = modules.filter(m => m.enabled);
-    const priorities = enabledModules.map(m => m.priority);
-    const hasDuplicates = new Set(priorities).size !== priorities.length;
-
-    if (hasDuplicates) {
-      setPriorityError('启用的功能优先级不能重复');
-      // We still update local state but don't push to parent yet? 
-      // Or we push but parent handles it? 
-      // Requirement: "启用的功能的优先级不能相同"
-      // Let's just show error and NOT save to parent if invalid.
-      return;
-    } else {
-      setPriorityError(null);
-      if (onUpdateModules) {
-        onUpdateModules(modules);
+  const reorderModules = (sourceId: string, targetId: string) => {
+    updateModules(prev => {
+      const sorted = sortByPriority(prev);
+      const sourceIndex = sorted.findIndex(m => m.id === sourceId);
+      const targetIndex = sorted.findIndex(m => m.id === targetId);
+      if (sourceIndex === -1 || targetIndex === -1 || sourceIndex === targetIndex) {
+        return prev;
       }
-    }
+      const [moved] = sorted.splice(sourceIndex, 1);
+      sorted.splice(targetIndex, 0, moved);
+      return normalizePriorities(sorted);
+    });
+  };
+
+  const handleDragStart = (event: React.DragEvent<HTMLButtonElement>, moduleId: string) => {
+    if (!moduleId) return;
+    setDraggingModuleId(moduleId);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', moduleId);
+  };
+
+  const handleDragOver = (event: React.DragEvent<HTMLTableRowElement>, targetId: string) => {
+    event.preventDefault();
+    if (!draggingModuleId || draggingModuleId === targetId) return;
+    reorderModules(draggingModuleId, targetId);
+  };
+
+  const handleDragEnd = () => {
+    setDraggingModuleId(null);
   };
 
   const getIcon = (iconName: string) => {
@@ -290,12 +303,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               功能模块管理
             </h3>
             
-            {priorityError && (
-              <div className="bg-red-50 text-red-600 text-xs p-2 rounded-lg flex items-center gap-2">
-                <AlertCircle className="w-4 h-4" />
-                {priorityError}
-              </div>
-            )}
+            <p className="text-xs text-gray-400">
+              拖动右侧的手柄即可调整模块顺序，顺序越靠前会在主界面中优先显示。
+            </p>
 
             <div className="rounded-xl border border-gray-200">
               <table className="w-full text-sm text-left">
@@ -305,12 +315,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <th className="px-4 py-3">模块名称</th>
                     <th className="px-4 py-3 w-24 text-center">图标</th>
                     <th className="px-4 py-3 w-28 text-center">快捷键</th>
-                    <th className="px-4 py-3 w-20 text-center">优先级</th>
+                    <th className="px-4 py-3 w-24 text-center">顺序</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 bg-white">
                   {sortedModules.map(module => (
-                    <tr key={module.id} className="hover:bg-gray-50/50 transition-colors">
+                    <tr
+                      key={module.id}
+                      onDragOver={(e) => handleDragOver(e, module.id)}
+                      onDrop={(e) => e.preventDefault()}
+                      className={`hover:bg-gray-50/50 transition-colors ${draggingModuleId === module.id ? 'bg-blue-50/70' : ''}`}
+                    >
                       <td className="px-4 py-3 text-center">
                         <button 
                           onClick={() => handleModuleToggle(module.id)}
@@ -375,17 +390,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         />
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <input 
-                          type="number" 
-                          min="1" 
-                          max="100"
-                          value={module.priority}
-                          onChange={(e) => handlePriorityChange(module.id, parseInt(e.target.value) || 0)}
-                          className={`w-full px-2 py-1 text-sm border rounded-lg text-center outline-none focus:ring-2 focus:ring-blue-500/20 text-gray-900 ${
-                            priorityError && module.enabled ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-white'
-                          } ${!module.enabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                          disabled={!module.enabled}
-                        />
+                        <div className={`flex items-center justify-center gap-2 ${!module.enabled ? 'opacity-40' : ''}`}>
+                          <span className="text-xs text-gray-400">
+                            #{sortedModules.findIndex(m => m.id === module.id) + 1}
+                          </span>
+                          <button
+                            type="button"
+                            className="p-1.5 rounded-md border border-dashed border-gray-300 text-gray-400 bg-white hover:text-blue-600 hover:border-blue-300 transition-colors"
+                            draggable={module.enabled}
+                            onDragStart={(e) => handleDragStart(e, module.id)}
+                            onDragEnd={handleDragEnd}
+                            title="拖动调整顺序"
+                            disabled={!module.enabled}
+                          >
+                            <GripVertical className="w-4 h-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -458,6 +478,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             )}
           </div>
 
+          {/* Section: Splash Screen Settings */}
+          <div className="space-y-4">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
+              开屏动画设置
+            </h3>
+            
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium text-gray-700">开屏文案</label>
+                <input 
+                  type="text" 
+                  value={localStorage.getItem('linkmaster_splash_text_v1') || '有善始者实繁，能克终者盖寡'}
+                  onChange={(e) => {
+                    localStorage.setItem('linkmaster_splash_text_v1', e.target.value);
+                  }}
+                  placeholder="有善始者实繁，能克终者盖寡"
+                  className="px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 bg-white"
+                />
+                <p className="text-xs text-gray-400">设置应用启动时开屏动画显示的文案（需重启应用生效）</p>
+              </div>
+            </div>
+          </div>
+
           {/* Section: Browser Settings */}
           <div className="space-y-4">
             <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
@@ -495,7 +538,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div className="flex items-center justify-between mb-2">
                 <div>
                   <h4 className="text-sm font-medium text-gray-700">本地归档根目录</h4>
-                  <p className="text-xs text-gray-400 mt-1">上传的文件将按分类整理到此目录</p>
+                  <p className="text-xs text-gray-400 mt-1">文件管理和学习模块的资源文件都将保存到此目录</p>
                 </div>
                 <button 
                   onClick={handleSelectArchiveDir}

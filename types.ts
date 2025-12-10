@@ -115,7 +115,7 @@ export interface PluginMetadata {
   entryPath?: string; // Runtime only: absolute path to entry file
 }
 
-export type AppMode = 'bookmarks' | 'notes' | 'ssh' | 'api' | 'todo' | 'files' | 'renderer' | 'prompts' | 'markdown' | 'terminal' | 'browser' | 'leetcode' | 'learning' | 'image-hosting' | string;
+export type AppMode = 'bookmarks' | 'notes' | 'ssh' | 'api' | 'todo' | 'files' | 'prompts' | 'markdown' | 'terminal' | 'browser' | 'leetcode' | 'learning' | 'image-hosting' | string;
 
 export interface ModuleConfig {
   id: string;
@@ -196,6 +196,8 @@ export interface ElectronAPI {
   readFileBase64: (path: string) => Promise<string>;
   writeFile: (path: string, content: string) => Promise<boolean>;
   deleteFile: (path: string) => Promise<boolean>;
+  renameFile: (oldPath: string, newPath: string) => Promise<boolean>;
+  deleteDir: (path: string) => Promise<boolean>;
   listDir: (path: string) => Promise<Array<{ name: string; isDirectory: boolean; path: string }>>;
   getUserInfo: () => Promise<{ username: string; hostname: string }>;
   uploadImage: (params: { accessToken: string; owner: string; repo: string; path: string; content: string; message: string }) => Promise<any>;

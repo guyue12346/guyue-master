@@ -69,6 +69,7 @@ export interface CourseData {
   personalModules?: PersonalModule[];
   introMarkdown?: string; // Optional markdown content for course introduction
   icon?: string; // Optional icon for the course
+  priority?: number; // 1-100, lower number = higher priority
 }
 
 export interface CourseCategory {
@@ -77,6 +78,7 @@ export interface CourseCategory {
   icon: string; // Lucide icon name
   description: string;
   color: string; // Tailwind color class
+  priority?: number; // 1-100, lower number = higher priority
 }
 
 // Course Categories

@@ -43,7 +43,7 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
         try {
           if (window.electronAPI && window.electronAPI.readFile) {
             const text = await window.electronAPI.readFile(file.path);
-            setContent(text || '无法读取文件内容');
+            setContent(text || '');
             
             // Generate TOC for markdown
             if (['md', 'markdown'].includes(ext)) {
@@ -101,14 +101,14 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
   return (
     <div className="flex flex-col h-full bg-white overflow-hidden relative">
       {/* Header */}
-      <div className="h-16 border-b border-gray-100 flex items-center justify-between px-8 bg-white z-10 shrink-0">
+      <div className="h-16 border-b border-gray-100 flex items-center justify-between px-8 bg-white z-10 shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
         <div className="flex flex-col min-w-0">
            <h1 className="text-xl font-bold text-gray-800 truncate" title={file.name}>
              {file.name}
            </h1>
         </div>
         
-        <div className="flex items-center gap-2 ml-4 shrink-0">
+        <div className="flex items-center gap-2 ml-4 shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           {['md', 'markdown'].includes(file.type.toLowerCase().replace('.', '')) && (
             <button 
               onClick={() => setShowTOC(!showTOC)}
@@ -199,6 +199,18 @@ const renderFileContent = (file: FileRecord, content: string) => {
   }
 
   if (['md', 'markdown'].includes(ext)) {
+    // 如果内容为空，显示提示
+    if (!content || content.trim() === '') {
+      return (
+        <div className="h-full flex items-center justify-center bg-white">
+          <div className="text-center text-gray-400">
+            <p className="text-lg">文档内容为空</p>
+            <p className="text-sm mt-2">请编辑此文档添加内容</p>
+          </div>
+        </div>
+      );
+    }
+    
     // Pre-process content:
     // 1. Ensure $$...$$ is treated as block math
     let formattedContent = content.replace(/(\$\$[\s\S]+?\$\$)/g, '\n\n$1\n\n');

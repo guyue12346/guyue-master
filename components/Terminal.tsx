@@ -291,7 +291,7 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
   return (
     <div className="flex flex-col h-full bg-white overflow-hidden">
       {/* Header */}
-      <div className="h-10 bg-gray-100 border-b border-gray-200 flex items-center justify-between px-2 shrink-0 select-none" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+      <div className="h-10 bg-gray-100 border-b border-gray-200 flex items-center justify-between px-2 shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
         
         {/* Tabs */}
         <div className="flex items-center gap-1 flex-1 overflow-x-auto no-scrollbar" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>

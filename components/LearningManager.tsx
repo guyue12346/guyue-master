@@ -7,6 +7,7 @@ import { Terminal as TerminalComponent } from './Terminal';
 import { MarkdownNote } from '../types';
 import { LearningCategoryModal } from './LearningCategoryModal';
 import { LearningCourseModal } from './LearningCourseModal';
+import { deleteCategoryFolder, deleteCourseFolder } from '../utils/learningStorage';
 
 // All courses
 const DEFAULT_COURSES: CourseData[] = [CS336_DATA, DOCKER_DATA, GIT_DATA];
@@ -43,8 +44,8 @@ const MiniBrowser: React.FC<{ url: string; title?: string; onClose?: () => void 
   return (
     <div className="flex flex-col h-full bg-white relative border-b border-gray-200">
        {/* Toolbar */}
-       <div className="h-10 border-b border-gray-200 flex items-center px-2 gap-2 bg-gray-50">
-          <div className="flex items-center gap-1">
+       <div className="h-10 border-b border-gray-200 flex items-center px-2 gap-2 bg-gray-50" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+          <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             <button 
               onClick={handleGoBack}
               disabled={!canGoBack}
@@ -67,14 +68,15 @@ const MiniBrowser: React.FC<{ url: string; title?: string; onClose?: () => void 
             </button>
           </div>
           
-          <div className="flex-1 px-2 py-1 bg-white border border-gray-200 rounded text-xs text-gray-500 truncate font-mono">
+          <div className="flex-1 px-2 py-1 bg-white border border-gray-200 rounded text-xs text-gray-500 truncate font-mono" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             {currentUrl}
           </div>
 
           <button 
             onClick={() => window.electronAPI?.openPath(currentUrl)}
-            className="p-1 rounded-md hover:bg-gray-200 text-gray-500 transition-colors"
+            className="p-1 rounded-md hover:bg-gray-200 text-gray-500 transition-colors\"
             title="在默认浏览器中打开"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           >
             <ExternalLink className="w-4 h-4" />
           </button>
@@ -164,12 +166,21 @@ export const LearningManager: React.FC = () => {
     setEditingCategory(undefined);
   };
 
-  const handleDeleteCategory = (id: string, e: React.MouseEvent) => {
+  const handleDeleteCategory = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm('确定要删除该学习方向吗？这将同时删除该方向下的所有课程。')) {
+    if (confirm('确定要删除该学习方向吗？这将同时删除该方向下的所有课程及其文件。')) {
+      // 获取要删除的分类名称
+      const categoryToDelete = categories.find(c => c.id === id);
+      
+      // 先更新状态
       setCategories(prev => prev.filter(c => c.id !== id));
       setCourses(prev => prev.filter(c => c.categoryId !== id));
       if (selectedCategoryId === id) setSelectedCategoryId(null);
+      
+      // 删除本地文件夹
+      if (categoryToDelete) {
+        await deleteCategoryFolder(categoryToDelete.name);
+      }
     }
   };
 
@@ -194,11 +205,21 @@ export const LearningManager: React.FC = () => {
     setEditingCourse(undefined);
   };
 
-  const handleDeleteCourse = (id: string, e: React.MouseEvent) => {
+  const handleDeleteCourse = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm('确定要删除该课程吗？')) {
+    if (confirm('确定要删除该课程吗？这将同时删除课程内的所有文件。')) {
+      // 获取要删除的课程和分类信息
+      const courseToDelete = courses.find(c => c.id === id);
+      const category = courseToDelete ? categories.find(cat => cat.id === courseToDelete.categoryId) : null;
+      
+      // 先更新状态
       setCourses(prev => prev.filter(c => c.id !== id));
       if (selectedCourseId === id) setSelectedCourseId(null);
+      
+      // 删除本地文件夹
+      if (courseToDelete && category) {
+        await deleteCourseFolder(category.name, courseToDelete.title);
+      }
     }
   };
 
@@ -248,7 +269,9 @@ export const LearningManager: React.FC = () => {
   
   // Get courses in selected category
   const coursesInCategory = selectedCategoryId 
-    ? courses.filter(c => c.categoryId === selectedCategoryId)
+    ? courses
+        .filter(c => c.categoryId === selectedCategoryId)
+        .sort((a, b) => (a.priority || 50) - (b.priority || 50))
     : [];
 
   // Helper to get category icon component
@@ -439,25 +462,32 @@ export const LearningManager: React.FC = () => {
     }
   };
 
-  // Color mapping for categories
-  const colorMap: Record<string, { bg: string; text: string; border: string; hover: string }> = {
-    purple: { bg: 'bg-purple-50', text: 'text-purple-600', border: 'border-purple-200', hover: 'hover:border-purple-500 hover:shadow-purple-500/10' },
-    blue: { bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-200', hover: 'hover:border-blue-500 hover:shadow-blue-500/10' },
-    green: { bg: 'bg-green-50', text: 'text-green-600', border: 'border-green-200', hover: 'hover:border-green-500 hover:shadow-green-500/10' },
-    orange: { bg: 'bg-orange-50', text: 'text-orange-600', border: 'border-orange-200', hover: 'hover:border-orange-500 hover:shadow-orange-500/10' },
-    gray: { bg: 'bg-gray-50', text: 'text-gray-600', border: 'border-gray-200', hover: 'hover:border-gray-500 hover:shadow-gray-500/10' },
+  // Color mapping for categories - using actual color values for dynamic colors
+  const colorMap: Record<string, { bg: string; bgColor: string; text: string; textColor: string; border: string; borderColor: string; hoverBorderColor: string }> = {
+    purple: { bg: 'bg-purple-50', bgColor: '#faf5ff', text: 'text-purple-600', textColor: '#9333ea', border: 'border-purple-200', borderColor: '#e9d5ff', hoverBorderColor: '#a855f7' },
+    blue: { bg: 'bg-blue-50', bgColor: '#eff6ff', text: 'text-blue-600', textColor: '#2563eb', border: 'border-blue-200', borderColor: '#bfdbfe', hoverBorderColor: '#3b82f6' },
+    green: { bg: 'bg-green-50', bgColor: '#f0fdf4', text: 'text-green-600', textColor: '#16a34a', border: 'border-green-200', borderColor: '#bbf7d0', hoverBorderColor: '#22c55e' },
+    orange: { bg: 'bg-orange-50', bgColor: '#fff7ed', text: 'text-orange-600', textColor: '#ea580c', border: 'border-orange-200', borderColor: '#fed7aa', hoverBorderColor: '#f97316' },
+    cyan: { bg: 'bg-cyan-50', bgColor: '#ecfeff', text: 'text-cyan-600', textColor: '#0891b2', border: 'border-cyan-200', borderColor: '#a5f3fc', hoverBorderColor: '#06b6d4' },
+    gray: { bg: 'bg-gray-50', bgColor: '#f9fafb', text: 'text-gray-600', textColor: '#4b5563', border: 'border-gray-200', borderColor: '#e5e7eb', hoverBorderColor: '#6b7280' },
+    red: { bg: 'bg-red-50', bgColor: '#fef2f2', text: 'text-red-600', textColor: '#dc2626', border: 'border-red-200', borderColor: '#fecaca', hoverBorderColor: '#ef4444' },
+    yellow: { bg: 'bg-yellow-50', bgColor: '#fefce8', text: 'text-yellow-600', textColor: '#ca8a04', border: 'border-yellow-200', borderColor: '#fef08a', hoverBorderColor: '#eab308' },
+    pink: { bg: 'bg-pink-50', bgColor: '#fdf2f8', text: 'text-pink-600', textColor: '#db2777', border: 'border-pink-200', borderColor: '#fbcfe8', hoverBorderColor: '#ec4899' },
+    indigo: { bg: 'bg-indigo-50', bgColor: '#eef2ff', text: 'text-indigo-600', textColor: '#4f46e5', border: 'border-indigo-200', borderColor: '#c7d2fe', hoverBorderColor: '#6366f1' },
   };
 
   // View 1: Category Selection
   if (!selectedCategoryId) {
-    const filteredCategories = categories.filter(cat => {
-      if (!searchQuery) return true;
-      const q = searchQuery.toLowerCase();
-      const coursesInCat = courses.filter(c => c.categoryId === cat.id);
-      return cat.name.toLowerCase().includes(q) || 
-             cat.description.toLowerCase().includes(q) ||
-             coursesInCat.some(c => c.title.toLowerCase().includes(q));
-    });
+    const sortedAndFilteredCategories = categories
+      .filter(cat => {
+        if (!searchQuery) return true;
+        const q = searchQuery.toLowerCase();
+        const coursesInCat = courses.filter(c => c.categoryId === cat.id);
+        return cat.name.toLowerCase().includes(q) || 
+               cat.description.toLowerCase().includes(q) ||
+               coursesInCat.some(c => c.title.toLowerCase().includes(q));
+      })
+      .sort((a, b) => (a.priority || 50) - (b.priority || 50));
 
     return (
       <div className="flex flex-col h-full bg-white p-6">
@@ -483,7 +513,7 @@ export const LearningManager: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredCategories.map(cat => {
+            {sortedAndFilteredCategories.map(cat => {
               const IconComponent = getCategoryIcon(cat.icon);
               const colors = colorMap[cat.color] || colorMap.gray;
               const courseCount = courses.filter(c => c.categoryId === cat.id).length;
@@ -492,10 +522,14 @@ export const LearningManager: React.FC = () => {
                 <div key={cat.id} className="relative group">
                   <button
                     onClick={() => setSelectedCategoryId(cat.id)}
-                    className={`w-full flex flex-col text-left bg-white border ${colors.border} rounded-xl p-6 ${colors.hover} hover:shadow-lg transition-all duration-300`}
+                    className={`w-full h-full flex flex-col text-left bg-white border rounded-xl p-6 hover:shadow-lg transition-all duration-300`}
+                    style={{ borderColor: colors.borderColor }}
                   >
-                    <div className={`w-14 h-14 ${colors.bg} rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
-                      <IconComponent className={`w-7 h-7 ${colors.text}`} />
+                    <div 
+                      className={`w-14 h-14 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}
+                      style={{ backgroundColor: colors.bgColor }}
+                    >
+                      <IconComponent className="w-7 h-7" style={{ color: colors.textColor }} />
                     </div>
                     <h3 className="text-lg font-bold text-gray-800 mb-2">{cat.name}</h3>
                     <p className="text-sm text-gray-500 line-clamp-2 flex-1">{cat.description}</p>
@@ -566,8 +600,8 @@ export const LearningManager: React.FC = () => {
                 返回
               </button>
               <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
-                <div className={`w-10 h-10 ${colors.bg} rounded-lg flex items-center justify-center`}>
-                  <IconComponent className={`w-5 h-5 ${colors.text}`} />
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: colors.bgColor }}>
+                  <IconComponent className="w-5 h-5" style={{ color: colors.textColor }} />
                 </div>
                 {selectedCategory?.name}
               </h1>
@@ -618,10 +652,14 @@ export const LearningManager: React.FC = () => {
                   }}
                 >
                   <div
-                    className={`w-full flex flex-col text-left bg-white border ${colors.border} rounded-xl p-6 ${colors.hover} hover:shadow-lg transition-all duration-300 h-full`}
+                    className="w-full flex flex-col text-left bg-white border rounded-xl p-6 hover:shadow-lg transition-all duration-300 h-full"
+                    style={{ borderColor: colors.borderColor }}
                   >
-                    <div className={`w-12 h-12 ${colors.bg} rounded-lg flex items-center justify-center mb-4 group-hover:scale-105 transition-transform`}>
-                      {React.createElement(getCategoryIcon(course.icon || 'GraduationCap'), { className: `w-6 h-6 ${colors.text}` })}
+                    <div 
+                      className="w-12 h-12 rounded-lg flex items-center justify-center mb-4 group-hover:scale-105 transition-transform"
+                      style={{ backgroundColor: colors.bgColor }}
+                    >
+                      {React.createElement(getCategoryIcon(course.icon || 'GraduationCap'), { className: 'w-6 h-6', style: { color: colors.textColor } })}
                     </div>
                     <h3 className="text-lg font-bold text-gray-800 mb-2 group-hover:text-gray-900 transition-colors">{course.title}</h3>
                     <p className="text-sm text-gray-500 line-clamp-2 flex-1">{course.description}</p>
@@ -699,8 +737,8 @@ export const LearningManager: React.FC = () => {
                 ));
               }
             }}
-            isFullscreen={false}
-            onToggleFullscreen={() => {}}
+            isFullscreen={isImmersive}
+            onToggleFullscreen={() => setIsImmersive(!isImmersive)}
             showViewToggle={false}
             viewMode="single"
             hideCategory={true}
@@ -911,12 +949,12 @@ export const LearningManager: React.FC = () => {
         <MarkdownEditor 
           note={content.data} 
           onUpdate={handleUpdateNote}
-          isFullscreen={false}
-          onToggleFullscreen={() => {}}
+          isFullscreen={isImmersive}
+          onToggleFullscreen={() => setIsImmersive(!isImmersive)}
           showViewToggle={content.origin === 'personal'}
-          viewMode="single"
+          viewMode="split"
           hideCategory={true}
-          initialEditMode={true}
+          initialEditMode={false}
         />
       );
     }
@@ -970,10 +1008,11 @@ export const LearningManager: React.FC = () => {
       {/* Left Sidebar: Course Content List */}
       {!isImmersive && (
         <div className="flex flex-col border-r border-gray-200 h-full w-80 flex-shrink-0 transition-all duration-300">
-          <div className="h-12 flex items-center px-4 border-b border-gray-200 bg-gray-50">
+          <div className="h-12 flex items-center px-4 border-b border-gray-200 bg-gray-50" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
             <button 
               onClick={() => { setSelectedCourseId(null); setSearchQuery(''); }}
               className="flex items-center gap-1 text-sm text-gray-600 hover:text-blue-600 transition-colors"
+              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             >
               <ArrowLeft className="w-4 h-4" />
               返回
@@ -982,6 +1021,7 @@ export const LearningManager: React.FC = () => {
           {selectedCourse ? (
             <LearningList 
               course={selectedCourse}
+              categories={categories}
               selectedItemId={null} 
               activeVideoId={primaryContent?.type === 'video' ? primaryContent.id : (secondaryContent?.type === 'video' ? secondaryContent.id : null)}
               activeNoteId={primaryContent?.type === 'note' ? primaryContent.id : (secondaryContent?.type === 'note' ? secondaryContent.id : null)}

@@ -77,7 +77,7 @@ export const NavRail: React.FC<NavRailProps> = ({
   return (
     <div className="w-20 h-full flex-shrink-0 bg-[#1E1E1E] flex flex-col items-center py-6 z-30 shadow-xl">
       {/* Top Logo / Spacer - Updated to 'Gu Yue' Design - Draggable Area */}
-      <div className="mb-8 relative group cursor-default select-none" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+      <div className="mb-8 relative group cursor-default" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
         <div className="w-12 h-12 rounded-xl bg-gradient-to-b from-slate-700 to-slate-900 flex items-center justify-center shadow-lg shadow-black/20 overflow-hidden border border-white/10 group-hover:border-blue-500/30 transition-colors">
            {/* Characters */}
            <div className="flex flex-col items-center justify-center leading-none z-10 text-gray-200 group-hover:text-white transition-colors">

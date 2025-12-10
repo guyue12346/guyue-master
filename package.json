@@ -2,7 +2,7 @@
   "name": "guyue-master",
   "productName": "Guyue Master",
   "private": true,
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "macOS 风格的多功能生产力工具",
   "author": "Guyue",
   "main": "dist-electron/main.js",

@@ -83,12 +83,11 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
     e.preventDefault();
     e.stopPropagation();
     
-    if (window.confirm('确定要删除这个分类吗？')) {
-      onDeleteCategory(id);
-      
-      if (editingId === id) {
-        cancelEdit();
-      }
+    // 确认弹窗由 onDeleteCategory 处理
+    onDeleteCategory(id);
+    
+    if (editingId === id) {
+      cancelEdit();
     }
   };
 
@@ -148,7 +147,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                   <div
                     key={cat.id}
                     onClick={() => !isSystem && startEdit(cat)}
-                    className={`relative flex items-center gap-2 px-3 py-2.5 rounded-lg transition-all select-none group
+                    className={`relative flex items-center gap-2 px-3 py-2.5 rounded-lg transition-all group
                       ${isEditing ? 'bg-white shadow-sm ring-1 ring-blue-500/20 z-10' : 'hover:bg-white hover:shadow-sm'}
                       ${isSystem ? 'opacity-70 cursor-default bg-gray-100/50' : 'cursor-pointer'}
                     `}
@@ -274,7 +273,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="h-full flex flex-col items-center justify-center text-gray-300 select-none">
+              <div className="h-full flex flex-col items-center justify-center text-gray-300">
                 <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4 border border-dashed border-gray-200">
                   <Edit2 className="w-8 h-8 opacity-30" />
                 </div>

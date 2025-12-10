@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import { NavRail } from './components/NavRail';
 import { Sidebar } from './components/Sidebar';
+import { SplashScreen } from './components/SplashScreen';
 import { Bookmark, Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata } from './types';
 import { Plus, Search, Command, Loader2 } from 'lucide-react';
 
@@ -37,6 +38,10 @@ const PromptModal = React.lazy(() => import('./components/PromptModal').then(m =
 const CategoryManagerModal = React.lazy(() => import('./components/CategoryManagerModal').then(m => ({ default: m.CategoryManagerModal })));
 const SettingsModal = React.lazy(() => import('./components/SettingsModal').then(m => ({ default: m.SettingsModal })));
 
+// Storage version for migration management
+const STORAGE_VERSION = 'v1';
+const STORAGE_VERSION_KEY = 'linkmaster_storage_version';
+
 const STORAGE_KEY_BOOKMARKS = 'linkmaster_bookmarks_v1';
 const STORAGE_KEY_CATEGORIES = 'linkmaster_categories_v1';
 const STORAGE_KEY_NOTES = 'linkmaster_notes_v1';
@@ -50,10 +55,104 @@ const STORAGE_KEY_RENDER_FILES = 'linkmaster_render_files_v1';
 const STORAGE_KEY_MODULES = 'linkmaster_modules_v1';
 const STORAGE_KEY_IMAGE_RECORDS = 'linkmaster_image_records_v1';
 const STORAGE_KEY_IMAGE_CONFIG = 'linkmaster_image_config_v1';
+const STORAGE_KEY_SPLASH_TEXT = 'linkmaster_splash_text_v1';
+
+// Data migration utility
+const migrateStorageData = () => {
+  const currentVersion = localStorage.getItem(STORAGE_VERSION_KEY);
+  
+  // First time or old version - perform migration
+  if (!currentVersion) {
+    console.log('Performing storage migration...');
+    
+    // Example: Migrate old keys to new keys
+    const oldKeys = [
+      { old: 'linkmaster_bookmarks', new: STORAGE_KEY_BOOKMARKS },
+      { old: 'linkmaster_categories', new: STORAGE_KEY_CATEGORIES },
+      { old: 'linkmaster_notes', new: STORAGE_KEY_NOTES },
+      { old: 'linkmaster_ssh', new: STORAGE_KEY_SSH },
+      { old: 'linkmaster_api', new: STORAGE_KEY_API },
+      { old: 'linkmaster_todos', new: STORAGE_KEY_TODOS },
+      { old: 'linkmaster_files', new: STORAGE_KEY_FILES },
+      { old: 'linkmaster_prompts', new: STORAGE_KEY_PROMPTS },
+      { old: 'linkmaster_markdown', new: STORAGE_KEY_MARKDOWN },
+      { old: 'linkmaster_render_files', new: STORAGE_KEY_RENDER_FILES },
+      { old: 'linkmaster_modules', new: STORAGE_KEY_MODULES },
+      { old: 'linkmaster_image_records', new: STORAGE_KEY_IMAGE_RECORDS },
+      { old: 'linkmaster_image_config', new: STORAGE_KEY_IMAGE_CONFIG },
+      { old: 'linkmaster_splash_text', new: STORAGE_KEY_SPLASH_TEXT },
+      { old: 'learning_data', new: 'learning_data_v1' },
+    ];
+    
+    oldKeys.forEach(({ old, new: newKey }) => {
+      const oldData = localStorage.getItem(old);
+      if (oldData && !localStorage.getItem(newKey)) {
+        localStorage.setItem(newKey, oldData);
+        console.log(`Migrated ${old} to ${newKey}`);
+      }
+    });
+    
+    // Set current version
+    localStorage.setItem(STORAGE_VERSION_KEY, STORAGE_VERSION);
+  }
+};
+
+// Safe JSON parse with error handling
+const safeJSONParse = <T,>(data: string | null, defaultValue: T): T => {
+  if (!data) return defaultValue;
+  try {
+    return JSON.parse(data);
+  } catch (e) {
+    console.error('JSON parse error:', e);
+    return defaultValue;
+  }
+};
 
 const App: React.FC = () => {
+  // Perform data migration on app start
+  useEffect(() => {
+    migrateStorageData();
+  }, []);
+
+  // Splash screen state
+  const [showSplash, setShowSplash] = useState(true);
+  const [splashText, setSplashText] = useState<string>(() => {
+    return localStorage.getItem(STORAGE_KEY_SPLASH_TEXT) || '有善始者实繁，能克终者盖寡';
+  });
+  const [isAppReady, setIsAppReady] = useState(false);
+  
+  // Performance: Cache for loaded data to prevent re-parsing
+  const [dataCache] = useState(() => new Map<string, any>());
+
   const [appMode, setAppMode] = useState<AppMode>('bookmarks');
-  const [moduleConfig, setModuleConfig] = useState<ModuleConfig[]>(DEFAULT_MODULE_CONFIG);
+  const [moduleConfig, setModuleConfig] = useState<ModuleConfig[]>(() => {
+    if (typeof window === 'undefined') {
+      return DEFAULT_MODULE_CONFIG;
+    }
+
+    const savedModules = localStorage.getItem(STORAGE_KEY_MODULES);
+    if (savedModules) {
+      try {
+        const parsed: ModuleConfig[] = JSON.parse(savedModules);
+        const merged = DEFAULT_MODULE_CONFIG.map(defaultModule => {
+          const existing = parsed.find(m => m.id === defaultModule.id);
+          return existing ? { ...defaultModule, ...existing, name: defaultModule.name } : defaultModule;
+        });
+        const legacyExtras = parsed.filter(m =>
+          !merged.find(item => item.id === m.id) &&
+          (m.id as string) !== 'tips' &&
+          (m.id as string) !== 'renderer' &&
+          (m.id as string) !== 'markdown' &&
+          m.name !== '文件归档'
+        );
+        return [...merged, ...legacyExtras];
+      } catch (error) {
+        console.error('Failed to parse module config, falling back to defaults', error);
+      }
+    }
+
+    return DEFAULT_MODULE_CONFIG;
+  });
   const [plugins, setPlugins] = useState<PluginMetadata[]>([]);
 
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
@@ -224,16 +323,75 @@ const App: React.FC = () => {
     };
   }, [moduleConfig]);
 
-  // Initial Load
+  // Initial Load - Performance: Batch load all data
   useEffect(() => {
-    // Load Bookmarks
+    const loadAllData = () => {
+      // Performance Optimization 1: Batch read from localStorage
+      const storageKeys = [
+        { key: STORAGE_KEY_BOOKMARKS, setter: setBookmarks, defaultValue: [
+          {id: '1', title: 'Google', url: 'https://google.com', category: '工具', note: 'Search Engine', priority: 1, createdAt: Date.now()},
+          {id: '2', title: 'Tailwind CSS', url: 'https://tailwindcss.com', category: '开发', note: 'CSS Framework', priority: 2, createdAt: Date.now()},
+        ]},
+        { key: STORAGE_KEY_CATEGORIES, setter: (data: any) => setCategoriesMap(prev => ({ ...prev, ...data })), defaultValue: null },
+        { key: STORAGE_KEY_NOTES, setter: setNotes, defaultValue: [{id: '1', content: '欢迎使用 NoteMaster！\n在这里记录你的灵感。', color: 'bg-yellow-100', createdAt: Date.now()}]},
+        { key: STORAGE_KEY_SSH, setter: setSSHRecords, defaultValue: [] },
+        { key: STORAGE_KEY_API, setter: setApiRecords, defaultValue: [] },
+        { key: STORAGE_KEY_TODOS, setter: setTodos, defaultValue: [] },
+        { key: STORAGE_KEY_FILES, setter: setFileRecords, defaultValue: [] },
+        { key: STORAGE_KEY_PROMPTS, setter: setPrompts, defaultValue: [] },
+        { key: STORAGE_KEY_MARKDOWN, setter: setMarkdownNotes, defaultValue: [] },
+        { key: STORAGE_KEY_IMAGE_RECORDS, setter: setImageRecords, defaultValue: [] },
+        { key: STORAGE_KEY_IMAGE_CONFIG, setter: setImageHostingConfig, defaultValue: { accessToken: '', owner: '', repo: '', path: '' } },
+      ];
+
+      // Load all data in batch
+      storageKeys.forEach(({ key, setter, defaultValue }) => {
+        // Performance Optimization 2: Use cache to avoid re-parsing
+        if (dataCache.has(key)) {
+          setter(dataCache.get(key) as any);
+          return;
+        }
+
+        const savedData = localStorage.getItem(key);
+        if (savedData) {
+          const parsed = safeJSONParse(savedData, defaultValue);
+          if (parsed !== defaultValue) {
+            dataCache.set(key, parsed);
+            setter(parsed as any);
+          } else if (defaultValue) {
+            setter(defaultValue as any);
+          }
+        } else if (defaultValue) {
+          setter(defaultValue as any);
+        }
+      });
+    };
+
+    loadAllData();
+  }, [dataCache]);
+
+  // Load Bookmarks (kept for backward compatibility, but now handled in batch)
+  useEffect(() => {
+    const savedBookmarks = localStorage.getItem(STORAGE_KEY_BOOKMARKS);
+    if (savedBookmarks && !dataCache.has(STORAGE_KEY_BOOKMARKS)) {
+      const parsed = safeJSONParse(savedBookmarks, [
+        {id: '1', title: 'Google', url: 'https://google.com', category: '工具', note: 'Search Engine', priority: 1, createdAt: Date.now()},
+        {id: '2', title: 'Tailwind CSS', url: 'https://tailwindcss.com', category: '开发', note: 'CSS Framework', priority: 2, createdAt: Date.now()},
+      ]);
+      setBookmarks(parsed);
+    }
+  }, [dataCache]);
+
+  // Note: Following individual loads are kept but will be skipped if batch load succeeded
+  useEffect(() => {
+    if (dataCache.has(STORAGE_KEY_BOOKMARKS)) return;
+    // Load Bookmarks (fallback)
     const savedBookmarks = localStorage.getItem(STORAGE_KEY_BOOKMARKS);
     if (savedBookmarks) {
-      try {
-        setBookmarks(JSON.parse(savedBookmarks));
-      } catch (e) {
-        console.error("Failed to parse bookmarks", e);
-      }
+      setBookmarks(safeJSONParse(savedBookmarks, [
+        {id: '1', title: 'Google', url: 'https://google.com', category: '工具', note: 'Search Engine', priority: 1, createdAt: Date.now()},
+        {id: '2', title: 'Tailwind CSS', url: 'https://tailwindcss.com', category: '开发', note: 'CSS Framework', priority: 2, createdAt: Date.now()},
+      ]));
     } else {
         setBookmarks([
             {id: '1', title: 'Google', url: 'https://google.com', category: '工具', note: 'Search Engine', priority: 1, createdAt: Date.now()},
@@ -337,29 +495,6 @@ const App: React.FC = () => {
       }
     }
 
-    // Load Module Config
-    const savedModules = localStorage.getItem(STORAGE_KEY_MODULES);
-    if (savedModules) {
-      try {
-        const parsed: ModuleConfig[] = JSON.parse(savedModules);
-        const merged = DEFAULT_MODULE_CONFIG.map(defaultModule => {
-          const existing = parsed.find(m => m.id === defaultModule.id);
-          // Force name from default config to ensure updates propagate, as renaming is not supported in UI yet
-          return existing ? { ...defaultModule, ...existing, name: defaultModule.name } : defaultModule;
-        });
-        const legacyExtras = parsed.filter(m => 
-          !merged.find(item => item.id === m.id) && 
-          (m.id as string) !== 'tips' &&
-          (m.id as string) !== 'renderer' &&
-          (m.id as string) !== 'markdown' &&
-          m.name !== '文件归档'
-        );
-        setModuleConfig([...merged, ...legacyExtras]);
-      } catch (e) {
-        setModuleConfig(DEFAULT_MODULE_CONFIG);
-      }
-    }
-
     // Load Plugins
     if (window.electronAPI) {
       window.electronAPI.getPlugins().then(loadedPlugins => {
@@ -388,7 +523,13 @@ const App: React.FC = () => {
           });
           return newConfig;
         });
+        
+        // All data loaded, mark app as ready
+        setIsAppReady(true);
       });
+    } else {
+      // No electron API, mark as ready immediately
+      setIsAppReady(true);
     }
   }, []);
 
@@ -403,58 +544,91 @@ const App: React.FC = () => {
     }
   }, [appMode]);
 
-  // Save on change
+  // Performance Optimization 3: Debounced save to reduce write operations
+  const saveToStorage = useMemo(() => {
+    const timeouts = new Map<string, NodeJS.Timeout>();
+    
+    return (key: string, data: any, delay: number = 300) => {
+      // Clear existing timeout
+      if (timeouts.has(key)) {
+        clearTimeout(timeouts.get(key)!);
+      }
+      
+      // Set new timeout
+      const timeout = setTimeout(() => {
+        try {
+          localStorage.setItem(key, JSON.stringify(data));
+          dataCache.set(key, data);
+          timeouts.delete(key);
+        } catch (e) {
+          console.error(`Failed to save ${key}:`, e);
+        }
+      }, delay);
+      
+      timeouts.set(key, timeout);
+    };
+  }, [dataCache]);
+
+  // Save on change - with debounce
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_BOOKMARKS, JSON.stringify(bookmarks));
-  }, [bookmarks]);
+    if (bookmarks.length > 0) {
+      saveToStorage(STORAGE_KEY_BOOKMARKS, bookmarks);
+    }
+  }, [bookmarks, saveToStorage]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(categoriesMap));
-  }, [categoriesMap]);
+    if (Object.keys(categoriesMap).length > 0) {
+      saveToStorage(STORAGE_KEY_CATEGORIES, categoriesMap);
+    }
+  }, [categoriesMap, saveToStorage]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(notes));
-  }, [notes]);
+    if (notes.length > 0) {
+      saveToStorage(STORAGE_KEY_NOTES, notes);
+    }
+  }, [notes, saveToStorage]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_SSH, JSON.stringify(sshRecords));
-  }, [sshRecords]);
+    saveToStorage(STORAGE_KEY_SSH, sshRecords);
+  }, [sshRecords, saveToStorage]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_API, JSON.stringify(apiRecords));
-  }, [apiRecords]);
+    saveToStorage(STORAGE_KEY_API, apiRecords);
+  }, [apiRecords, saveToStorage]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_TODOS, JSON.stringify(todos));
-  }, [todos]);
+    saveToStorage(STORAGE_KEY_TODOS, todos);
+  }, [todos, saveToStorage]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_FILES, JSON.stringify(fileRecords));
-  }, [fileRecords]);
+    saveToStorage(STORAGE_KEY_FILES, fileRecords);
+  }, [fileRecords, saveToStorage]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_PROMPTS, JSON.stringify(prompts));
-  }, [prompts]);
+    saveToStorage(STORAGE_KEY_PROMPTS, prompts);
+  }, [prompts, saveToStorage]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_MARKDOWN, JSON.stringify(markdownNotes));
-  }, [markdownNotes]);
+    saveToStorage(STORAGE_KEY_MARKDOWN, markdownNotes);
+  }, [markdownNotes, saveToStorage]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_IMAGE_RECORDS, JSON.stringify(imageRecords));
-  }, [imageRecords]);
+    saveToStorage(STORAGE_KEY_IMAGE_RECORDS, imageRecords);
+  }, [imageRecords, saveToStorage]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_IMAGE_CONFIG, JSON.stringify(imageHostingConfig));
-  }, [imageHostingConfig]);
+    saveToStorage(STORAGE_KEY_IMAGE_CONFIG, imageHostingConfig);
+  }, [imageHostingConfig, saveToStorage]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_RENDER_FILES, JSON.stringify(fileRecords));
-  }, [fileRecords]);
+    saveToStorage(STORAGE_KEY_RENDER_FILES, fileRecords, 500); // Longer delay for file records
+  }, [fileRecords, saveToStorage]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_MODULES, JSON.stringify(moduleConfig));
-  }, [moduleConfig]);
+    if (moduleConfig.length > 0) {
+      saveToStorage(STORAGE_KEY_MODULES, moduleConfig);
+    }
+  }, [moduleConfig, saveToStorage]);
 
   // --- Dynamic Categories for Notes (By Month) ---
   const noteCategories: Category[] = useMemo(() => {
@@ -481,7 +655,7 @@ const App: React.FC = () => {
   // Determine which categories to pass to sidebar
   const activeCategories = useMemo(() => {
     if (appMode === 'notes') return noteCategories;
-    if (appMode === 'renderer') return categoriesMap['files'] || DEFAULT_CATEGORIES;
+    if (appMode === 'files') return categoriesMap['files'] || DEFAULT_CATEGORIES;
     return categoriesMap[appMode] || DEFAULT_CATEGORIES;
   }, [appMode, noteCategories, categoriesMap]);
 
@@ -572,7 +746,7 @@ const App: React.FC = () => {
   }, [todos, selectedCategory, searchQuery, appMode]);
 
   const filteredFileRecords = useMemo(() => {
-    if (appMode !== 'files' && appMode !== 'renderer') return [];
+    if (appMode !== 'files') return [];
     return fileRecords
       .filter(f => selectedCategory === '全部' || f.category === selectedCategory)
       .filter(f => 
@@ -632,7 +806,7 @@ const App: React.FC = () => {
     if (appMode === 'api') return filteredAPIRecords.length;
     if (appMode === 'todo') return filteredTodos.length;
     if (appMode === 'files') return filteredFileRecords.length;
-    if (appMode === 'renderer') return filteredFileRecords.length;
+    if (appMode === 'files') return filteredFileRecords.length;
     if (appMode === 'prompts') return filteredPrompts.length;
     if (appMode === 'markdown') return filteredMarkdownNotes.length;
     if (appMode === 'image-hosting') return filteredImageRecords.length;
@@ -676,7 +850,7 @@ const App: React.FC = () => {
     if (appMode === 'todo') return '搜索任务...';
     if (appMode === 'files') return '搜索文件...';
     if (appMode === 'prompts') return '搜索 Prompt...';
-    if (appMode === 'renderer') return '搜索文件...';
+    if (appMode === 'files') return '搜索文件...';
     if (appMode === 'markdown') return '搜索笔记...';
     if (appMode === 'browser') return '搜索网页...';
     if (appMode === 'leetcode') return '搜索题目...';
@@ -901,11 +1075,28 @@ const App: React.FC = () => {
 
   // --- Handlers: Files ---
 
-  const handleSaveFile = (fileData: Partial<FileRecord>) => {
+  const handleSaveFile = async (fileData: Partial<FileRecord>) => {
      const catName = fileData.category || '未分类';
      ensureCategoryExists(catName);
 
      if (fileData.id) {
+       // 检查是否需要重命名文件
+       const existingFile = fileRecords.find(f => f.id === fileData.id);
+       if (existingFile && fileData.name && existingFile.name !== fileData.name && window.electronAPI) {
+         // 获取文件所在目录
+         const dirPath = existingFile.path.substring(0, existingFile.path.lastIndexOf('/'));
+         const newPath = dirPath ? `${dirPath}/${fileData.name}` : fileData.name;
+         
+         // 尝试重命名实际文件
+         const success = await window.electronAPI.renameFile(existingFile.path, newPath);
+         if (success) {
+           // 更新文件路径
+           fileData.path = newPath;
+         } else {
+           console.error('Failed to rename file on disk');
+           // 即使重命名失败，也继续更新记录（可能是记录与实际文件不同步的情况）
+         }
+       }
        setFileRecords(prev => prev.map(f => f.id === fileData.id ? { ...f, ...fileData } as FileRecord : f));
      } else {
        const newFile: FileRecord = {
@@ -924,8 +1115,27 @@ const App: React.FC = () => {
      setEditingFile(null);
   };
 
-  const handleDeleteFile = (id: string) => {
-    if (confirm('确定要删除这个文件记录吗?')) {
+  const handleDeleteFile = async (id: string) => {
+    const file = fileRecords.find(f => f.id === id);
+    if (!file) return;
+    
+    // 检查文件是否在归档目录内（自建或上传的文件需要实际删除）
+    const archiveRoot = localStorage.getItem('linkmaster_archive_path');
+    const isInArchive = archiveRoot && file.path.startsWith(archiveRoot);
+    
+    const message = isInArchive 
+      ? '确定要删除这个文件吗？文件将从磁盘上永久删除！'
+      : '确定要删除这个文件引用吗？（原文件不会被删除）';
+    
+    if (confirm(message)) {
+      // 如果是归档目录内的文件，实际删除
+      if (isInArchive && window.electronAPI) {
+        const success = await window.electronAPI.deleteFile(file.path);
+        if (!success) {
+          console.error('Failed to delete file from disk');
+          // 即使删除失败也继续移除记录（可能文件已不存在）
+        }
+      }
       setFileRecords(prev => prev.filter(f => f.id !== id));
     }
   };
@@ -1062,30 +1272,84 @@ const App: React.FC = () => {
     setIsCategoryManagerOpen(true);
   };
 
-  const handleDeleteCategory = (id: string) => {
-    if (window.confirm('确定要删除这个分类吗？注意：分类下的文件将被移动到"未分类"。')) {
-      setCategoriesMap(prev => ({
-        ...prev,
-        [appMode]: prev[appMode].filter(c => c.id !== id)
-      }));
-      
-      // Move files to Uncategorized
-      if (appMode === 'files') {
-        setFileRecords(prev => prev.map(f => f.category === id ? { ...f, category: '未分类' } : f));
+  const handleDeleteCategory = async (id: string) => {
+    // 获取分类名称
+    const category = (categoriesMap[appMode] || []).find(c => c.id === id);
+    if (!category) return;
+    
+    // 对于文件管理模块，检查是否要删除对应的文件夹
+    if (appMode === 'files') {
+      const archiveRoot = localStorage.getItem('linkmaster_archive_path');
+      if (archiveRoot && window.electronAPI) {
+        const confirmDelete = window.confirm(
+          `确定要删除分类"${category.name}"吗？\n\n⚠️ 警告：这将同时删除该分类下的文件夹及所有文件！`
+        );
+        
+        if (confirmDelete) {
+          // 删除该分类下所有文件类型的文件夹
+          const filesInCategory = fileRecords.filter(f => f.category === category.name);
+          const fileTypes = [...new Set(filesInCategory.map(f => f.type))];
+          
+          // 删除分类文件夹（包含所有子文件夹）
+          const safeCategoryName = category.name.replace(/[\\/:*?"<>|]/g, '_');
+          const categoryDir = await window.electronAPI.pathJoin(archiveRoot, safeCategoryName);
+          
+          console.log('Deleting category directory:', categoryDir);
+          
+          const deleteSuccess = await window.electronAPI.deleteDir(categoryDir);
+          console.log('Delete result:', deleteSuccess);
+          
+          if (!deleteSuccess) {
+            console.error('Failed to delete category directory:', categoryDir);
+          }
+          
+          // 删除该分类下的文件记录
+          setFileRecords(prev => prev.filter(f => f.category !== category.name));
+          
+          // 删除分类
+          setCategoriesMap(prev => ({
+            ...prev,
+            [appMode]: prev[appMode].filter(c => c.id !== id)
+          }));
+        }
+      } else {
+        // 没有归档目录，只删除记录
+        if (window.confirm('确定要删除这个分类吗？分类下的文件记录将被删除。')) {
+          setFileRecords(prev => prev.filter(f => f.category !== category.name));
+          setCategoriesMap(prev => ({
+            ...prev,
+            [appMode]: prev[appMode].filter(c => c.id !== id)
+          }));
+        }
+      }
+    } else {
+      // 其他模块，只删除分类
+      if (window.confirm('确定要删除这个分类吗？')) {
+        setCategoriesMap(prev => ({
+          ...prev,
+          [appMode]: prev[appMode].filter(c => c.id !== id)
+        }));
       }
     }
   };
 
   return (
-    <div className="fixed inset-0 flex overflow-hidden bg-gray-50 select-none">
-      {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && isSidebarVisible && (
-        <NavRail 
-          currentMode={appMode} 
-          onModeChange={setAppMode} 
-          onOpenSettings={() => setIsSettingsOpen(true)}
-          moduleConfig={moduleConfig}
+    <>
+      {showSplash ? (
+        <SplashScreen
+          customText={splashText}
+          onComplete={() => setShowSplash(false)}
         />
-      )}
+      ) : (
+        <div className="fixed inset-0 flex overflow-hidden bg-gray-50">
+          {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && isSidebarVisible && (
+            <NavRail 
+              currentMode={appMode} 
+              onModeChange={setAppMode} 
+              onOpenSettings={() => setIsSettingsOpen(true)}
+              moduleConfig={moduleConfig}
+            />
+          )}
 
       {appMode === 'markdown' && !isMarkdownFullscreen ? (
         <Suspense fallback={<div className="w-64 bg-gray-50 border-r border-gray-200" />}>
@@ -1143,7 +1407,7 @@ const App: React.FC = () => {
           onSelectCategory={setSelectedCategory}
           onOpenManager={() => setIsCategoryManagerOpen(true)}
           totalCount={getCurrentCount()}
-          files={appMode === 'renderer' ? filteredFileRecords : undefined}
+          files={appMode === 'files' ? filteredFileRecords : undefined}
           activeFileId={activeRenderFileId}
           onSelectFile={(id) => {
             setActiveRenderFileId(id);
@@ -1168,7 +1432,7 @@ const App: React.FC = () => {
               </div>
            </div>
            <div className="flex items-center gap-3 ml-4">
-              {appMode !== 'renderer' && appMode !== 'image-hosting' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
+              {appMode !== 'image-hosting' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
               <button 
                 onClick={() => {
                   switch (appMode) {
@@ -1291,6 +1555,7 @@ const App: React.FC = () => {
                 records={filteredImageRecords}
                 config={imageHostingConfig}
                 selectedCategory={selectedCategory}
+                categories={(categoriesMap[appMode] || DEFAULT_CATEGORIES).map(c => c.name)}
                 onUpdateRecords={setImageRecords}
                 onUpdateConfig={setImageHostingConfig}
               />
@@ -1354,54 +1619,6 @@ const App: React.FC = () => {
                 isFullscreen={isMarkdownFullscreen}
                 onToggleFullscreen={() => setIsMarkdownFullscreen(!isMarkdownFullscreen)}
               />
-            )}
-
-            {appMode === 'renderer' && activeRenderFileId && (
-              isEditingFile ? (
-                <MarkdownEditor
-                  note={{
-                    id: activeRenderFileId,
-                    title: fileRecords.find(f => f.id === activeRenderFileId)?.name || '',
-                    content: editingFileContent,
-                    category: fileRecords.find(f => f.id === activeRenderFileId)?.category || '',
-                    createdAt: 0,
-                    updatedAt: 0
-                  }}
-                  onUpdate={async (id, updates) => {
-                    if (updates.content !== undefined && window.electronAPI) {
-                      const file = fileRecords.find(f => f.id === id);
-                      if (file) {
-                        await window.electronAPI.writeFile(file.path, updates.content);
-                        setEditingFileContent(updates.content);
-                      }
-                    }
-                  }}
-                  isFullscreen={isRendererFullscreen}
-                  onToggleFullscreen={() => setIsRendererFullscreen(!isRendererFullscreen)}
-                  hideMetadata={true}
-                  showViewToggle={true}
-                  onExitEdit={() => setIsEditingFile(false)}
-                />
-              ) : (
-                <FileRenderer 
-                  file={fileRecords.find(f => f.id === activeRenderFileId)!} 
-                  isFullscreen={isRendererFullscreen}
-                  onToggleFullscreen={() => setIsRendererFullscreen(!isRendererFullscreen)}
-                  onEdit={async () => {
-                     const file = fileRecords.find(f => f.id === activeRenderFileId);
-                     if (file && window.electronAPI) {
-                        try {
-                          const content = await window.electronAPI.readFile(file.path);
-                          setEditingFileContent(content);
-                          setIsEditingFile(true);
-                        } catch (e) {
-                          console.error('Failed to read file for editing', e);
-                          alert('无法读取文件内容');
-                        }
-                     }
-                  }}
-                />
-              )
             )}
           </Suspense>
         </div>
@@ -1477,12 +1694,7 @@ const App: React.FC = () => {
             setCategoriesMap(prev => ({ ...prev, [appMode]: newCategories }));
             setSelectedCategory('全部');
           }}
-          onDeleteCategory={(id) => {
-            setCategoriesMap(prev => ({
-              ...prev,
-              [appMode]: prev[appMode].filter(c => c.id !== id)
-            }));
-          }}
+          onDeleteCategory={handleDeleteCategory}
         />
 
         <SettingsModal
@@ -1499,7 +1711,9 @@ const App: React.FC = () => {
           onUpdateModules={setModuleConfig}
         />
       </Suspense>
-    </div>
+        </div>
+      )}
+    </>
   );
 };
 

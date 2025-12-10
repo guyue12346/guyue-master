@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readFileBase64: (path: string) => ipcRenderer.invoke('read-file-base64', path),
   writeFile: (path: string, content: string) => ipcRenderer.invoke('write-file', path, content),
   deleteFile: (path: string) => ipcRenderer.invoke('delete-file', path),
+  renameFile: (oldPath: string, newPath: string) => ipcRenderer.invoke('rename-file', oldPath, newPath),
+  deleteDir: (path: string) => ipcRenderer.invoke('delete-dir', path),
   listDir: (path: string) => ipcRenderer.invoke('list-dir', path),
   getUserInfo: () => ipcRenderer.invoke('get-user-info'),
   uploadImage: (params: any) => ipcRenderer.invoke('upload-image', params),

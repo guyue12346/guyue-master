@@ -236,6 +236,28 @@ ipcMain.handle('delete-file', async (_, filePath) => {
   }
 });
 
+// IPC: 重命名文件
+ipcMain.handle('rename-file', async (_, oldPath: string, newPath: string) => {
+  try {
+    await fs.rename(oldPath, newPath);
+    return true;
+  } catch (error) {
+    console.error('Failed to rename file:', error);
+    return false;
+  }
+});
+
+// IPC: 删除目录（递归删除）
+ipcMain.handle('delete-dir', async (_, dirPath: string) => {
+  try {
+    await fs.rm(dirPath, { recursive: true, force: true });
+    return true;
+  } catch (error) {
+    console.error('Failed to delete directory:', error);
+    return false;
+  }
+});
+
 // IPC: 列出目录内容 (用于笔记文件树)
 ipcMain.handle('list-dir', async (_, dirPath) => {
   try {

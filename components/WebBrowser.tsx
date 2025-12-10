@@ -214,8 +214,8 @@ export const WebBrowser: React.FC<WebBrowserProps> = ({ initialUrl = 'https://ww
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 bg-white">
         {/* Browser Toolbar */}
-        <div className="h-12 bg-white border-b border-gray-200 flex items-center px-3 gap-3 shrink-0 shadow-sm z-10">
-          <div className="flex items-center gap-1">
+        <div className="h-12 bg-white border-b border-gray-200 flex items-center px-3 gap-3 shrink-0 shadow-sm z-10" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+          <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             <button 
               onClick={handleGoBack}
               disabled={!activeTab?.canGoBack}
@@ -239,7 +239,7 @@ export const WebBrowser: React.FC<WebBrowserProps> = ({ initialUrl = 'https://ww
           </div>
 
           {/* Address Bar */}
-          <form onSubmit={handleNavigate} className="flex-1 flex items-center">
+          <form onSubmit={handleNavigate} className="flex-1 flex items-center" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             <div className="relative w-full group">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 {inputUrl.startsWith('https') ? (

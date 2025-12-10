@@ -99,6 +99,13 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validate .md extension for note mode
+    if (mode === 'note' && !name.toLowerCase().endsWith('.md')) {
+      alert('文件名必须以 .md 结尾');
+      return;
+    }
+    
     setIsProcessing(true);
 
     let finalPath = path;
@@ -125,12 +132,7 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
         if (!dirCreated) throw new Error('无法创建目标文件夹');
 
         // 3. Construct target file path
-        // Ensure filename has extension
-        let fileName = name;
-        if (mode === 'note' && !fileName.toLowerCase().endsWith('.md')) {
-            fileName += '.md';
-        }
-        const targetPath = await window.electronAPI.pathJoin(targetDir, fileName);
+        const targetPath = await window.electronAPI.pathJoin(targetDir, name);
 
         // 4. Create or Copy file
         if (mode === 'note') {

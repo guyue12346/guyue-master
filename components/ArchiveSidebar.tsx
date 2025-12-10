@@ -142,7 +142,7 @@ export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({
           </div>
         ) : (
           Object.entries(groupedArchives).map(([folderName, { files, category }]) => (
-            <div key={folderName} className="select-none">
+            <div key={folderName}>
               {/* Folder Item */}
               <div 
                 className="flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-black/5 transition-colors group"

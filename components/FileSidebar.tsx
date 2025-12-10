@@ -88,7 +88,7 @@ export const FileSidebar: React.FC<FileSidebarProps> = ({
             return (
               <div key={categoryName} className="mb-1">
                 <div 
-                  className="flex items-center gap-1 px-2 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-200/50 rounded-md cursor-pointer select-none"
+                  className="flex items-center gap-1 px-2 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-200/50 rounded-md cursor-pointer"
                   onClick={() => toggleCategory(categoryName)}
                 >
                   {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}

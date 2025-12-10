@@ -242,8 +242,8 @@ export const LeetCodeManager: React.FC = () => {
       {/* Right Content: Webview */}
       <div className="flex-1 flex flex-col min-w-0 bg-white border-l border-gray-200">
         {/* Toolbar */}
-        <div className="h-12 border-b border-gray-200 flex items-center px-4 gap-2 bg-gray-50/50">
-          <div className="flex items-center gap-1">
+        <div className="h-12 border-b border-gray-200 flex items-center px-4 gap-2 bg-gray-50/50" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+          <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             <button 
               onClick={handleGoBack}
               disabled={!canGoBack}

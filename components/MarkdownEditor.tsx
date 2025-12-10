@@ -9,7 +9,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import 'katex/dist/katex.min.css';
 import { MarkdownNote } from '../types';
-import { Save, Edit3, Maximize2, Minimize2, Info, Lightbulb, AlertCircle, AlertTriangle, ShieldAlert, Book } from 'lucide-react';
+import { Save, Edit3, Maximize2, Minimize2, Info, Lightbulb, AlertCircle, AlertTriangle, ShieldAlert, Book, List } from 'lucide-react';
 
 interface MarkdownEditorProps {
   note: MarkdownNote | null;
@@ -41,6 +41,36 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const [content, setContent] = useState('');
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('');
+  const [showTOC, setShowTOC] = useState(false);
+  const [toc, setToc] = useState<{ level: number; text: string; id: string }[]>([]);
+
+  // Generate TOC from content
+  useEffect(() => {
+    if (content) {
+      const headers: { level: number; text: string; id: string }[] = [];
+      const lines = content.split('\n');
+      let inCodeBlock = false;
+      
+      lines.forEach(line => {
+        if (line.trim().startsWith('```')) {
+          inCodeBlock = !inCodeBlock;
+          return;
+        }
+        if (inCodeBlock) return;
+
+        const match = line.match(/^(#{1,6})\s+(.+)$/);
+        if (match) {
+          const level = match[1].length;
+          const text = match[2].trim();
+          const id = text.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u4e00-\u9fa5-]/g, '');
+          headers.push({ level, text, id });
+        }
+      });
+      setToc(headers);
+    } else {
+      setToc([]);
+    }
+  }, [content]);
 
   useEffect(() => {
     if (note) {
@@ -288,6 +318,60 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
               );
             }
             return <code className={className} {...props}>{children}</code>;
+          },
+          a: ({href, children, ...props}) => {
+            const handleClick = (e: React.MouseEvent) => {
+              e.preventDefault();
+              if (href) {
+                // 使用系统默认浏览器打开链接
+                if (window.electronAPI) {
+                  window.electronAPI.openPath(href);
+                } else {
+                  window.open(href, '_blank');
+                }
+              }
+            };
+            return (
+              <a 
+                href={href} 
+                onClick={handleClick}
+                className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                {...props}
+              >
+                {children}
+              </a>
+            );
+          },
+          // Add IDs to headings for TOC navigation
+          h1: ({children, ...props}) => {
+            const text = String(children);
+            const id = text.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u4e00-\u9fa5-]/g, '');
+            return <h1 id={id} {...props}>{children}</h1>;
+          },
+          h2: ({children, ...props}) => {
+            const text = String(children);
+            const id = text.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u4e00-\u9fa5-]/g, '');
+            return <h2 id={id} {...props}>{children}</h2>;
+          },
+          h3: ({children, ...props}) => {
+            const text = String(children);
+            const id = text.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u4e00-\u9fa5-]/g, '');
+            return <h3 id={id} {...props}>{children}</h3>;
+          },
+          h4: ({children, ...props}) => {
+            const text = String(children);
+            const id = text.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u4e00-\u9fa5-]/g, '');
+            return <h4 id={id} {...props}>{children}</h4>;
+          },
+          h5: ({children, ...props}) => {
+            const text = String(children);
+            const id = text.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u4e00-\u9fa5-]/g, '');
+            return <h5 id={id} {...props}>{children}</h5>;
+          },
+          h6: ({children, ...props}) => {
+            const text = String(children);
+            const id = text.toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u4e00-\u9fa5-]/g, '');
+            return <h6 id={id} {...props}>{children}</h6>;
           }
         }}
       >
@@ -299,9 +383,9 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   return (
     <div className="relative h-full flex flex-col bg-white">
       {/* Toolbar */}
-      <div className="h-14 border-b border-gray-100 flex items-center justify-between px-6 shrink-0">
+      <div className="h-14 border-b border-gray-100 flex items-center justify-between px-6 shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
         {isEditing ? (
-          <div className="flex items-center gap-4 w-full mr-4">
+          <div className="flex items-center gap-4 w-full mr-4" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             {!hideMetadata && (
               <>
                 <input
@@ -337,7 +421,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           </div>
         )}
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           {isEditing && viewMode === 'single' && (
             <div className="flex bg-gray-100 rounded-lg p-0.5 mr-2">
               <button
@@ -379,6 +463,19 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           >
             {onExitEdit ? <Book className="w-4 h-4" /> : (isEditing ? <Save className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />)}
           </button>
+
+          {/* TOC Button - only show when not editing and has headers */}
+          {!isEditing && toc.length > 0 && (
+            <button
+              onClick={() => setShowTOC(!showTOC)}
+              className={`p-2 rounded-lg transition-colors shrink-0 ${
+                showTOC ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
+              }`}
+              title={showTOC ? "隐藏目录" : "显示目录"}
+            >
+              <List className="w-4 h-4" />
+            </button>
+          )}
 
           <button 
             onClick={onToggleFullscreen}
@@ -430,10 +527,43 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
             </>
           )
         ) : (
-          /* View Mode: Full Width Preview */
-          <div className="w-full h-full overflow-y-auto bg-white p-8 md:p-12 lg:p-16 select-text">
-            <div className="prose prose-slate max-w-4xl mx-auto">
-              {renderMarkdown(content)}
+          /* View Mode: Full Width Preview with optional TOC */
+          <div className="w-full h-full overflow-hidden flex">
+            {/* TOC Sidebar */}
+            {showTOC && toc.length > 0 && (
+              <div className="w-64 h-full border-r border-gray-200 bg-gray-50/50 overflow-y-auto shrink-0">
+                <div className="p-4">
+                  <h3 className="text-sm font-semibold text-gray-600 mb-3 flex items-center gap-2">
+                    <List className="w-4 h-4" />
+                    目录
+                  </h3>
+                  <nav className="space-y-1">
+                    {toc.map((item, index) => (
+                      <a
+                        key={index}
+                        href={`#${item.id}`}
+                        className="block text-sm text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded px-2 py-1 transition-colors"
+                        style={{ paddingLeft: `${(item.level - 1) * 12 + 8}px` }}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          const element = document.getElementById(item.id);
+                          if (element) {
+                            element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                          }
+                        }}
+                      >
+                        {item.text}
+                      </a>
+                    ))}
+                  </nav>
+                </div>
+              </div>
+            )}
+            {/* Content */}
+            <div className="flex-1 h-full overflow-y-auto bg-white p-8 md:p-12 lg:p-16 select-text">
+              <div className="prose prose-slate max-w-4xl mx-auto">
+                {renderMarkdown(content)}
+              </div>
             </div>
           </div>
         )}
