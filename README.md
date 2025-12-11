@@ -74,9 +74,10 @@ Guyue Master 基于 React + Electron 打造，提供 macOS 原生风格的玻璃
 ## 📦 构建与发布
 
 1. 执行 `npm run electron:build:dmg` 生成 DMG；或使用 `electron:build:mac` 输出 `.app`/`.zip`。
-2. 构建产物默认位于 `release/`，其中 `latest-mac.yml`、`.blockmap` 等文件可直接用于自动更新或分发。
+2. 构建产物默认位于 `release/`（本地忽略），包含 `latest-mac.yml`、`.blockmap` 等自动更新文件。
 3. electron-builder 配置位于 `package.json -> build`，包含应用 ID、图标、签名参数、DMG 布局等，可按需调整。
 4. 若需 CI/CD，可在构建前运行 `npm run build && npx tsc -p electron/tsconfig.json` 以确保渲染层与主进程 TypeScript 完整编译。
+5. 发布时到 GitHub **Releases** 创建/更新对应 tag，将 `.dmg`、`.blockmap`、`latest-mac.yml` 上传至 Release Assets；若需记录元数据，可在 `latest-installers/` 填写下载链接与校验和。
 
 ## 📂 目录概览
 

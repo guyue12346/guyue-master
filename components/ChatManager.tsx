@@ -7,6 +7,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
+import remarkBreaks from 'remark-breaks';
 import rehypeKatex from 'rehype-katex';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -68,6 +69,27 @@ const CodeBlock: React.FC<{ language?: string; children: string }> = ({ language
   );
 };
 
+const shouldWrapAsCodeBlock = (content: string) => {
+  if (!content.includes('\n')) return false;
+  const lines = content.split('\n');
+  const hasWideIndent = lines.some(line => /^ {3,}\S/.test(line) || line.includes('   '));
+  const hasTreeChars = /[\\/|]/.test(content);
+  return hasWideIndent && hasTreeChars;
+};
+
+const normalizeMarkdownContent = (content: string) => {
+  if (!content) return '';
+  let normalized = content.replace(/\u00A0/g, ' ').trimEnd();
+  const fenceMatches = normalized.match(/```/g);
+  if (fenceMatches && fenceMatches.length % 2 !== 0) {
+    normalized = `${normalized}\n\n\`\`\``;
+  }
+  if (!normalized.includes('```') && shouldWrapAsCodeBlock(normalized)) {
+    normalized = `\`\`\`text\n${normalized}\n\`\`\``;
+  }
+  return normalized;
+};
+
 // ==================== Message Component ====================
 
 const MessageBubble: React.FC<{
@@ -76,6 +98,8 @@ const MessageBubble: React.FC<{
 }> = ({ message, isStreaming }) => {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
+  const rawContent = message.content || (isStreaming ? '▊' : '');
+  const displayContent = normalizeMarkdownContent(rawContent);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content);
@@ -109,7 +133,7 @@ const MessageBubble: React.FC<{
           ) : (
             <div className="prose prose-sm max-w-none prose-pre:p-0 prose-pre:bg-transparent">
               <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkMath]}
+                remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
                 rehypePlugins={[rehypeKatex]}
                 components={{
                   code({ className, children, ...props }) {
@@ -127,7 +151,7 @@ const MessageBubble: React.FC<{
                   },
                 }}
               >
-                {message.content || (isStreaming ? '▊' : '')}
+                {displayContent}
               </ReactMarkdown>
             </div>
           )}

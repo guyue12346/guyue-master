@@ -12,6 +12,11 @@ dist
 dist-ssr
 dist-electron
 release
+latest-installers/*.dmg
+latest-installers/*.blockmap
+latest-installers/*.zip
+latest-installers/*.pkg
+latest-installers/*.yml
 *.local
 .env
 
