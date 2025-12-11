@@ -72,9 +72,9 @@ const CodeBlock: React.FC<{ language?: string; children: string }> = ({ language
 const shouldWrapAsCodeBlock = (content: string) => {
   if (!content.includes('\n')) return false;
   const lines = content.split('\n');
-  const hasWideIndent = lines.some(line => /^ {3,}\S/.test(line) || line.includes('   '));
-  const hasTreeChars = /[\\/|]/.test(content);
-  return hasWideIndent && hasTreeChars;
+  const hasTreeStructure = lines.some(line => /^ {2,}[\\/|]/.test(line) || /-->/.test(line));
+  const hasGitBranchPattern = lines.some(line => line.startsWith('* ')) && lines.some(line => /^  \S/.test(line));
+  return hasTreeStructure || hasGitBranchPattern;
 };
 
 const normalizeMarkdownContent = (content: string) => {
