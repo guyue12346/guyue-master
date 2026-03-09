@@ -4,6 +4,9 @@ import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import pty from 'node-pty';
 import os from 'os';
+import net from 'net';
+import nodemailer from 'nodemailer';
+import dns from 'dns';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,6 +15,7 @@ const __dirname = path.dirname(__filename);
 const isDev = process.env.NODE_ENV === 'development';
 
 let mainWindow: BrowserWindow | null = null;
+let zenmuxUsageWindow: BrowserWindow | null = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -19,9 +23,10 @@ function createWindow() {
     height: 900,
     minWidth: 1000,
     minHeight: 600,
+    show: false, // 先隐藏窗口，等内容准备好再显示
     titleBarStyle: 'hiddenInset', // macOS 风格标题栏
     trafficLightPosition: { x: 15, y: 15 }, // 红绿灯位置
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#f5f5f7', // 与应用背景色保持一致
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -29,6 +34,31 @@ function createWindow() {
       sandbox: false,
       webviewTag: true, // Enable webview tag
     },
+  });
+
+  // 当页面准备好显示时再展示窗口，避免白屏/黑屏闪烁
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show();
+  });
+
+  // 加载失败时的处理
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error('Page failed to load:', errorCode, errorDescription);
+    // 开发环境下可能是 Vite 还没启动，尝试重新加载
+    if (isDev && errorCode === -102) { // ERR_CONNECTION_REFUSED
+      setTimeout(() => {
+        mainWindow?.loadURL('http://localhost:3000');
+      }, 1000);
+    }
+  });
+
+  // 渲染进程崩溃时的处理
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.error('Render process gone:', details.reason);
+    if (details.reason === 'crashed') {
+      // 尝试重新加载页面
+      mainWindow?.reload();
+    }
   });
 
   // 开发环境加载 Vite 开发服务器
@@ -53,6 +83,101 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+}
+
+// Zenmux 登录窗口
+const ZENMUX_COST_PAGE_URL = 'https://zenmux.ai/platform/cost';
+
+function createZenmuxUsageWindow(showWindow = true): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 1280,
+    height: 860,
+    minWidth: 960,
+    minHeight: 640,
+    show: showWindow,
+    title: 'Zenmux 登录',
+    autoHideMenuBar: true,
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      partition: 'persist:zenmux',
+    },
+  });
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http:') || url.startsWith('https:')) {
+      void shell.openExternal(url);
+      return { action: 'deny' };
+    }
+    return { action: 'allow' };
+  });
+
+  void win.loadURL(ZENMUX_COST_PAGE_URL);
+
+  win.on('closed', () => {
+    if (zenmuxUsageWindow === win) {
+      zenmuxUsageWindow = null;
+    }
+  });
+
+  return win;
+}
+
+function waitForWindowLoad(win: BrowserWindow, timeoutMs = 30000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (win.isDestroyed()) {
+      reject(new Error('窗口已关闭'));
+      return;
+    }
+
+    if (!win.webContents.isLoadingMainFrame()) {
+      resolve();
+      return;
+    }
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      win.webContents.removeListener('did-finish-load', onFinish);
+      win.webContents.removeListener('did-fail-load', onFail);
+    };
+
+    const onFinish = () => {
+      cleanup();
+      resolve();
+    };
+
+    const onFail = (_event: unknown, errorCode: number, errorDescription: string) => {
+      cleanup();
+      reject(new Error(`页面加载失败(${errorCode}): ${errorDescription || 'unknown'}`));
+    };
+
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('页面加载超时，请重试'));
+    }, timeoutMs);
+
+    win.webContents.once('did-finish-load', onFinish);
+    win.webContents.once('did-fail-load', onFail);
+  });
+}
+
+async function ensureZenmuxUsageWindow(showWindow = false): Promise<BrowserWindow> {
+  if (!zenmuxUsageWindow || zenmuxUsageWindow.isDestroyed()) {
+    zenmuxUsageWindow = createZenmuxUsageWindow(showWindow);
+  } else if (showWindow) {
+    zenmuxUsageWindow.show();
+    zenmuxUsageWindow.focus();
+  }
+
+  const currentUrl = zenmuxUsageWindow.webContents.getURL();
+  if (!currentUrl.includes('zenmux.ai/platform')) {
+    void zenmuxUsageWindow.loadURL(ZENMUX_COST_PAGE_URL);
+  }
+
+  await waitForWindowLoad(zenmuxUsageWindow);
+  return zenmuxUsageWindow;
 }
 
 // 当 Electron 完成初始化时创建窗口
@@ -343,6 +468,171 @@ ipcMain.handle('upload-image', async (event, { accessToken, owner, repo, path: f
   }
 });
 
+// --- LeetCode API ---
+ipcMain.handle('leetcode-api', async (event, { query, variables, session }) => {
+  try {
+    // 支持 REST API 调用
+    if (query === '__REST__' && variables?.url) {
+      const response = await fetch(variables.url, {
+        method: 'GET',
+        headers: {
+          'Cookie': `LEETCODE_SESSION=${session}`,
+          'Referer': 'https://leetcode.cn/',
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        },
+      });
+
+      const text = await response.text();
+      // 尝试解析为 JSON
+      try {
+        return JSON.parse(text);
+      } catch {
+        return text;
+      }
+    }
+
+    // GraphQL 请求
+    const response = await fetch('https://leetcode.cn/graphql/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': `LEETCODE_SESSION=${session}`,
+        'Referer': 'https://leetcode.cn/',
+        'Origin': 'https://leetcode.cn',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('LeetCode API error:', error);
+    throw error;
+  }
+});
+
+// --- Zenmux Usage API ---
+interface ZenmuxUsageResult {
+  category: 'Zenmux';
+  totalRequests: number;
+  totalCost: number;
+  balance: number;
+  monthlyRequests: number;
+  monthlyCost: number;
+  lastUpdated: number;
+  source: string;
+}
+
+async function fetchZenmuxUsageFromBrowser(): Promise<ZenmuxUsageResult> {
+  const win = await ensureZenmuxUsageWindow(false);
+
+  // 从页面DOM中提取使用统计数据
+  const script = String.raw`
+    (async () => {
+      const result = {
+        ok: false,
+        data: null,
+        reason: '',
+      };
+
+      try {
+        // 检查是否在正确的页面
+        if (!location.href.includes('zenmux.ai/platform')) {
+          result.reason = 'not-on-zenmux-platform-page';
+          return result;
+        }
+
+        // 尝试从页面提取数据
+        const extractNumber = (text) => {
+          if (!text) return 0;
+          const match = text.match(/[\d,.]+/);
+          if (!match) return 0;
+          return parseFloat(match[0].replace(/,/g, ''));
+        };
+
+        // 查找包含统计数据的元素
+        const findTextContent = (keywords) => {
+          const elements = document.querySelectorAll('*');
+          for (const el of elements) {
+            const text = el.textContent?.trim() || '';
+            if (keywords.some(k => text.toLowerCase().includes(k.toLowerCase()))) {
+              return text;
+            }
+          }
+          return null;
+        };
+
+        // 提取各项数据
+        const data = {
+          total_requests: 0,
+          total_cost: 0,
+          balance: 0,
+          monthly_requests: 0,
+          monthly_cost: 0,
+        };
+
+        // 尝试从页面提取数据
+        // 注意: 实际的选择器需要根据Zenmux页面的实际结构来调整
+        const allText = document.body.innerText;
+        
+        // 简单的数据提取逻辑(需要根据实际页面调整)
+        const balanceMatch = allText.match(/balance[:\s]+\$?([\d,.]+)/i);
+        if (balanceMatch) data.balance = extractNumber(balanceMatch[1]);
+
+        const costMatch = allText.match(/total.*cost[:\s]+\$?([\d,.]+)/i);
+        if (costMatch) data.total_cost = extractNumber(costMatch[1]);
+
+        const requestsMatch = allText.match(/total.*requests?[:\s]+([\d,.]+)/i);
+        if (requestsMatch) data.total_requests = extractNumber(requestsMatch[1]);
+
+        result.ok = true;
+        result.data = data;
+        return result;
+      } catch (error) {
+        result.reason = error.message || 'extraction-error';
+        return result;
+      }
+    })();
+  `;
+
+  const extractResult = await win.webContents.executeJavaScript(script, true) as any;
+
+  if (!extractResult?.ok) {
+    throw new Error(`请先在登录窗口完成 Zenmux 登录 (${extractResult?.reason || 'unknown'})`);
+  }
+
+  const data = extractResult.data || {};
+  
+  return {
+    category: 'Zenmux',
+    totalRequests: data.total_requests || 0,
+    totalCost: data.total_cost || 0,
+    balance: data.balance || 0,
+    monthlyRequests: data.monthly_requests || 0,
+    monthlyCost: data.monthly_cost || 0,
+    lastUpdated: Date.now(),
+    source: 'browser-dom',
+  };
+}
+
+ipcMain.handle('open-zenmux-login', async () => {
+  try {
+    await ensureZenmuxUsageWindow(true);
+    return true;
+  } catch (error) {
+    throw new Error((error as Error).message || '打开登录窗口失败');
+  }
+});
+
+ipcMain.handle('fetch-zenmux-usage-browser', async () => {
+  try {
+    return await fetchZenmuxUsageFromBrowser();
+  } catch (error) {
+    throw new Error((error as Error).message || '同步数据失败');
+  }
+});
+
 // --- Plugin System ---
 ipcMain.handle('get-plugins', async () => {
   const pluginsDir = path.join(app.getPath('userData'), 'plugins');
@@ -513,3 +803,172 @@ ipcMain.on('terminal-close', (event, id) => {
   }
 });
 
+// ==================== 应用数据文件存储 ====================
+// 获取应用数据目录路径
+function getAppDataDir(): string {
+  return path.join(app.getPath('userData'), 'app-data');
+}
+
+// 确保应用数据目录存在
+async function ensureAppDataDir(): Promise<void> {
+  const dir = getAppDataDir();
+  try {
+    await fs.access(dir);
+  } catch {
+    await fs.mkdir(dir, { recursive: true });
+  }
+}
+
+// IPC: 保存应用数据到文件
+ipcMain.handle('save-app-data', async (_, key: string, data: any) => {
+  try {
+    await ensureAppDataDir();
+    const filePath = path.join(getAppDataDir(), `${key}.json`);
+    await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    return true;
+  } catch (error) {
+    console.error(`Failed to save app data [${key}]:`, error);
+    return false;
+  }
+});
+
+// IPC: 读取应用数据文件
+ipcMain.handle('load-app-data', async (_, key: string) => {
+  try {
+    const filePath = path.join(getAppDataDir(), `${key}.json`);
+    const content = await fs.readFile(filePath, 'utf-8');
+    return JSON.parse(content);
+  } catch (error) {
+    // 文件不存在时返回 null，不打印错误
+    return null;
+  }
+});
+
+// IPC: 检查应用数据文件是否存在
+ipcMain.handle('app-data-exists', async (_, key: string) => {
+  try {
+    const filePath = path.join(getAppDataDir(), `${key}.json`);
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+// ==================== 邮件发送功能 ====================
+interface EmailConfig {
+  enabled: boolean;
+  smtp: {
+    host: string;
+    port: number;
+    secure: boolean;
+    user: string;
+    pass: string;
+  };
+  recipient: string;
+}
+
+// 常用 SMTP 服务器 IP 映射（绕过 DNS 污染/代理劫持）
+const SMTP_IP_MAP: Record<string, string[]> = {
+  'smtp.qq.com': ['43.129.255.54', '43.137.210.144', '109.244.198.105'],
+  'smtp.163.com': ['220.181.12.15', '123.126.97.79'],
+  'smtp.126.com': ['220.181.12.15', '123.126.97.79'],
+  'smtp.gmail.com': ['142.250.157.108', '142.250.157.109'],
+  'smtp.outlook.com': ['52.98.154.2', '52.98.138.66'],
+};
+
+// 测试 IP 是否可连接
+async function testConnection(host: string, port: number, timeout = 5000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    socket.setTimeout(timeout);
+    socket.on('connect', () => { socket.destroy(); resolve(true); });
+    socket.on('error', () => { socket.destroy(); resolve(false); });
+    socket.on('timeout', () => { socket.destroy(); resolve(false); });
+    socket.connect(port, host);
+  });
+}
+
+// 获取可用的 SMTP 服务器地址
+async function getSmtpHost(hostname: string, port: number): Promise<string> {
+  const cleanHostname = hostname.trim().toLowerCase();
+
+  // 如果有预设 IP，尝试连接
+  const ips = SMTP_IP_MAP[cleanHostname];
+  if (ips && ips.length > 0) {
+    for (const ip of ips) {
+      if (await testConnection(ip, port)) {
+        return ip;
+      }
+    }
+    // 即使测试失败，也使用第一个 IP（避免 DNS 查询）
+    return ips[0];
+  }
+  return hostname;
+}
+
+// 创建邮件传输器
+async function createTransporter(config: EmailConfig) {
+  const host = await getSmtpHost(config.smtp.host, config.smtp.port);
+
+  return nodemailer.createTransport({
+    host: host,
+    port: config.smtp.port,
+    secure: config.smtp.secure,
+    auth: {
+      user: config.smtp.user,
+      pass: config.smtp.pass,
+    },
+    tls: {
+      rejectUnauthorized: false,
+      servername: config.smtp.host,
+    },
+  } as nodemailer.TransportOptions);
+}
+
+// IPC: 发送邮件
+ipcMain.handle('send-email', async (_, { config, subject, content }: { config: EmailConfig; subject: string; content: string }) => {
+  try {
+    const transporter = await createTransporter(config);
+
+    await transporter.sendMail({
+      from: config.smtp.user,
+      to: config.recipient,
+      subject: subject,
+      html: content,
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to send email:', error);
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+// IPC: 测试邮件配置
+ipcMain.handle('test-email-config', async (_, config: EmailConfig) => {
+  try {
+    const transporter = await createTransporter(config);
+    await transporter.verify();
+
+    await transporter.sendMail({
+      from: config.smtp.user,
+      to: config.recipient,
+      subject: '[Guyue Master] 邮件配置测试',
+      html: `
+        <div style="font-family: sans-serif; padding: 20px;">
+          <h2 style="color: #3b82f6;">邮件配置测试成功</h2>
+          <p>如果你收到这封邮件，说明 SMTP 配置正确！</p>
+          <p style="color: #6b7280; font-size: 12px; margin-top: 20px;">
+            发送时间: ${new Date().toLocaleString('zh-CN')}
+          </p>
+        </div>
+      `,
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Email config test failed:', error);
+    return { success: false, error: (error as Error).message };
+  }
+});

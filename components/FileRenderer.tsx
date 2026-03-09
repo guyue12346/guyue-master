@@ -235,6 +235,32 @@ const renderFileContent = (file: FileRecord, content: string) => {
             text-align: center !important;
           }
 
+          /* Override prose inline code styles - remove auto-added quotes */
+          .prose :where(code):not(:where([class~="not-prose"], [class~="not-prose"] *))::before,
+          .prose :where(code):not(:where([class~="not-prose"], [class~="not-prose"] *))::after {
+            content: none !important;
+          }
+          .prose :where(code):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+            background-color: #f3f4f6;
+            padding: 0.2em 0.4em;
+            border-radius: 0.25rem;
+            font-size: 0.875em;
+            font-weight: 500;
+          }
+
+          /* Override prose blockquote styles - no italic, no quotes */
+          .prose :where(blockquote):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+            font-style: normal !important;
+            quotes: none !important;
+          }
+          .prose :where(blockquote):not(:where([class~="not-prose"], [class~="not-prose"] *)) p {
+            font-style: normal !important;
+          }
+          .prose :where(blockquote):not(:where([class~="not-prose"], [class~="not-prose"] *))::before,
+          .prose :where(blockquote):not(:where([class~="not-prose"], [class~="not-prose"] *))::after {
+            content: none !important;
+          }
+
           /* GitHub Alerts / Callouts */
           .markdown-alert {
             padding: 0.5rem 1rem;
@@ -242,6 +268,10 @@ const renderFileContent = (file: FileRecord, content: string) => {
             border-left: 0.25rem solid;
             border-radius: 0.25rem;
             font-size: 0.95em;
+            font-style: normal !important;
+          }
+          .markdown-alert p {
+            font-style: normal !important;
           }
           .markdown-alert-title {
             display: flex;
@@ -255,26 +285,48 @@ const renderFileContent = (file: FileRecord, content: string) => {
             height: 16px;
             fill: currentColor;
           }
-          
+
           /* Note */
           .markdown-alert-note { border-color: #0969da; background-color: #f0f6fc; color: #1f2328; }
           .markdown-alert-note .markdown-alert-title { color: #0969da; }
-          
+
           /* Tip */
           .markdown-alert-tip { border-color: #1a7f37; background-color: #f0fdf4; color: #1f2328; }
           .markdown-alert-tip .markdown-alert-title { color: #1a7f37; }
-          
+
           /* Important */
           .markdown-alert-important { border-color: #8250df; background-color: #fbfaff; color: #1f2328; }
           .markdown-alert-important .markdown-alert-title { color: #8250df; }
-          
+
           /* Warning */
           .markdown-alert-warning { border-color: #9a6700; background-color: #fff8c5; color: #1f2328; }
           .markdown-alert-warning .markdown-alert-title { color: #9a6700; }
-          
+
           /* Caution */
           .markdown-alert-caution { border-color: #d1242f; background-color: #fff5f5; color: #1f2328; }
           .markdown-alert-caution .markdown-alert-title { color: #d1242f; }
+
+          /* Custom blockquote colors */
+          .blockquote-color {
+            padding: 0.5rem 1rem;
+            margin: 1rem 0;
+            border-left: 0.25rem solid;
+            border-radius: 0.25rem;
+            font-style: normal !important;
+          }
+          .blockquote-color p { font-style: normal !important; margin: 0; }
+
+          /* 10 Color options */
+          .bq-red { border-color: #ef4444 !important; background-color: #fef2f2 !important; }
+          .bq-orange { border-color: #f97316 !important; background-color: #fff7ed !important; }
+          .bq-yellow { border-color: #eab308 !important; background-color: #fefce8 !important; }
+          .bq-green { border-color: #22c55e !important; background-color: #f0fdf4 !important; }
+          .bq-blue { border-color: #3b82f6 !important; background-color: #eff6ff !important; }
+          .bq-purple { border-color: #a855f7 !important; background-color: #faf5ff !important; }
+          .bq-pink { border-color: #ec4899 !important; background-color: #fdf2f8 !important; }
+          .bq-gray { border-color: #6b7280 !important; background-color: #f9fafb !important; }
+          .bq-cyan { border-color: #06b6d4 !important; background-color: #ecfeff !important; }
+          .bq-teal { border-color: #14b8a6 !important; background-color: #f0fdfa !important; }
         `}</style>
         <div className="prose prose-slate max-w-4xl mx-auto">
           <ReactMarkdown 
@@ -314,21 +366,22 @@ const renderFileContent = (file: FileRecord, content: string) => {
               blockquote: ({node, children, ...props}) => {
                 const childrenArray = React.Children.toArray(children);
                 const firstChild = childrenArray[0];
-                
+                const validColors = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'gray', 'cyan', 'teal'];
+
                 if (React.isValidElement(firstChild) && firstChild.type === 'p') {
-                  const props = firstChild.props as { children?: React.ReactNode };
-                  const pChildren = React.Children.toArray(props.children);
+                  const pProps = firstChild.props as { children?: React.ReactNode };
+                  const pChildren = React.Children.toArray(pProps.children);
                   const firstText = pChildren[0];
-                  
+
                   if (typeof firstText === 'string') {
-                    // Match [!NOTE] Title or [!NOTE]
-                    const match = firstText.match(/^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:[ \t]+)?(.*?)(\n|$)/i);
-                    if (match) {
-                      const type = match[1].toLowerCase();
-                      // If title group is empty, use type as title
-                      const title = match[2]?.trim() || type.charAt(0).toUpperCase() + type.slice(1);
-                      const remainingText = firstText.substring(match[0].length);
-                      
+                    // Match [!NOTE|color] Title or [!NOTE] - Alert with optional color
+                    const alertMatch = firstText.match(/^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)(?:\|(\w+))?\](?:[ \t]+)?(.*?)(\n|$)/i);
+                    if (alertMatch) {
+                      const type = alertMatch[1].toLowerCase();
+                      const color = alertMatch[2]?.toLowerCase();
+                      const title = alertMatch[3]?.trim() || type.charAt(0).toUpperCase() + type.slice(1);
+                      const remainingText = firstText.substring(alertMatch[0].length);
+
                       const getAlertIcon = (t: string) => {
                         switch(t) {
                           case 'note': return <Info />;
@@ -343,13 +396,32 @@ const renderFileContent = (file: FileRecord, content: string) => {
                       const newPChildren = [remainingText, ...pChildren.slice(1)];
                       const hasContent = remainingText.trim() || newPChildren.length > 1;
 
+                      // Use custom color if provided, otherwise use alert type color
+                      const colorClass = color && validColors.includes(color) ? `bq-${color}` : '';
+                      const alertClass = colorClass ? `markdown-alert ${colorClass}` : `markdown-alert markdown-alert-${type}`;
+
                       return (
-                        <div className={`markdown-alert markdown-alert-${type}`}>
+                        <div className={alertClass}>
                           <p className="markdown-alert-title">
                             {getAlertIcon(type)}
                             {title}
                           </p>
                           {hasContent && <p>{newPChildren}</p>}
+                          {childrenArray.slice(1)}
+                        </div>
+                      );
+                    }
+
+                    // Match [color] content - plain blockquote with color
+                    const colorMatch = firstText.match(/^\s*\[(\w+)\]\s*/);
+                    if (colorMatch && validColors.includes(colorMatch[1].toLowerCase())) {
+                      const color = colorMatch[1].toLowerCase();
+                      const remainingText = firstText.substring(colorMatch[0].length);
+                      const newPChildren = [remainingText, ...pChildren.slice(1)];
+
+                      return (
+                        <div className={`blockquote-color bq-${color}`}>
+                          <p>{newPChildren}</p>
                           {childrenArray.slice(1)}
                         </div>
                       );
@@ -383,11 +455,13 @@ const renderFileContent = (file: FileRecord, content: string) => {
                   }
                 }
 
-                // Parse alt text for width and border
-                // Syntax: ![alt|width|border]
+                // Parse alt text for width, border and caption
+                // Syntax: ![alt|width|border|caption:图注] or ![alt|width|border|title:标题]
                 const altText = alt || '';
                 let width: string | undefined = undefined;
                 let hasBorder = false;
+                let caption: string | undefined = undefined;
+                let captionStyle: 'italic' | 'bold' = 'italic'; // 默认灰色斜体
                 let realAlt = altText;
 
                 // Split by pipe (support both half-width | and full-width ｜)
@@ -396,14 +470,23 @@ const renderFileContent = (file: FileRecord, content: string) => {
                 if (parts.length > 1) {
                     realAlt = parts[0];
                     for (let i = 1; i < parts.length; i++) {
-                        const part = parts[i].trim().toLowerCase();
-                        if (part === 'border') {
+                        const part = parts[i].trim();
+                        const partLower = part.toLowerCase();
+                        if (partLower === 'border') {
                             hasBorder = true;
-                        } else if (/^\d+(%|px)?$/.test(part)) {
-                             if (!isNaN(Number(part))) {
-                                 width = `${part}px`;
+                        } else if (partLower.startsWith('caption:')) {
+                            // caption: 灰色斜体样式
+                            caption = part.replace(/^caption:/i, '').trim();
+                            captionStyle = 'italic';
+                        } else if (partLower.startsWith('title:') || part.startsWith('标题:') || part.startsWith('标题：')) {
+                            // title:/标题: 黑色加粗样式
+                            caption = part.replace(/^(title:|标题:|标题：)/i, '').trim();
+                            captionStyle = 'bold';
+                        } else if (/^\d+(%|px)?$/.test(partLower)) {
+                             if (!isNaN(Number(partLower))) {
+                                 width = `${partLower}px`;
                              } else {
-                                 width = part;
+                                 width = partLower;
                              }
                         }
                     }
@@ -414,24 +497,24 @@ const renderFileContent = (file: FileRecord, content: string) => {
                     }
                 }
 
-                const style: React.CSSProperties = { 
+                const imgStyle: React.CSSProperties = { 
                     width: width,
                     maxWidth: '100%' 
                 };
 
                 // Default: no border, no shadow. 
-                let className = "mx-auto my-4"; 
+                let imgClassName = "mx-auto"; 
                 
                 if (hasBorder) {
-                    className += " rounded-lg shadow-md";
+                    imgClassName += " rounded-lg shadow-md";
                 }
 
-                return (
+                const imgElement = (
                   <img 
                     src={finalSrc} 
                     alt={realAlt} 
-                    style={style}
-                    className={className}
+                    style={imgStyle}
+                    className={imgClassName}
                     onError={(e) => {
                       // Fallback for excalidraw: try .png if .svg failed
                       const target = e.target as HTMLImageElement;
@@ -441,6 +524,27 @@ const renderFileContent = (file: FileRecord, content: string) => {
                     }}
                     {...props} 
                   />
+                );
+
+                // If caption exists, wrap in figure element
+                if (caption) {
+                  const captionClassName = captionStyle === 'bold' 
+                    ? 'mt-2 text-sm text-gray-800 text-center font-bold'
+                    : 'mt-2 text-sm text-gray-500 text-center italic';
+                  return (
+                    <figure className="my-4 flex flex-col items-center">
+                      {imgElement}
+                      <figcaption className={captionClassName}>
+                        {caption}
+                      </figcaption>
+                    </figure>
+                  );
+                }
+
+                return (
+                  <div className="my-4">
+                    {imgElement}
+                  </div>
                 );
               },
               code: ({node, inline, className, children, ...props}: any) => {

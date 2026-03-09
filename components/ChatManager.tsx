@@ -32,7 +32,7 @@ interface ChatManagerProps {
 
 // ==================== Code Block Component ====================
 
-const CodeBlock: React.FC<{ language?: string; children: string }> = ({ language, children }) => {
+const CodeBlock: React.FC<{ language?: string; children: string }> = React.memo(({ language, children }) => {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
@@ -67,15 +67,7 @@ const CodeBlock: React.FC<{ language?: string; children: string }> = ({ language
       </SyntaxHighlighter>
     </div>
   );
-};
-
-const shouldWrapAsCodeBlock = (content: string) => {
-  if (!content.includes('\n')) return false;
-  const lines = content.split('\n');
-  const hasTreeStructure = lines.some(line => /^ {2,}[\\/|]/.test(line) || /-->/.test(line));
-  const hasGitBranchPattern = lines.some(line => line.startsWith('* ')) && lines.some(line => /^  \S/.test(line));
-  return hasTreeStructure || hasGitBranchPattern;
-};
+});
 
 const normalizeMarkdownContent = (content: string) => {
   if (!content) return '';
@@ -83,9 +75,6 @@ const normalizeMarkdownContent = (content: string) => {
   const fenceMatches = normalized.match(/```/g);
   if (fenceMatches && fenceMatches.length % 2 !== 0) {
     normalized = `${normalized}\n\n\`\`\``;
-  }
-  if (!normalized.includes('```') && shouldWrapAsCodeBlock(normalized)) {
-    normalized = `\`\`\`text\n${normalized}\n\`\`\``;
   }
   return normalized;
 };
@@ -95,7 +84,7 @@ const normalizeMarkdownContent = (content: string) => {
 const MessageBubble: React.FC<{
   message: ChatMessage;
   isStreaming?: boolean;
-}> = ({ message, isStreaming }) => {
+}> = React.memo(({ message, isStreaming }) => {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
   const rawContent = message.content || (isStreaming ? '▊' : '');
@@ -136,17 +125,24 @@ const MessageBubble: React.FC<{
                 remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
                 rehypePlugins={[rehypeKatex]}
                 components={{
-                  code({ className, children, ...props }) {
+                  code(props: { inline?: boolean; className?: string; children?: React.ReactNode; [key: string]: any }) {
+                    const { inline, className, children, ...rest } = props;
                     const match = /language-(\w+)/.exec(className || '');
-                    const isInline = !match;
-                    return isInline ? (
-                      <code className="px-1 py-0.5 bg-gray-200 rounded text-sm font-mono" {...props}>
+                    const codeString = String(children).replace(/\n$/, '');
+                    const hasNewline = codeString.includes('\n');
+                    // 只有包含换行或有语言标识且非内联时才渲染为代码块
+                    if (hasNewline || (match && !inline)) {
+                      return (
+                        <CodeBlock language={match?.[1]}>
+                          {codeString}
+                        </CodeBlock>
+                      );
+                    }
+                    // 单行内联代码：仅用等宽字体，不加背景
+                    return (
+                      <span className="font-mono text-[0.92em]" {...rest}>
                         {children}
-                      </code>
-                    ) : (
-                      <CodeBlock language={match[1]}>
-                        {String(children).replace(/\n$/, '')}
-                      </CodeBlock>
+                      </span>
                     );
                   },
                 }}
@@ -171,7 +167,12 @@ const MessageBubble: React.FC<{
       </div>
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  // 自定义比较函数：只有在 message 内容或 streaming 状态变化时才重新渲染
+  return prevProps.message.id === nextProps.message.id &&
+         prevProps.message.content === nextProps.message.content &&
+         prevProps.isStreaming === nextProps.isStreaming;
+});
 
 // ==================== Settings Panel ====================
 
@@ -212,6 +213,7 @@ const SettingsPanel: React.FC<{
             }}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           >
+            <option value="zenmux">Zenmux (推荐)</option>
             <option value="gemini">Google Gemini</option>
             <option value="openai">OpenAI</option>
             <option value="anthropic">Anthropic Claude</option>
@@ -234,32 +236,64 @@ const SettingsPanel: React.FC<{
           </div>
         )}
 
-        {/* Base URL (for custom/ollama) */}
-        {(localConfig.provider === 'custom' || localConfig.provider === 'ollama') && (
+        {/* Base URL (for custom/ollama/zenmux) */}
+        {(localConfig.provider === 'custom' || localConfig.provider === 'ollama' || localConfig.provider === 'zenmux') && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Base URL</label>
             <input
               type="text"
               value={localConfig.baseUrl || ''}
               onChange={(e) => setLocalConfig({ ...localConfig, baseUrl: e.target.value })}
-              placeholder={localConfig.provider === 'ollama' ? 'http://localhost:11434/v1' : 'https://api.example.com/v1'}
+              placeholder={
+                localConfig.provider === 'zenmux' ? 'https://zenmux.ai/api/v1' :
+                localConfig.provider === 'ollama' ? 'http://localhost:11434/v1' : 
+                'https://api.example.com/v1'
+              }
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
+            {localConfig.provider === 'zenmux' && (
+              <p className="text-xs text-gray-500 mt-1">Zenmux 聚合多个 AI 模型提供商的 API</p>
+            )}
           </div>
         )}
 
         {/* Model Selection */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">模型</label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            模型 {localConfig.provider === 'zenmux' && <span className="text-xs text-gray-500">({models.length} 个可用)</span>}
+          </label>
           {models.length > 0 ? (
             <select
               value={localConfig.model}
               onChange={(e) => setLocalConfig({ ...localConfig, model: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
             >
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
+              {localConfig.provider === 'zenmux' ? (
+                // Zenmux 模型按类别分组显示
+                (() => {
+                  const grouped: Record<string, typeof models> = {};
+                  models.forEach((m: any) => {
+                    const category = m.category || '其他';
+                    if (!grouped[category]) grouped[category] = [];
+                    grouped[category].push(m);
+                  });
+                  
+                  return Object.entries(grouped).map(([category, categoryModels]) => (
+                    <optgroup key={category} label={`━━ ${category} ━━`}>
+                      {categoryModels.map((m: any) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name} {m.description ? `(${m.description})` : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ));
+                })()
+              ) : (
+                // 其他 provider 正常显示
+                models.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))
+              )}
             </select>
           ) : (
             <input
@@ -269,6 +303,11 @@ const SettingsPanel: React.FC<{
               placeholder="输入模型名称"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
+          )}
+          {localConfig.provider === 'zenmux' && (
+            <p className="text-xs text-gray-500 mt-1">
+              💡 推荐: Claude Sonnet 4.5 (平衡) / GPT-4o (全能) / Gemini 2.5 Pro (专业)
+            </p>
           )}
         </div>
 
@@ -304,12 +343,14 @@ const SettingsPanel: React.FC<{
           />
         </div>
 
-        {/* Web Search Toggle (Gemini only) */}
-        {localConfig.provider === 'gemini' && (
+        {/* Web Search Toggle (Gemini/Zenmux) */}
+        {(localConfig.provider === 'gemini' || localConfig.provider === 'zenmux') && (
           <div className="flex items-center justify-between">
             <div>
               <label className="block text-sm font-medium text-gray-700">联网搜索</label>
-              <p className="text-xs text-gray-500 mt-0.5">启用 Google Search 实时搜索</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {localConfig.provider === 'gemini' ? '启用 Google Search 实时搜索' : '启用 Web Search 实时搜索'}
+              </p>
             </div>
             <button
               type="button"
@@ -390,10 +431,6 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
       textarea.style.height = `${newHeight}px`;
     }
   }, []);
-
-  useEffect(() => {
-    adjustTextareaHeight();
-  }, [inputValue, adjustTextareaHeight]);
 
   // Initialize
   useEffect(() => {
@@ -655,8 +692,8 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
           </div>
 
           <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-            {/* Web Search Toggle (Gemini only) */}
-            {!compact && config.provider === 'gemini' && (
+            {/* Web Search Toggle (Gemini/Zenmux) */}
+            {!compact && (config.provider === 'gemini' || config.provider === 'zenmux') && (
               <button
                 onClick={() => {
                   const newConfig = { ...config, enableWebSearch: !config.enableWebSearch };
@@ -761,7 +798,20 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
                     <textarea
                       ref={textareaRef}
                       value={inputValue}
-                      onChange={(e) => setInputValue(e.target.value)}
+                      onChange={(e) => {
+                        setInputValue(e.target.value);
+                        // Adjust height immediately on input
+                        requestAnimationFrame(() => {
+                          if (textareaRef.current) {
+                            textareaRef.current.style.height = 'auto';
+                            const scrollHeight = textareaRef.current.scrollHeight;
+                            const maxHeight = 120;
+                            const minHeight = 36;
+                            const newHeight = Math.max(minHeight, Math.min(scrollHeight, maxHeight));
+                            textareaRef.current.style.height = `${newHeight}px`;
+                          }
+                        });
+                      }}
                       onKeyDown={handleKeyPress}
                       placeholder="输入消息..."
                       rows={1}

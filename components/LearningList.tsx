@@ -1,14 +1,159 @@
-import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, PlayCircle, FileText, Code, CheckCircle2, Circle, Folder, Info, Trash2, FileUp, Plus, Link, Edit2 } from 'lucide-react';
-import { CourseData, Module, Lecture, AssignmentModule, PersonalModule, ResourceItem, CourseCategory } from './LearningData';
+import React, { useState, useRef, useEffect } from 'react';
+import ReactDOM from 'react-dom';
+import { ChevronDown, ChevronRight, PlayCircle, FileText, Code, CheckCircle2, Circle, Folder, Info, Trash2, FileUp, Plus, Link, Edit2, Book, Globe, Music, Image, GripVertical } from 'lucide-react';
+import { CourseData, Module, Lecture, AssignmentModule, PersonalModule, ResourceItem, CourseCategory, LectureIcon, LECTURE_ICONS } from './LearningData';
 import { LearningMDModal } from './LearningMDModal';
-import { 
-  copyFileToDestination, 
-  deleteResourceFile, 
+import {
+  copyFileToDestination,
+  deleteResourceFile,
   deleteModuleFolder,
   SectionType,
   SECTION_NAMES
 } from '../utils/learningStorage';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
+// Portal-based dropdown to avoid overflow clipping
+interface DropdownPortalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  triggerRef: React.RefObject<HTMLButtonElement>;
+  children: React.ReactNode;
+}
+
+const DropdownPortal: React.FC<DropdownPortalProps> = ({ isOpen, onClose, triggerRef, children }) => {
+  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isOpen && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setPosition({
+        top: rect.bottom + 4,
+        left: rect.right - 160 // 160 is the dropdown width (w-40)
+      });
+    }
+  }, [isOpen, triggerRef]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      // Check if click is outside both the trigger button and the dropdown menu
+      const isOutsideTrigger = triggerRef.current && !triggerRef.current.contains(target);
+      const isOutsideDropdown = dropdownRef.current && !dropdownRef.current.contains(target);
+
+      if (isOutsideTrigger && isOutsideDropdown) {
+        onClose();
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen, onClose, triggerRef]);
+
+  if (!isOpen) return null;
+
+  return ReactDOM.createPortal(
+    <div
+      ref={dropdownRef}
+      className="fixed w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-[9999]"
+      style={{ top: position.top, left: position.left }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {children}
+    </div>,
+    document.body
+  );
+};
+
+// Sortable Item Component for lectures
+interface SortableLectureItemProps {
+  id: string;
+  children: React.ReactNode;
+}
+
+const SortableLectureItem: React.FC<SortableLectureItemProps> = ({ id, children }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="flex items-center group/item">
+      <button
+        {...attributes}
+        {...listeners}
+        className="p-1 cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 opacity-0 group-hover/item:opacity-100 transition-opacity"
+      >
+        <GripVertical className="w-3 h-3" />
+      </button>
+      <div className="flex-1">{children}</div>
+    </div>
+  );
+};
+
+// Sortable Item Component for resource items (assignments/personal)
+interface SortableResourceItemProps {
+  id: string;
+  children: React.ReactNode;
+}
+
+const SortableResourceItem: React.FC<SortableResourceItemProps> = ({ id, children }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="flex items-center group/item">
+      <button
+        {...attributes}
+        {...listeners}
+        className="p-1 cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 opacity-0 group-hover/item:opacity-100 transition-opacity"
+      >
+        <GripVertical className="w-3 h-3" />
+      </button>
+      <div className="flex-1">{children}</div>
+    </div>
+  );
+};
 
 interface LearningListProps {
   course: CourseData;
@@ -52,7 +197,102 @@ export const LearningList: React.FC<LearningListProps> = ({
   const [addingLinkSection, setAddingLinkSection] = useState<'resources' | 'assignments' | 'personal' | null>(null);
   const [newLinkTitle, setNewLinkTitle] = useState('');
   const [newLinkUrl, setNewLinkUrl] = useState('');
-  const [newLinkType, setNewLinkType] = useState<'video' | 'note'>('note');
+  const [newLinkIcon, setNewLinkIcon] = useState<LectureIcon>('link');
+
+  // 根据图标类型渲染对应图标
+  const renderIcon = (icon: LectureIcon | undefined, className: string = "w-3.5 h-3.5 flex-shrink-0") => {
+    switch (icon) {
+      case 'video': return <PlayCircle className={className} />;
+      case 'file': return <FileText className={className} />;
+      case 'book': return <Book className={className} />;
+      case 'code': return <Code className={className} />;
+      case 'globe': return <Globe className={className} />;
+      case 'music': return <Music className={className} />;
+      case 'image': return <Image className={className} />;
+      default: return <Link className={className} />;
+    }
+  };
+
+  // Drag and drop sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  // Handle drag end for lectures (resources section)
+  const handleLectureDragEnd = (moduleId: string) => (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const module = course.modules.find(m => m.id === moduleId);
+    if (!module) return;
+
+    const oldIndex = module.lectures.findIndex(l => l.id === active.id);
+    const newIndex = module.lectures.findIndex(l => l.id === over.id);
+
+    if (oldIndex !== -1 && newIndex !== -1) {
+      const newLectures = arrayMove(module.lectures, oldIndex, newIndex);
+      const updatedCourse = {
+        ...course,
+        modules: course.modules.map(m =>
+          m.id === moduleId ? { ...m, lectures: newLectures } : m
+        )
+      };
+      onUpdateCourse(updatedCourse);
+    }
+  };
+
+  // Handle drag end for assignment items
+  const handleAssignmentDragEnd = (moduleId: string) => (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const module = (course.assignmentModules || []).find(m => m.id === moduleId);
+    if (!module) return;
+
+    const oldIndex = module.items.findIndex(i => i.id === active.id);
+    const newIndex = module.items.findIndex(i => i.id === over.id);
+
+    if (oldIndex !== -1 && newIndex !== -1) {
+      const newItems = arrayMove(module.items, oldIndex, newIndex);
+      const updatedCourse = {
+        ...course,
+        assignmentModules: (course.assignmentModules || []).map(m =>
+          m.id === moduleId ? { ...m, items: newItems } : m
+        )
+      };
+      onUpdateCourse(updatedCourse);
+    }
+  };
+
+  // Handle drag end for personal items
+  const handlePersonalDragEnd = (moduleId: string) => (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const module = (course.personalModules || []).find(m => m.id === moduleId);
+    if (!module) return;
+
+    const oldIndex = module.items.findIndex(i => i.id === active.id);
+    const newIndex = module.items.findIndex(i => i.id === over.id);
+
+    if (oldIndex !== -1 && newIndex !== -1) {
+      const newItems = arrayMove(module.items, oldIndex, newIndex);
+      const updatedCourse = {
+        ...course,
+        personalModules: (course.personalModules || []).map(m =>
+          m.id === moduleId ? { ...m, items: newItems } : m
+        )
+      };
+      onUpdateCourse(updatedCourse);
+    }
+  };
 
   const [expandedAssignmentModules, setExpandedAssignmentModules] = useState<Record<string, boolean>>({});
   const [expandedPersonalModules, setExpandedPersonalModules] = useState<Record<string, boolean>>({});
@@ -69,8 +309,20 @@ export const LearningList: React.FC<LearningListProps> = ({
   const [mdModalSection, setMdModalSection] = useState<'resources' | 'assignments' | 'personal'>('resources');
   const [mdModalModuleName, setMdModalModuleName] = useState('');
 
+  // Rename Modal State
+  const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<{
+    type: 'lecture' | 'item' | 'module';
+    section: 'resources' | 'assignments' | 'personal';
+    moduleId: string;
+    itemId: string;
+    currentTitle: string;
+    filePath: string;
+  } | null>(null);
+
   // Dropdown Menu State for + button
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+  const dropdownRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   // ==================== Module Management ====================
   
@@ -82,12 +334,29 @@ export const LearningList: React.FC<LearningListProps> = ({
     setExpandedSections(prev => ({ ...prev, [section]: true }));
   };
 
-  const confirmAddModule = () => {
+  const confirmAddModule = async () => {
     if (!newModuleTitle.trim()) {
       setIsAddingModule(false);
       return;
     }
-    
+
+    // 创建磁盘上的文件夹
+    const category = categories.find(c => c.id === course.categoryId);
+    const categoryName = category ? category.name : 'Uncategorized';
+
+    try {
+      const { getModulePath } = await import('../utils/learningStorage');
+      const modulePath = await getModulePath(categoryName, course.title, addingModuleSection as SectionType, newModuleTitle);
+
+      // 确保目录存在
+      if (window.electronAPI) {
+        await window.electronAPI.ensureDir(modulePath);
+      }
+    } catch (error) {
+      console.error('Failed to create module folder:', error);
+      // 继续创建模块数据，即使文件夹创建失败
+    }
+
     if (addingModuleSection === 'resources') {
       const newModule: Module = {
         id: `mod_${Date.now()}`,
@@ -127,7 +396,7 @@ export const LearningList: React.FC<LearningListProps> = ({
       };
       onUpdateCourse(updatedCourse);
     }
-    
+
     setIsAddingModule(false);
     setNewModuleTitle('');
   };
@@ -415,6 +684,193 @@ export const LearningList: React.FC<LearningListProps> = ({
     setPendingUpload(null);
   };
 
+  // ==================== Rename File ====================
+
+  const handleOpenRenameModal = (
+    type: 'lecture' | 'item',
+    section: 'resources' | 'assignments' | 'personal',
+    moduleId: string,
+    itemId: string,
+    currentTitle: string,
+    filePath: string,
+    e: React.MouseEvent
+  ) => {
+    e.stopPropagation();
+    setRenameTarget({ type, section, moduleId, itemId, currentTitle, filePath });
+    setIsRenameModalOpen(true);
+  };
+
+  const handleRename = async (newTitle: string) => {
+    if (!renameTarget || !window.electronAPI) return;
+
+    const { type, section, moduleId, itemId, filePath, currentTitle } = renameTarget;
+
+    // 章节重命名
+    if (type === 'module') {
+      const category = categories.find(c => c.id === course.categoryId);
+      const categoryName = category ? category.name : 'Uncategorized';
+
+      // 获取章节文件夹路径（使用 sanitizeName 确保路径正确）
+      const { getModulePath, sanitizeName } = await import('../utils/learningStorage');
+      const oldModulePath = await getModulePath(categoryName, course.title, section as SectionType, currentTitle);
+      const newModulePath = await getModulePath(categoryName, course.title, section as SectionType, newTitle);
+
+      // 旧目录名和新目录名（经过 sanitize 处理）
+      const oldSanitizedName = sanitizeName(currentTitle);
+      const newSanitizedName = sanitizeName(newTitle);
+
+      // 重命名文件夹
+      const success = await window.electronAPI.renameFile(oldModulePath, newModulePath);
+      if (!success) {
+        // 文件夹可能不存在（用户还没上传任何文件），尝试创建新文件夹
+        console.log('Folder rename skipped, creating new folder instead');
+        await window.electronAPI.ensureDir(newModulePath);
+      }
+
+      // 更新课程数据中的章节名称和文件路径
+      if (section === 'resources') {
+        const updatedCourse = {
+          ...course,
+          modules: course.modules.map(m => {
+            if (m.id === moduleId) {
+              return {
+                ...m,
+                title: newTitle,
+                lectures: m.lectures.map(l => ({
+                  ...l,
+                  materials: l.materials?.replace(`/${oldSanitizedName}/`, `/${newSanitizedName}/`)
+                }))
+              };
+            }
+            return m;
+          })
+        };
+        onUpdateCourse(updatedCourse);
+      } else if (section === 'assignments') {
+        const updatedCourse = {
+          ...course,
+          assignmentModules: (course.assignmentModules || []).map(m => {
+            if (m.id === moduleId) {
+              return {
+                ...m,
+                title: newTitle,
+                items: m.items.map(item => ({
+                  ...item,
+                  link: item.link?.replace(`/${oldSanitizedName}/`, `/${newSanitizedName}/`)
+                }))
+              };
+            }
+            return m;
+          })
+        };
+        onUpdateCourse(updatedCourse);
+      } else if (section === 'personal') {
+        const updatedCourse = {
+          ...course,
+          personalModules: (course.personalModules || []).map(m => {
+            if (m.id === moduleId) {
+              return {
+                ...m,
+                title: newTitle,
+                items: m.items.map(item => ({
+                  ...item,
+                  link: item.link?.replace(`/${oldSanitizedName}/`, `/${newSanitizedName}/`)
+                }))
+              };
+            }
+            return m;
+          })
+        };
+        onUpdateCourse(updatedCourse);
+      }
+
+      setIsRenameModalOpen(false);
+      setRenameTarget(null);
+      return;
+    }
+
+    // 文件重命名
+    // 获取文件目录和新路径
+    const pathParts = filePath.split('/');
+    const oldFileName = pathParts.pop() || '';
+    const dirPath = pathParts.join('/');
+    const extension = oldFileName.includes('.') ? '.' + oldFileName.split('.').pop() : '';
+    const newFileName = newTitle.endsWith(extension) ? newTitle : newTitle + extension;
+    const newPath = dirPath + '/' + newFileName;
+
+    // 重命名文件
+    const success = await window.electronAPI.renameFile(filePath, newPath);
+    if (!success) {
+      alert('重命名失败');
+      return;
+    }
+
+    // 更新课程数据
+    const displayTitle = newTitle.replace(/\.[^/.]+$/, "");
+
+    if (type === 'lecture' && section === 'resources') {
+      const updatedCourse = {
+        ...course,
+        modules: course.modules.map(m => {
+          if (m.id === moduleId) {
+            return {
+              ...m,
+              lectures: m.lectures.map(l => {
+                if (l.id === itemId) {
+                  return { ...l, title: displayTitle, materials: newPath };
+                }
+                return l;
+              })
+            };
+          }
+          return m;
+        })
+      };
+      onUpdateCourse(updatedCourse);
+    } else if (type === 'item' && section === 'assignments') {
+      const updatedCourse = {
+        ...course,
+        assignmentModules: (course.assignmentModules || []).map(m => {
+          if (m.id === moduleId) {
+            return {
+              ...m,
+              items: m.items.map(item => {
+                if (item.id === itemId) {
+                  return { ...item, title: displayTitle, link: newPath };
+                }
+                return item;
+              })
+            };
+          }
+          return m;
+        })
+      };
+      onUpdateCourse(updatedCourse);
+    } else if (type === 'item' && section === 'personal') {
+      const updatedCourse = {
+        ...course,
+        personalModules: (course.personalModules || []).map(m => {
+          if (m.id === moduleId) {
+            return {
+              ...m,
+              items: m.items.map(item => {
+                if (item.id === itemId) {
+                  return { ...item, title: displayTitle, link: newPath };
+                }
+                return item;
+              })
+            };
+          }
+          return m;
+        })
+      };
+      onUpdateCourse(updatedCourse);
+    }
+
+    setIsRenameModalOpen(false);
+    setRenameTarget(null);
+  };
+
   // ==================== Link Management ====================
 
   const handleAddLectureLink = (moduleId: string, e: React.MouseEvent) => {
@@ -423,7 +879,7 @@ export const LearningList: React.FC<LearningListProps> = ({
     setAddingLinkSection('resources');
     setNewLinkTitle('');
     setNewLinkUrl('');
-    setNewLinkType('note');
+    setNewLinkIcon('link');
     setExpandedModules(prev => ({ ...prev, [moduleId]: true }));
   };
 
@@ -433,6 +889,7 @@ export const LearningList: React.FC<LearningListProps> = ({
     setAddingLinkSection(section);
     setNewLinkTitle('');
     setNewLinkUrl('');
+    setNewLinkIcon('link');
     setExpandedSections(prev => ({ ...prev, [section]: true }));
     if (section === 'assignments') {
       setExpandedAssignmentModules(prev => ({ ...prev, [moduleId]: true }));
@@ -454,8 +911,7 @@ export const LearningList: React.FC<LearningListProps> = ({
         title: newLinkTitle,
         lecturer: 'User',
         materials: newLinkUrl,
-        videoUrl: newLinkType === 'video' ? newLinkUrl : undefined,
-        type: newLinkType,
+        icon: newLinkIcon,
         date: new Date().toISOString().split('T')[0],
         desc: 'External Link'
       };
@@ -474,7 +930,8 @@ export const LearningList: React.FC<LearningListProps> = ({
       const newItem: ResourceItem = {
         id: `assign_item_${Date.now()}`,
         title: newLinkTitle,
-        link: newLinkUrl
+        link: newLinkUrl,
+        icon: newLinkIcon
       };
 
       const updatedCourse = {
@@ -491,7 +948,8 @@ export const LearningList: React.FC<LearningListProps> = ({
       const newItem: ResourceItem = {
         id: `personal_item_${Date.now()}`,
         title: newLinkTitle,
-        link: newLinkUrl
+        link: newLinkUrl,
+        icon: newLinkIcon
       };
 
       const updatedCourse = {
@@ -510,6 +968,7 @@ export const LearningList: React.FC<LearningListProps> = ({
     setAddingLinkSection(null);
     setNewLinkTitle('');
     setNewLinkUrl('');
+    setNewLinkIcon('link');
   };
 
   // ==================== Delete Functions ====================
@@ -594,6 +1053,13 @@ export const LearningList: React.FC<LearningListProps> = ({
     setExpandedModules(prev => ({ ...prev, [moduleId]: !prev[moduleId] }));
   };
 
+  // 按名称自然排序（支持数字前缀如 01, 02, 10）
+  const sortByTitle = <T extends { title: string }>(items: T[]): T[] => {
+    return [...items].sort((a, b) =>
+      a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' })
+    );
+  };
+
   return (
     <div className="w-80 flex-shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col h-full overflow-hidden">
       <div className="p-4 border-b border-gray-200 bg-white">
@@ -656,18 +1122,18 @@ export const LearningList: React.FC<LearningListProps> = ({
           `}
         >
           <Info className="w-4 h-4 text-blue-500" />
-          课程介绍
+          学习总览
         </button>
 
         {/* Course Resources Section */}
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           <div className="flex items-center justify-between bg-gray-50 border-b border-gray-200">
-            <button 
+            <button
               onClick={() => toggleSection('resources')}
               className="flex-1 px-3 py-2 flex items-center gap-2 font-medium text-sm text-gray-700 hover:bg-gray-100 transition-colors"
             >
               <Folder className="w-4 h-4 text-blue-500" />
-              课程资源
+              学习内容
               {expandedSections['resources'] ? <ChevronDown className="w-4 h-4 text-gray-400 ml-auto" /> : <ChevronRight className="w-4 h-4 text-gray-400 ml-auto" />}
             </button>
             <button
@@ -712,7 +1178,7 @@ export const LearningList: React.FC<LearningListProps> = ({
           
           {expandedSections['resources'] && (
             <div className="">
-              {course.modules.map((module) => (
+              {sortByTitle(course.modules).map((module) => (
                 <div key={module.id} className="border-b border-gray-100 last:border-0 group/module">
                   <div className="flex items-center justify-between hover:bg-gray-50 transition-colors pr-2">
                     <button 
@@ -733,39 +1199,51 @@ export const LearningList: React.FC<LearningListProps> = ({
                       >
                         <Link className="w-3.5 h-3.5" />
                       </button>
-                      <div className="relative">
+                      <button
+                        ref={(el) => { dropdownRefs.current[`res-${module.id}`] = el; }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenDropdownId(openDropdownId === `res-${module.id}` ? null : `res-${module.id}`);
+                        }}
+                        className="p-1.5 hover:bg-gray-200 rounded text-gray-500"
+                        title="添加资料"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                      <DropdownPortal
+                        isOpen={openDropdownId === `res-${module.id}`}
+                        onClose={() => setOpenDropdownId(null)}
+                        triggerRef={{ current: dropdownRefs.current[`res-${module.id}`] }}
+                      >
                         <button
                           onClick={(e) => {
-                            e.stopPropagation();
-                            setOpenDropdownId(openDropdownId === `res-${module.id}` ? null : `res-${module.id}`);
+                            handleAddFile(module.id, 'resources', e);
+                            setOpenDropdownId(null);
                           }}
-                          className="p-1.5 hover:bg-gray-200 rounded text-gray-500"
-                          title="添加资料"
+                          className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
                         >
-                          <Plus className="w-3.5 h-3.5" />
+                          <FileUp className="w-3.5 h-3.5" />
+                          上传文件
                         </button>
-                        {openDropdownId === `res-${module.id}` && (
-                          <div className="absolute right-0 top-full mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
-                            <button
-                              onClick={(e) => {
-                                handleAddFile(module.id, 'resources', e);
-                                setOpenDropdownId(null);
-                              }}
-                              className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
-                            >
-                              <FileUp className="w-3.5 h-3.5" />
-                              上传文件
-                            </button>
-                            <button
-                              onClick={(e) => handleOpenMDModal(module.id, module.title, 'resources', e)}
-                              className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2 border-t border-gray-100"
-                            >
-                              <FileText className="w-3.5 h-3.5" />
-                              新建 MD
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                        <button
+                          onClick={(e) => handleOpenMDModal(module.id, module.title, 'resources', e)}
+                          className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2 border-t border-gray-100"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          新建 MD
+                        </button>
+                      </DropdownPortal>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRenameTarget({ type: 'module', section: 'resources', moduleId: module.id, itemId: '', currentTitle: module.title, filePath: '' });
+                          setIsRenameModalOpen(true);
+                        }}
+                        className="p-1.5 hover:bg-blue-100 hover:text-blue-500 rounded text-gray-400"
+                        title="重命名章节"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
                       <button
                         onClick={(e) => handleDeleteModule(module.id, 'resources', e)}
                         className="p-1.5 hover:bg-red-100 hover:text-red-500 rounded text-gray-400"
@@ -799,27 +1277,24 @@ export const LearningList: React.FC<LearningListProps> = ({
                               placeholder="链接 URL (http://...)"
                               className="w-full text-sm px-2 py-1 border border-blue-200 rounded focus:outline-none focus:border-blue-400"
                             />
-                            <div className="flex gap-4 my-2">
-                              <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-                                <input
-                                  type="radio"
-                                  name="linkType"
-                                  checked={newLinkType === 'video'}
-                                  onChange={() => setNewLinkType('video')}
-                                  className="text-blue-500 focus:ring-blue-500"
-                                />
-                                课程视频
-                              </label>
-                              <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-                                <input
-                                  type="radio"
-                                  name="linkType"
-                                  checked={newLinkType === 'note'}
-                                  onChange={() => setNewLinkType('note')}
-                                  className="text-blue-500 focus:ring-blue-500"
-                                />
-                                课程教案
-                              </label>
+                            {/* Icon Selector */}
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <span className="text-xs text-gray-500 mr-1">图标:</span>
+                              {LECTURE_ICONS.map((iconItem) => (
+                                <button
+                                  key={iconItem.value}
+                                  type="button"
+                                  onClick={() => setNewLinkIcon(iconItem.value)}
+                                  className={`p-1.5 rounded transition-colors ${
+                                    newLinkIcon === iconItem.value
+                                      ? 'bg-blue-500 text-white'
+                                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                  }`}
+                                  title={iconItem.label}
+                                >
+                                  {renderIcon(iconItem.value, "w-3.5 h-3.5")}
+                                </button>
+                              ))}
                             </div>
                             <div className="flex justify-end gap-2">
                               <button onClick={() => { setAddingLinkModuleId(null); setAddingLinkSection(null); }} className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">取消</button>
@@ -829,81 +1304,61 @@ export const LearningList: React.FC<LearningListProps> = ({
                         </div>
                       )}
 
-                      {/* Videos Subsection */}
-                      {module.lectures.some(l => l.videoUrl) && (
-                        <>
-                          <div className="px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider mt-1">
-                            课程视频
-                          </div>
-                          {module.lectures.filter(l => l.videoUrl).map((lec) => (
-                            <div 
-                              key={`vid_${lec.id}`}
-                              className={`group/item px-3 py-1.5 flex items-center justify-between cursor-pointer transition-colors pl-6
-                                ${activeVideoId === lec.id ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}
-                              `}
-                              onClick={() => onSelectItem('video', lec.id)}
-                            >
-                              <div className="flex items-center gap-2 overflow-hidden">
-                                <PlayCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                                <span className="text-sm truncate">{lec.title}</span>
-                              </div>
-                              <button
-                                onClick={(e) => handleDeleteLecture(module.id, lec.id, e)}
-                                className="opacity-0 group-hover/item:opacity-100 p-1 hover:text-red-500 transition-opacity"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          ))}
-                        </>
-                      )}
-
-                      {/* Plans/Notes Subsection */}
-                      {module.lectures.some(l => !l.videoUrl) && (
-                        <>
-                          <div className="px-3 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider mt-2">
-                            课程教案
-                          </div>
-                          {module.lectures.filter(l => !l.videoUrl).map((lec) => {
+                      {/* 学习内容列表 */}
+                      <DndContext
+                        sensors={sensors}
+                        collisionDetection={closestCenter}
+                        onDragEnd={handleLectureDragEnd(module.id)}
+                      >
+                        <SortableContext
+                          items={module.lectures.map(l => l.id)}
+                          strategy={verticalListSortingStrategy}
+                        >
+                          {module.lectures.map((lec) => {
                             const isMDFile = lec.materials?.toLowerCase().endsWith('.md');
+                            const isActive = activeVideoId === lec.id || activeNoteId === lec.id;
                             return (
-                              <div 
-                                key={`note_${lec.id}`}
-                                className={`group/item px-3 py-1.5 flex items-center justify-between cursor-pointer transition-colors pl-6
-                                  ${activeNoteId === lec.id ? 'bg-green-100 text-green-700' : 'text-gray-600 hover:bg-gray-100'}
-                                `}
-                                onClick={() => onSelectItem('note', lec.id)}
-                              >
-                                <div className="flex items-center gap-2 overflow-hidden">
-                                  <FileText className="w-3.5 h-3.5 flex-shrink-0" />
-                                  <span className="text-sm truncate">{lec.title}</span>
-                                </div>
-                                <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100">
-                                  {isMDFile && (
+                              <SortableLectureItem key={lec.id} id={lec.id}>
+                                <div
+                                  className={`px-2 py-1.5 flex items-center justify-between cursor-pointer transition-colors
+                                    ${isActive ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}
+                                  `}
+                                  onClick={() => onSelectItem('note', lec.id)}
+                                >
+                                  <div className="flex items-center gap-2 overflow-hidden">
+                                    {lec.icon ? (
+                                      renderIcon(lec.icon)
+                                    ) : lec.materials?.startsWith('http') ? (
+                                      <Link className="w-3.5 h-3.5 flex-shrink-0" />
+                                    ) : (
+                                      <FileText className="w-3.5 h-3.5 flex-shrink-0" />
+                                    )}
+                                    <span className="text-sm truncate">{lec.title}</span>
+                                  </div>
+                                  <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100">
+                                    {isMDFile && (
+                                      <button
+                                        onClick={(e) => handleOpenRenameModal('lecture', 'resources', module.id, lec.id, lec.title, lec.materials || '', e)}
+                                        className="p-1 hover:text-blue-500 transition-colors"
+                                        title="修改文件名"
+                                      >
+                                        <Edit2 className="w-3 h-3" />
+                                      </button>
+                                    )}
                                     <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        onSelectItem('custom-note', lec.materials || '');
-                                      }}
-                                      className="p-1 hover:text-blue-500 transition-colors"
-                                      title="编辑"
+                                      onClick={(e) => handleDeleteLecture(module.id, lec.id, e)}
+                                      className="p-1 hover:text-red-500 transition-opacity"
+                                      title="删除"
                                     >
-                                      <Edit2 className="w-3 h-3" />
+                                      <Trash2 className="w-3 h-3" />
                                     </button>
-                                  )}
-                                  <button
-                                    onClick={(e) => handleDeleteLecture(module.id, lec.id, e)}
-                                    className="p-1 hover:text-red-500 transition-opacity"
-                                    title="删除"
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                  </button>
+                                  </div>
                                 </div>
-                              </div>
+                              </SortableLectureItem>
                             );
                           })}
-                        </>
-                      )}
+                        </SortableContext>
+                      </DndContext>
                     </div>
                   )}
                 </div>
@@ -920,7 +1375,7 @@ export const LearningList: React.FC<LearningListProps> = ({
               className="flex-1 px-3 py-2 flex items-center gap-2 font-medium text-sm text-gray-700 hover:bg-gray-100 transition-colors"
             >
               <Code className="w-4 h-4 text-green-500" />
-              课程练习
+              学习练习
               {expandedSections['assignments'] ? <ChevronDown className="w-4 h-4 text-gray-400 ml-auto" /> : <ChevronRight className="w-4 h-4 text-gray-400 ml-auto" />}
             </button>
             <button
@@ -968,7 +1423,7 @@ export const LearningList: React.FC<LearningListProps> = ({
               {(course.assignmentModules || []).length === 0 ? (
                 <div className="text-xs text-gray-400 text-center py-4">暂无章节，点击 + 添加</div>
               ) : (
-                (course.assignmentModules || []).map((module) => (
+                sortByTitle(course.assignmentModules || []).map((module) => (
                   <div key={module.id} className="border-b border-gray-100 last:border-0 group/module">
                     <div className="flex items-center justify-between hover:bg-gray-50 transition-colors pr-2">
                       <button 
@@ -989,39 +1444,51 @@ export const LearningList: React.FC<LearningListProps> = ({
                         >
                           <Link className="w-3.5 h-3.5" />
                         </button>
-                        <div className="relative">
+                        <button
+                          ref={(el) => { dropdownRefs.current[`assign-${module.id}`] = el; }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenDropdownId(openDropdownId === `assign-${module.id}` ? null : `assign-${module.id}`);
+                          }}
+                          className="p-1.5 hover:bg-gray-200 rounded text-gray-500"
+                          title="添加文件"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                        <DropdownPortal
+                          isOpen={openDropdownId === `assign-${module.id}`}
+                          onClose={() => setOpenDropdownId(null)}
+                          triggerRef={{ current: dropdownRefs.current[`assign-${module.id}`] }}
+                        >
                           <button
                             onClick={(e) => {
-                              e.stopPropagation();
-                              setOpenDropdownId(openDropdownId === `assign-${module.id}` ? null : `assign-${module.id}`);
+                              handleAddFile(module.id, 'assignments', e);
+                              setOpenDropdownId(null);
                             }}
-                            className="p-1.5 hover:bg-gray-200 rounded text-gray-500"
-                            title="添加文件"
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
                           >
-                            <Plus className="w-3.5 h-3.5" />
+                            <FileUp className="w-3.5 h-3.5" />
+                            上传文件
                           </button>
-                          {openDropdownId === `assign-${module.id}` && (
-                            <div className="absolute right-0 top-full mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
-                              <button
-                                onClick={(e) => {
-                                  handleAddFile(module.id, 'assignments', e);
-                                  setOpenDropdownId(null);
-                                }}
-                                className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
-                              >
-                                <FileUp className="w-3.5 h-3.5" />
-                                上传文件
-                              </button>
-                              <button
-                                onClick={(e) => handleOpenMDModal(module.id, module.title, 'assignments', e)}
-                                className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2 border-t border-gray-100"
-                              >
-                                <FileText className="w-3.5 h-3.5" />
-                                新建 MD
-                              </button>
-                            </div>
-                          )}
-                        </div>
+                          <button
+                            onClick={(e) => handleOpenMDModal(module.id, module.title, 'assignments', e)}
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2 border-t border-gray-100"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            新建 MD
+                          </button>
+                        </DropdownPortal>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRenameTarget({ type: 'module', section: 'assignments', moduleId: module.id, itemId: '', currentTitle: module.title, filePath: '' });
+                            setIsRenameModalOpen(true);
+                          }}
+                          className="p-1.5 hover:bg-blue-100 hover:text-blue-500 rounded text-gray-400"
+                          title="重命名章节"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           onClick={(e) => handleDeleteModule(module.id, 'assignments', e)}
                           className="p-1.5 hover:bg-red-100 hover:text-red-500 rounded text-gray-400"
@@ -1054,6 +1521,25 @@ export const LearningList: React.FC<LearningListProps> = ({
                                 placeholder="练习链接 URL"
                                 className="w-full text-sm px-2 py-1 border border-green-200 rounded focus:outline-none focus:border-green-400"
                               />
+                              {/* Icon Selector */}
+                              <div className="flex items-center gap-1 flex-wrap">
+                                <span className="text-xs text-gray-500 mr-1">图标:</span>
+                                {LECTURE_ICONS.map((iconItem) => (
+                                  <button
+                                    key={iconItem.value}
+                                    type="button"
+                                    onClick={() => setNewLinkIcon(iconItem.value)}
+                                    className={`p-1.5 rounded transition-colors ${
+                                      newLinkIcon === iconItem.value
+                                        ? 'bg-green-500 text-white'
+                                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                    }`}
+                                    title={iconItem.label}
+                                  >
+                                    {renderIcon(iconItem.value, "w-3.5 h-3.5")}
+                                  </button>
+                                ))}
+                              </div>
                               <div className="flex justify-end gap-2">
                                 <button onClick={() => { setAddingLinkSection(null); setAddingLinkModuleId(null); }} className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">取消</button>
                                 <button onClick={confirmAddLink} className="text-xs bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600">添加</button>
@@ -1065,52 +1551,63 @@ export const LearningList: React.FC<LearningListProps> = ({
                         {module.items.length === 0 ? (
                           <div className="px-6 py-2 text-xs text-gray-400">暂无练习资源</div>
                         ) : (
-                          module.items.map((item) => {
-                            const isMDFile = item.link?.toLowerCase().endsWith('.md');
-                            return (
-                              <div 
-                                key={item.id}
-                                onClick={() => onSelectItem('assignment', item.link)}
-                                className="group/item px-3 py-1.5 flex items-center justify-between cursor-pointer transition-colors pl-6 text-gray-600 hover:bg-gray-100"
-                              >
-                                <div className="flex items-center gap-2 overflow-hidden flex-1">
-                                  <button 
-                                    onClick={(e) => { e.stopPropagation(); onToggleProgress(item.id); }}
-                                    className="flex-shrink-0 text-gray-300 hover:text-green-500 transition-colors"
-                                  >
-                                    {progress[item.id] ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> : <Circle className="w-3.5 h-3.5" />}
-                                  </button>
-                                  {item.link.startsWith('http') ? (
-                                    <Link className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
-                                  ) : (
-                                    <FileText className="w-3.5 h-3.5 flex-shrink-0" />
-                                  )}
-                                  <span className={`text-sm truncate ${progress[item.id] ? 'text-gray-400 line-through' : ''}`}>{item.title}</span>
-                                </div>
-                                <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100">
-                                  {isMDFile && (
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        onSelectItem('custom-note', item.link || '');
-                                      }}
-                                      className="p-1 hover:text-blue-500 transition-colors"
-                                      title="编辑"
+                          <DndContext
+                            sensors={sensors}
+                            collisionDetection={closestCenter}
+                            onDragEnd={handleAssignmentDragEnd(module.id)}
+                          >
+                            <SortableContext
+                              items={module.items.map(i => i.id)}
+                              strategy={verticalListSortingStrategy}
+                            >
+                              {module.items.map((item) => {
+                                const isMDFile = item.link?.toLowerCase().endsWith('.md');
+                                return (
+                                  <SortableResourceItem key={item.id} id={item.id}>
+                                    <div
+                                      onClick={() => onSelectItem('assignment', item.link)}
+                                      className="px-2 py-1.5 flex items-center justify-between cursor-pointer transition-colors text-gray-600 hover:bg-gray-100"
                                     >
-                                      <Edit2 className="w-3 h-3" />
-                                    </button>
-                                  )}
-                                  <button
-                                    onClick={(e) => handleDeleteItem(module.id, item.id, 'assignments', e)}
-                                    className="p-1 hover:text-red-500 transition-opacity"
-                                    title="删除"
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          })
+                                      <div className="flex items-center gap-2 overflow-hidden flex-1">
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); onToggleProgress(item.id); }}
+                                          className="flex-shrink-0 text-gray-300 hover:text-green-500 transition-colors"
+                                        >
+                                          {progress[item.id] ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> : <Circle className="w-3.5 h-3.5" />}
+                                        </button>
+                                        {item.icon ? (
+                                          renderIcon(item.icon)
+                                        ) : item.link.startsWith('http') ? (
+                                          <Link className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+                                        ) : (
+                                          <FileText className="w-3.5 h-3.5 flex-shrink-0" />
+                                        )}
+                                        <span className={`text-sm truncate ${progress[item.id] ? 'text-gray-400 line-through' : ''}`}>{item.title}</span>
+                                      </div>
+                                      <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100">
+                                        {isMDFile && (
+                                          <button
+                                            onClick={(e) => handleOpenRenameModal('item', 'assignments', module.id, item.id, item.title, item.link || '', e)}
+                                            className="p-1 hover:text-blue-500 transition-colors"
+                                            title="修改文件名"
+                                          >
+                                            <Edit2 className="w-3 h-3" />
+                                          </button>
+                                        )}
+                                        <button
+                                          onClick={(e) => handleDeleteItem(module.id, item.id, 'assignments', e)}
+                                          className="p-1 hover:text-red-500 transition-opacity"
+                                          title="删除"
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </SortableResourceItem>
+                                );
+                              })}
+                            </SortableContext>
+                          </DndContext>
                         )}
                       </div>
                     )}
@@ -1129,7 +1626,7 @@ export const LearningList: React.FC<LearningListProps> = ({
               className="flex-1 px-3 py-2 flex items-center gap-2 font-medium text-sm text-gray-700 hover:bg-gray-100 transition-colors"
             >
               <FileUp className="w-4 h-4 text-orange-500" />
-              个人资源
+              其它资源
               {expandedSections['personal'] ? <ChevronDown className="w-4 h-4 text-gray-400 ml-auto" /> : <ChevronRight className="w-4 h-4 text-gray-400 ml-auto" />}
             </button>
             <button
@@ -1177,7 +1674,7 @@ export const LearningList: React.FC<LearningListProps> = ({
               {(course.personalModules || []).length === 0 ? (
                 <div className="text-xs text-gray-400 text-center py-4">暂无章节，点击 + 添加</div>
               ) : (
-                (course.personalModules || []).map((module) => (
+                sortByTitle(course.personalModules || []).map((module) => (
                   <div key={module.id} className="border-b border-gray-100 last:border-0 group/module">
                     <div className="flex items-center justify-between hover:bg-gray-50 transition-colors pr-2">
                       <button 
@@ -1198,39 +1695,51 @@ export const LearningList: React.FC<LearningListProps> = ({
                         >
                           <Link className="w-3.5 h-3.5" />
                         </button>
-                        <div className="relative">
+                        <button
+                          ref={(el) => { dropdownRefs.current[`personal-${module.id}`] = el; }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenDropdownId(openDropdownId === `personal-${module.id}` ? null : `personal-${module.id}`);
+                          }}
+                          className="p-1.5 hover:bg-gray-200 rounded text-gray-500"
+                          title="添加文件"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                        <DropdownPortal
+                          isOpen={openDropdownId === `personal-${module.id}`}
+                          onClose={() => setOpenDropdownId(null)}
+                          triggerRef={{ current: dropdownRefs.current[`personal-${module.id}`] }}
+                        >
                           <button
                             onClick={(e) => {
-                              e.stopPropagation();
-                              setOpenDropdownId(openDropdownId === `personal-${module.id}` ? null : `personal-${module.id}`);
+                              handleAddFile(module.id, 'personal', e);
+                              setOpenDropdownId(null);
                             }}
-                            className="p-1.5 hover:bg-gray-200 rounded text-gray-500"
-                            title="添加文件"
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
                           >
-                            <Plus className="w-3.5 h-3.5" />
+                            <FileUp className="w-3.5 h-3.5" />
+                            上传文件
                           </button>
-                          {openDropdownId === `personal-${module.id}` && (
-                            <div className="absolute right-0 top-full mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
-                              <button
-                                onClick={(e) => {
-                                  handleAddFile(module.id, 'personal', e);
-                                  setOpenDropdownId(null);
-                                }}
-                                className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
-                              >
-                                <FileUp className="w-3.5 h-3.5" />
-                                上传文件
-                              </button>
-                              <button
-                                onClick={(e) => handleOpenMDModal(module.id, module.title, 'personal', e)}
-                                className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2 border-t border-gray-100"
-                              >
-                                <FileText className="w-3.5 h-3.5" />
-                                新建 MD
-                              </button>
-                            </div>
-                          )}
-                        </div>
+                          <button
+                            onClick={(e) => handleOpenMDModal(module.id, module.title, 'personal', e)}
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2 border-t border-gray-100"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            新建 MD
+                          </button>
+                        </DropdownPortal>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRenameTarget({ type: 'module', section: 'personal', moduleId: module.id, itemId: '', currentTitle: module.title, filePath: '' });
+                            setIsRenameModalOpen(true);
+                          }}
+                          className="p-1.5 hover:bg-blue-100 hover:text-blue-500 rounded text-gray-400"
+                          title="重命名章节"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           onClick={(e) => handleDeleteModule(module.id, 'personal', e)}
                           className="p-1.5 hover:bg-red-100 hover:text-red-500 rounded text-gray-400"
@@ -1263,6 +1772,25 @@ export const LearningList: React.FC<LearningListProps> = ({
                                 placeholder="资源链接 URL"
                                 className="w-full text-sm px-2 py-1 border border-orange-200 rounded focus:outline-none focus:border-orange-400"
                               />
+                              {/* Icon Selector */}
+                              <div className="flex items-center gap-1 flex-wrap">
+                                <span className="text-xs text-gray-500 mr-1">图标:</span>
+                                {LECTURE_ICONS.map((iconItem) => (
+                                  <button
+                                    key={iconItem.value}
+                                    type="button"
+                                    onClick={() => setNewLinkIcon(iconItem.value)}
+                                    className={`p-1.5 rounded transition-colors ${
+                                      newLinkIcon === iconItem.value
+                                        ? 'bg-orange-500 text-white'
+                                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                    }`}
+                                    title={iconItem.label}
+                                  >
+                                    {renderIcon(iconItem.value, "w-3.5 h-3.5")}
+                                  </button>
+                                ))}
+                              </div>
                               <div className="flex justify-end gap-2">
                                 <button onClick={() => { setAddingLinkSection(null); setAddingLinkModuleId(null); }} className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">取消</button>
                                 <button onClick={confirmAddLink} className="text-xs bg-orange-500 text-white px-3 py-1 rounded hover:bg-orange-600">添加</button>
@@ -1272,48 +1800,59 @@ export const LearningList: React.FC<LearningListProps> = ({
                         )}
 
                         {module.items.length === 0 ? (
-                          <div className="px-6 py-2 text-xs text-gray-400">暂无个人资源</div>
+                          <div className="px-6 py-2 text-xs text-gray-400">暂无其它资源</div>
                         ) : (
-                          module.items.map((item) => {
-                            const isMDFile = item.link?.toLowerCase().endsWith('.md');
-                            return (
-                              <div 
-                                key={item.id}
-                                onClick={() => onSelectItem('personal-resource', item.link)}
-                                className="group/item px-3 py-1.5 flex items-center justify-between cursor-pointer transition-colors pl-6 text-gray-600 hover:bg-gray-100"
-                              >
-                                <div className="flex items-center gap-2 overflow-hidden flex-1">
-                                  {item.link.startsWith('http') ? (
-                                    <Link className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" />
-                                  ) : (
-                                    <FileText className="w-3.5 h-3.5 flex-shrink-0" />
-                                  )}
-                                  <span className="text-sm truncate">{item.title}</span>
-                                </div>
-                                <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100">
-                                  {isMDFile && (
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        onSelectItem('custom-note', item.link || '');
-                                      }}
-                                      className="p-1 hover:text-blue-500 transition-colors"
-                                      title="编辑"
+                          <DndContext
+                            sensors={sensors}
+                            collisionDetection={closestCenter}
+                            onDragEnd={handlePersonalDragEnd(module.id)}
+                          >
+                            <SortableContext
+                              items={module.items.map(i => i.id)}
+                              strategy={verticalListSortingStrategy}
+                            >
+                              {module.items.map((item) => {
+                                const isMDFile = item.link?.toLowerCase().endsWith('.md');
+                                return (
+                                  <SortableResourceItem key={item.id} id={item.id}>
+                                    <div
+                                      onClick={() => onSelectItem('personal-resource', item.link)}
+                                      className="px-2 py-1.5 flex items-center justify-between cursor-pointer transition-colors text-gray-600 hover:bg-gray-100"
                                     >
-                                      <Edit2 className="w-3 h-3" />
-                                    </button>
-                                  )}
-                                  <button
-                                    onClick={(e) => handleDeleteItem(module.id, item.id, 'personal', e)}
-                                    className="p-1 hover:text-red-500 transition-opacity"
-                                    title="删除"
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          })
+                                      <div className="flex items-center gap-2 overflow-hidden flex-1">
+                                        {item.icon ? (
+                                          renderIcon(item.icon)
+                                        ) : item.link.startsWith('http') ? (
+                                          <Link className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" />
+                                        ) : (
+                                          <FileText className="w-3.5 h-3.5 flex-shrink-0" />
+                                        )}
+                                        <span className="text-sm truncate">{item.title}</span>
+                                      </div>
+                                      <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100">
+                                        {isMDFile && (
+                                          <button
+                                            onClick={(e) => handleOpenRenameModal('item', 'personal', module.id, item.id, item.title, item.link || '', e)}
+                                            className="p-1 hover:text-blue-500 transition-colors"
+                                            title="修改文件名"
+                                          >
+                                            <Edit2 className="w-3 h-3" />
+                                          </button>
+                                        )}
+                                        <button
+                                          onClick={(e) => handleDeleteItem(module.id, item.id, 'personal', e)}
+                                          className="p-1 hover:text-red-500 transition-opacity"
+                                          title="删除"
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </SortableResourceItem>
+                                );
+                              })}
+                            </SortableContext>
+                          </DndContext>
                         )}
                       </div>
                     )}
@@ -1333,6 +1872,71 @@ export const LearningList: React.FC<LearningListProps> = ({
         onSave={handleCreateMD}
         moduleName={mdModalModuleName}
       />
+
+      {/* Rename Modal */}
+      {isRenameModalOpen && renameTarget && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => { setIsRenameModalOpen(false); setRenameTarget(null); }}>
+          <div
+            className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                  <Edit2 className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900">
+                    {renameTarget.type === 'module' ? '重命名章节' : '修改文件名'}
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-0.5">当前: {renameTarget.currentTitle}</p>
+                </div>
+              </div>
+            </div>
+
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const input = (e.target as HTMLFormElement).elements.namedItem('newTitle') as HTMLInputElement;
+              handleRename(input.value);
+            }} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  {renameTarget.type === 'module' ? '新章节名' : '新文件名'} <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="newTitle"
+                  defaultValue={renameTarget.type === 'module' ? renameTarget.currentTitle : renameTarget.currentTitle + (renameTarget.filePath.includes('.') ? '.' + renameTarget.filePath.split('.').pop() : '')}
+                  placeholder={renameTarget.type === 'module' ? '输入新的章节名称' : '输入新的文件名'}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  autoFocus
+                />
+                {renameTarget.type !== 'module' && (
+                  <p className="mt-2 text-xs text-gray-500">
+                    请保留文件扩展名 (如 .md)
+                  </p>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => { setIsRenameModalOpen(false); setRenameTarget(null); }}
+                  className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  确认
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

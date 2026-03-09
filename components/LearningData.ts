@@ -1,10 +1,25 @@
+// 可选的图标类型
+export type LectureIcon = 'link' | 'video' | 'file' | 'book' | 'code' | 'globe' | 'music' | 'image';
+
+export const LECTURE_ICONS: { value: LectureIcon; label: string }[] = [
+  { value: 'link', label: '链接' },
+  { value: 'video', label: '视频' },
+  { value: 'file', label: '文档' },
+  { value: 'book', label: '书籍' },
+  { value: 'code', label: '代码' },
+  { value: 'globe', label: '网页' },
+  { value: 'music', label: '音频' },
+  { value: 'image', label: '图片' },
+];
+
 export interface Lecture {
   id: string;
   title: string;
   lecturer: string;
   materials: string; // Filename for the note/plan
-  videoUrl?: string; // Placeholder for video
-  type?: 'video' | 'note'; // Type of resource
+  videoUrl?: string; // Placeholder for video (deprecated)
+  type?: 'video' | 'note'; // Type of resource (deprecated)
+  icon?: LectureIcon; // 图标类型
   date: string;
   desc: string;
 }
@@ -21,6 +36,7 @@ export interface ResourceItem {
   id: string;
   title: string;
   link: string;
+  icon?: LectureIcon; // 图标类型
 }
 
 // Module for assignments section (independent from course modules)

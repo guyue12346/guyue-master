@@ -69,6 +69,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [plugins, setPlugins] = useState<PluginMetadata[]>([]);
   const [draggingModuleId, setDraggingModuleId] = useState<string | null>(null);
   const [splashQuotesInput, setSplashQuotesInput] = useState<string>('');
+  const [splashEnabled, setSplashEnabled] = useState<boolean>(true);
   const iconSelectorRef = useRef<HTMLDivElement>(null);
 
   // Sort modules by priority for display
@@ -97,6 +98,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
     const splashQuotes = parseStoredSplashQuotes();
     setSplashQuotesInput(splashQuotes.join('\n'));
+
+    const savedSplashEnabled = localStorage.getItem('linkmaster_splash_enabled');
+    setSplashEnabled(savedSplashEnabled !== 'false');
 
     // Load plugins
     if (window.electronAPI) {
@@ -169,7 +173,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     });
   };
 
-  const handleDragStart = (event: React.DragEvent<HTMLButtonElement>, moduleId: string) => {
+  const handleDragStart = (event: React.DragEvent<HTMLDivElement>, moduleId: string) => {
     if (!moduleId) return;
     setDraggingModuleId(moduleId);
     event.dataTransfer.effectAllowed = 'move';
@@ -435,17 +439,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           <span className="text-xs text-gray-400">
                             #{sortedModules.findIndex(m => m.id === module.id) + 1}
                           </span>
-                          <button
-                            type="button"
-                            className="p-1.5 rounded-md border border-dashed border-gray-300 text-gray-400 bg-white hover:text-blue-600 hover:border-blue-300 transition-colors"
+                          <div
+                            className={`p-1.5 rounded-md border border-dashed border-gray-300 bg-white transition-colors ${
+                              module.enabled
+                                ? 'text-gray-400 hover:text-blue-600 hover:border-blue-300 cursor-grab'
+                                : 'text-gray-200 cursor-not-allowed'
+                            }`}
                             draggable={module.enabled}
-                            onDragStart={(e) => handleDragStart(e, module.id)}
+                            onDragStart={(e) => module.enabled && handleDragStart(e, module.id)}
                             onDragEnd={handleDragEnd}
-                            title="拖动调整顺序"
-                            disabled={!module.enabled}
+                            title={module.enabled ? "拖动调整顺序" : "请先启用模块"}
                           >
                             <GripVertical className="w-4 h-4" />
-                          </button>
+                          </div>
                         </div>
                       </td>
                     </tr>
@@ -525,7 +531,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               开屏动画设置
             </h3>
             
-            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-medium text-gray-700">开屏动画</label>
+                  <p className="text-xs text-gray-400">开启或关闭应用启动时的开屏动画</p>
+                </div>
+                <button 
+                  onClick={() => {
+                    const newValue = !splashEnabled;
+                    setSplashEnabled(newValue);
+                    localStorage.setItem('linkmaster_splash_enabled', String(newValue));
+                  }}
+                  className={`transition-colors ${splashEnabled ? 'text-blue-600' : 'text-gray-400'}`}
+                >
+                  {splashEnabled ? <ToggleRight className="w-8 h-8" /> : <ToggleLeft className="w-8 h-8" />}
+                </button>
+              </div>
+              
               <div className="flex flex-col gap-2">
                 <label className="text-sm font-medium text-gray-700">开屏文案</label>
                 <textarea
@@ -534,6 +557,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   placeholder={DEFAULT_SPLASH_QUOTE}
                   rows={3}
                   className="px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 bg-white resize-none"
+                  disabled={!splashEnabled}
                 />
                 <p className="text-xs text-gray-400">支持多行输入，每行一句。应用启动时会从列表中随机展示一句（重启生效）。</p>
               </div>

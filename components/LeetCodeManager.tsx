@@ -14,6 +14,8 @@ interface LeetCodeManagerProps {
 
 const STORAGE_KEY_LISTS = 'leetcode_lists';
 const STORAGE_KEY_PROGRESS = 'leetcode_progress';
+const STORAGE_KEY_ACTIVE_LIST = 'leetcode_active_list';
+const STORAGE_KEY_EXPANDED_CATEGORIES = 'leetcode_expanded_categories';
 
 export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onOpenChat }) => {
   // addressBarUrl tracks the URL shown in the toolbar
@@ -145,6 +147,23 @@ export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onOpenChat }) 
     return {};
   });
 
+  const [activeListId, setActiveListId] = useState<string | null>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_ACTIVE_LIST);
+    return saved || null;
+  });
+
+  const [expandedCategoriesMap, setExpandedCategoriesMap] = useState<Record<string, string[]>>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_EXPANDED_CATEGORIES);
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Failed to parse expanded categories', e);
+      }
+    }
+    return {};
+  });
+
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingList, setEditingList] = useState<ILeetCodeList | undefined>(undefined);
@@ -157,6 +176,25 @@ export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onOpenChat }) 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY_PROGRESS, JSON.stringify(progress));
   }, [progress]);
+
+  useEffect(() => {
+    if (activeListId) {
+      localStorage.setItem(STORAGE_KEY_ACTIVE_LIST, activeListId);
+    } else {
+      localStorage.removeItem(STORAGE_KEY_ACTIVE_LIST);
+    }
+  }, [activeListId]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_EXPANDED_CATEGORIES, JSON.stringify(expandedCategoriesMap));
+  }, [expandedCategoriesMap]);
+
+  const handleSetExpandedCategories = (listId: string, categories: string[]) => {
+    setExpandedCategoriesMap(prev => ({
+      ...prev,
+      [listId]: categories
+    }));
+  };
 
   // Handlers
   const handleSelectProblem = (url: string) => {
@@ -247,6 +285,10 @@ export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onOpenChat }) 
             onAddList={handleAddList}
             onDeleteList={handleDeleteList}
             onEditList={handleEditList}
+            activeListId={activeListId}
+            onSetActiveList={setActiveListId}
+            expandedCategoriesMap={expandedCategoriesMap}
+            onSetExpandedCategories={handleSetExpandedCategories}
           />
         </div>
       )}

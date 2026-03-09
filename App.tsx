@@ -3,7 +3,7 @@ import { NavRail } from './components/NavRail';
 import { Sidebar } from './components/Sidebar';
 import { SplashScreen } from './components/SplashScreen';
 import { FloatingChatWindow } from './components/FloatingChatWindow';
-import { Bookmark, Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata } from './types';
+import { Bookmark, Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig } from './types';
 import { Plus, Search, Command, Loader2 } from 'lucide-react';
 
 // Lazy load components to improve initial load performance
@@ -26,6 +26,8 @@ const LearningManager = React.lazy(() => import('./components/LearningManager').
 const ImageHosting = React.lazy(() => import('./components/ImageHosting').then(m => ({ default: m.ImageHosting })));
 const ChatManager = React.lazy(() => import('./components/ChatManager').then(m => ({ default: m.ChatManager })));
 const PluginContainer = React.lazy(() => import('./components/PluginContainer').then(m => ({ default: m.PluginContainer })));
+const HeatmapContainer = React.lazy(() => import('./components/HeatmapContainer').then(m => ({ default: m.HeatmapContainer })));
+const DataCenterManager = React.lazy(() => import('./components/datacenter/DataCenterManager').then(m => ({ default: m.DataCenterManager })));
 
 // Lazy load modals
 const AddEditModal = React.lazy(() => import('./components/AddEditModal').then(m => ({ default: m.AddEditModal })));
@@ -48,6 +50,7 @@ const STORAGE_KEY_NOTES = 'linkmaster_notes_v1';
 const STORAGE_KEY_SSH = 'linkmaster_ssh_v1';
 const STORAGE_KEY_API = 'linkmaster_api_v1';
 const STORAGE_KEY_TODOS = 'linkmaster_todos_v1';
+const STORAGE_KEY_TODO_PLAN = 'linkmaster_todo_plan_v1';
 const STORAGE_KEY_FILES = 'linkmaster_files_v1';
 const STORAGE_KEY_PROMPTS = 'linkmaster_prompts_v1';
 const STORAGE_KEY_MARKDOWN = 'linkmaster_markdown_v1';
@@ -56,6 +59,11 @@ const STORAGE_KEY_MODULES = 'linkmaster_modules_v1';
 const STORAGE_KEY_IMAGE_RECORDS = 'linkmaster_image_records_v1';
 const STORAGE_KEY_IMAGE_CONFIG = 'linkmaster_image_config_v1';
 const STORAGE_KEY_SPLASH_TEXT = 'linkmaster_splash_text_v1';
+const STORAGE_KEY_HEATMAP = 'linkmaster_heatmap_v1';
+const STORAGE_KEY_OJ_HEATMAP = 'linkmaster_oj_heatmap_v1';
+const STORAGE_KEY_RESOURCE = 'linkmaster_resource_v1';
+const STORAGE_KEY_EMAIL_CONFIG = 'linkmaster_email_config';
+const STORAGE_KEY_LAST_EMAIL_CHECK = 'linkmaster_last_email_check';
 
 const DEFAULT_SPLASH_QUOTES = [
   '有善始者实繁，能克终者盖寡',
@@ -151,7 +159,10 @@ const App: React.FC = () => {
   }, []);
 
   // Splash screen state
-  const [showSplash, setShowSplash] = useState(true);
+  const [showSplash, setShowSplash] = useState(() => {
+    const splashEnabled = localStorage.getItem('linkmaster_splash_enabled');
+    return splashEnabled !== 'false';
+  });
   const [splashText] = useState<string>(() => {
     const quotes = loadSplashQuotes();
     return pickRandomSplashQuote(quotes);
@@ -161,7 +172,7 @@ const App: React.FC = () => {
   // Performance: Cache for loaded data to prevent re-parsing
   const [dataCache] = useState(() => new Map<string, any>());
 
-  const [appMode, setAppMode] = useState<AppMode>('bookmarks');
+  const [appMode, setAppMode] = useState<AppMode>('todo');
   const [moduleConfig, setModuleConfig] = useState<ModuleConfig[]>(() => {
     if (typeof window === 'undefined') {
       return DEFAULT_MODULE_CONFIG;
@@ -229,6 +240,7 @@ const App: React.FC = () => {
   const [hasChatMounted, setHasChatMounted] = useState(false);
   const [isFloatingChatOpen, setIsFloatingChatOpen] = useState(false);
   const [floatingChatSource, setFloatingChatSource] = useState<'leetcode' | 'learning' | null>(null);
+  const [hasDataCenterMounted, setHasDataCenterMounted] = useState(false);
 
   // Prevent body scroll to fix layout shifts on focus
   useEffect(() => {
@@ -258,7 +270,10 @@ const App: React.FC = () => {
     if (appMode === 'chat' && !hasChatMounted) {
       setHasChatMounted(true);
     }
-  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasLeetCodeMounted, hasLearningMounted, hasChatMounted]);
+    if (appMode === 'datacenter' && !hasDataCenterMounted) {
+      setHasDataCenterMounted(true);
+    }
+  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasLeetCodeMounted, hasLearningMounted, hasChatMounted, hasDataCenterMounted]);
 
   useEffect(() => {
     if (appMode === 'chat') {
@@ -304,6 +319,48 @@ const App: React.FC = () => {
   const [fileModalMode, setFileModalMode] = useState<'file' | 'note'>('file');
   const [editingPrompt, setEditingPrompt] = useState<PromptRecord | null>(null);
   
+  // Todo Plan State
+  const [showTodoPlan, setShowTodoPlan] = useState(true);
+  const [todoPlanContent, setTodoPlanContent] = useState<string>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_TODO_PLAN);
+    if (saved) {
+      // 检查是否是JSON字符串格式（以引号开头）
+      if (saved.startsWith('"') && saved.endsWith('"')) {
+        try {
+          // 是JSON格式，需要解析（兼容旧数据）
+          return JSON.parse(saved);
+        } catch {
+          // 解析失败，去掉首尾引号后返回
+          return saved.slice(1, -1).replace(/\\n/g, '\n').replace(/\\"/g, '"');
+        }
+      }
+      // 不是JSON格式，直接返回原始字符串
+      return saved;
+    }
+    return '# 近期总体规划\n\n在这里记录你的总体规划和目标...\n';
+  });
+
+  // Heatmap State
+  const [heatmapData, setHeatmapData] = useState<HeatmapData>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_HEATMAP);
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        return { guyue: {}, xiaohong: {} };
+      }
+    }
+    return { guyue: {}, xiaohong: {} };
+  });
+
+  // OJ Heatmap State (数据中心) - 初始为空，从文件加载
+  const [ojHeatmapData, setOJHeatmapData] = useState<OJHeatmapData>({ sites: [], submissions: [] });
+  const [isOJDataLoaded, setIsOJDataLoaded] = useState(false);
+
+  // Resource Center State
+  const [resourceData, setResourceData] = useState<ResourceCenterData>({ categories: [], items: [] });
+  const [isResourceDataLoaded, setIsResourceDataLoaded] = useState(false);
+
   // File Editing State
   const [isEditingFile, setIsEditingFile] = useState(false);
   const [editingFileContent, setEditingFileContent] = useState('');
@@ -370,6 +427,8 @@ const App: React.FC = () => {
   useEffect(() => {
     const loadAllData = () => {
       // Performance Optimization 1: Batch read from localStorage
+      // 注意：图床数据（IMAGE_RECORDS 和 IMAGE_CONFIG）由单独的 useEffect 从文件存储加载
+      // 不在这里加载，避免被空值覆盖
       const storageKeys = [
         { key: STORAGE_KEY_BOOKMARKS, setter: setBookmarks, defaultValue: [
           {id: '1', title: 'Google', url: 'https://google.com', category: '工具', note: 'Search Engine', priority: 1, createdAt: Date.now()},
@@ -383,8 +442,6 @@ const App: React.FC = () => {
         { key: STORAGE_KEY_FILES, setter: setFileRecords, defaultValue: [] },
         { key: STORAGE_KEY_PROMPTS, setter: setPrompts, defaultValue: [] },
         { key: STORAGE_KEY_MARKDOWN, setter: setMarkdownNotes, defaultValue: [] },
-        { key: STORAGE_KEY_IMAGE_RECORDS, setter: setImageRecords, defaultValue: [] },
-        { key: STORAGE_KEY_IMAGE_CONFIG, setter: setImageHostingConfig, defaultValue: { accessToken: '', owner: '', repo: '', path: '' } },
       ];
 
       // Load all data in batch
@@ -396,6 +453,7 @@ const App: React.FC = () => {
         }
 
         const savedData = localStorage.getItem(key);
+
         if (savedData) {
           const parsed = safeJSONParse(savedData, defaultValue);
           if (parsed !== defaultValue) {
@@ -425,9 +483,330 @@ const App: React.FC = () => {
     }
   }, [dataCache]);
 
+  // 图床数据单独加载 - 优先从文件存储加载，确保更新后数据不丢失
+  useEffect(() => {
+    const loadImageData = async () => {
+      if (!window.electronAPI) {
+        // 非 Electron 环境，从 localStorage 加载
+        const savedImageRecords = localStorage.getItem(STORAGE_KEY_IMAGE_RECORDS);
+        if (savedImageRecords) {
+          try {
+            setImageRecords(JSON.parse(savedImageRecords));
+          } catch (e) {
+            console.error("Failed to parse image records", e);
+          }
+        }
+        const savedImageConfig = localStorage.getItem(STORAGE_KEY_IMAGE_CONFIG);
+        if (savedImageConfig) {
+          try {
+            setImageHostingConfig(JSON.parse(savedImageConfig));
+          } catch (e) {
+            console.error("Failed to parse image config", e);
+          }
+        }
+        return;
+      }
+
+      // 加载图床记录 - 优先从文件存储
+      try {
+        const fileData = await window.electronAPI.loadAppData('image-records');
+        if (fileData && Array.isArray(fileData) && fileData.length > 0) {
+          setImageRecords(fileData);
+          console.log("Loaded image records from file storage:", fileData.length, "items");
+        } else {
+          // 回退到 localStorage（兼容旧数据）
+          const savedImageRecords = localStorage.getItem(STORAGE_KEY_IMAGE_RECORDS);
+          if (savedImageRecords) {
+            const parsed = JSON.parse(savedImageRecords);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setImageRecords(parsed);
+              // 迁移到文件存储
+              await window.electronAPI.saveAppData('image-records', parsed);
+              console.log("Migrated image records to file storage");
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load image records:", e);
+      }
+
+      // 加载图床配置 - 优先从文件存储
+      try {
+        const fileData = await window.electronAPI.loadAppData('image-config');
+        if (fileData && fileData.accessToken) {
+          setImageHostingConfig(fileData);
+          console.log("Loaded image config from file storage");
+        } else {
+          // 回退到 localStorage（兼容旧数据）
+          const savedImageConfig = localStorage.getItem(STORAGE_KEY_IMAGE_CONFIG);
+          if (savedImageConfig) {
+            const parsed = JSON.parse(savedImageConfig);
+            if (parsed && parsed.accessToken) {
+              setImageHostingConfig(parsed);
+              // 迁移到文件存储
+              await window.electronAPI.saveAppData('image-config', parsed);
+              console.log("Migrated image config to file storage");
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load image config:", e);
+      }
+    };
+
+    loadImageData();
+  }, []);
+
+  // 加载 OJ 热力图数据 - 从文件存储
+  useEffect(() => {
+    const loadOJData = async () => {
+      if (!window.electronAPI) {
+        // 浏览器环境：从 localStorage 加载
+        const saved = localStorage.getItem(STORAGE_KEY_OJ_HEATMAP);
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            if (parsed.records && !parsed.submissions) {
+              setOJHeatmapData({ sites: parsed.sites || [], submissions: [] });
+            } else {
+              setOJHeatmapData(parsed);
+            }
+          } catch (e) {
+            console.error("Failed to parse OJ data from localStorage:", e);
+          }
+        }
+        setIsOJDataLoaded(true);
+        return;
+      }
+
+      try {
+        const fileData = await window.electronAPI.loadAppData('oj-heatmap');
+        if (fileData && (fileData.sites || fileData.submissions)) {
+          // 兼容旧数据结构
+          if (fileData.records && !fileData.submissions) {
+            setOJHeatmapData({ sites: fileData.sites || [], submissions: [] });
+          } else {
+            setOJHeatmapData(fileData);
+          }
+          console.log("Loaded OJ data from file storage");
+        } else {
+          // 回退到 localStorage（兼容旧数据）
+          const saved = localStorage.getItem(STORAGE_KEY_OJ_HEATMAP);
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved);
+              if (parsed.records && !parsed.submissions) {
+                setOJHeatmapData({ sites: parsed.sites || [], submissions: [] });
+              } else {
+                setOJHeatmapData(parsed);
+              }
+              // 迁移到文件存储
+              await window.electronAPI.saveAppData('oj-heatmap', parsed);
+              console.log("Migrated OJ data to file storage");
+            } catch (e) {
+              console.error("Failed to parse OJ data:", e);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load OJ data:", e);
+      }
+      setIsOJDataLoaded(true);
+    };
+
+    loadOJData();
+  }, []);
+
+  // 加载资源中心数据 - 从文件存储
+  useEffect(() => {
+    // 数据清理函数：清理无效的 cost 对象
+    const cleanResourceData = (data: ResourceCenterData): ResourceCenterData => {
+      return {
+        ...data,
+        items: data.items.map(item => ({
+          ...item,
+          // 如果 cost 存在但 amount <= 0，则将 cost 设为 undefined
+          cost: (item.cost && item.cost.amount > 0) ? item.cost : undefined
+        }))
+      };
+    };
+
+    const loadResourceData = async () => {
+      if (!window.electronAPI) {
+        // 浏览器环境：从 localStorage 加载
+        const saved = localStorage.getItem(STORAGE_KEY_RESOURCE);
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            const cleaned = cleanResourceData(parsed);
+            setResourceData(cleaned);
+            // 如果清理后数据有变化，保存回 localStorage
+            if (JSON.stringify(parsed) !== JSON.stringify(cleaned)) {
+              localStorage.setItem(STORAGE_KEY_RESOURCE, JSON.stringify(cleaned));
+              console.log("Cleaned invalid cost data in resource center");
+            }
+          } catch (e) {
+            console.error("Failed to parse resource data from localStorage:", e);
+          }
+        }
+        setIsResourceDataLoaded(true);
+        return;
+      }
+
+      try {
+        const fileData = await window.electronAPI.loadAppData('resource-center');
+        if (fileData && (fileData.categories || fileData.items)) {
+          const cleaned = cleanResourceData(fileData);
+          setResourceData(cleaned);
+          // 如果清理后数据有变化，保存回文件
+          if (JSON.stringify(fileData) !== JSON.stringify(cleaned)) {
+            await window.electronAPI.saveAppData('resource-center', cleaned);
+            console.log("Cleaned invalid cost data in resource center");
+          }
+          console.log("Loaded resource data from file storage");
+        } else {
+          // 回退到 localStorage
+          const saved = localStorage.getItem(STORAGE_KEY_RESOURCE);
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved);
+              const cleaned = cleanResourceData(parsed);
+              setResourceData(cleaned);
+              await window.electronAPI.saveAppData('resource-center', cleaned);
+              console.log("Migrated resource data to file storage");
+            } catch (e) {
+              console.error("Failed to parse resource data:", e);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load resource data:", e);
+      }
+      setIsResourceDataLoaded(true);
+    };
+
+    loadResourceData();
+  }, []);
+
+  // 启动时检查资源到期并发送邮件提醒
+  useEffect(() => {
+    const checkAndSendExpiryReminder = async () => {
+      // 等待资源数据加载完成
+      if (!isResourceDataLoaded || resourceData.items.length === 0) return;
+
+      // 读取邮件配置
+      const emailConfigStr = localStorage.getItem(STORAGE_KEY_EMAIL_CONFIG);
+      if (!emailConfigStr) return;
+
+      let emailConfig: EmailConfig;
+      try {
+        emailConfig = JSON.parse(emailConfigStr);
+      } catch {
+        return;
+      }
+
+      // 检查邮件是否启用
+      if (!emailConfig.enabled || !emailConfig.smtp.host || !emailConfig.recipient) return;
+
+      // 检查今天是否已经发送过
+      const today = new Date().toISOString().split('T')[0];
+      const lastCheck = localStorage.getItem(STORAGE_KEY_LAST_EMAIL_CHECK);
+      if (lastCheck === today) return;
+
+      // 找出所有启用了提醒且明天到期的资源
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowStr = tomorrow.toISOString().split('T')[0];
+
+      const expiringResources = resourceData.items.filter(item => {
+        if (!item.emailReminder || !item.expireDate) return false;
+        return item.expireDate === tomorrowStr;
+      });
+
+      if (expiringResources.length === 0) {
+        // 没有即将到期的资源，标记今天已检查
+        localStorage.setItem(STORAGE_KEY_LAST_EMAIL_CHECK, today);
+        return;
+      }
+
+      // 构建邮件内容
+      const resourceList = expiringResources.map(r => `<li>${r.name} (到期日期: ${r.expireDate})</li>`).join('');
+      const emailContent = `
+        <div style="font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #f59e0b;">资源到期提醒</h2>
+          <p>以下资源将于<strong>明天 (${tomorrowStr})</strong> 到期，请及时处理：</p>
+          <ul style="line-height: 2;">
+            ${resourceList}
+          </ul>
+          <p style="color: #6b7280; font-size: 12px; margin-top: 30px; border-top: 1px solid #e5e7eb; padding-top: 15px;">
+            此邮件由 Guyue Master 自动发送
+          </p>
+        </div>
+      `;
+
+      // 发送邮件
+      if (window.electronAPI?.sendEmail) {
+        try {
+          const result = await window.electronAPI.sendEmail({
+            config: emailConfig,
+            subject: `[Guyue Master] ${expiringResources.length} 个资源明天到期`,
+            content: emailContent,
+          });
+
+          if (result.success) {
+            console.log('Expiry reminder email sent successfully');
+            localStorage.setItem(STORAGE_KEY_LAST_EMAIL_CHECK, today);
+          } else {
+            console.error('Failed to send expiry reminder:', result.error);
+          }
+        } catch (error) {
+          console.error('Failed to send expiry reminder:', error);
+        }
+      }
+    };
+
+    checkAndSendExpiryReminder();
+  }, [isResourceDataLoaded, resourceData]);
+
   // Note: Following individual loads are kept but will be skipped if batch load succeeded
   useEffect(() => {
-    if (dataCache.has(STORAGE_KEY_BOOKMARKS)) return;
+    if (dataCache.has(STORAGE_KEY_BOOKMARKS)) {
+      // 批量加载已完成，只加载插件并标记应用就绪
+      if (window.electronAPI) {
+        window.electronAPI.getPlugins().then(loadedPlugins => {
+          setPlugins(loadedPlugins);
+
+          setModuleConfig(prevConfig => {
+            const pluginModules: ModuleConfig[] = loadedPlugins.map(p => ({
+              id: p.id,
+              name: p.name,
+              icon: 'Package',
+              enabled: true,
+              priority: 50,
+              isPlugin: true,
+              pluginPath: p.entryPath
+            }));
+
+            const newConfig = [...prevConfig];
+            pluginModules.forEach(pm => {
+              const existingIndex = newConfig.findIndex(m => m.id === pm.id);
+              if (existingIndex === -1) {
+                newConfig.push(pm);
+              } else {
+                newConfig[existingIndex] = { ...newConfig[existingIndex], pluginPath: pm.pluginPath, isPlugin: true };
+              }
+            });
+            return newConfig;
+          });
+
+          setIsAppReady(true);
+        });
+      } else {
+        setIsAppReady(true);
+      }
+      return;
+    }
+
     // Load Bookmarks (fallback)
     const savedBookmarks = localStorage.getItem(STORAGE_KEY_BOOKMARKS);
     if (savedBookmarks) {
@@ -518,31 +897,11 @@ const App: React.FC = () => {
       }
     }
 
-    // Load Image Records
-    const savedImageRecords = localStorage.getItem(STORAGE_KEY_IMAGE_RECORDS);
-    if (savedImageRecords) {
-      try {
-        setImageRecords(JSON.parse(savedImageRecords));
-      } catch (e) {
-        console.error("Failed to parse image records", e);
-      }
-    }
-
-    // Load Image Config
-    const savedImageConfig = localStorage.getItem(STORAGE_KEY_IMAGE_CONFIG);
-    if (savedImageConfig) {
-      try {
-        setImageHostingConfig(JSON.parse(savedImageConfig));
-      } catch (e) {
-        console.error("Failed to parse image config", e);
-      }
-    }
-
     // Load Plugins
     if (window.electronAPI) {
       window.electronAPI.getPlugins().then(loadedPlugins => {
         setPlugins(loadedPlugins);
-        
+
         setModuleConfig(prevConfig => {
           const pluginModules: ModuleConfig[] = loadedPlugins.map(p => ({
             id: p.id,
@@ -566,7 +925,7 @@ const App: React.FC = () => {
           });
           return newConfig;
         });
-        
+
         // All data loaded, mark app as ready
         setIsAppReady(true);
       });
@@ -644,6 +1003,39 @@ const App: React.FC = () => {
   }, [todos, saveToStorage]);
 
   useEffect(() => {
+    // 直接保存字符串，不需要JSON序列化
+    if (todoPlanContent) {
+      localStorage.setItem(STORAGE_KEY_TODO_PLAN, todoPlanContent);
+    }
+  }, [todoPlanContent]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_HEATMAP, JSON.stringify(heatmapData));
+  }, [heatmapData]);
+
+  useEffect(() => {
+    // 只在数据加载完成后才保存，避免覆盖已有数据
+    if (!isOJDataLoaded) return;
+
+    // 保存到文件存储
+    if (window.electronAPI) {
+      window.electronAPI.saveAppData('oj-heatmap', ojHeatmapData);
+    }
+    // 同时保存到 localStorage 作为备份
+    localStorage.setItem(STORAGE_KEY_OJ_HEATMAP, JSON.stringify(ojHeatmapData));
+  }, [ojHeatmapData, isOJDataLoaded]);
+
+  useEffect(() => {
+    // 只在数据加载完成后才保存
+    if (!isResourceDataLoaded) return;
+
+    if (window.electronAPI) {
+      window.electronAPI.saveAppData('resource-center', resourceData);
+    }
+    localStorage.setItem(STORAGE_KEY_RESOURCE, JSON.stringify(resourceData));
+  }, [resourceData, isResourceDataLoaded]);
+
+  useEffect(() => {
     saveToStorage(STORAGE_KEY_FILES, fileRecords);
   }, [fileRecords, saveToStorage]);
 
@@ -656,12 +1048,29 @@ const App: React.FC = () => {
   }, [markdownNotes, saveToStorage]);
 
   useEffect(() => {
-    saveToStorage(STORAGE_KEY_IMAGE_RECORDS, imageRecords);
-  }, [imageRecords, saveToStorage]);
+    // 只在应用就绪后保存图床记录，避免覆盖已有数据
+    if (isAppReady && imageRecords.length > 0) {
+      saveToStorage(STORAGE_KEY_IMAGE_RECORDS, imageRecords);
+      // 同时创建备份
+      localStorage.setItem(STORAGE_KEY_IMAGE_RECORDS + '_backup', JSON.stringify(imageRecords));
+      // 保存到文件存储（持久化）
+      if (window.electronAPI) {
+        window.electronAPI.saveAppData('image-records', imageRecords);
+      }
+    }
+  }, [imageRecords, saveToStorage, isAppReady]);
 
   useEffect(() => {
-    saveToStorage(STORAGE_KEY_IMAGE_CONFIG, imageHostingConfig);
-  }, [imageHostingConfig, saveToStorage]);
+    if (isAppReady && imageHostingConfig.accessToken) {
+      saveToStorage(STORAGE_KEY_IMAGE_CONFIG, imageHostingConfig);
+      // 同时创建备份
+      localStorage.setItem(STORAGE_KEY_IMAGE_CONFIG + '_backup', JSON.stringify(imageHostingConfig));
+      // 保存到文件存储（持久化）
+      if (window.electronAPI) {
+        window.electronAPI.saveAppData('image-config', imageHostingConfig);
+      }
+    }
+  }, [imageHostingConfig, saveToStorage, isAppReady]);
 
   useEffect(() => {
     saveToStorage(STORAGE_KEY_RENDER_FILES, fileRecords, 500); // Longer delay for file records
@@ -1116,6 +1525,17 @@ const App: React.FC = () => {
     setIsTodoModalOpen(true);
   };
 
+  // --- Handlers: Heatmap ---
+  const handleUpdateHeatmap = (person: 'guyue' | 'xiaohong', date: string, value: number) => {
+    setHeatmapData(prev => ({
+      ...prev,
+      [person]: {
+        ...prev[person],
+        [date]: value,
+      },
+    }));
+  };
+
   // --- Handlers: Files ---
 
   const handleSaveFile = async (fileData: Partial<FileRecord>) => {
@@ -1447,7 +1867,7 @@ const App: React.FC = () => {
             />
           </Suspense>
         )
-      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
+      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'datacenter' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
         <Sidebar 
           appMode={appMode}  
           categories={activeCategories} 
@@ -1465,7 +1885,7 @@ const App: React.FC = () => {
       ) : null}
 
       <div className="flex-1 flex flex-col min-w-0 bg-white">
-        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'files' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
+        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'files' && appMode !== 'datacenter' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
         <div className="h-16 border-b border-gray-200 flex items-center justify-between px-6 bg-white shrink-0">
            <div className="flex items-center gap-4 flex-1 max-w-xl">
               <div className="relative flex-1">
@@ -1480,7 +1900,29 @@ const App: React.FC = () => {
               </div>
            </div>
            <div className="flex items-center gap-3 ml-4">
-              {appMode !== 'image-hosting' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
+              {appMode === 'todo' && (
+                <button 
+                  onClick={() => setShowTodoPlan(!showTodoPlan)}
+                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded-xl hover:from-purple-600 hover:to-blue-600 transition-all shadow-lg shadow-purple-500/30"
+                >
+                  {showTodoPlan ? (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                      </svg>
+                      <span className="font-medium">具体事项</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      <span className="font-medium">总体规划</span>
+                    </>
+                  )}
+                </button>
+              )}
+              {appMode !== 'image-hosting' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (appMode !== 'todo' || !showTodoPlan) && (
               <button 
                 onClick={() => {
                   switch (appMode) {
@@ -1527,7 +1969,7 @@ const App: React.FC = () => {
         </div>
         )}
 
-        <div className={`flex-1 overflow-auto ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'chat' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : 'p-6'}`}>
+        <div className={`flex-1 ${appMode === 'chat' ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'chat' || appMode === 'datacenter' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : 'p-6'}`}>
           <Suspense fallback={
             <div className="flex items-center justify-center h-full text-gray-400 gap-2">
               <Loader2 className="w-6 h-6 animate-spin" />
@@ -1538,7 +1980,33 @@ const App: React.FC = () => {
             {appMode === 'notes' && <NoteList notes={filteredNotes} onDelete={handleDeleteNote} onEdit={handleEditNote} />}
             {appMode === 'ssh' && <SSHList records={filteredSSHRecords} onDelete={handleDeleteSSH} onEdit={handleEditSSH} onOpenInTerminal={handleOpenSSHInTerminal} />}
             {appMode === 'api' && <APIList records={filteredAPIRecords} onDelete={handleDeleteAPI} onEdit={handleEditAPI} />}
-            {appMode === 'todo' && <TodoList todos={filteredTodos} onDelete={handleDeleteTodo} onEdit={handleEditTodo} onToggle={handleToggleTodo} />}
+            {appMode === 'todo' && (
+              showTodoPlan ? (
+                <div className="h-full p-6 overflow-y-auto">
+                  <MarkdownEditor
+                      note={{
+                        id: 'todo-plan',
+                        title: '近期总体规划',
+                        content: todoPlanContent,
+                        category: '',
+                        createdAt: 0,
+                        updatedAt: 0
+                      }}
+                      onUpdate={(id, updates) => {
+                        if (updates.content !== undefined) {
+                          setTodoPlanContent(updates.content);
+                        }
+                      }}
+                      isFullscreen={false}
+                      onToggleFullscreen={() => {}}
+                      hideMetadata={true}
+                      showViewToggle={false}
+                    />
+                </div>
+              ) : (
+                <TodoList todos={filteredTodos} onDelete={handleDeleteTodo} onEdit={handleEditTodo} onToggle={handleToggleTodo} />
+              )
+            )}
             
             {appMode === 'files' && (
                activeRenderFileId ? (
@@ -1654,6 +2122,19 @@ const App: React.FC = () => {
               </div>
             )}
 
+            {(hasDataCenterMounted || appMode === 'datacenter') && (
+              <div className={appMode === 'datacenter' ? 'h-full' : 'hidden'}>
+                <DataCenterManager
+                  ojHeatmapData={ojHeatmapData}
+                  onUpdateOJHeatmapData={setOJHeatmapData}
+                  heatmapData={heatmapData}
+                  onUpdateHeatmap={handleUpdateHeatmap}
+                  resourceData={resourceData}
+                  onUpdateResourceData={setResourceData}
+                />
+              </div>
+            )}
+
             {appMode === 'markdown' && activeTipId && (
               <MarkdownEditor
                 note={markdownNotes.find(t => t.id === activeTipId)!}
@@ -1753,6 +2234,71 @@ const App: React.FC = () => {
           categories={categoriesMap[appMode] || DEFAULT_CATEGORIES}
           initialEditId={initialCategoryEditId}
           onUpdateCategories={newCategories => {
+            const oldCategories = categoriesMap[appMode] || DEFAULT_CATEGORIES;
+            
+            // 检测分类名称是否有变化
+            const categoryNameChanges = new Map<string, string>(); // oldName -> newName
+            oldCategories.forEach(oldCat => {
+              const newCat = newCategories.find(c => c.id === oldCat.id);
+              if (newCat && newCat.name !== oldCat.name) {
+                categoryNameChanges.set(oldCat.name, newCat.name);
+              }
+            });
+            
+            // 如果有分类名称变化，更新相关数据记录
+            if (categoryNameChanges.size > 0) {
+              switch (appMode) {
+                case 'bookmarks':
+                  setBookmarks(prev => prev.map(item => {
+                    const newName = categoryNameChanges.get(item.category);
+                    return newName ? { ...item, category: newName } : item;
+                  }));
+                  break;
+                case 'ssh':
+                  setSSHRecords(prev => prev.map(item => {
+                    const newName = categoryNameChanges.get(item.category);
+                    return newName ? { ...item, category: newName } : item;
+                  }));
+                  break;
+                case 'api':
+                  setApiRecords(prev => prev.map(item => {
+                    const newName = categoryNameChanges.get(item.category);
+                    return newName ? { ...item, category: newName } : item;
+                  }));
+                  break;
+                case 'todo':
+                  setTodos(prev => prev.map(item => {
+                    const newName = categoryNameChanges.get(item.category);
+                    return newName ? { ...item, category: newName } : item;
+                  }));
+                  break;
+                case 'files':
+                  setFileRecords(prev => prev.map(item => {
+                    const newName = categoryNameChanges.get(item.category);
+                    return newName ? { ...item, category: newName } : item;
+                  }));
+                  break;
+                case 'prompts':
+                  setPrompts(prev => prev.map(item => {
+                    const newName = categoryNameChanges.get(item.category);
+                    return newName ? { ...item, category: newName } : item;
+                  }));
+                  break;
+                case 'markdown':
+                  setMarkdownNotes(prev => prev.map(item => {
+                    const newName = categoryNameChanges.get(item.category);
+                    return newName ? { ...item, category: newName } : item;
+                  }));
+                  break;
+                case 'image':
+                  setImageRecords(prev => prev.map(item => {
+                    const newName = categoryNameChanges.get(item.category || '');
+                    return newName ? { ...item, category: newName } : item;
+                  }));
+                  break;
+              }
+            }
+            
             setCategoriesMap(prev => ({ ...prev, [appMode]: newCategories }));
             setSelectedCategory('全部');
           }}

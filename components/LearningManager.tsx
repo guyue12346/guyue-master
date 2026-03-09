@@ -161,8 +161,57 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
   const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState<CourseData | undefined>(undefined);
 
-  const handleSaveCategory = (category: CourseCategory) => {
+  const handleSaveCategory = async (category: CourseCategory) => {
     if (editingCategory) {
+      // 检查名称是否改变，如果改变则重命名文件夹
+      if (editingCategory.name !== category.name) {
+        const { renameCategoryFolder, sanitizeName } = await import('../utils/learningStorage');
+        const result = await renameCategoryFolder(editingCategory.name, category.name);
+
+        if (result.success) {
+          // 更新所有该分类下课程的文件路径
+          const oldSanitized = sanitizeName(editingCategory.name);
+          const newSanitized = sanitizeName(category.name);
+
+          setCourses(prev => prev.map(course => {
+            if (course.categoryId !== category.id) return course;
+
+            // 更新 modules 中的文件路径
+            const updatedModules = course.modules.map(m => ({
+              ...m,
+              lectures: m.lectures.map(l => ({
+                ...l,
+                materials: l.materials?.replace(`/${oldSanitized}/`, `/${newSanitized}/`)
+              }))
+            }));
+
+            // 更新 assignmentModules 中的文件路径
+            const updatedAssignmentModules = (course.assignmentModules || []).map(m => ({
+              ...m,
+              items: m.items.map(item => ({
+                ...item,
+                link: item.link?.replace(`/${oldSanitized}/`, `/${newSanitized}/`)
+              }))
+            }));
+
+            // 更新 personalModules 中的文件路径
+            const updatedPersonalModules = (course.personalModules || []).map(m => ({
+              ...m,
+              items: m.items.map(item => ({
+                ...item,
+                link: item.link?.replace(`/${oldSanitized}/`, `/${newSanitized}/`)
+              }))
+            }));
+
+            return {
+              ...course,
+              modules: updatedModules,
+              assignmentModules: updatedAssignmentModules,
+              personalModules: updatedPersonalModules
+            };
+          }));
+        }
+      }
       setCategories(prev => prev.map(c => c.id === category.id ? category : c));
     } else {
       setCategories(prev => [...prev, category]);
@@ -188,8 +237,63 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
     }
   };
 
-  const handleSaveCourse = (courseData: Partial<CourseData>) => {
+  const handleSaveCourse = async (courseData: Partial<CourseData>) => {
     if (editingCourse) {
+      // 检查标题是否改变，如果改变则重命名文件夹
+      if (editingCourse.title !== courseData.title) {
+        const category = categories.find(c => c.id === editingCourse.categoryId);
+        if (category) {
+          const { renameCourseFolder, sanitizeName } = await import('../utils/learningStorage');
+          const result = await renameCourseFolder(category.name, editingCourse.title, courseData.title!);
+
+          if (result.success) {
+            // 更新课程中的文件路径
+            const oldSanitized = sanitizeName(editingCourse.title);
+            const newSanitized = sanitizeName(courseData.title!);
+
+            setCourses(prev => prev.map(c => {
+              if (c.id !== courseData.id) return c;
+
+              // 更新 modules 中的文件路径
+              const updatedModules = c.modules.map(m => ({
+                ...m,
+                lectures: m.lectures.map(l => ({
+                  ...l,
+                  materials: l.materials?.replace(`/${oldSanitized}/`, `/${newSanitized}/`)
+                }))
+              }));
+
+              // 更新 assignmentModules 中的文件路径
+              const updatedAssignmentModules = (c.assignmentModules || []).map(m => ({
+                ...m,
+                items: m.items.map(item => ({
+                  ...item,
+                  link: item.link?.replace(`/${oldSanitized}/`, `/${newSanitized}/`)
+                }))
+              }));
+
+              // 更新 personalModules 中的文件路径
+              const updatedPersonalModules = (c.personalModules || []).map(m => ({
+                ...m,
+                items: m.items.map(item => ({
+                  ...item,
+                  link: item.link?.replace(`/${oldSanitized}/`, `/${newSanitized}/`)
+                }))
+              }));
+
+              return {
+                ...c,
+                ...courseData,
+                modules: updatedModules,
+                assignmentModules: updatedAssignmentModules,
+                personalModules: updatedPersonalModules
+              } as CourseData;
+            }));
+            setEditingCourse(undefined);
+            return;
+          }
+        }
+      }
       setCourses(prev => prev.map(c => c.id === courseData.id ? { ...c, ...courseData } as CourseData : c));
     } else {
       // Create new course with default structure
@@ -201,7 +305,7 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
         categoryId: selectedCategoryId!,
         modules: [],
         assignments: [],
-        introMarkdown: '# 课程介绍\n\n在这里编写课程介绍...',
+        introMarkdown: '# 学习总览\n\n在这里编写学习总览...',
       };
       console.log('Creating new course:', newCourse);
       setCourses(prev => [...prev, newCourse]);
@@ -460,9 +564,27 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
 
   const handleUpdateNote = async (id: string, updates: Partial<MarkdownNote>) => {
     if (window.electronAPI && updates.content !== undefined) {
-      await window.electronAPI.writeFile(id, updates.content);
-      // Update local state if needed
+      const success = await window.electronAPI.writeFile(id, updates.content);
+      if (!success) {
+        console.error('Failed to save file:', id);
+        return;
+      }
+      // Update local state
       setCurrentNote(prev => prev ? { ...prev, ...updates } : null);
+
+      // Also update the content in primaryContent/secondaryContent to keep them in sync
+      const updatePaneContent = (content: PaneContent | null): PaneContent | null => {
+        if (content && content.type === 'custom-note' && content.id === id && content.data) {
+          return {
+            ...content,
+            data: { ...content.data, ...updates }
+          };
+        }
+        return content;
+      };
+
+      setPrimaryContent(prev => updatePaneContent(prev));
+      setSecondaryContent(prev => updatePaneContent(prev));
     }
   };
 
@@ -500,9 +622,8 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
             <div>
               <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
                 <GraduationCap className="w-8 h-8 text-blue-600" />
-                学习中心
+                学习空间
               </h1>
-              <p className="text-gray-500 mt-1">选择一个学习方向</p>
             </div>
             <button
               onClick={() => {
@@ -726,7 +847,7 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
           <MarkdownEditor 
             note={{
               id: selectedCourse.id,
-              title: '课程介绍',
+              title: '学习总览',
               content: selectedCourse.introMarkdown,
               category: 'Intro',
               createdAt: 0,

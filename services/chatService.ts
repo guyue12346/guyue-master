@@ -22,14 +22,14 @@ export interface ChatConversation {
 }
 
 export interface ChatConfig {
-  provider: 'gemini' | 'openai' | 'anthropic' | 'ollama' | 'custom';
+  provider: 'zenmux' | 'gemini' | 'openai' | 'anthropic' | 'ollama' | 'custom';
   apiKey: string;
   baseUrl?: string;
   model: string;
   temperature?: number;
   maxTokens?: number;
   systemPrompt?: string;
-  enableWebSearch?: boolean; // 启用联网搜索 (Gemini)
+  enableWebSearch?: boolean; // 启用联网搜索 (Gemini/Zenmux)
 }
 
 export interface StreamCallbacks {
@@ -40,7 +40,10 @@ export interface StreamCallbacks {
 
 // ==================== Model Definitions ====================
 
-export const AVAILABLE_MODELS: Record<string, { id: string; name: string; provider: string }[]> = {
+import { ZENMUX_MODELS } from './zenmuxModels';
+
+export const AVAILABLE_MODELS: Record<string, { id: string; name: string; provider: string; category?: string; description?: string }[]> = {
+  zenmux: ZENMUX_MODELS,
   gemini: [
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini' },
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini' },
@@ -69,9 +72,10 @@ export const AVAILABLE_MODELS: Record<string, { id: string; name: string; provid
 };
 
 export const DEFAULT_CHAT_CONFIG: ChatConfig = {
-  provider: 'gemini',
+  provider: 'zenmux',
   apiKey: '',
-  model: 'gemini-2.5-flash',
+  baseUrl: 'https://zenmux.ai/api/v1',
+  model: 'anthropic/claude-sonnet-4.5',
   temperature: 0.7,
   maxTokens: 4096,
   systemPrompt: '你是一个有帮助的AI助手。',
@@ -103,6 +107,7 @@ export class ChatService {
         case 'gemini':
           await this.sendGemini(messages, callbacks);
           break;
+        case 'zenmux':
         case 'openai':
         case 'anthropic':
         case 'ollama':
@@ -197,6 +202,9 @@ export class ChatService {
     let baseUrl = this.config.baseUrl;
     if (!baseUrl) {
       switch (this.config.provider) {
+        case 'zenmux':
+          baseUrl = 'https://zenmux.ai/api/v1';
+          break;
         case 'openai':
           baseUrl = 'https://api.openai.com/v1';
           break;
@@ -243,6 +251,17 @@ export class ChatService {
       temperature: this.config.temperature,
       max_tokens: this.config.maxTokens
     };
+
+    // Enable Web Search for Zenmux (暂时禁用，需要确认正确的格式)
+    // TODO: 确认Zenmux的web search正确格式
+    // if (this.config.provider === 'zenmux' && this.config.enableWebSearch) {
+    //   body.tools = [{
+    //     type: 'web_search',
+    //     web_search: {
+    //       enabled: true
+    //     }
+    //   }];
+    // }
 
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',

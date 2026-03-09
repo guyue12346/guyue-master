@@ -45,6 +45,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   writeTerminal: (id: string, data: string) => ipcRenderer.send('terminal-write', { id, data }),
   resizeTerminal: (id: string, cols: number, rows: number) => ipcRenderer.send('terminal-resize', { id, cols, rows }),
   closeTerminal: (id: string) => ipcRenderer.send('terminal-close', id),
+
+  // 应用数据文件存储
+  saveAppData: (key: string, data: any) => ipcRenderer.invoke('save-app-data', key, data),
+  loadAppData: (key: string) => ipcRenderer.invoke('load-app-data', key),
+  appDataExists: (key: string) => ipcRenderer.invoke('app-data-exists', key),
+
+  // LeetCode API
+  leetcodeApi: (params: { query: string; variables: any; session: string }) => ipcRenderer.invoke('leetcode-api', params),
+  // Codex Usage API
+  fetchCodexUsage: (params: { sessionToken: string }) => ipcRenderer.invoke('fetch-codex-usage', params),
+  openCodexUsageLogin: () => ipcRenderer.invoke('open-codex-usage-login'),
+  fetchCodexUsageFromBrowser: () => ipcRenderer.invoke('fetch-codex-usage-browser'),
+
+  // Email API
+  sendEmail: (params: { config: any; subject: string; content: string }) => ipcRenderer.invoke('send-email', params),
+  testEmailConfig: (config: any) => ipcRenderer.invoke('test-email-config', config),
 });
 
 // 类型定义（可选，用于 TypeScript）
@@ -76,6 +92,37 @@ export interface ElectronAPI {
   writeTerminal: (id: string, data: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => void;
   closeTerminal: (id: string) => void;
+  // 应用数据文件存储
+  saveAppData: (key: string, data: any) => Promise<boolean>;
+  loadAppData: (key: string) => Promise<any>;
+  appDataExists: (key: string) => Promise<boolean>;
+  // LeetCode API
+  leetcodeApi: (params: { query: string; variables: any; session: string }) => Promise<any>;
+  // Codex Usage API
+  fetchCodexUsage: (params: { sessionToken: string }) => Promise<{
+    category: 'Codex';
+    fiveHourUsed: number;
+    fiveHourLimit: number;
+    weeklyUsed: number;
+    weeklyLimit: number;
+    fiveHourResetAt?: string | null;
+    weeklyResetAt?: string | null;
+    lastUpdated: number;
+    source: string;
+  }>;
+  openCodexUsageLogin: () => Promise<boolean>;
+  fetchCodexUsageFromBrowser: () => Promise<{
+    category: 'Codex';
+    fiveHourUsed: number;
+    fiveHourLimit: number;
+    weeklyUsed: number;
+    weeklyLimit: number;
+    fiveHourResetAt?: string | null;
+    weeklyResetAt?: string | null;
+    lastUpdated: number;
+    source: string;
+  }>;
+  // Email API
+  sendEmail: (params: { config: any; subject: string; content: string }) => Promise<{ success: boolean; error?: string }>;
+  testEmailConfig: (config: any) => Promise<{ success: boolean; error?: string }>;
 }
-
-

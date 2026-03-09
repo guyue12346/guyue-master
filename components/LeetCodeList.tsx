@@ -10,6 +10,10 @@ interface LeetCodeListProps {
   onAddList: () => void;
   onDeleteList: (id: string) => void;
   onEditList: (list: ILeetCodeList) => void;
+  activeListId: string | null;
+  onSetActiveList: (id: string | null) => void;
+  expandedCategoriesMap: Record<string, string[]>;
+  onSetExpandedCategories: (listId: string, categories: string[]) => void;
 }
 
 export const LeetCodeList: React.FC<LeetCodeListProps> = ({ 
@@ -19,12 +23,20 @@ export const LeetCodeList: React.FC<LeetCodeListProps> = ({
   onToggleProblem,
   onAddList,
   onDeleteList,
-  onEditList
+  onEditList,
+  activeListId,
+  onSetActiveList,
+  expandedCategoriesMap,
+  onSetExpandedCategories
 }) => {
-  const [activeListId, setActiveListId] = useState<string | null>(null);
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
-
   const activeList = lists.find(l => l.id === activeListId);
+  
+  // 获取当前题单的展开分类列表
+  const expandedCategories = activeListId && expandedCategoriesMap[activeListId] 
+    ? new Set(expandedCategoriesMap[activeListId]) 
+    : new Set<string>();
+
+
 
   // Calculate progress for a list
   const getListProgress = (list: ILeetCodeList) => {
@@ -40,19 +52,24 @@ export const LeetCodeList: React.FC<LeetCodeListProps> = ({
   };
 
   const toggleCategory = (title: string) => {
+    if (!activeListId) return;
+    
     const newSet = new Set(expandedCategories);
     if (newSet.has(title)) {
       newSet.delete(title);
     } else {
       newSet.add(title);
     }
-    setExpandedCategories(newSet);
+    onSetExpandedCategories(activeListId, Array.from(newSet));
   };
 
-  // Auto expand first category when entering a list
+  // Auto expand first category when entering a list (only if no saved state)
   useEffect(() => {
-    if (activeList && activeList.categories.length > 0) {
-      setExpandedCategories(new Set([activeList.categories[0].title]));
+    if (activeList && activeList.categories.length > 0 && activeListId) {
+      // 只在没有保存的展开状态时才自动展开第一个分类
+      if (!expandedCategoriesMap[activeListId] || expandedCategoriesMap[activeListId].length === 0) {
+        onSetExpandedCategories(activeListId, [activeList.categories[0].title]);
+      }
     }
   }, [activeListId]);
 
@@ -81,7 +98,7 @@ export const LeetCodeList: React.FC<LeetCodeListProps> = ({
               <div 
                 key={list.id}
                 className="bg-white rounded-xl border border-gray-200 p-3 shadow-sm hover:shadow-md transition-all cursor-pointer group relative"
-                onClick={() => setActiveListId(list.id)}
+                onClick={() => onSetActiveList(list.id)}
               >
                 <div className="flex justify-between items-start mb-2">
                   <h3 className="font-medium text-gray-800 line-clamp-1 pr-6">{list.title}</h3>
@@ -133,7 +150,7 @@ export const LeetCodeList: React.FC<LeetCodeListProps> = ({
       <div className="p-4 border-b border-gray-200 bg-white space-y-3">
         <div className="flex items-center gap-2">
           <button 
-            onClick={() => setActiveListId(null)}
+            onClick={() => onSetActiveList(null)}
             className="p-1 -ml-1 rounded-md hover:bg-gray-100 text-gray-600 transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
