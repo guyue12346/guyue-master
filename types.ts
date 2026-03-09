@@ -349,6 +349,7 @@ export interface DataCenterConfig {
     coupleHeatmap: boolean;
     resourceCenter: boolean;
     resourceRealtime: boolean;
+    passwordManager: boolean;
   };
 }
 

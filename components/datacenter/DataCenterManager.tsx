@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart3, Flame, Heart, Package, Cpu, Settings, X, ToggleLeft, ToggleRight, Mail, Server, Key, Send, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import { BarChart3, Flame, Heart, Package, Cpu, Settings, X, ToggleLeft, ToggleRight, Mail, Server, Key, Send, Loader2, CheckCircle, AlertCircle, Shield } from 'lucide-react';
 import { OJHeatmapContainer } from './OJHeatmapContainer';
 import { CoupleHeatmapContainer } from './CoupleHeatmapContainer';
 import { ResourceCenter } from './ResourceCenter';
 import { ResourceRealtimeData } from './ResourceRealtimeData';
+import { PasswordManager } from './PasswordManager';
 import type { OJHeatmapData, HeatmapData, ResourceCenterData, DataCenterConfig, EmailConfig } from '../../types';
 
 // localStorage 存储键
@@ -17,6 +18,7 @@ const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
     coupleHeatmap: true,
     resourceCenter: true,
     resourceRealtime: true,
+    passwordManager: true,
   },
 };
 
@@ -173,6 +175,19 @@ const DataCenterSettingsModal: React.FC<{
                   className={`transition-colors ${config.modules.resourceRealtime ? 'text-blue-500' : 'text-gray-400'}`}
                 >
                   {config.modules.resourceRealtime ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <Shield className="w-4 h-4 text-emerald-500" />
+                  <span className="text-sm text-gray-900 dark:text-white">密码管理</span>
+                </div>
+                <button
+                  onClick={() => handleModuleToggle('passwordManager')}
+                  className={`transition-colors ${config.modules.passwordManager ? 'text-blue-500' : 'text-gray-400'}`}
+                >
+                  {config.modules.passwordManager ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
                 </button>
               </div>
             </div>
@@ -352,7 +367,7 @@ interface DataCenterManagerProps {
   onUpdateResourceData: (data: ResourceCenterData) => void;
 }
 
-type SubPage = 'oj-heatmap' | 'couple-heatmap' | 'resource-center' | 'resource-realtime';
+type SubPage = 'oj-heatmap' | 'couple-heatmap' | 'resource-center' | 'resource-realtime' | 'password-manager';
 
 interface NavItem {
   id: SubPage;
@@ -385,6 +400,12 @@ const NAV_ITEMS: NavItem[] = [
     name: '资源实时数据',
     icon: <Cpu className="w-4 h-4" />,
     configKey: 'resourceRealtime',
+  },
+  {
+    id: 'password-manager',
+    name: '密码管理',
+    icon: <Shield className="w-4 h-4" />,
+    configKey: 'passwordManager',
   },
 ];
 
@@ -515,6 +536,9 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
         )}
         {activePage === 'resource-realtime' && (
           <ResourceRealtimeData />
+        )}
+        {activePage === 'password-manager' && (
+          <PasswordManager />
         )}
       </div>
     </div>
