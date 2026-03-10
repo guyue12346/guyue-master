@@ -1,11 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart3, Flame, Heart, Package, Cpu, Settings, X, ToggleLeft, ToggleRight, Mail, Server, Key, Send, Loader2, CheckCircle, AlertCircle, Shield } from 'lucide-react';
+import { BarChart3, Flame, Package, Settings, X, ToggleLeft, ToggleRight, Mail, Server, Key, Send, Loader2, CheckCircle, AlertCircle, Shield } from 'lucide-react';
 import { OJHeatmapContainer } from './OJHeatmapContainer';
-import { CoupleHeatmapContainer } from './CoupleHeatmapContainer';
 import { ResourceCenter } from './ResourceCenter';
-import { ResourceRealtimeData } from './ResourceRealtimeData';
 import { PasswordManager } from './PasswordManager';
-import type { OJHeatmapData, HeatmapData, ResourceCenterData, DataCenterConfig, EmailConfig } from '../../types';
+import type { OJHeatmapData, ResourceCenterData, DataCenterConfig, EmailConfig } from '../../types';
 
 // localStorage 存储键
 const STORAGE_KEY_DATACENTER_CONFIG = 'linkmaster_datacenter_config';
@@ -15,9 +13,7 @@ const STORAGE_KEY_EMAIL_CONFIG = 'linkmaster_email_config';
 const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
   modules: {
     ojHeatmap: true,
-    coupleHeatmap: true,
     resourceCenter: true,
-    resourceRealtime: true,
     passwordManager: true,
   },
 };
@@ -141,19 +137,6 @@ const DataCenterSettingsModal: React.FC<{
 
               <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
                 <div className="flex items-center gap-3">
-                  <Heart className="w-4 h-4 text-pink-500" />
-                  <span className="text-sm text-gray-900 dark:text-white">小红与小田</span>
-                </div>
-                <button
-                  onClick={() => handleModuleToggle('coupleHeatmap')}
-                  className={`transition-colors ${config.modules.coupleHeatmap ? 'text-blue-500' : 'text-gray-400'}`}
-                >
-                  {config.modules.coupleHeatmap ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div className="flex items-center gap-3">
                   <Package className="w-4 h-4 text-blue-500" />
                   <span className="text-sm text-gray-900 dark:text-white">资源中心</span>
                 </div>
@@ -162,19 +145,6 @@ const DataCenterSettingsModal: React.FC<{
                   className={`transition-colors ${config.modules.resourceCenter ? 'text-blue-500' : 'text-gray-400'}`}
                 >
                   {config.modules.resourceCenter ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <Cpu className="w-4 h-4 text-indigo-500" />
-                  <span className="text-sm text-gray-900 dark:text-white">资源实时数据</span>
-                </div>
-                <button
-                  onClick={() => handleModuleToggle('resourceRealtime')}
-                  className={`transition-colors ${config.modules.resourceRealtime ? 'text-blue-500' : 'text-gray-400'}`}
-                >
-                  {config.modules.resourceRealtime ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
                 </button>
               </div>
 
@@ -363,13 +333,11 @@ const DataCenterSettingsModal: React.FC<{
 interface DataCenterManagerProps {
   ojHeatmapData: OJHeatmapData;
   onUpdateOJHeatmapData: (data: OJHeatmapData) => void;
-  heatmapData: HeatmapData;
-  onUpdateHeatmap: (person: 'guyue' | 'xiaohong', date: string, value: number) => void;
   resourceData: ResourceCenterData;
   onUpdateResourceData: (data: ResourceCenterData) => void;
 }
 
-type SubPage = 'oj-heatmap' | 'couple-heatmap' | 'resource-center' | 'resource-realtime' | 'password-manager';
+type SubPage = 'oj-heatmap' | 'resource-center' | 'password-manager';
 
 interface NavItem {
   id: SubPage;
@@ -386,22 +354,10 @@ const NAV_ITEMS: NavItem[] = [
     configKey: 'ojHeatmap',
   },
   {
-    id: 'couple-heatmap',
-    name: '小红与小田',
-    icon: <Heart className="w-4 h-4" />,
-    configKey: 'coupleHeatmap',
-  },
-  {
     id: 'resource-center',
     name: '资源中心',
     icon: <Package className="w-4 h-4" />,
     configKey: 'resourceCenter',
-  },
-  {
-    id: 'resource-realtime',
-    name: '资源实时数据',
-    icon: <Cpu className="w-4 h-4" />,
-    configKey: 'resourceRealtime',
   },
   {
     id: 'password-manager',
@@ -414,8 +370,6 @@ const NAV_ITEMS: NavItem[] = [
 export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
   ojHeatmapData,
   onUpdateOJHeatmapData,
-  heatmapData,
-  onUpdateHeatmap,
   resourceData,
   onUpdateResourceData,
 }) => {
@@ -524,20 +478,11 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
             onUpdateData={onUpdateOJHeatmapData}
           />
         )}
-        {activePage === 'couple-heatmap' && (
-          <CoupleHeatmapContainer
-            heatmapData={heatmapData}
-            onUpdateHeatmap={onUpdateHeatmap}
-          />
-        )}
         {activePage === 'resource-center' && (
           <ResourceCenter
             data={resourceData}
             onUpdateData={onUpdateResourceData}
           />
-        )}
-        {activePage === 'resource-realtime' && (
-          <ResourceRealtimeData />
         )}
         {activePage === 'password-manager' && (
           <PasswordManager />

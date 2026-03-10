@@ -3,11 +3,10 @@ import { NavRail } from './components/NavRail';
 import { Sidebar } from './components/Sidebar';
 import { SplashScreen } from './components/SplashScreen';
 import { FloatingChatWindow } from './components/FloatingChatWindow';
-import { Bookmark, Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig } from './types';
+import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig } from './types';
 import { Plus, Search, Command, Loader2 } from 'lucide-react';
 
 // Lazy load components to improve initial load performance
-const BookmarkList = React.lazy(() => import('./components/BookmarkList').then(m => ({ default: m.BookmarkList })));
 const NoteList = React.lazy(() => import('./components/NoteList').then(m => ({ default: m.NoteList })));
 const SSHList = React.lazy(() => import('./components/SSHList').then(m => ({ default: m.SSHList })));
 const APIList = React.lazy(() => import('./components/APIList').then(m => ({ default: m.APIList })));
@@ -31,7 +30,6 @@ const DataCenterManager = React.lazy(() => import('./components/datacenter/DataC
 const ExcalidrawEditor = React.lazy(() => import('./components/datacenter/ExcalidrawEditor').then(m => ({ default: m.ExcalidrawEditor })));
 
 // Lazy load modals
-const AddEditModal = React.lazy(() => import('./components/AddEditModal').then(m => ({ default: m.AddEditModal })));
 const NoteModal = React.lazy(() => import('./components/NoteModal').then(m => ({ default: m.NoteModal })));
 const SSHModal = React.lazy(() => import('./components/SSHModal').then(m => ({ default: m.SSHModal })));
 const APIModal = React.lazy(() => import('./components/APIModal').then(m => ({ default: m.APIModal })));
@@ -45,7 +43,6 @@ const SettingsModal = React.lazy(() => import('./components/SettingsModal').then
 const STORAGE_VERSION = 'v1';
 const STORAGE_VERSION_KEY = 'linkmaster_storage_version';
 
-const STORAGE_KEY_BOOKMARKS = 'linkmaster_bookmarks_v1';
 const STORAGE_KEY_CATEGORIES = 'linkmaster_categories_v1';
 const STORAGE_KEY_NOTES = 'linkmaster_notes_v1';
 const STORAGE_KEY_SSH = 'linkmaster_ssh_v1';
@@ -112,7 +109,6 @@ const migrateStorageData = () => {
     
     // Example: Migrate old keys to new keys
     const oldKeys = [
-      { old: 'linkmaster_bookmarks', new: STORAGE_KEY_BOOKMARKS },
       { old: 'linkmaster_categories', new: STORAGE_KEY_CATEGORIES },
       { old: 'linkmaster_notes', new: STORAGE_KEY_NOTES },
       { old: 'linkmaster_ssh', new: STORAGE_KEY_SSH },
@@ -193,6 +189,7 @@ const App: React.FC = () => {
           (m.id as string) !== 'renderer' &&
           (m.id as string) !== 'markdown' &&
           (m.id as string) !== 'vscode' &&
+          (m.id as string) !== 'bookmarks' &&
           m.name !== '文件归档'
         );
         return [...merged, ...legacyExtras];
@@ -205,7 +202,6 @@ const App: React.FC = () => {
   });
   const [plugins, setPlugins] = useState<PluginMetadata[]>([]);
 
-  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
   const [sshRecords, setSSHRecords] = useState<SSHRecord[]>([]);
   const [apiRecords, setApiRecords] = useState<APIRecord[]>([]);
@@ -289,7 +285,6 @@ const App: React.FC = () => {
   
   // Categories now managed per app mode
   const [categoriesMap, setCategoriesMap] = useState<Record<string, Category[]>>({
-    bookmarks: DEFAULT_CATEGORIES,
     ssh: DEFAULT_CATEGORIES,
     api: DEFAULT_CATEGORIES,
     todo: DEFAULT_CATEGORIES,
@@ -303,7 +298,6 @@ const App: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   
   // Modals
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
   const [isSSHModalOpen, setIsSSHModalOpen] = useState(false);
   const [isAPIModalOpen, setIsAPIModalOpen] = useState(false);
@@ -315,7 +309,6 @@ const App: React.FC = () => {
   const [initialCategoryEditId, setInitialCategoryEditId] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
-  const [editingBookmark, setEditingBookmark] = useState<Bookmark | null>(null);
   const [editingNote, setEditingNote] = useState<Note | null>(null);
   const [editingSSH, setEditingSSH] = useState<SSHRecord | null>(null);
   const [editingAPI, setEditingAPI] = useState<APIRecord | null>(null);
@@ -435,10 +428,6 @@ const App: React.FC = () => {
       // 注意：图床数据（IMAGE_RECORDS 和 IMAGE_CONFIG）由单独的 useEffect 从文件存储加载
       // 不在这里加载，避免被空值覆盖
       const storageKeys = [
-        { key: STORAGE_KEY_BOOKMARKS, setter: setBookmarks, defaultValue: [
-          {id: '1', title: 'Google', url: 'https://google.com', category: '工具', note: 'Search Engine', priority: 1, createdAt: Date.now()},
-          {id: '2', title: 'Tailwind CSS', url: 'https://tailwindcss.com', category: '开发', note: 'CSS Framework', priority: 2, createdAt: Date.now()},
-        ]},
         { key: STORAGE_KEY_CATEGORIES, setter: (data: any) => setCategoriesMap(prev => ({ ...prev, ...data })), defaultValue: null },
         { key: STORAGE_KEY_NOTES, setter: setNotes, defaultValue: [{id: '1', content: '欢迎使用 NoteMaster！\n在这里记录你的灵感。', color: 'bg-yellow-100', createdAt: Date.now()}]},
         { key: STORAGE_KEY_SSH, setter: setSSHRecords, defaultValue: [] },
@@ -474,18 +463,6 @@ const App: React.FC = () => {
     };
 
     loadAllData();
-  }, [dataCache]);
-
-  // Load Bookmarks (kept for backward compatibility, but now handled in batch)
-  useEffect(() => {
-    const savedBookmarks = localStorage.getItem(STORAGE_KEY_BOOKMARKS);
-    if (savedBookmarks && !dataCache.has(STORAGE_KEY_BOOKMARKS)) {
-      const parsed = safeJSONParse(savedBookmarks, [
-        {id: '1', title: 'Google', url: 'https://google.com', category: '工具', note: 'Search Engine', priority: 1, createdAt: Date.now()},
-        {id: '2', title: 'Tailwind CSS', url: 'https://tailwindcss.com', category: '开发', note: 'CSS Framework', priority: 2, createdAt: Date.now()},
-      ]);
-      setBookmarks(parsed);
-    }
   }, [dataCache]);
 
   // 图床数据单独加载 - 优先从文件存储加载，确保更新后数据不丢失
@@ -775,7 +752,7 @@ const App: React.FC = () => {
 
   // Note: Following individual loads are kept but will be skipped if batch load succeeded
   useEffect(() => {
-    if (dataCache.has(STORAGE_KEY_BOOKMARKS)) {
+    if (dataCache.has(STORAGE_KEY_CATEGORIES)) {
       // 批量加载已完成，只加载插件并标记应用就绪
       if (window.electronAPI) {
         window.electronAPI.getPlugins().then(loadedPlugins => {
@@ -810,20 +787,6 @@ const App: React.FC = () => {
         setIsAppReady(true);
       }
       return;
-    }
-
-    // Load Bookmarks (fallback)
-    const savedBookmarks = localStorage.getItem(STORAGE_KEY_BOOKMARKS);
-    if (savedBookmarks) {
-      setBookmarks(safeJSONParse(savedBookmarks, [
-        {id: '1', title: 'Google', url: 'https://google.com', category: '工具', note: 'Search Engine', priority: 1, createdAt: Date.now()},
-        {id: '2', title: 'Tailwind CSS', url: 'https://tailwindcss.com', category: '开发', note: 'CSS Framework', priority: 2, createdAt: Date.now()},
-      ]));
-    } else {
-        setBookmarks([
-            {id: '1', title: 'Google', url: 'https://google.com', category: '工具', note: 'Search Engine', priority: 1, createdAt: Date.now()},
-            {id: '2', title: 'Tailwind CSS', url: 'https://tailwindcss.com', category: '开发', note: 'CSS Framework', priority: 2, createdAt: Date.now()},
-        ]);
     }
 
     // Load Categories
@@ -978,12 +941,6 @@ const App: React.FC = () => {
 
   // Save on change - with debounce
   useEffect(() => {
-    if (bookmarks.length > 0) {
-      saveToStorage(STORAGE_KEY_BOOKMARKS, bookmarks);
-    }
-  }, [bookmarks, saveToStorage]);
-
-  useEffect(() => {
     if (Object.keys(categoriesMap).length > 0) {
       saveToStorage(STORAGE_KEY_CATEGORIES, categoriesMap);
     }
@@ -1117,23 +1074,6 @@ const App: React.FC = () => {
   }, [appMode, noteCategories, categoriesMap]);
 
   // Derived State: Filtered Items
-  const filteredBookmarks = useMemo(() => {
-    if (appMode !== 'bookmarks') return [];
-    return bookmarks
-      .filter(b => selectedCategory === '全部' || b.category === selectedCategory)
-      .filter(b => 
-        b.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        b.note.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        b.url.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-      .sort((a, b) => {
-        const pA = a.priority ?? 999;
-        const pB = b.priority ?? 999;
-        if (pA !== pB) return pA - pB;
-        return a.createdAt - b.createdAt;
-      });
-  }, [bookmarks, selectedCategory, searchQuery, appMode]);
-
   const filteredNotes = useMemo(() => {
     if (appMode !== 'notes') return [];
     return notes
@@ -1257,7 +1197,6 @@ const App: React.FC = () => {
   }, [imageRecords, searchQuery, appMode, selectedCategory]);
 
   const getCurrentCount = () => {
-    if (appMode === 'bookmarks') return filteredBookmarks.length;
     if (appMode === 'notes') return filteredNotes.length;
     if (appMode === 'ssh') return filteredSSHRecords.length;
     if (appMode === 'api') return filteredAPIRecords.length;
@@ -1287,7 +1226,6 @@ const App: React.FC = () => {
 
   const getAddButtonLabel = () => {
     switch (appMode) {
-      case 'bookmarks': return '添加书签';
       case 'notes': return '新建笔记';
       case 'ssh': return '添加连接';
       case 'api': return '添加API';
@@ -1301,7 +1239,6 @@ const App: React.FC = () => {
   };
 
   const getSearchPlaceholder = () => {
-    if (appMode === 'bookmarks') return '搜索书签...';
     if (appMode === 'ssh') return '搜索服务器...';
     if (appMode === 'api') return '搜索 API...';
     if (appMode === 'todo') return '搜索任务...';
@@ -1340,44 +1277,6 @@ const App: React.FC = () => {
         [appMode]: [...currentCategories, newCategory]
       };
     });
-  };
-
-  // --- Handlers: Bookmarks ---
-
-  const handleSaveBookmark = (bm: Partial<Bookmark>) => {
-    const catName = bm.category || '未分类';
-    ensureCategoryExists(catName);
-
-    if (bm.id) {
-      setBookmarks(prev => prev.map(b => b.id === bm.id ? { ...b, ...bm } as Bookmark : b));
-    } else {
-      const currentMaxPriority = bookmarks.length > 0 
-        ? Math.max(...bookmarks.map(b => b.priority || 0)) 
-        : 0;
-      
-      const newBookmark: Bookmark = {
-        id: crypto.randomUUID(),
-        title: bm.title!,
-        url: bm.url!,
-        category: catName,
-        note: bm.note || '',
-        priority: bm.priority ?? (currentMaxPriority + 1),
-        createdAt: Date.now(),
-      };
-      setBookmarks(prev => [newBookmark, ...prev]);
-    }
-    setEditingBookmark(null);
-  };
-
-  const handleDeleteBookmark = (id: string) => {
-    if (confirm('确定要删除这个书签吗?')) {
-      setBookmarks(prev => prev.filter(b => b.id !== id));
-    }
-  };
-
-  const handleEditBookmark = (bm: Bookmark) => {
-    setEditingBookmark(bm);
-    setIsAddModalOpen(true);
   };
 
   // --- Handlers: Notes ---
@@ -1528,17 +1427,6 @@ const App: React.FC = () => {
   const handleEditTodo = (todo: TodoItem) => {
     setEditingTodo(todo);
     setIsTodoModalOpen(true);
-  };
-
-  // --- Handlers: Heatmap ---
-  const handleUpdateHeatmap = (person: 'guyue' | 'xiaohong', date: string, value: number) => {
-    setHeatmapData(prev => ({
-      ...prev,
-      [person]: {
-        ...prev[person],
-        [date]: value,
-      },
-    }));
   };
 
   // --- Handlers: Files ---
@@ -1959,9 +1847,7 @@ const App: React.FC = () => {
                     case 'markdown': 
                       handleAddMarkdownNote(); 
                       break;
-                    default: 
-                      setEditingBookmark(null);
-                      setIsAddModalOpen(true);
+                    default: break;
                   }
                 }}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/30"
@@ -1981,7 +1867,6 @@ const App: React.FC = () => {
               <span>加载模块中...</span>
             </div>
           }>
-            {appMode === 'bookmarks' && <BookmarkList bookmarks={filteredBookmarks} onDelete={handleDeleteBookmark} onEdit={handleEditBookmark} onOpenInBrowser={handleOpenInBrowser} />}
             {appMode === 'notes' && <NoteList notes={filteredNotes} onDelete={handleDeleteNote} onEdit={handleEditNote} />}
             {appMode === 'ssh' && <SSHList records={filteredSSHRecords} onDelete={handleDeleteSSH} onEdit={handleEditSSH} onOpenInTerminal={handleOpenSSHInTerminal} />}
             {appMode === 'api' && <APIList records={filteredAPIRecords} onDelete={handleDeleteAPI} onEdit={handleEditAPI} />}
@@ -2143,8 +2028,6 @@ const App: React.FC = () => {
                 <DataCenterManager
                   ojHeatmapData={ojHeatmapData}
                   onUpdateOJHeatmapData={setOJHeatmapData}
-                  heatmapData={heatmapData}
-                  onUpdateHeatmap={handleUpdateHeatmap}
                   resourceData={resourceData}
                   onUpdateResourceData={setResourceData}
                 />
@@ -2185,14 +2068,6 @@ const App: React.FC = () => {
 
       {/* Modals */}
       <Suspense fallback={null}>
-        <AddEditModal
-          isOpen={isAddModalOpen}
-          onClose={() => setIsAddModalOpen(false)}
-          onSave={handleSaveBookmark}
-          initialData={editingBookmark}
-          categories={(categoriesMap[appMode] || DEFAULT_CATEGORIES).map(c => c.name)}
-        />
-
         <NoteModal
           isOpen={isNoteModalOpen}
           onClose={() => setIsNoteModalOpen(false)}
@@ -2264,12 +2139,6 @@ const App: React.FC = () => {
             // 如果有分类名称变化，更新相关数据记录
             if (categoryNameChanges.size > 0) {
               switch (appMode) {
-                case 'bookmarks':
-                  setBookmarks(prev => prev.map(item => {
-                    const newName = categoryNameChanges.get(item.category);
-                    return newName ? { ...item, category: newName } : item;
-                  }));
-                  break;
                 case 'ssh':
                   setSSHRecords(prev => prev.map(item => {
                     const newName = categoryNameChanges.get(item.category);
@@ -2324,7 +2193,6 @@ const App: React.FC = () => {
         <SettingsModal
           isOpen={isSettingsOpen}
           onClose={() => setIsSettingsOpen(false)}
-          bookmarks={bookmarks}
           categories={activeCategories}
           notes={notes}
           sshRecords={sshRecords}

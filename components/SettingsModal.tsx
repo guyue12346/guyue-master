@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X, FileDown, FolderOpen, ToggleLeft, ToggleRight, ChevronDown, Globe, Package, Plus, Trash2, GripVertical } from 'lucide-react';
-import { Bookmark, Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, ModuleConfig, AVAILABLE_ICONS, PluginMetadata } from '../types';
+import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, ModuleConfig, AVAILABLE_ICONS, PluginMetadata } from '../types';
 import * as LucideIcons from 'lucide-react';
 
 const DEFAULT_SPLASH_QUOTE = '有善始者实繁，能克终者盖寡';
@@ -38,7 +38,6 @@ const normalizePriorities = (modules: ModuleConfig[]) =>
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  bookmarks: Bookmark[];
   categories: Category[];
   notes: Note[];
   sshRecords: SSHRecord[];
@@ -52,7 +51,6 @@ interface SettingsModalProps {
 export const SettingsModal: React.FC<SettingsModalProps> = ({ 
   isOpen, 
   onClose, 
-  bookmarks,
   categories,
   notes,
   sshRecords,
@@ -223,39 +221,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const dateStr = new Date().toISOString().split('T')[0];
     let mdContent = `# LinkMaster Backup\n> Exported on ${dateStr}\n\n`;
 
-    // 2. Export Bookmarks
-    mdContent += `# Bookmarks\n\n`;
-    
-    const validCategories = categories.filter(c => c.id !== 'all' && c.name !== '全部');
-
-    validCategories.forEach(cat => {
-      const catBookmarks = bookmarks.filter(b => b.category === cat.name);
-      
-      if (catBookmarks.length > 0) {
-        mdContent += `## ${cat.name}\n\n`;
-        
-        catBookmarks.forEach(b => {
-            const noteText = b.note ? ` - ${b.note}` : '';
-            mdContent += `- [${b.title}](${b.url})${noteText}\n`;
-        });
-        
-        mdContent += `\n`;
-      }
-    });
-
-    // Uncategorized Bookmarks
-    const processedIds = new Set(validCategories.flatMap(c => bookmarks.filter(b => b.category === c.name).map(b => b.id)));
-    const uncategorized = bookmarks.filter(b => !processedIds.has(b.id));
-
-    if (uncategorized.length > 0) {
-       mdContent += `## Uncategorized\n\n`;
-       uncategorized.forEach(b => {
-          mdContent += `- [${b.title}](${b.url}) - ${b.note || ''}\n`;
-       });
-       mdContent += `\n`;
-    }
-
-    // 3. Export SSH Records
+    // 2. Export SSH Records
     if (sshRecords.length > 0) {
       mdContent += `---\n\n# SSH Records\n\n`;
       mdContent += `| Hostname | Address | User | Port | Note |\n`;

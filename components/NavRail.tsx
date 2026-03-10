@@ -95,7 +95,6 @@ export const NavRail: React.FC<NavRailProps> = ({
           // For consistency with previous hardcoded labels:
           let label = module.name;
           if (module.id === 'todo') label = 'TodoMaster';
-          if (module.id === 'bookmarks') label = 'LinkMaster';
           if (module.id === 'ssh') label = 'SSHManager';
           if (module.id === 'api') label = 'APIManager';
           if (module.id === 'files') label = 'FileManager';
