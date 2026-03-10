@@ -190,6 +190,8 @@ const DataCenterSettingsModal: React.FC<{
                   {config.modules.passwordManager ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
                 </button>
               </div>
+
+
             </div>
           </div>
 

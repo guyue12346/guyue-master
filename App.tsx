@@ -28,6 +28,7 @@ const ChatManager = React.lazy(() => import('./components/ChatManager').then(m =
 const PluginContainer = React.lazy(() => import('./components/PluginContainer').then(m => ({ default: m.PluginContainer })));
 const HeatmapContainer = React.lazy(() => import('./components/HeatmapContainer').then(m => ({ default: m.HeatmapContainer })));
 const DataCenterManager = React.lazy(() => import('./components/datacenter/DataCenterManager').then(m => ({ default: m.DataCenterManager })));
+const ExcalidrawEditor = React.lazy(() => import('./components/datacenter/ExcalidrawEditor').then(m => ({ default: m.ExcalidrawEditor })));
 
 // Lazy load modals
 const AddEditModal = React.lazy(() => import('./components/AddEditModal').then(m => ({ default: m.AddEditModal })));
@@ -240,6 +241,7 @@ const App: React.FC = () => {
   const [hasChatMounted, setHasChatMounted] = useState(false);
   const [isFloatingChatOpen, setIsFloatingChatOpen] = useState(false);
   const [floatingChatSource, setFloatingChatSource] = useState<'leetcode' | 'learning' | null>(null);
+  const [hasExcalidrawMounted, setHasExcalidrawMounted] = useState(false);
   const [hasDataCenterMounted, setHasDataCenterMounted] = useState(false);
 
   // Prevent body scroll to fix layout shifts on focus
@@ -270,10 +272,13 @@ const App: React.FC = () => {
     if (appMode === 'chat' && !hasChatMounted) {
       setHasChatMounted(true);
     }
+    if (appMode === 'excalidraw' && !hasExcalidrawMounted) {
+      setHasExcalidrawMounted(true);
+    }
     if (appMode === 'datacenter' && !hasDataCenterMounted) {
       setHasDataCenterMounted(true);
     }
-  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasLeetCodeMounted, hasLearningMounted, hasChatMounted, hasDataCenterMounted]);
+  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasLeetCodeMounted, hasLearningMounted, hasChatMounted, hasExcalidrawMounted, hasDataCenterMounted]);
 
   useEffect(() => {
     if (appMode === 'chat') {
@@ -1867,7 +1872,7 @@ const App: React.FC = () => {
             />
           </Suspense>
         )
-      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'datacenter' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
+      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'excalidraw' && appMode !== 'datacenter' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
         <Sidebar 
           appMode={appMode}  
           categories={activeCategories} 
@@ -1885,7 +1890,7 @@ const App: React.FC = () => {
       ) : null}
 
       <div className="flex-1 flex flex-col min-w-0 bg-white">
-        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'files' && appMode !== 'datacenter' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
+        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
         <div className="h-16 border-b border-gray-200 flex items-center justify-between px-6 bg-white shrink-0">
            <div className="flex items-center gap-4 flex-1 max-w-xl">
               <div className="relative flex-1">
@@ -1969,7 +1974,7 @@ const App: React.FC = () => {
         </div>
         )}
 
-        <div className={`flex-1 ${appMode === 'chat' ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'chat' || appMode === 'datacenter' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : 'p-6'}`}>
+        <div className={`flex-1 ${appMode === 'chat' ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'chat' || appMode === 'excalidraw' || appMode === 'datacenter' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : 'p-6'}`}>
           <Suspense fallback={
             <div className="flex items-center justify-center h-full text-gray-400 gap-2">
               <Loader2 className="w-6 h-6 animate-spin" />
@@ -2119,6 +2124,12 @@ const App: React.FC = () => {
             {(hasChatMounted || appMode === 'chat') && (
               <div className={appMode === 'chat' ? 'h-full' : 'hidden'}>
                 <ChatManager />
+              </div>
+            )}
+
+            {(hasExcalidrawMounted || appMode === 'excalidraw') && (
+              <div className={appMode === 'excalidraw' ? 'h-full' : 'hidden'}>
+                <ExcalidrawEditor />
               </div>
             )}
 

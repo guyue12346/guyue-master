@@ -142,7 +142,8 @@ export const DEFAULT_MODULE_CONFIG: ModuleConfig[] = [
   { id: 'learning', name: '学习空间', enabled: true, priority: 12, icon: 'GraduationCap', shortcut: 'Tab+K' },
   { id: 'image-hosting', name: '图床管理', enabled: true, priority: 13, icon: 'Image', shortcut: 'Tab+I' },
   { id: 'chat', name: 'AI Chat', enabled: true, priority: 14, icon: 'MessageSquare', shortcut: 'Tab+C' },
-  { id: 'datacenter', name: '数据中心', enabled: true, priority: 15, icon: 'BarChart3', shortcut: 'Tab+D' }
+  { id: 'excalidraw', name: '绘图板', enabled: true, priority: 15, icon: 'Pencil', shortcut: 'Tab+E' },
+  { id: 'datacenter', name: '数据中心', enabled: true, priority: 16, icon: 'BarChart3', shortcut: 'Tab+D' }
 ];
 
 export interface Category {
