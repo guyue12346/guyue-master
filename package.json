@@ -24,6 +24,7 @@
     "@google/genai": "^1.30.0",
     "@monaco-editor/react": "^4.7.0",
     "@types/react-syntax-highlighter": "^15.5.13",
+    "html-to-image": "^1.11.13",
     "html2canvas": "^1.4.1",
     "katex": "^0.16.25",
     "lucide-react": "^0.554.0",
