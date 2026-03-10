@@ -2,9 +2,15 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   Plus, Save, Trash2, X, Download, Upload, Image as ImageIcon,
   FileText, Edit2, Copy, CheckCircle, AlertCircle, Loader2, Pencil,
-  FolderOpen, ChevronDown
+  FolderOpen, ChevronDown, Settings, Sigma
 } from 'lucide-react';
 import '@excalidraw/excalidraw/index.css';
+
+declare global {
+  interface Window {
+    MathJax?: any;
+  }
+}
 
 // ======== 类型定义 ========
 interface DrawingFile {
@@ -21,6 +27,56 @@ const STORAGE_KEY_DRAWINGS = 'guyue_excalidraw_drawings';
 const STORAGE_KEY_ACTIVE = 'guyue_excalidraw_active';
 const STORAGE_KEY_IMAGE_CONFIG = 'linkmaster_image_hosting_config_v1';
 const STORAGE_KEY_IMAGE_RECORDS = 'linkmaster_image_records_v1';
+const STORAGE_KEY_DEFAULTS = 'guyue_excalidraw_defaults';
+const STORAGE_KEY_LIBRARY = 'guyue_excalidraw_library';
+const STORAGE_KEY_LATEX_MAP = 'guyue_excalidraw_latex_map';
+
+// 需要持久化的 appState 属性（工具偏好设置）
+const PERSISTED_APP_STATE_KEYS = [
+  'viewBackgroundColor',
+  'currentItemFontFamily',
+  'currentItemFontSize',
+  'currentItemStrokeColor',
+  'currentItemBackgroundColor',
+  'currentItemFillStyle',
+  'currentItemStrokeWidth',
+  'currentItemStrokeStyle',
+  'currentItemRoughness',
+  'currentItemOpacity',
+  'currentItemRoundness',
+  'currentItemStartArrowhead',
+  'currentItemEndArrowhead',
+];
+
+// 字体映射表 (Excalidraw v0.18)
+const FONT_FAMILIES: Record<number, string> = {
+  1: '手写体 (Virgil)',
+  2: '普通 (Helvetica)',
+  3: '代码 (Cascadia)',
+  5: 'Excalifont',
+  6: 'Nunito',
+  7: 'Lilita One',
+  8: 'Comic Shanns',
+};
+
+const loadDefaults = (): Record<string, any> => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_DEFAULTS);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+};
+
+const saveDefaults = (defaults: Record<string, any>) => {
+  localStorage.setItem(STORAGE_KEY_DEFAULTS, JSON.stringify(defaults));
+};
+
+const pickAppState = (appState: any): Record<string, any> => {
+  const picked: Record<string, any> = {};
+  for (const key of PERSISTED_APP_STATE_KEYS) {
+    if (appState[key] !== undefined) picked[key] = appState[key];
+  }
+  return picked;
+};
 
 // ======== 工具函数 ========
 const generateId = () => `draw_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
@@ -34,6 +90,141 @@ const loadDrawings = (): DrawingFile[] => {
 
 const saveDrawings = (drawings: DrawingFile[]) => {
   localStorage.setItem(STORAGE_KEY_DRAWINGS, JSON.stringify(drawings));
+};
+
+const loadLibrary = (): any[] => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_LIBRARY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+};
+
+const saveLibrary = (items: any[]) => {
+  try {
+    localStorage.setItem(STORAGE_KEY_LIBRARY, JSON.stringify(items));
+  } catch (e) {
+    console.error('Failed to save library:', e);
+  }
+};
+
+// LaTeX 源码映射: fileId -> latex string
+const loadLatexMap = (): Record<string, string> => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_LATEX_MAP);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+};
+
+const saveLatexMap = (map: Record<string, string>) => {
+  localStorage.setItem(STORAGE_KEY_LATEX_MAP, JSON.stringify(map));
+};
+
+// ======== MathJax 加载 ========
+const ensureMathJax = async () => {
+  if (window.MathJax?.tex2svgPromise || window.MathJax?.tex2svg) return window.MathJax;
+
+  await new Promise<void>((resolve, reject) => {
+    const existingScript = document.getElementById('guyue-mathjax-script') as HTMLScriptElement | null;
+    if (existingScript) {
+      if (window.MathJax?.tex2svg) { resolve(); return; }
+      existingScript.addEventListener('load', () => resolve(), { once: true });
+      existingScript.addEventListener('error', () => reject(new Error('MathJax load error')), { once: true });
+      return;
+    }
+
+    window.MathJax = {
+      loader: { load: ['input/tex', 'output/svg'] },
+      tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] },
+      svg: { fontCache: 'none' },
+      startup: { typeset: false },
+    };
+
+    const script = document.createElement('script');
+    script.id = 'guyue-mathjax-script';
+    script.async = true;
+    script.src = 'https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js';
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('MathJax load error'));
+    document.head.appendChild(script);
+  });
+
+  return window.MathJax;
+};
+
+// 将 LaTeX 渲染为 SVG dataURL 并测量尺寸
+const renderLatexToSvg = async (latex: string, color: string = '#1e1e1e'): Promise<{ dataURL: string; width: number; height: number }> => {
+  const mj = await ensureMathJax();
+  const wrapper = mj.tex2svgPromise
+    ? await mj.tex2svgPromise(latex, { display: true })
+    : mj.tex2svg(latex, { display: true });
+  const svgEl = wrapper?.querySelector?.('svg');
+  if (!svgEl) throw new Error('LaTeX render failed');
+  svgEl.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  svgEl.style.color = color;
+
+  const measureContainer = document.createElement('div');
+  measureContainer.style.cssText = 'position:fixed;left:-99999px;top:0;visibility:hidden';
+  measureContainer.appendChild(svgEl.cloneNode(true));
+  document.body.appendChild(measureContainer);
+  const measuredSvg = measureContainer.querySelector('svg');
+  const rect = measuredSvg?.getBoundingClientRect();
+  document.body.removeChild(measureContainer);
+
+  const svgString = new XMLSerializer().serializeToString(svgEl);
+  const dataURL = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgString)))}`;
+  return {
+    dataURL,
+    width: Math.max(rect?.width || 180, 80),
+    height: Math.max(rect?.height || 60, 40),
+  };
+};
+
+// ======== LaTeX 编辑弹窗 ========
+const LatexEditModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: (latex: string) => void;
+  isProcessing: boolean;
+  initialLatex: string;
+}> = ({ isOpen, onClose, onConfirm, isProcessing, initialLatex }) => {
+  const [latex, setLatex] = useState(initialLatex);
+  useEffect(() => { if (isOpen) setLatex(initialLatex); }, [isOpen, initialLatex]);
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-lg m-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-2">
+            <Sigma className="w-5 h-5 text-blue-500" />
+            <h3 className="text-base font-semibold text-gray-900 dark:text-white">编辑 LaTeX 公式</h3>
+          </div>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-4 space-y-3">
+          <textarea
+            value={latex}
+            onChange={e => setLatex(e.target.value)}
+            rows={5}
+            autoFocus
+            placeholder="例如：\\int_0^{\\infty} e^{-x}dx"
+            className="w-full px-3 py-2 text-sm font-mono border border-gray-200 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
+          />
+          <p className="text-xs text-gray-500 dark:text-gray-400">输入 LaTeX 语法，不需要 $$ 包裹。双击公式图片可再次编辑。</p>
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl">取消</button>
+            <button
+              onClick={() => { if (latex.trim()) onConfirm(latex.trim()); }}
+              disabled={isProcessing || !latex.trim()}
+              className="px-4 py-2 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-xl flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sigma className="w-4 h-4" />}
+              {isProcessing ? '渲染中...' : '确认'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 // ======== 删除确认弹窗 ========
@@ -181,6 +372,22 @@ export const ExcalidrawEditor: React.FC = () => {
   const [isFileListOpen, setIsFileListOpen] = useState(false);
   const [isDark, setIsDark] = useState(false);
 
+  // 素材库持久化
+  const [libraryItems, setLibraryItems] = useState<any[]>(loadLibrary);
+  const handleLibraryChange = useCallback((items: any[]) => {
+    setLibraryItems(items);
+    saveLibrary(items);
+  }, []);
+
+  // LaTeX 自动渲染
+  const lastEditingIdRef = useRef<string | null>(null);
+  const isProcessingLatexRef = useRef(false);
+  const latexMapRef = useRef<Record<string, string>>(loadLatexMap());
+
+  // LaTeX 编辑弹窗状态
+  const [latexEditTarget, setLatexEditTarget] = useState<{ elementId: string; fileId: string; latex: string } | null>(null);
+  const [isLatexProcessing, setIsLatexProcessing] = useState(false);
+
   // 检测暗色模式
   useEffect(() => {
     const check = () => setIsDark(document.documentElement.classList.contains('dark'));
@@ -201,6 +408,7 @@ export const ExcalidrawEditor: React.FC = () => {
           setExportUtils({
             exportToBlob: mod.exportToBlob,
             exportToSvg: mod.exportToSvg,
+            convertToExcalidrawElements: mod.convertToExcalidrawElements,
           });
         }
       } catch (err) {
@@ -216,6 +424,158 @@ export const ExcalidrawEditor: React.FC = () => {
     setTimeout(() => setToast(null), 2500);
   }, []);
 
+  // LaTeX 自动渲染：文本编辑完成后检测 $$...$$ 并转为公式图片
+  const handleChange = useCallback(async (elements: readonly any[], appState: any) => {
+    const api = excalidrawAPIRef.current;
+    if (!api || !exportUtils?.convertToExcalidrawElements) return;
+
+    // 追踪编辑状态变化
+    const editingId = appState?.editingElement?.id ?? null;
+    const prevId = lastEditingIdRef.current;
+    lastEditingIdRef.current = editingId;
+
+    // 仅在文本编辑刚结束时处理（从编辑态 → 非编辑态）
+    if (editingId !== null || prevId === null || isProcessingLatexRef.current) return;
+
+    // 找到刚编辑完的文本元素
+    const finishedEl = elements.find((e: any) => e.id === prevId && !e.isDeleted);
+    if (!finishedEl || finishedEl.type !== 'text') return;
+
+    const text = (finishedEl.text || '').trim();
+    const latexMatch = text.match(/^\$\$([\s\S]+)\$\$$/);
+    if (!latexMatch) return;
+
+    const latex = latexMatch[1].trim();
+    if (!latex) return;
+
+    isProcessingLatexRef.current = true;
+    try {
+      const color = finishedEl.strokeColor || '#1e1e1e';
+      const { dataURL, width, height } = await renderLatexToSvg(latex, color);
+
+      const fileId = `latex_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      api.addFiles([{
+        mimeType: 'image/svg+xml',
+        id: fileId,
+        dataURL,
+        created: Date.now(),
+      }]);
+
+      // 保存 LaTeX 源码映射
+      latexMapRef.current[fileId] = latex;
+      saveLatexMap(latexMapRef.current);
+
+      const newElements = exportUtils.convertToExcalidrawElements([{
+        type: 'image',
+        x: finishedEl.x,
+        y: finishedEl.y,
+        width,
+        height,
+        fileId,
+      }]);
+
+      // 替换文本元素为图片元素
+      const currentElements = api.getSceneElements();
+      const updatedElements = currentElements
+        .filter((el: any) => el.id !== finishedEl.id)
+        .concat(newElements);
+
+      setTimeout(() => {
+        api.updateScene({ elements: updatedElements });
+      }, 0);
+    } catch (err) {
+      console.error('LaTeX auto-render error:', err);
+    } finally {
+      isProcessingLatexRef.current = false;
+    }
+  }, [exportUtils]);
+
+  // 双击公式图片 → 打开编辑弹窗
+  const handlePointerDown = useCallback((activeTool: any, pointerDownState: any, event: React.PointerEvent) => {
+    // Excalidraw 的 onPointerDown 不太好用来检测双击
+    // 我们改用 DOM 事件监听
+  }, []);
+
+  // 监听画布容器上的双击事件
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const container = canvasContainerRef.current;
+    if (!container) return;
+
+    const handleDblClick = () => {
+      const api = excalidrawAPIRef.current;
+      if (!api) return;
+
+      const appState = api.getAppState();
+      const selectedIds = appState.selectedElementIds || {};
+      const selectedKeys = Object.keys(selectedIds).filter(k => selectedIds[k]);
+      if (selectedKeys.length !== 1) return;
+
+      const elements = api.getSceneElements();
+      const selectedEl = elements.find((e: any) => e.id === selectedKeys[0] && !e.isDeleted);
+      if (!selectedEl || selectedEl.type !== 'image') return;
+
+      const fileId = selectedEl.fileId;
+      if (!fileId || !latexMapRef.current[fileId]) return;
+
+      // 是公式图片，打开编辑弹窗
+      setLatexEditTarget({
+        elementId: selectedEl.id,
+        fileId,
+        latex: latexMapRef.current[fileId],
+      });
+    };
+
+    container.addEventListener('dblclick', handleDblClick);
+    return () => container.removeEventListener('dblclick', handleDblClick);
+  }, []);
+
+  // 确认编辑 LaTeX 公式
+  const handleLatexEditConfirm = useCallback(async (newLatex: string) => {
+    if (!latexEditTarget || !excalidrawAPIRef.current) return;
+    const api = excalidrawAPIRef.current;
+
+    setIsLatexProcessing(true);
+    try {
+      const elements = api.getSceneElements();
+      const targetEl = elements.find((e: any) => e.id === latexEditTarget.elementId && !e.isDeleted);
+      const color = targetEl?.strokeColor || '#1e1e1e';
+
+      const { dataURL, width, height } = await renderLatexToSvg(newLatex, color);
+
+      // 用新的 fileId 来更新
+      const newFileId = `latex_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      api.addFiles([{
+        mimeType: 'image/svg+xml',
+        id: newFileId,
+        dataURL,
+        created: Date.now(),
+      }]);
+
+      // 更新 LaTeX 映射：删除旧的，添加新的
+      delete latexMapRef.current[latexEditTarget.fileId];
+      latexMapRef.current[newFileId] = newLatex;
+      saveLatexMap(latexMapRef.current);
+
+      // 替换元素：保持位置，更新 fileId 和尺寸
+      const updatedElements = elements.map((el: any) => {
+        if (el.id === latexEditTarget.elementId) {
+          return { ...el, fileId: newFileId, width, height };
+        }
+        return el;
+      });
+
+      api.updateScene({ elements: updatedElements });
+      setLatexEditTarget(null);
+      showToast('公式已更新');
+    } catch (err) {
+      console.error('LaTeX edit error:', err);
+      showToast('公式渲染失败', 'error');
+    } finally {
+      setIsLatexProcessing(false);
+    }
+  }, [latexEditTarget, showToast]);
+
   // 获取当前激活的画布
   const activeDrawing = useMemo(() => {
     return drawings.find(d => d.id === activeId) || null;
@@ -223,10 +583,11 @@ export const ExcalidrawEditor: React.FC = () => {
 
   // 新建画布
   const handleNewDrawing = useCallback(() => {
+    const defaults = loadDefaults();
     const newDrawing: DrawingFile = {
       id: generateId(),
       name: `画布 ${drawings.length + 1}`,
-      data: { elements: [], appState: {}, files: {} },
+      data: { elements: [], appState: { ...defaults }, files: {} },
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -246,7 +607,7 @@ export const ExcalidrawEditor: React.FC = () => {
     const appState = api.getAppState();
     const files = api.getFiles();
     const updated = drawings.map(d =>
-      d.id === activeId ? { ...d, data: { elements, appState: { viewBackgroundColor: appState.viewBackgroundColor }, files }, updatedAt: Date.now() } : d
+      d.id === activeId ? { ...d, data: { elements, appState: pickAppState(appState), files }, updatedAt: Date.now() } : d
     );
     setDrawings(updated);
     saveDrawings(updated);
@@ -459,6 +820,41 @@ export const ExcalidrawEditor: React.FC = () => {
     }
   }, []);
 
+  // 设置面板
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const settingsRef = useRef<HTMLDivElement>(null);
+
+  // 保存当前工具配置为默认
+  const handleSaveAsDefaults = useCallback(() => {
+    if (!excalidrawAPIRef.current) { showToast('绘图引擎未就绪', 'error'); return; }
+    const appState = excalidrawAPIRef.current.getAppState();
+    const defaults = pickAppState(appState);
+    saveDefaults(defaults);
+    showToast('已保存为默认配置');
+    setIsSettingsOpen(false);
+  }, [showToast]);
+
+  // 清除默认配置
+  const handleClearDefaults = useCallback(() => {
+    localStorage.removeItem(STORAGE_KEY_DEFAULTS);
+    showToast('已恢复默认配置');
+    setIsSettingsOpen(false);
+  }, [showToast]);
+
+  // 关闭设置面板
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
+        setIsSettingsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  // 获取当前默认配置摘要
+  const currentDefaults = useMemo(() => loadDefaults(), [isSettingsOpen]);
+
   // 导出菜单
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
@@ -490,7 +886,7 @@ export const ExcalidrawEditor: React.FC = () => {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <Pencil className="w-5 h-5 text-blue-500" />
-            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">绘图板</h2>
+            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Excalidraw</h2>
           </div>
 
           {/* 文件选择器 */}
@@ -546,22 +942,20 @@ export const ExcalidrawEditor: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1">
           {/* 保存按钮 */}
           <button onClick={handleSave}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+            className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
             title="保存 (自动保存每30秒)">
             <Save className="w-4 h-4" />
-            <span className="hidden sm:inline">保存</span>
           </button>
 
           {/* 导出菜单 */}
           <div className="relative" ref={exportMenuRef}>
             <button onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
+              className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              title="导出">
               <Download className="w-4 h-4" />
-              <span className="hidden sm:inline">导出</span>
-              <ChevronDown className="w-3 h-3" />
             </button>
             {isExportMenuOpen && (
               <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl z-30 overflow-hidden">
@@ -581,18 +975,89 @@ export const ExcalidrawEditor: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* 设置按钮 */}
+          <div className="relative" ref={settingsRef}>
+            <button onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+              className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              title="默认配置">
+              <Settings className="w-4 h-4" />
+            </button>
+            {isSettingsOpen && (
+              <div className="absolute right-0 top-full mt-1 w-72 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl z-30 overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+                  <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">默认配置</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">先在画布中调好偏好设置，再点击下方按钮保存</p>
+                </div>
+                {Object.keys(currentDefaults).length > 0 && (
+                  <div className="px-4 py-2.5 border-b border-gray-100 dark:border-gray-700/50 space-y-1.5">
+                    <p className="text-xs font-medium text-gray-500 dark:text-gray-400">当前默认值</p>
+                    {currentDefaults.currentItemFontFamily && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">字体</span>
+                        <span className="text-xs text-gray-700 dark:text-gray-300">{FONT_FAMILIES[currentDefaults.currentItemFontFamily] || `Font ${currentDefaults.currentItemFontFamily}`}</span>
+                      </div>
+                    )}
+                    {currentDefaults.currentItemFontSize && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">字号</span>
+                        <span className="text-xs text-gray-700 dark:text-gray-300">{currentDefaults.currentItemFontSize}px</span>
+                      </div>
+                    )}
+                    {currentDefaults.currentItemStrokeColor && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">描边色</span>
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-3 h-3 rounded-sm border border-gray-300 dark:border-gray-600" style={{ backgroundColor: currentDefaults.currentItemStrokeColor }} />
+                          <span className="text-xs text-gray-700 dark:text-gray-300">{currentDefaults.currentItemStrokeColor}</span>
+                        </div>
+                      </div>
+                    )}
+                    {currentDefaults.currentItemStrokeWidth !== undefined && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">线宽</span>
+                        <span className="text-xs text-gray-700 dark:text-gray-300">{currentDefaults.currentItemStrokeWidth}</span>
+                      </div>
+                    )}
+                    {currentDefaults.currentItemRoughness !== undefined && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">风格</span>
+                        <span className="text-xs text-gray-700 dark:text-gray-300">{currentDefaults.currentItemRoughness === 0 ? '精细' : currentDefaults.currentItemRoughness === 1 ? '手绘' : '粗糙'}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="p-2 space-y-1">
+                  <button onClick={handleSaveAsDefaults}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors">
+                    <Save className="w-4 h-4 text-blue-500" />
+                    将当前画笔配置保存为默认
+                  </button>
+                  {Object.keys(currentDefaults).length > 0 && (
+                    <button onClick={handleClearDefaults}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors">
+                      <Trash2 className="w-4 h-4 text-red-500" />
+                      清除默认配置
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Excalidraw 编辑器 */}
-      <div className="flex-1 relative" style={{ minHeight: 0 }}>
+      <div className="flex-1 relative" style={{ minHeight: 0 }} ref={canvasContainerRef}>
         {activeDrawing && (
           <ExcalidrawComp
             excalidrawAPI={(api: any) => { excalidrawAPIRef.current = api; }}
             key={activeId}
-            initialData={activeDrawing.data}
+            initialData={{ ...activeDrawing.data, libraryItems }}
             theme={isDark ? 'dark' : 'light'}
             langCode="zh-CN"
+            onChange={handleChange}
+            onLibraryChange={handleLibraryChange}
             UIOptions={{
               canvasActions: {
                 loadScene: false,
@@ -631,6 +1096,13 @@ export const ExcalidrawEditor: React.FC = () => {
         onExport={handleExportToHosting}
         isUploading={isUploading}
         defaultName={activeDrawing?.name || 'drawing'}
+      />
+      <LatexEditModal
+        isOpen={!!latexEditTarget}
+        onClose={() => setLatexEditTarget(null)}
+        onConfirm={handleLatexEditConfirm}
+        isProcessing={isLatexProcessing}
+        initialLatex={latexEditTarget?.latex || ''}
       />
     </div>
   );
