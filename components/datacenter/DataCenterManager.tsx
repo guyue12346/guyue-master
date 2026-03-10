@@ -181,7 +181,7 @@ const DataCenterSettingsModal: React.FC<{
               <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
                 <div className="flex items-center gap-3">
                   <Shield className="w-4 h-4 text-emerald-500" />
-                  <span className="text-sm text-gray-900 dark:text-white">密码管理</span>
+                  <span className="text-sm text-gray-900 dark:text-white">网站管理</span>
                 </div>
                 <button
                   onClick={() => handleModuleToggle('passwordManager')}
@@ -403,7 +403,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     id: 'password-manager',
-    name: '密码管理',
+    name: '网站管理',
     icon: <Shield className="w-4 h-4" />,
     configKey: 'passwordManager',
   },
