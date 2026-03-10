@@ -162,21 +162,46 @@ const renderLatexToSvg = async (latex: string, color: string = '#1e1e1e'): Promi
   svgEl.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   svgEl.style.color = color;
 
-  const measureContainer = document.createElement('div');
-  measureContainer.style.cssText = 'position:fixed;left:-99999px;top:0;visibility:hidden';
-  measureContainer.appendChild(svgEl.cloneNode(true));
-  document.body.appendChild(measureContainer);
-  const measuredSvg = measureContainer.querySelector('svg');
-  const rect = measuredSvg?.getBoundingClientRect();
-  document.body.removeChild(measureContainer);
+  // MathJax SVG 用 ex 单位，1ex ≈ 8px（基准字号 16px 时）
+  const EX_TO_PX = 8;
+  const SCALE = 1.8; // 适当放大以在 Excalidraw 中清晰显示
+
+  // 从 SVG 属性中读取 ex 单位的宽高
+  const rawWidth = svgEl.getAttribute('width');   // e.g. "2.375ex"
+  const rawHeight = svgEl.getAttribute('height'); // e.g. "1.532ex"
+
+  let width: number;
+  let height: number;
+
+  if (rawWidth && rawHeight && rawWidth.includes('ex') && rawHeight.includes('ex')) {
+    width = parseFloat(rawWidth) * EX_TO_PX * SCALE;
+    height = parseFloat(rawHeight) * EX_TO_PX * SCALE;
+  } else {
+    // 回退：用 DOM 测量
+    const measureContainer = document.createElement('div');
+    measureContainer.style.cssText = 'position:fixed;left:-99999px;top:0;visibility:hidden;font-size:16px';
+    measureContainer.appendChild(svgEl.cloneNode(true));
+    document.body.appendChild(measureContainer);
+    const measuredSvg = measureContainer.querySelector('svg');
+    const rect = measuredSvg?.getBoundingClientRect();
+    document.body.removeChild(measureContainer);
+    width = (rect?.width || 60) * SCALE;
+    height = (rect?.height || 30) * SCALE;
+  }
+
+  // 设置固定 px 尺寸并确保 viewBox 正确
+  const viewBox = svgEl.getAttribute('viewBox');
+  if (viewBox) {
+    svgEl.setAttribute('width', `${width}px`);
+    svgEl.setAttribute('height', `${height}px`);
+  }
+
+  width = Math.max(width, 24);
+  height = Math.max(height, 16);
 
   const svgString = new XMLSerializer().serializeToString(svgEl);
   const dataURL = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgString)))}`;
-  return {
-    dataURL,
-    width: Math.max(rect?.width || 180, 80),
-    height: Math.max(rect?.height || 60, 40),
-  };
+  return { dataURL, width, height };
 };
 
 // ======== LaTeX 编辑弹窗 ========
@@ -380,13 +405,17 @@ export const ExcalidrawEditor: React.FC = () => {
   }, []);
 
   // LaTeX 自动渲染
-  const lastEditingIdRef = useRef<string | null>(null);
   const isProcessingLatexRef = useRef(false);
   const latexMapRef = useRef<Record<string, string>>(loadLatexMap());
+  const latexDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const processedLatexIdsRef = useRef<Set<string>>(new Set());
 
   // LaTeX 编辑弹窗状态
   const [latexEditTarget, setLatexEditTarget] = useState<{ elementId: string; fileId: string; latex: string } | null>(null);
   const [isLatexProcessing, setIsLatexProcessing] = useState(false);
+
+  // 画布容器 ref（用于 DOM 检测）
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
 
   // 检测暗色模式
   useEffect(() => {
@@ -425,79 +454,79 @@ export const ExcalidrawEditor: React.FC = () => {
   }, []);
 
   // LaTeX 自动渲染：文本编辑完成后检测 $$...$$ 并转为公式图片
-  const handleChange = useCallback(async (elements: readonly any[], appState: any) => {
-    const api = excalidrawAPIRef.current;
-    if (!api || !exportUtils?.convertToExcalidrawElements) return;
+  const handleChange = useCallback((elements: readonly any[], _appState: any) => {
+    // 每次变化都重置防抖计时器
+    if (latexDebounceRef.current) clearTimeout(latexDebounceRef.current);
 
-    // 追踪编辑状态变化
-    const editingId = appState?.editingElement?.id ?? null;
-    const prevId = lastEditingIdRef.current;
-    lastEditingIdRef.current = editingId;
+    latexDebounceRef.current = setTimeout(async () => {
+      const api = excalidrawAPIRef.current;
+      const container = canvasContainerRef.current;
+      if (!api || !exportUtils?.convertToExcalidrawElements || isProcessingLatexRef.current) return;
 
-    // 仅在文本编辑刚结束时处理（从编辑态 → 非编辑态）
-    if (editingId !== null || prevId === null || isProcessingLatexRef.current) return;
+      // 检测 Excalidraw 的文本编辑器是否仍然激活（DOM 中有 textarea 说明还在编辑）
+      if (container?.querySelector('textarea, [contenteditable="true"]')) return;
 
-    // 找到刚编辑完的文本元素
-    const finishedEl = elements.find((e: any) => e.id === prevId && !e.isDeleted);
-    if (!finishedEl || finishedEl.type !== 'text') return;
-
-    const text = (finishedEl.text || '').trim();
-    const latexMatch = text.match(/^\$\$([\s\S]+)\$\$$/);
-    if (!latexMatch) return;
-
-    const latex = latexMatch[1].trim();
-    if (!latex) return;
-
-    isProcessingLatexRef.current = true;
-    try {
-      const color = finishedEl.strokeColor || '#1e1e1e';
-      const { dataURL, width, height } = await renderLatexToSvg(latex, color);
-
-      const fileId = `latex_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-      api.addFiles([{
-        mimeType: 'image/svg+xml',
-        id: fileId,
-        dataURL,
-        created: Date.now(),
-      }]);
-
-      // 保存 LaTeX 源码映射
-      latexMapRef.current[fileId] = latex;
-      saveLatexMap(latexMapRef.current);
-
-      const newElements = exportUtils.convertToExcalidrawElements([{
-        type: 'image',
-        x: finishedEl.x,
-        y: finishedEl.y,
-        width,
-        height,
-        fileId,
-      }]);
-
-      // 替换文本元素为图片元素
+      // 扫描所有文本元素，寻找未处理的 $$...$$ 内容
       const currentElements = api.getSceneElements();
-      const updatedElements = currentElements
-        .filter((el: any) => el.id !== finishedEl.id)
-        .concat(newElements);
+      for (const el of currentElements) {
+        if (el.type !== 'text' || el.isDeleted) continue;
+        if (processedLatexIdsRef.current.has(el.id)) continue;
 
-      setTimeout(() => {
-        api.updateScene({ elements: updatedElements });
-      }, 0);
-    } catch (err) {
-      console.error('LaTeX auto-render error:', err);
-    } finally {
-      isProcessingLatexRef.current = false;
-    }
+        const text = (el.text || '').trim();
+        const latexMatch = text.match(/^\$\$([\s\S]+)\$\$$/);
+        if (!latexMatch) continue;
+
+        const latex = latexMatch[1].trim();
+        if (!latex) continue;
+
+        // 标记为已处理，防止重复转换
+        processedLatexIdsRef.current.add(el.id);
+        isProcessingLatexRef.current = true;
+
+        try {
+          const color = el.strokeColor || '#1e1e1e';
+          const { dataURL, width, height } = await renderLatexToSvg(latex, color);
+
+          const fileId = `latex_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          api.addFiles([{
+            mimeType: 'image/svg+xml',
+            id: fileId,
+            dataURL,
+            created: Date.now(),
+          }]);
+
+          // 保存 LaTeX 源码映射
+          latexMapRef.current[fileId] = latex;
+          saveLatexMap(latexMapRef.current);
+
+          const newElements = exportUtils.convertToExcalidrawElements([{
+            type: 'image',
+            x: el.x,
+            y: el.y,
+            width,
+            height,
+            fileId,
+          }]);
+
+          // 替换文本元素为图片元素
+          const freshElements = api.getSceneElements();
+          const updatedElements = freshElements
+            .filter((e: any) => e.id !== el.id)
+            .concat(newElements);
+
+          api.updateScene({ elements: updatedElements });
+        } catch (err) {
+          console.error('LaTeX auto-render error:', err);
+          processedLatexIdsRef.current.delete(el.id);
+        } finally {
+          isProcessingLatexRef.current = false;
+        }
+        break; // 一次只处理一个
+      }
+    }, 800);
   }, [exportUtils]);
 
-  // 双击公式图片 → 打开编辑弹窗
-  const handlePointerDown = useCallback((activeTool: any, pointerDownState: any, event: React.PointerEvent) => {
-    // Excalidraw 的 onPointerDown 不太好用来检测双击
-    // 我们改用 DOM 事件监听
-  }, []);
-
-  // 监听画布容器上的双击事件
-  const canvasContainerRef = useRef<HTMLDivElement>(null);
+  // 监听画布容器上的双击事件（编辑 LaTeX 公式）
   useEffect(() => {
     const container = canvasContainerRef.current;
     if (!container) return;
