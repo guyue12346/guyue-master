@@ -2,13 +2,15 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   MessageSquarePlus, Send, Settings2, Trash2, StopCircle, Copy, Check,
   ChevronDown, Bot, User, Sparkles, AlertCircle, Loader2, Plus, X,
-  PanelLeftClose, PanelLeftOpen, RotateCcw, Download, Globe, Columns, Square
+  PanelLeftClose, PanelLeftOpen, RotateCcw, Download, Globe, Columns, Square, Zap
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import remarkBreaks from 'remark-breaks';
+import remarkGithubBlockquoteAlert from 'remark-github-blockquote-alert';
 import rehypeKatex from 'rehype-katex';
+import rehypeRaw from 'rehype-raw';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import {
@@ -42,13 +44,17 @@ const CodeBlock: React.FC<{ language?: string; children: string }> = React.memo(
   };
 
   return (
-    <div className="relative group my-3">
-      <div className="absolute right-2 top-2 z-10">
+    <div className="relative group my-3 rounded-xl overflow-hidden border border-gray-700/50 shadow-md">
+      {/* Language bar */}
+      <div className="flex items-center justify-between px-4 py-1.5 bg-gray-800/90 border-b border-gray-700/50">
+        <span className="text-xs font-mono text-gray-400 uppercase tracking-wide">
+          {language || 'code'}
+        </span>
         <button
           onClick={handleCopy}
-          className="p-1.5 bg-gray-700 hover:bg-gray-600 rounded text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-all"
         >
-          {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+          {copied ? <><Check className="w-3 h-3 text-green-400" /><span className="text-green-400">已复制</span></> : <><Copy className="w-3 h-3" /><span>复制</span></>}
         </button>
       </div>
       <SyntaxHighlighter
@@ -57,10 +63,12 @@ const CodeBlock: React.FC<{ language?: string; children: string }> = React.memo(
         wrapLongLines
         customStyle={{
           margin: 0,
-          borderRadius: '0.5rem',
-          fontSize: '0.875rem',
+          borderRadius: 0,
+          fontSize: '0.85rem',
           whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word'
+          wordBreak: 'break-word',
+          background: '#1a1b26',
+          padding: '1rem',
         }}
       >
         {children}
@@ -79,6 +87,147 @@ const normalizeMarkdownContent = (content: string) => {
   return normalized;
 };
 
+// ==================== AI Logo ====================
+const AIAvatar: React.FC<{ size?: 'sm' | 'md' | 'lg' }> = ({ size = 'md' }) => {
+  const sizeMap = { sm: 'w-6 h-6', md: 'w-8 h-8', lg: 'w-16 h-16' };
+  const iconSizeMap = { sm: 'w-3 h-3', md: 'w-4 h-4', lg: 'w-8 h-8' };
+  return (
+    <div
+      className={`${sizeMap[size]} rounded-xl flex-shrink-0 flex items-center justify-center shadow-sm`}
+      style={{ background: 'linear-gradient(135deg, #6d28d9 0%, #9333ea 40%, #db2777 100%)' }}
+    >
+      <Sparkles className={`${iconSizeMap[size]} text-white`} />
+    </div>
+  );
+};
+
+// ==================== Markdown Renderer ====================
+const MarkdownContent: React.FC<{ content: string; isStreaming?: boolean }> = React.memo(({ content, isStreaming }) => {
+  const displayContent = normalizeMarkdownContent(content);
+  return (
+    <div className="prose-chat">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath, [remarkBreaks], remarkGithubBlockquoteAlert]}
+        rehypePlugins={[rehypeKatex, rehypeRaw]}
+        components={{
+          code(props: { inline?: boolean; className?: string; children?: React.ReactNode; [key: string]: any }) {
+            const { inline, className, children, ...rest } = props;
+            const match = /language-(\w+)/.exec(className || '');
+            const codeString = String(children).replace(/\n$/, '');
+            const hasNewline = codeString.includes('\n');
+            if (hasNewline || (match && !inline)) {
+              return <CodeBlock language={match?.[1]}>{codeString}</CodeBlock>;
+            }
+            return (
+              <code
+                className="bg-gray-100 text-rose-600 border border-gray-200 px-1.5 py-0.5 rounded-md text-[0.82em] font-mono"
+                {...rest}
+              >
+                {children}
+              </code>
+            );
+          },
+          table({ children }) {
+            return (
+              <div className="overflow-x-auto my-3 rounded-xl border border-gray-200 shadow-sm">
+                <table className="min-w-full text-sm border-collapse">{children}</table>
+              </div>
+            );
+          },
+          thead({ children }) {
+            return <thead className="bg-gray-50 border-b border-gray-200">{children}</thead>;
+          },
+          tbody({ children }) {
+            return <tbody className="divide-y divide-gray-100">{children}</tbody>;
+          },
+          tr({ children }) {
+            return <tr className="hover:bg-gray-50/70 transition-colors">{children}</tr>;
+          },
+          th({ children, ...props }: any) {
+            return <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap" {...props}>{children}</th>;
+          },
+          td({ children, ...props }: any) {
+            return <td className="px-3 py-2 text-gray-700 align-top" {...props}>{children}</td>;
+          },
+          blockquote({ children }) {
+            return (
+              <blockquote className="pl-4 border-l-4 border-purple-400 bg-purple-50/60 rounded-r-lg py-1.5 pr-2 my-3 text-gray-600 not-italic">
+                {children}
+              </blockquote>
+            );
+          },
+          h1({ children }) {
+            return <h1 className="text-xl font-bold text-gray-900 mt-5 mb-2.5 pb-1.5 border-b border-gray-200 leading-tight">{children}</h1>;
+          },
+          h2({ children }) {
+            return <h2 className="text-lg font-bold text-gray-800 mt-4 mb-2 leading-tight">{children}</h2>;
+          },
+          h3({ children }) {
+            return <h3 className="text-base font-semibold text-gray-800 mt-3 mb-1.5 leading-tight">{children}</h3>;
+          },
+          h4({ children }) {
+            return <h4 className="text-sm font-semibold text-gray-700 mt-2.5 mb-1 leading-tight">{children}</h4>;
+          },
+          h5({ children }) {
+            return <h5 className="text-sm font-medium text-gray-700 mt-2 mb-0.5">{children}</h5>;
+          },
+          h6({ children }) {
+            return <h6 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mt-2 mb-0.5">{children}</h6>;
+          },
+          ul({ children }) {
+            return <ul className="list-disc pl-5 my-2 space-y-0.5 text-gray-700">{children}</ul>;
+          },
+          ol({ children }) {
+            return <ol className="list-decimal pl-5 my-2 space-y-0.5 text-gray-700">{children}</ol>;
+          },
+          li({ children }) {
+            return <li className="pl-0.5 leading-relaxed">{children}</li>;
+          },
+          a({ href, children }) {
+            return (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:text-blue-800 underline decoration-blue-200 hover:decoration-blue-500 font-medium transition-colors"
+              >
+                {children}
+              </a>
+            );
+          },
+          img({ src, alt }) {
+            return (
+              <img
+                src={src}
+                alt={alt || ''}
+                className="max-w-full h-auto rounded-xl my-3 border border-gray-200 shadow-sm"
+              />
+            );
+          },
+          hr() {
+            return <hr className="my-4 border-gray-200" />;
+          },
+          p({ children }) {
+            return <p className="mb-2 last:mb-0 leading-relaxed text-gray-800 text-sm">{children}</p>;
+          },
+          strong({ children }) {
+            return <strong className="font-semibold text-gray-900">{children}</strong>;
+          },
+          em({ children }) {
+            return <em className="italic text-gray-700">{children}</em>;
+          },
+          del({ children }) {
+            return <del className="line-through text-gray-400">{children}</del>;
+          },
+        }}
+      >
+        {displayContent}
+      </ReactMarkdown>
+      {isStreaming && <span className="inline-block w-1 h-4 bg-purple-500 rounded-sm ml-0.5 animate-pulse" style={{ verticalAlign: 'text-bottom' }} />}
+    </div>
+  );
+});
+
 // ==================== Message Component ====================
 
 const MessageBubble: React.FC<{
@@ -87,8 +236,6 @@ const MessageBubble: React.FC<{
 }> = React.memo(({ message, isStreaming }) => {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
-  const rawContent = message.content || (isStreaming ? '▊' : '');
-  const displayContent = normalizeMarkdownContent(rawContent);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content);
@@ -96,79 +243,64 @@ const MessageBubble: React.FC<{
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const timeStr = message.timestamp
+    ? new Date(message.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    : '';
+
   return (
-    <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''} group`}>
-      <div className={`
-        w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0
-        ${isUser ? 'bg-blue-600' : 'bg-gradient-to-br from-purple-500 to-pink-500'}
-      `}>
-        {isUser ? (
+    <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} group`}>
+      {/* Avatar */}
+      {isUser ? (
+        <div className="w-8 h-8 rounded-xl flex-shrink-0 flex items-center justify-center bg-gradient-to-br from-blue-500 to-blue-700 shadow-sm">
           <User className="w-4 h-4 text-white" />
-        ) : (
-          <Bot className="w-4 h-4 text-white" />
-        )}
-      </div>
-
-      <div className={`flex-1 max-w-[85%] ${isUser ? 'text-right' : ''}`}>
-        <div className={`
-          inline-block text-left rounded-2xl px-4 py-3 
-          ${isUser 
-            ? 'bg-blue-600 text-white' 
-            : 'bg-gray-100 text-gray-800'
-          }
-        `}>
-          {isUser ? (
-            <p className="whitespace-pre-wrap">{message.content}</p>
-          ) : (
-            <div className="prose prose-sm max-w-none prose-pre:p-0 prose-pre:bg-transparent">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
-                rehypePlugins={[rehypeKatex]}
-                components={{
-                  code(props: { inline?: boolean; className?: string; children?: React.ReactNode; [key: string]: any }) {
-                    const { inline, className, children, ...rest } = props;
-                    const match = /language-(\w+)/.exec(className || '');
-                    const codeString = String(children).replace(/\n$/, '');
-                    const hasNewline = codeString.includes('\n');
-                    // 只有包含换行或有语言标识且非内联时才渲染为代码块
-                    if (hasNewline || (match && !inline)) {
-                      return (
-                        <CodeBlock language={match?.[1]}>
-                          {codeString}
-                        </CodeBlock>
-                      );
-                    }
-                    // 单行内联代码：仅用等宽字体，不加背景
-                    return (
-                      <span className="font-mono text-[0.92em]" {...rest}>
-                        {children}
-                      </span>
-                    );
-                  },
-                }}
-              >
-                {displayContent}
-              </ReactMarkdown>
-            </div>
-          )}
         </div>
+      ) : (
+        <AIAvatar />
+      )}
 
-        {!isUser && !isStreaming && (
-          <div className="mt-1 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button
-              onClick={handleCopy}
-              className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-gray-600"
-              title="复制"
-            >
-              {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
-            </button>
+      {/* Content */}
+      <div className={`flex-1 min-w-0 flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
+        {isUser ? (
+          // User bubble
+          <div className="max-w-[80%]">
+            <div className="px-4 py-3 rounded-2xl rounded-tr-sm shadow-sm" style={{ background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)' }}>
+              <p className="whitespace-pre-wrap text-sm text-white leading-relaxed">{message.content}</p>
+            </div>
+            <div className="mt-1 flex justify-end items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <span className="text-[11px] text-gray-400">{timeStr}</span>
+            </div>
+          </div>
+        ) : (
+          // AI bubble
+          <div className="max-w-[92%] w-full">
+            <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white border border-gray-100 shadow-sm">
+              {isStreaming && !message.content ? (
+                <div className="flex items-center gap-1.5 h-5">
+                  <span className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <span className="w-2 h-2 rounded-full bg-purple-500 animate-bounce" style={{ animationDelay: '160ms' }} />
+                  <span className="w-2 h-2 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: '320ms' }} />
+                </div>
+              ) : (
+                <MarkdownContent content={message.content} isStreaming={isStreaming} />
+              )}
+            </div>
+            {!isStreaming && (
+              <div className="mt-1.5 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  onClick={handleCopy}
+                  className="flex items-center gap-1 px-2 py-1 text-[11px] text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  {copied ? <><Check className="w-3 h-3 text-green-500" /><span className="text-green-600">已复制</span></> : <><Copy className="w-3 h-3" /><span>复制</span></>}
+                </button>
+                <span className="text-[11px] text-gray-300">{timeStr}</span>
+              </div>
+            )}
           </div>
         )}
       </div>
     </div>
   );
 }, (prevProps, nextProps) => {
-  // 自定义比较函数：只有在 message 内容或 streaming 状态变化时才重新渲染
   return prevProps.message.id === nextProps.message.id &&
          prevProps.message.content === nextProps.message.content &&
          prevProps.isStreaming === nextProps.isStreaming;

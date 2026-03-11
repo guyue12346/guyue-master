@@ -73,6 +73,15 @@ export interface PersonalResource {
   moduleId?: string;
 }
 
+// Custom user-defined section (supports arbitrary modules + resource items)
+export interface CustomSection {
+  id: string;
+  title: string;
+  icon: string;  // Lucide icon name from AVAILABLE_ICONS
+  color: string; // color key from AVAILABLE_COLORS
+  modules: PersonalModule[];
+}
+
 export interface CourseData {
   id: string;
   title: string;
@@ -85,6 +94,7 @@ export interface CourseData {
   personalResources?: PersonalResource[];
   assignmentModules?: AssignmentModule[];
   personalModules?: PersonalModule[];
+  customSections?: CustomSection[];
   introMarkdown?: string;
   icon?: string;
   priority?: number;

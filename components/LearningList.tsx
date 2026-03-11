@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import ReactDOM from 'react-dom';
-import { ChevronDown, ChevronRight, PlayCircle, FileText, Code, CheckCircle2, Circle, Folder, Info, Trash2, FileUp, Plus, Link, Edit2, Book, Globe, Music, Image, GripVertical, Search, ArrowRightLeft } from 'lucide-react';
-import { CourseData, Module, Lecture, AssignmentModule, PersonalModule, ResourceItem, CourseCategory, LectureIcon, LECTURE_ICONS } from './LearningData';
+import { ChevronDown, ChevronRight, PlayCircle, FileText, Code, CheckCircle2, Circle, Folder, Info, Trash2, FileUp, Plus, Link, Edit2, Book, Globe, Music, Image, GripVertical, Search, ArrowRightLeft, X } from 'lucide-react';
+import { CourseData, Module, Lecture, AssignmentModule, PersonalModule, ResourceItem, CourseCategory, LectureIcon, LECTURE_ICONS, CustomSection } from './LearningData';
+import { getCategoryIcon, AVAILABLE_ICONS, AVAILABLE_COLORS } from './LearningConstants';
 import { LearningMDModal } from './LearningMDModal';
 import { ConfirmDialog } from './ConfirmDialog';
 import {
@@ -180,13 +181,21 @@ export const LearningList: React.FC<LearningListProps> = ({
   onToggleProgress,
   onUpdateCourse
 }) => {
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-    'resources': true,
-    'assignments': true,
-    'personal': true
+  const expandedStorageKey = `learning_expanded_${course.id}`;
+
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(`${expandedStorageKey}_sections`);
+      return saved ? JSON.parse(saved) : { 'resources': true, 'assignments': true, 'personal': true };
+    } catch { return { 'resources': true, 'assignments': true, 'personal': true }; }
   });
   
-  const [expandedModules, setExpandedModules] = useState<Record<string, boolean>>({});
+  const [expandedModules, setExpandedModules] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(`${expandedStorageKey}_modules`);
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
 
   // UI States for Inputs/Dialogs
   const [isAddingModule, setIsAddingModule] = useState(false);
@@ -195,7 +204,7 @@ export const LearningList: React.FC<LearningListProps> = ({
   const [newModuleDesc, setNewModuleDesc] = useState('');
 
   const [addingLinkModuleId, setAddingLinkModuleId] = useState<string | null>(null);
-  const [addingLinkSection, setAddingLinkSection] = useState<'resources' | 'assignments' | 'personal' | null>(null);
+  const [addingLinkSection, setAddingLinkSection] = useState<string | null>(null);
   const [newLinkTitle, setNewLinkTitle] = useState('');
   const [newLinkUrl, setNewLinkUrl] = useState('');
   const [newLinkIcon, setNewLinkIcon] = useState<LectureIcon>('link');
@@ -252,13 +261,49 @@ export const LearningList: React.FC<LearningListProps> = ({
     }
   };
 
-  const [expandedAssignmentModules, setExpandedAssignmentModules] = useState<Record<string, boolean>>({});
-  const [expandedPersonalModules, setExpandedPersonalModules] = useState<Record<string, boolean>>({});
+  const [expandedAssignmentModules, setExpandedAssignmentModules] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(`${expandedStorageKey}_assignment_modules`);
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
+  const [expandedPersonalModules, setExpandedPersonalModules] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(`${expandedStorageKey}_personal_modules`);
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
+
+  // Custom sections expanded state
+  const [expandedCustomSections, setExpandedCustomSections] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(`${expandedStorageKey}_custom_sections`);
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
+  const [expandedCustomModules, setExpandedCustomModules] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(`${expandedStorageKey}_custom_modules`);
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
+
+  // Custom section modal state (add/edit a custom top-level section)
+  const [customSectionModal, setCustomSectionModal] = useState<{
+    mode: 'add' | 'edit';
+    editingId?: string;
+    title: string;
+    icon: string;
+    color: string;
+  } | null>(null);
+
+  // Adding a module to a custom section
+  const [addingCustomModuleForSection, setAddingCustomModuleForSection] = useState<string | null>(null);
 
   const [pendingUpload, setPendingUpload] = useState<{
     file: { path: string; name: string };
     targetId: string; // moduleId
-    section: 'resources' | 'assignments' | 'personal';
+    section: string; // 'resources' | 'assignments' | 'personal' | customSectionId
   } | null>(null);
 
   // MD Modal State
@@ -526,7 +571,7 @@ export const LearningList: React.FC<LearningListProps> = ({
 
   // ==================== File Upload ====================
 
-  const handleAddFile = async (moduleId: string, section: 'resources' | 'assignments' | 'personal', e: React.MouseEvent) => {
+  const handleAddFile = async (moduleId: string, section: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!window.electronAPI) {
       alert('请在桌面端使用此功能');
@@ -671,15 +716,25 @@ export const LearningList: React.FC<LearningListProps> = ({
       const courseName = course.title;
       
       let moduleName = 'General';
+      let sectionType: SectionType = 'personal';
       
       if (section === 'resources') {
+        sectionType = 'resources';
         const module = course.modules.find(m => m.id === targetId);
         moduleName = module ? module.title : 'General';
       } else if (section === 'assignments') {
+        sectionType = 'assignments';
         const module = (course.assignmentModules || []).find(m => m.id === targetId);
         moduleName = module ? module.title : 'General';
-      } else {
+      } else if (section === 'personal') {
+        sectionType = 'personal';
         const module = (course.personalModules || []).find(m => m.id === targetId);
+        moduleName = module ? module.title : 'General';
+      } else {
+        // Custom section – store under 'personal' directory
+        sectionType = 'personal';
+        const customSec = (course.customSections || []).find(s => s.id === section);
+        const module = customSec?.modules.find(m => m.id === targetId);
         moduleName = module ? module.title : 'General';
       }
       
@@ -688,7 +743,7 @@ export const LearningList: React.FC<LearningListProps> = ({
         file.path,
         categoryName,
         courseName,
-        section as SectionType,
+        sectionType,
         moduleName,
         file.name
       );
@@ -743,7 +798,7 @@ export const LearningList: React.FC<LearningListProps> = ({
       };
       onUpdateCourse(updatedCourse);
       setExpandedAssignmentModules(prev => ({ ...prev, [targetId]: true }));
-    } else {
+    } else if (section === 'personal') {
       const newItem: ResourceItem = {
         id: `personal_item_${Date.now()}`,
         title: fileTitle,
@@ -761,6 +816,23 @@ export const LearningList: React.FC<LearningListProps> = ({
       };
       onUpdateCourse(updatedCourse);
       setExpandedPersonalModules(prev => ({ ...prev, [targetId]: true }));
+    } else {
+      // Custom section upload
+      const customSectionId = section;
+      const newItem: ResourceItem = {
+        id: `custom_item_${Date.now()}`,
+        title: fileTitle,
+        link: finalPath
+      };
+      onUpdateCourse({
+        ...course,
+        customSections: (course.customSections || []).map(s =>
+          s.id === customSectionId
+            ? { ...s, modules: s.modules.map(m => m.id === targetId ? { ...m, items: [...m.items, newItem] } : m) }
+            : s
+        )
+      });
+      setExpandedCustomModules(prev => ({ ...prev, [targetId]: true }));
     }
     
     setPendingUpload(null);
@@ -1044,6 +1116,23 @@ export const LearningList: React.FC<LearningListProps> = ({
         })
       };
       onUpdateCourse(updatedCourse);
+    } else if (addingLinkSection && addingLinkModuleId) {
+      // Custom section
+      const customSectionId = addingLinkSection;
+      const newItem: ResourceItem = {
+        id: `custom_item_${Date.now()}`,
+        title: newLinkTitle,
+        link: newLinkUrl,
+        icon: newLinkIcon
+      };
+      onUpdateCourse({
+        ...course,
+        customSections: (course.customSections || []).map(s =>
+          s.id === customSectionId
+            ? { ...s, modules: s.modules.map(m => m.id === addingLinkModuleId ? { ...m, items: [...m.items, newItem] } : m) }
+            : s
+        )
+      });
     }
 
     setAddingLinkModuleId(null);
@@ -1108,6 +1197,171 @@ export const LearningList: React.FC<LearningListProps> = ({
       },
     });
   };
+
+  // ==================== Custom Section Management ====================
+
+  const handleOpenAddCustomSection = () => {
+    setCustomSectionModal({ mode: 'add', title: '', icon: 'Folder', color: 'blue' });
+  };
+
+  const handleOpenEditCustomSection = (section: CustomSection) => {
+    setCustomSectionModal({ mode: 'edit', editingId: section.id, title: section.title, icon: section.icon, color: section.color });
+  };
+
+  const handleSaveCustomSection = () => {
+    if (!customSectionModal || !customSectionModal.title.trim()) return;
+    if (customSectionModal.mode === 'add') {
+      const newSection: CustomSection = {
+        id: `custom_sec_${Date.now()}`,
+        title: customSectionModal.title.trim(),
+        icon: customSectionModal.icon,
+        color: customSectionModal.color,
+        modules: []
+      };
+      onUpdateCourse({ ...course, customSections: [...(course.customSections || []), newSection] });
+      setExpandedCustomSections(prev => ({ ...prev, [newSection.id]: true }));
+    } else if (customSectionModal.mode === 'edit' && customSectionModal.editingId) {
+      const id = customSectionModal.editingId;
+      onUpdateCourse({
+        ...course,
+        customSections: (course.customSections || []).map(s =>
+          s.id === id ? { ...s, title: customSectionModal.title.trim(), icon: customSectionModal.icon, color: customSectionModal.color } : s
+        )
+      });
+    }
+    setCustomSectionModal(null);
+  };
+
+  const handleDeleteCustomSection = (sectionId: string) => {
+    setConfirmState({
+      title: '删除目录',
+      message: '确定要删除该目录吗？目录内的所有章节和资源将一起删除。',
+      variant: 'danger',
+      onConfirm: () => {
+        onUpdateCourse({ ...course, customSections: (course.customSections || []).filter(s => s.id !== sectionId) });
+        setConfirmState(null);
+      }
+    });
+  };
+
+  const handleAddCustomModule = (sectionId: string) => {
+    setAddingCustomModuleForSection(sectionId);
+    setNewModuleTitle('');
+    setNewModuleDesc('');
+    setExpandedCustomSections(prev => ({ ...prev, [sectionId]: true }));
+  };
+
+  const confirmAddCustomModule = () => {
+    if (!newModuleTitle.trim() || !addingCustomModuleForSection) {
+      setAddingCustomModuleForSection(null);
+      return;
+    }
+    const newModule: PersonalModule = {
+      id: `custom_mod_${Date.now()}`,
+      title: newModuleTitle,
+      description: newModuleDesc,
+      items: []
+    };
+    onUpdateCourse({
+      ...course,
+      customSections: (course.customSections || []).map(s =>
+        s.id === addingCustomModuleForSection ? { ...s, modules: [...s.modules, newModule] } : s
+      )
+    });
+    setExpandedCustomModules(prev => ({ ...prev, [newModule.id]: true }));
+    setAddingCustomModuleForSection(null);
+    setNewModuleTitle('');
+  };
+
+  const handleDeleteCustomModule = (sectionId: string, moduleId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirmState({
+      title: '删除章节',
+      message: '确定要删除该章节吗？这将同时删除章节内的所有资源。',
+      variant: 'danger',
+      onConfirm: () => {
+        onUpdateCourse({
+          ...course,
+          customSections: (course.customSections || []).map(s =>
+            s.id === sectionId ? { ...s, modules: s.modules.filter(m => m.id !== moduleId) } : s
+          )
+        });
+        setConfirmState(null);
+      }
+    });
+  };
+
+  const handleDeleteCustomItem = (sectionId: string, moduleId: string, itemId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirmState({
+      title: '删除资源',
+      message: '确定要删除该资源吗？',
+      variant: 'danger',
+      onConfirm: async () => {
+        const section = (course.customSections || []).find(s => s.id === sectionId);
+        const mod = section?.modules.find(m => m.id === moduleId);
+        const itemLink = mod?.items.find(i => i.id === itemId)?.link || '';
+        onUpdateCourse({
+          ...course,
+          customSections: (course.customSections || []).map(s =>
+            s.id === sectionId
+              ? { ...s, modules: s.modules.map(m => m.id === moduleId ? { ...m, items: m.items.filter(i => i.id !== itemId) } : m) }
+              : s
+          )
+        });
+        if (itemLink) await deleteResourceFile(itemLink);
+        setConfirmState(null);
+      }
+    });
+  };
+
+  const handleAddCustomLink = (sectionId: string, moduleId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setAddingLinkModuleId(moduleId);
+    setAddingLinkSection(sectionId);
+    setNewLinkTitle('');
+    setNewLinkUrl('');
+    setNewLinkIcon('link');
+    setExpandedCustomSections(prev => ({ ...prev, [sectionId]: true }));
+    setExpandedCustomModules(prev => ({ ...prev, [moduleId]: true }));
+  };
+
+  const handleAddCustomFile = async (sectionId: string, moduleId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.electronAPI) {
+      alert('请在桌面端使用此功能');
+      return;
+    }
+    const file = await window.electronAPI.selectFile();
+    if (!file) return;
+    setPendingUpload({ file, targetId: moduleId, section: sectionId });
+  };
+
+  // ==================== Persist Expanded State ====================
+
+  useEffect(() => {
+    localStorage.setItem(`${expandedStorageKey}_sections`, JSON.stringify(expandedSections));
+  }, [expandedSections, expandedStorageKey]);
+
+  useEffect(() => {
+    localStorage.setItem(`${expandedStorageKey}_modules`, JSON.stringify(expandedModules));
+  }, [expandedModules, expandedStorageKey]);
+
+  useEffect(() => {
+    localStorage.setItem(`${expandedStorageKey}_assignment_modules`, JSON.stringify(expandedAssignmentModules));
+  }, [expandedAssignmentModules, expandedStorageKey]);
+
+  useEffect(() => {
+    localStorage.setItem(`${expandedStorageKey}_personal_modules`, JSON.stringify(expandedPersonalModules));
+  }, [expandedPersonalModules, expandedStorageKey]);
+
+  useEffect(() => {
+    localStorage.setItem(`${expandedStorageKey}_custom_sections`, JSON.stringify(expandedCustomSections));
+  }, [expandedCustomSections, expandedStorageKey]);
+
+  useEffect(() => {
+    localStorage.setItem(`${expandedStorageKey}_custom_modules`, JSON.stringify(expandedCustomModules));
+  }, [expandedCustomModules, expandedStorageKey]);
 
   // ==================== UI Helpers ====================
 
@@ -2016,6 +2270,253 @@ export const LearningList: React.FC<LearningListProps> = ({
           )}
         </div>
 
+        {/* Custom Sections */}
+        {(course.customSections || []).map((customSec) => {
+          const colorInfo = AVAILABLE_COLORS.find(c => c.name === customSec.color) || AVAILABLE_COLORS[1];
+          const SectionIcon = getCategoryIcon(customSec.icon);
+          const isExpanded = !!expandedCustomSections[customSec.id];
+          return (
+            <div key={customSec.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+              <div className="flex items-center justify-between bg-gray-50 border-b border-gray-200 group/csec">
+                <button
+                  onClick={() => setExpandedCustomSections(prev => ({ ...prev, [customSec.id]: !prev[customSec.id] }))}
+                  className="flex-1 px-3 py-2 flex items-center gap-2 font-medium text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                >
+                  <SectionIcon className={`w-4 h-4 ${colorInfo.text}`} />
+                  {customSec.title}
+                  {isExpanded ? <ChevronDown className="w-4 h-4 text-gray-400 ml-auto" /> : <ChevronRight className="w-4 h-4 text-gray-400 ml-auto" />}
+                </button>
+                <div className="flex items-center opacity-0 group-hover/csec:opacity-100 transition-opacity">
+                  <button
+                    onClick={() => handleAddCustomModule(customSec.id)}
+                    className="p-1.5 hover:bg-gray-200 text-gray-500 transition-colors"
+                    title="添加章节"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleOpenEditCustomSection(customSec)}
+                    className="p-1.5 hover:bg-blue-100 hover:text-blue-600 text-gray-400 transition-colors"
+                    title="编辑目录"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteCustomSection(customSec.id)}
+                    className="p-1.5 hover:bg-red-100 hover:text-red-500 text-gray-400 transition-colors mr-1"
+                    title="删除目录"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Add Module Input for custom section */}
+              {addingCustomModuleForSection === customSec.id && (
+                <div className={`p-2 border-b border-gray-100 bg-${customSec.color}-50/50`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <input
+                      autoFocus
+                      type="text"
+                      value={newModuleTitle}
+                      onChange={(e) => setNewModuleTitle(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && confirmAddCustomModule()}
+                      placeholder="输入章节名称..."
+                      className="flex-1 text-sm px-2 py-1 border border-gray-200 rounded focus:outline-none focus:border-blue-400"
+                    />
+                    <button onClick={confirmAddCustomModule} className={`p-1 ${colorInfo.text} hover:bg-gray-100 rounded`}>
+                      <CheckCircle2 className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => setAddingCustomModuleForSection(null)} className="p-1 text-gray-400 hover:bg-gray-100 rounded">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    value={newModuleDesc}
+                    onChange={(e) => setNewModuleDesc(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && confirmAddCustomModule()}
+                    placeholder="输入章节备注 (可选)..."
+                    className="w-full text-xs px-2 py-1 border border-gray-200 rounded focus:outline-none focus:border-blue-400 text-gray-600"
+                  />
+                </div>
+              )}
+
+              {isExpanded && (
+                <div>
+                  {customSec.modules.length === 0 ? (
+                    <div className="text-xs text-gray-400 text-center py-4">暂无章节，点击 + 添加</div>
+                  ) : (
+                    customSec.modules.map((module) => (
+                      <div key={module.id} className="border-b border-gray-100 last:border-0 group/module">
+                        <div className="flex items-center justify-between hover:bg-gray-50 transition-colors pr-2">
+                          <button
+                            onClick={() => setExpandedCustomModules(prev => ({ ...prev, [module.id]: !prev[module.id] }))}
+                            className="flex-1 px-3 py-2 flex items-center justify-between text-left"
+                          >
+                            <div className="flex-1">
+                              <div className="text-sm font-medium text-gray-800">{module.title}</div>
+                              {module.description && <div className="text-xs text-gray-400 line-clamp-1">{module.description}</div>}
+                            </div>
+                            {expandedCustomModules[module.id] ? <ChevronDown className="w-3 h-3 text-gray-400" /> : <ChevronRight className="w-3 h-3 text-gray-400" />}
+                          </button>
+                          <div className="flex items-center opacity-0 group-hover/module:opacity-100 transition-opacity">
+                            <button
+                              onClick={(e) => handleAddCustomLink(customSec.id, module.id, e)}
+                              className="p-1.5 hover:bg-gray-200 rounded text-gray-500"
+                              title="添加链接"
+                            >
+                              <Link className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              ref={(el) => { dropdownRefs.current[`custom-${module.id}`] = el; }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOpenDropdownId(openDropdownId === `custom-${module.id}` ? null : `custom-${module.id}`);
+                              }}
+                              className="p-1.5 hover:bg-gray-200 rounded text-gray-500"
+                              title="添加文件"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                            </button>
+                            <DropdownPortal
+                              isOpen={openDropdownId === `custom-${module.id}`}
+                              onClose={() => setOpenDropdownId(null)}
+                              triggerRef={{ current: dropdownRefs.current[`custom-${module.id}`] }}
+                            >
+                              <button
+                                onClick={(e) => {
+                                  handleAddCustomFile(customSec.id, module.id, e);
+                                  setOpenDropdownId(null);
+                                }}
+                                className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                              >
+                                <FileUp className="w-3.5 h-3.5" />
+                                上传文件
+                              </button>
+                            </DropdownPortal>
+                            <button
+                              onClick={(e) => handleDeleteCustomModule(customSec.id, module.id, e)}
+                              className="p-1.5 hover:bg-red-100 hover:text-red-500 rounded text-gray-400"
+                              title="删除章节"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {expandedCustomModules[module.id] && (
+                          <div className="bg-gray-50/50 pb-2">
+                            {/* Add Link Input */}
+                            {addingLinkSection === customSec.id && addingLinkModuleId === module.id && (
+                              <div className="px-3 py-2 bg-blue-50/30 border-b border-blue-100 mb-2">
+                                <div className="space-y-2">
+                                  <input
+                                    autoFocus
+                                    type="text"
+                                    value={newLinkTitle}
+                                    onChange={(e) => setNewLinkTitle(e.target.value)}
+                                    placeholder="资源标题"
+                                    className="w-full text-sm px-2 py-1 border border-blue-200 rounded focus:outline-none focus:border-blue-400"
+                                  />
+                                  <input
+                                    type="text"
+                                    value={newLinkUrl}
+                                    onChange={(e) => setNewLinkUrl(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && confirmAddLink()}
+                                    placeholder="资源链接 URL"
+                                    className="w-full text-sm px-2 py-1 border border-blue-200 rounded focus:outline-none focus:border-blue-400"
+                                  />
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    <span className="text-xs text-gray-500 mr-1">图标:</span>
+                                    {LECTURE_ICONS.map((iconItem) => (
+                                      <button
+                                        key={iconItem.value}
+                                        type="button"
+                                        onClick={() => setNewLinkIcon(iconItem.value)}
+                                        className={`p-1.5 rounded transition-colors ${newLinkIcon === iconItem.value ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                                        title={iconItem.label}
+                                      >
+                                        {renderIcon(iconItem.value, "w-3.5 h-3.5")}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <div className="flex justify-end gap-2">
+                                    <button onClick={() => { setAddingLinkSection(null); setAddingLinkModuleId(null); }} className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">取消</button>
+                                    <button onClick={confirmAddLink} className="text-xs bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">添加</button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            {module.items.length === 0 ? (
+                              <div className="px-6 py-2 text-xs text-gray-400">暂无资源</div>
+                            ) : (
+                              <DndContext
+                                sensors={sensors}
+                                collisionDetection={closestCenter}
+                                onDragEnd={(event) => {
+                                  const { active, over } = event;
+                                  if (!over || active.id === over.id) return;
+                                  const oldIdx = module.items.findIndex(i => i.id === active.id);
+                                  const newIdx = module.items.findIndex(i => i.id === over.id);
+                                  if (oldIdx !== -1 && newIdx !== -1) {
+                                    onUpdateCourse({
+                                      ...course,
+                                      customSections: (course.customSections || []).map(s =>
+                                        s.id === customSec.id
+                                          ? { ...s, modules: s.modules.map(m => m.id === module.id ? { ...m, items: arrayMove(m.items, oldIdx, newIdx) } : m) }
+                                          : s
+                                      )
+                                    });
+                                  }
+                                }}
+                              >
+                                <SortableContext items={module.items.map(i => i.id)} strategy={verticalListSortingStrategy}>
+                                  {module.items.map((item) => (
+                                    <SortableResourceItem key={item.id} id={item.id}>
+                                      <div
+                                        onClick={() => onSelectItem('personal-resource', item.link)}
+                                        className="px-2 py-1.5 flex items-center justify-between cursor-pointer transition-colors text-gray-600 hover:bg-gray-100"
+                                      >
+                                        <div className="flex items-center gap-2 overflow-hidden flex-1">
+                                          {item.icon ? renderIcon(item.icon) : item.link.startsWith('http') ? <Link className={`w-3.5 h-3.5 flex-shrink-0 ${colorInfo.text}`} /> : <FileText className="w-3.5 h-3.5 flex-shrink-0" />}
+                                          <span className="text-sm truncate">{item.title}</span>
+                                        </div>
+                                        <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100">
+                                          <button
+                                            onClick={(e) => handleDeleteCustomItem(customSec.id, module.id, item.id, e)}
+                                            className="p-1 hover:text-red-500 transition-opacity"
+                                            title="删除"
+                                          >
+                                            <Trash2 className="w-3 h-3" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </SortableResourceItem>
+                                  ))}
+                                </SortableContext>
+                              </DndContext>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Add Custom Section Button */}
+        <button
+          onClick={handleOpenAddCustomSection}
+          className="w-full flex items-center justify-center gap-2 py-2 px-3 text-xs text-gray-400 hover:text-blue-600 hover:bg-blue-50 border border-dashed border-gray-200 hover:border-blue-300 rounded-lg transition-all"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          新建自定义目录
+        </button>
+
       </div>
 
       {/* Batch Action Bar (#14) */}
@@ -2144,6 +2645,94 @@ export const LearningList: React.FC<LearningListProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Section Modal (Add / Edit) */}
+      {customSectionModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setCustomSectionModal(null)}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-gray-200">
+              <h2 className="text-base font-bold text-gray-900">
+                {customSectionModal.mode === 'add' ? '新建自定义目录' : '编辑目录'}
+              </h2>
+              <button onClick={() => setCustomSectionModal(null)} className="p-1 text-gray-400 hover:text-gray-600 rounded">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              {/* Title */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">目录名称 <span className="text-red-500">*</span></label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={customSectionModal.title}
+                  onChange={(e) => setCustomSectionModal(prev => prev ? { ...prev, title: e.target.value } : null)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSaveCustomSection()}
+                  placeholder="如：笔记、参考文献..."
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              {/* Icon Picker */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-2">选择图标</label>
+                <div className="grid grid-cols-8 gap-1 max-h-28 overflow-y-auto p-1 border border-gray-200 rounded-lg bg-gray-50">
+                  {AVAILABLE_ICONS.map(({ name, icon: IconComp }) => (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => setCustomSectionModal(prev => prev ? { ...prev, icon: name } : null)}
+                      className={`p-1.5 rounded-md flex items-center justify-center transition-colors ${
+                        customSectionModal.icon === name ? 'bg-blue-500 text-white' : 'text-gray-500 hover:bg-gray-200'
+                      }`}
+                      title={name}
+                    >
+                      <IconComp className="w-3.5 h-3.5" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Color Picker */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-2">选择颜色</label>
+                <div className="flex flex-wrap gap-2">
+                  {AVAILABLE_COLORS.map((c) => (
+                    <button
+                      key={c.name}
+                      type="button"
+                      onClick={() => setCustomSectionModal(prev => prev ? { ...prev, color: c.name } : null)}
+                      className={`w-6 h-6 rounded-full border-2 transition-all ${c.bg} ${
+                        customSectionModal.color === c.name ? 'border-gray-700 scale-110' : 'border-transparent hover:scale-105'
+                      }`}
+                      title={c.name}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Preview */}
+              <div className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg border border-gray-200">
+                {React.createElement(getCategoryIcon(customSectionModal.icon), {
+                  className: `w-4 h-4 ${(AVAILABLE_COLORS.find(c => c.name === customSectionModal.color) || AVAILABLE_COLORS[1]).text}`
+                })}
+                <span className="text-sm font-medium text-gray-700">{customSectionModal.title || '预览目录名称'}</span>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 px-5 py-4 border-t border-gray-200">
+              <button onClick={() => setCustomSectionModal(null)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">取消</button>
+              <button
+                onClick={handleSaveCustomSection}
+                disabled={!customSectionModal.title.trim()}
+                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {customSectionModal.mode === 'add' ? '创建' : '保存'}
+              </button>
+            </div>
           </div>
         </div>
       )}

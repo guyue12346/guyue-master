@@ -652,10 +652,6 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
                       {/* #10: Progress bar */}
                       {total > 0 && (
                         <div className="mt-3">
-                          <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
-                            <span>学习进度</span>
-                            <span>{pct}%</span>
-                          </div>
                           <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
                             <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: colors.textColor }} />
                           </div>
@@ -866,15 +862,7 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
               <ChevronLeft className="w-4 h-4" />
               返回
             </button>
-            {/* #10: Progress display */}
-            {courseProgress.total > 0 && (
-              <div className="ml-auto flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-                <div className="w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                  <div className="h-full bg-green-500 rounded-full transition-all duration-500" style={{ width: `${courseProgress.percent}%` }} />
-                </div>
-                <span className="text-xs text-gray-400">{courseProgress.percent}%</span>
-              </div>
-            )}
+
           </div>
           {selectedCourse ? (
             <LearningList 
