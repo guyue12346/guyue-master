@@ -49,6 +49,40 @@
       ::-webkit-scrollbar-thumb:hover {
         background: rgba(0,0,0,0.2);
       }
+
+      /* ============ prose-chat: Chat markdown base ============ */
+      .prose-chat { font-size: 0.875rem; line-height: 1.65; color: #374151; }
+      .prose-chat > :first-child { margin-top: 0 !important; }
+      .prose-chat > :last-child { margin-bottom: 0 !important; }
+
+      /* ============ GitHub Blockquote Alerts ============ */
+      .markdown-alert {
+        border-left-width: 4px;
+        border-radius: 0 0.5rem 0.5rem 0;
+        padding: 0.6rem 1rem;
+        margin: 0.75rem 0;
+        font-size: 0.85rem;
+      }
+      .markdown-alert-title {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-weight: 600;
+        font-size: 0.8rem;
+        margin-bottom: 0.35rem;
+        text-transform: uppercase;
+        letter-spacing: 0.025em;
+      }
+      .markdown-alert-note   { border-color: #3b82f6; background: #eff6ff; }
+      .markdown-alert-note .markdown-alert-title { color: #1d4ed8; }
+      .markdown-alert-tip    { border-color: #10b981; background: #ecfdf5; }
+      .markdown-alert-tip .markdown-alert-title { color: #065f46; }
+      .markdown-alert-important { border-color: #8b5cf6; background: #f5f3ff; }
+      .markdown-alert-important .markdown-alert-title { color: #5b21b6; }
+      .markdown-alert-warning { border-color: #f59e0b; background: #fffbeb; }
+      .markdown-alert-warning .markdown-alert-title { color: #92400e; }
+      .markdown-alert-caution { border-color: #ef4444; background: #fef2f2; }
+      .markdown-alert-caution .markdown-alert-title { color: #991b1b; }
     </style>
   <script type="importmap">
 {

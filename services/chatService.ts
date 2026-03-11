@@ -325,8 +325,26 @@ export const loadConversations = (): ChatConversation[] => {
   }
 };
 
+/** 最多保留的对话数量，超出时自动删除最旧的 */
+const MAX_CONVERSATIONS = 50;
+
 export const saveConversations = (conversations: ChatConversation[]): void => {
-  localStorage.setItem(STORAGE_KEY_CONVERSATIONS, JSON.stringify(conversations));
+  // 按最后更新时间降序，保留最新的 MAX_CONVERSATIONS 条
+  const trimmed = conversations
+    .slice()
+    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+    .slice(0, MAX_CONVERSATIONS);
+  try {
+    localStorage.setItem(STORAGE_KEY_CONVERSATIONS, JSON.stringify(trimmed));
+  } catch (e) {
+    // localStorage 满时，尝试删除最旧的一半后重试
+    const half = trimmed.slice(0, Math.floor(MAX_CONVERSATIONS / 2));
+    try {
+      localStorage.setItem(STORAGE_KEY_CONVERSATIONS, JSON.stringify(half));
+    } catch {
+      console.warn('ChatService: 无法保存对话历史，localStorage 已满');
+    }
+  }
 };
 
 export const loadChatConfig = (): ChatConfig => {

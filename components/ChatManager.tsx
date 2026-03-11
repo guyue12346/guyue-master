@@ -719,21 +719,35 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
   // Render empty state
   const renderEmptyState = () => (
     <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-8">
-      <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center mb-6 shadow-lg">
-        <Sparkles className="w-10 h-10 text-white" />
+      <div className="relative mb-8">
+        <div
+          className="w-24 h-24 rounded-3xl flex items-center justify-center shadow-2xl"
+          style={{ background: 'linear-gradient(135deg, #6d28d9 0%, #9333ea 50%, #db2777 100%)' }}
+        >
+          <Sparkles className="w-12 h-12 text-white" />
+        </div>
+        <div className="absolute -bottom-1 -right-1 w-7 h-7 bg-green-400 rounded-full border-2 border-white flex items-center justify-center shadow-md">
+          <Zap className="w-3.5 h-3.5 text-white" />
+        </div>
       </div>
       <h2 className="text-2xl font-bold text-gray-800 mb-2">开始对话</h2>
-      <p className="text-gray-500 text-center max-w-md mb-6">
-        与 AI 进行对话，获取帮助、创意灵感或解答问题。
+      <p className="text-gray-400 text-center max-w-sm mb-8 text-sm leading-relaxed">
+        选择一个建议快速开始，或者用自己的语言就可以。
       </p>
-      <div className="flex flex-wrap gap-2 justify-center max-w-lg">
-        {['帮我写一段代码', '解释一个概念', '翻译文本', '头脑风暴'].map((suggestion) => (
+      <div className="grid grid-cols-2 gap-2 max-w-sm w-full">
+        {[
+          { icon: '\uD83D\uDCBB', label: '帮我写一段代码' },
+          { icon: '\uD83D\uDCD6', label: '解释一个概念' },
+          { icon: '\uD83C\uDF0D', label: '翻译一段文本' },
+          { icon: '\u2728', label: '头脑风暴开始' },
+        ].map(({ icon, label }) => (
           <button
-            key={suggestion}
-            onClick={() => setInputValue(suggestion)}
-            className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-full text-sm text-gray-700 transition-colors"
+            key={label}
+            onClick={() => setInputValue(label)}
+            className="flex items-center gap-2 px-3 py-3 bg-white hover:bg-gray-50 border border-gray-200 hover:border-purple-300 hover:shadow-sm rounded-xl text-sm text-gray-700 transition-all group text-left"
           >
-            {suggestion}
+            <span className="text-lg group-hover:scale-110 transition-transform">{icon}</span>
+            <span className="font-medium">{label}</span>
           </button>
         ))}
       </div>
@@ -741,90 +755,107 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
   );
 
   return (
-    <div className="flex h-full bg-gray-50 relative">
-      {/* Sidebar */}
+    <div className="flex h-full bg-gray-50/80 relative">
+      {/* ======================== Sidebar ======================== */}
       {showSidebar && (
-        <div className="w-72 bg-white border-r border-gray-200 flex flex-col">
+        <div className="w-72 bg-white border-r border-gray-100 flex flex-col shadow-sm">
           {/* Sidebar Header */}
-          <div className="h-14 border-b border-gray-200 flex items-center justify-between px-4" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
-            <h2 className="font-semibold text-gray-800">对话历史</h2>
+          <div className="h-14 border-b border-gray-100 flex items-center justify-between px-4" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+            <div className="flex items-center gap-2.5" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+              <AIAvatar size="sm" />
+              <span className="font-semibold text-gray-800 text-sm">AI 助手</span>
+            </div>
             <button
               onClick={handleNewConversation}
-              className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 hover:text-blue-600 transition-colors"
+              className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500 hover:text-purple-600 transition-colors"
               style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
               title="新建对话"
             >
-              <Plus className="w-5 h-5" />
+              <Plus className="w-4.5 h-4.5" />
             </button>
           </div>
 
           {/* Conversation List */}
-          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
             {conversations.length === 0 ? (
-              <div className="text-center text-gray-400 text-sm py-8">
+              <div className="text-center text-gray-400 text-sm py-12">
+                <MessageSquarePlus className="w-8 h-8 mx-auto mb-2 opacity-40" />
                 暂无对话记录
               </div>
             ) : (
-              conversations.map((conv) => (
-                <button
-                  key={conv.id}
-                  onClick={() => setActiveConversationId(conv.id)}
-                  className={`
-                    w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left group transition-colors
-                    ${activeConversationId === conv.id 
-                      ? 'bg-blue-50 text-blue-700' 
-                      : 'hover:bg-gray-100 text-gray-700'
-                    }
-                  `}
-                >
-                  <MessageSquarePlus className="w-4 h-4 flex-shrink-0 opacity-60" />
-                  <span className="flex-1 truncate text-sm">{conv.title}</span>
+              conversations.map((conv) => {
+                const isActive = activeConversationId === conv.id;
+                const msgCount = conv.messages.length;
+                const dateStr = conv.updatedAt
+                  ? new Date(conv.updatedAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+                  : '';
+                return (
                   <button
-                    onClick={(e) => handleDeleteConversation(conv.id, e)}
-                    className="p-1 opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-600 rounded transition-all"
+                    key={conv.id}
+                    onClick={() => setActiveConversationId(conv.id)}
+                    className={`
+                      w-full flex items-start gap-2.5 px-3 py-2.5 rounded-xl text-left group transition-all
+                      ${isActive
+                        ? 'bg-purple-50 text-purple-700 shadow-sm'
+                        : 'hover:bg-gray-50 text-gray-700'
+                      }
+                    `}
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    <div className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${isActive ? 'bg-purple-500' : 'bg-gray-300'}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{conv.title}</p>
+                      {msgCount > 0 && (
+                        <p className={`text-[11px] mt-0.5 ${isActive ? 'text-purple-400' : 'text-gray-400'}`}>
+                          {msgCount} 条消息{dateStr ? ` · ${dateStr}` : ''}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      onClick={(e) => handleDeleteConversation(conv.id, e)}
+                      className="p-1 mt-0.5 opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-500 rounded-lg transition-all flex-shrink-0"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
                   </button>
-                </button>
-              ))
+                );
+              })
             )}
           </div>
 
           {/* Sidebar Footer */}
-          <div className="p-3 border-t border-gray-200">
+          <div className="p-3 border-t border-gray-100">
             <button
               onClick={() => setShowSettings(true)}
-              className="w-full flex items-center gap-2 px-3 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition-colors text-sm"
             >
               <Settings2 className="w-4 h-4" />
-              <span className="text-sm">设置</span>
+              <span>设置</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* Main Chat Area */}
+      {/* ======================== Main Chat Area ======================== */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Chat Header */}
-        <div className="h-14 border-b border-gray-200 flex items-center justify-between px-4 bg-white" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
-          <div className="flex items-center gap-3" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <div className="h-14 border-b border-gray-100 flex items-center justify-between px-4 bg-white/90 backdrop-blur-sm" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+          <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             <button
               onClick={() => setShowSidebar(!showSidebar)}
-              className="p-2 hover:bg-gray-100 rounded-lg text-gray-600"
+              className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500 transition-colors"
               title={showSidebar ? '隐藏侧边栏' : '显示侧边栏'}
             >
-              {showSidebar ? <PanelLeftClose className="w-5 h-5" /> : <PanelLeftOpen className="w-5 h-5" />}
+              {showSidebar ? <PanelLeftClose className="w-4.5 h-4.5" /> : <PanelLeftOpen className="w-4.5 h-4.5" />}
             </button>
-            <div className="flex items-center gap-2">
-              <Bot className="w-5 h-5 text-purple-500" />
-              <span className="font-medium text-gray-800">
-                {activeConversation?.title || 'AI 助手'}
-              </span>
-            </div>
+            <div className="h-5 w-px bg-gray-200 mx-1" />
+            <AIAvatar size="sm" />
+            <span className="font-semibold text-gray-800 text-sm">
+              {activeConversation?.title || 'AI 助手'}
+            </span>
           </div>
 
-          <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-            {/* Web Search Toggle (Gemini/Zenmux) */}
+          <div className="flex items-center gap-1.5" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            {/* Web Search Toggle */}
             {!compact && (config.provider === 'gemini' || config.provider === 'zenmux') && (
               <button
                 onClick={() => {
@@ -833,7 +864,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
                   chatService?.updateConfig(newConfig);
                   saveChatConfig(newConfig);
                 }}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all ${
                   config.enableWebSearch
                     ? 'bg-green-100 text-green-700 hover:bg-green-200'
                     : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
@@ -846,44 +877,43 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
             )}
             {!compact && (
               <>
-                <div className="px-3 py-1 bg-gray-100 rounded-full text-xs text-gray-600 font-medium">
-                  {config.model}
+                <div className="px-2.5 py-1 bg-purple-50 text-purple-600 rounded-full text-[11px] font-medium border border-purple-100 max-w-[160px] truncate">
+                  {config.model.split('/').pop() || config.model}
                 </div>
                 <button
                   onClick={() => setLayoutMode(layoutMode === 'single' ? 'split' : 'single')}
-                  className={`p-2 rounded-lg transition-colors ${
+                  className={`p-1.5 rounded-lg transition-colors ${
                     layoutMode === 'split'
                       ? 'bg-blue-100 text-blue-600'
                       : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
                   }`}
                   title={layoutMode === 'split' ? '退出分屏' : '分屏模式'}
                 >
-                  <Columns className="w-5 h-5" />
+                  <Columns className="w-4.5 h-4.5" />
                 </button>
                 <button
                   onClick={() => setShowTerminal(!showTerminal)}
-                  className={`p-2 rounded-lg transition-colors ${
+                  className={`p-1.5 rounded-lg transition-colors ${
                     showTerminal
                       ? 'bg-blue-100 text-blue-600'
                       : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
                   }`}
                   title={showTerminal ? '隐藏终端' : '显示终端'}
                 >
-                  <Square className="w-5 h-5" />
+                  <Square className="w-4.5 h-4.5" />
                 </button>
               </>
             )}
           </div>
         </div>
 
-        {/* Content Area with Split & Terminal Support */}
+        {/* Content Area */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          {/* Main Chat Area */}
-          <div className={`flex-1 flex overflow-hidden ${showTerminal ? '' : ''}`}>
-            {/* Left Chat Pane (always visible or split) */}
-            <div className={layoutMode === 'split' ? 'w-1/2 border-r border-gray-200 flex flex-col' : 'w-full flex flex-col'}>
+          <div className={`flex-1 flex overflow-hidden`}>
+            {/* Left Chat Pane */}
+            <div className={layoutMode === 'split' ? 'w-1/2 border-r border-gray-100 flex flex-col' : 'w-full flex flex-col'}>
               {/* Messages Area */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
                 {!activeConversation || activeConversation.messages.length === 0 ? (
                   renderEmptyState()
                 ) : (
@@ -905,15 +935,16 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
                       />
                     )}
 
-                    {/* Loading Indicator */}
+                    {/* Waiting for first token */}
                     {isStreaming && !streamingContent && (
                       <div className="flex gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
-                          <Bot className="w-4 h-4 text-white" />
-                        </div>
-                        <div className="flex items-center gap-2 px-4 py-3 bg-gray-100 rounded-2xl">
-                          <Loader2 className="w-4 h-4 animate-spin text-gray-500" />
-                          <span className="text-sm text-gray-500">思考中...</span>
+                        <AIAvatar />
+                        <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white border border-gray-100 shadow-sm">
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                            <span className="w-2 h-2 rounded-full bg-purple-500 animate-bounce" style={{ animationDelay: '160ms' }} />
+                            <span className="w-2 h-2 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: '320ms' }} />
+                          </div>
                         </div>
                       </div>
                     )}
@@ -923,106 +954,98 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
                 )}
               </div>
 
-            {/* Input Area for Left Pane */}
-            <div className="p-4 border-t border-gray-200 bg-white">
-              <div className="flex items-end gap-3">
-                <div className="flex-1 relative">
-                    <textarea
-                      ref={textareaRef}
-                      value={inputValue}
-                      onChange={(e) => {
-                        setInputValue(e.target.value);
-                        // Adjust height immediately on input
-                        requestAnimationFrame(() => {
-                          if (textareaRef.current) {
-                            textareaRef.current.style.height = 'auto';
-                            const scrollHeight = textareaRef.current.scrollHeight;
-                            const maxHeight = 120;
-                            const minHeight = 36;
-                            const newHeight = Math.max(minHeight, Math.min(scrollHeight, maxHeight));
-                            textareaRef.current.style.height = `${newHeight}px`;
-                          }
-                        });
-                      }}
-                      onKeyDown={handleKeyPress}
-                      placeholder="输入消息..."
-                      rows={1}
-                      className="w-full px-4 py-2 bg-gray-100 border-none rounded-xl resize-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all overflow-y-auto"
-                      style={{ height: '36px', maxHeight: '120px', minHeight: '36px' }}
-                      disabled={isStreaming}
-                    />
-                  </div>
+              {/* Error Banner */}
+              {error && (
+                <div className="mx-4 mb-2 p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-2 text-red-600">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span className="text-xs flex-1">{error}</span>
+                  <button onClick={() => setError(null)} className="p-1 hover:bg-red-100 rounded-lg">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
 
+              {/* Input Area */}
+              <div className="p-4 bg-white border-t border-gray-100">
+                <div className="flex items-end gap-2 bg-gray-50 border border-gray-200 hover:border-purple-300 focus-within:border-purple-400 focus-within:ring-2 focus-within:ring-purple-100 rounded-2xl px-4 py-3 transition-all shadow-sm">
+                  <textarea
+                    ref={textareaRef}
+                    value={inputValue}
+                    onChange={(e) => {
+                      setInputValue(e.target.value);
+                      requestAnimationFrame(() => {
+                        if (textareaRef.current) {
+                          textareaRef.current.style.height = 'auto';
+                          const scrollHeight = textareaRef.current.scrollHeight;
+                          const maxHeight = 120;
+                          const minHeight = 36;
+                          const newHeight = Math.max(minHeight, Math.min(scrollHeight, maxHeight));
+                          textareaRef.current.style.height = `${newHeight}px`;
+                        }
+                      });
+                    }}
+                    onKeyDown={handleKeyPress}
+                    placeholder="输入消息，按 Enter 发送..."
+                    rows={1}
+                    className="flex-1 bg-transparent border-none outline-none resize-none text-sm text-gray-800 placeholder-gray-400 overflow-y-auto"
+                    style={{ height: '36px', maxHeight: '120px', minHeight: '36px' }}
+                    disabled={isStreaming}
+                  />
                   {isStreaming ? (
                     <button
                       onClick={handleStop}
-                      className="p-2 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors"
-                      style={{ height: '36px', width: '36px' }}
+                      className="flex-shrink-0 p-2 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors shadow-sm"
                       title="停止生成"
                     >
-                      <StopCircle className="w-5 h-5" />
+                      <StopCircle className="w-4.5 h-4.5" />
                     </button>
                   ) : (
                     <button
                       onClick={handleSend}
                       disabled={!inputValue.trim()}
-                      className={`
-                        p-2 rounded-xl transition-colors
-                        ${inputValue.trim() 
-                          ? 'bg-blue-600 text-white hover:bg-blue-700' 
+                      className={`flex-shrink-0 p-2 rounded-xl transition-all shadow-sm ${
+                        inputValue.trim()
+                          ? 'text-white hover:opacity-90 active:scale-95'
                           : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                        }
-                      `}
-                      style={{ height: '36px', width: '36px' }}
+                      }`}
+                      style={inputValue.trim() ? { background: 'linear-gradient(135deg, #7c3aed 0%, #db2777 100%)' } : {}}
                       title="发送"
                     >
-                      <Send className="w-5 h-5" />
+                      <Send className="w-4.5 h-4.5" />
                     </button>
                   )}
                 </div>
+                <p className="text-[10px] text-gray-300 text-center mt-1.5">Enter 发送 · Shift+Enter 换行</p>
               </div>
             </div>
 
             {/* Right Pane - Split View */}
             {layoutMode === 'split' && (
-              <div className="w-1/2 border-l border-gray-200 flex flex-col bg-gray-50">
-                {/* 如果开启了终端，在分屏中显示终端 */}
+              <div className="w-1/2 flex flex-col bg-gray-50">
                 {showTerminal ? (
                   <div className="flex-1 bg-gray-900">
                     <TerminalComponent />
                   </div>
                 ) : (
-                  <div className="flex-1 flex items-center justify-center text-gray-400 p-6">
+                  <div className="flex-1 flex items-center justify-center text-gray-300 p-6">
                     <div className="text-center">
-                      <Columns className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                      <Columns className="w-10 h-10 mx-auto mb-3 opacity-40" />
                       <p className="text-sm">分屏模式</p>
-                      <p className="text-xs mt-1">这里可以查看补充信息</p>
                     </div>
                   </div>
                 )}
               </div>
             )}
-            </div>
           </div>
 
-          {/* Terminal Pane - 仅在非分屏模式下从底部显示 */}
+          {/* Terminal Pane */}
           {showTerminal && layoutMode !== 'split' && (
             <div className="h-1/3 border-t border-gray-200 bg-gray-900">
               <TerminalComponent />
             </div>
           )}
-
-          {/* Error Banner */}
-          {error && (
-            <div className="mx-6 mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-red-700">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              <span className="text-sm flex-1">{error}</span>
-              <button onClick={() => setError(null)} className="p-1 hover:bg-red-100 rounded">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          )}
         </div>
+      </div>
 
       {/* Settings Panel */}
       {showSettings && (
