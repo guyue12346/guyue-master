@@ -101,7 +101,7 @@ function createZenmuxUsageWindow(showWindow = true): BrowserWindow {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      sandbox: false,
       partition: 'persist:zenmux',
     },
   });
@@ -513,107 +513,86 @@ ipcMain.handle('leetcode-api', async (event, { query, variables, session }) => {
 });
 
 // --- Zenmux Usage API ---
-interface ZenmuxUsageResult {
-  category: 'Zenmux';
-  totalRequests: number;
-  totalCost: number;
-  balance: number;
-  monthlyRequests: number;
-  monthlyCost: number;
-  lastUpdated: number;
-  source: string;
+
+// 用 webRequest 拦截 ctoken
+let cachedCtoken: string | null = null;
+
+function setupCtokenInterceptor(win: BrowserWindow) {
+  const filter = { urls: ['https://zenmux.ai/api/*'] };
+  win.webContents.session.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
+    const m = details.url.match(/[?&]ctoken=([^&]+)/);
+    if (m) cachedCtoken = m[1];
+    callback({ cancel: false, requestHeaders: details.requestHeaders });
+  });
 }
 
-async function fetchZenmuxUsageFromBrowser(): Promise<ZenmuxUsageResult> {
-  const win = await ensureZenmuxUsageWindow(false);
+// 从隐藏窗口提取 ctoken 并调用 Zenmux 内部 API
+async function fetchZenmuxDashboardData(): Promise<any> {
+  // 创建或复用隐藏窗口
+  if (!zenmuxUsageWindow || zenmuxUsageWindow.isDestroyed()) {
+    cachedCtoken = null;
+    zenmuxUsageWindow = createZenmuxUsageWindow(false);
+    setupCtokenInterceptor(zenmuxUsageWindow);
+  }
 
-  // 从页面DOM中提取使用统计数据
-  const script = String.raw`
+  // 仅在没有 ctoken 时才加载页面（首次 / 过期）
+  if (!cachedCtoken) {
+    void zenmuxUsageWindow.loadURL('https://zenmux.ai/platform/usage');
+    await waitForWindowLoad(zenmuxUsageWindow);
+    // 等待 SPA 发出至少一个带 ctoken 的请求
+    for (let i = 0; i < 30 && !cachedCtoken; i++) {
+      await new Promise(r => setTimeout(r, 300));
+    }
+    if (!cachedCtoken) {
+      return { error: 'ctoken-not-found', loginRequired: false };
+    }
+  }
+
+  const ctokenLiteral = JSON.stringify(cachedCtoken);
+  const script = `
     (async () => {
-      const result = {
-        ok: false,
-        data: null,
-        reason: '',
-      };
+      const result = { loginRequired: false, error: null, data: null, lastUpdated: Date.now() };
 
       try {
-        // 检查是否在正确的页面
-        if (!location.href.includes('zenmux.ai/platform')) {
-          result.reason = 'not-on-zenmux-platform-page';
-          return result;
-        }
+        const url = window.location.href;
+        if (url.includes('/sign-in') || url.includes('/login')) { result.loginRequired = true; return result; }
+        const bodyText = (document.body && document.body.innerText) || '';
+        if (bodyText.includes('Sign in') && bodyText.includes('Continue with Google') && bodyText.length < 3000) { result.loginRequired = true; return result; }
 
-        // 尝试从页面提取数据
-        const extractNumber = (text) => {
-          if (!text) return 0;
-          const match = text.match(/[\d,.]+/);
-          if (!match) return 0;
-          return parseFloat(match[0].replace(/,/g, ''));
-        };
+        const ctoken = ${ctokenLiteral};
+        const ym = '' + new Date().getFullYear() + String(new Date().getMonth() + 1).padStart(2, '0');
+        const postBody = JSON.stringify({ queryDimension: 'BIZ_MTH', queryTime: ym, apiKeys: [], modelSlugs: [] });
+        const postOpts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: postBody };
 
-        // 查找包含统计数据的元素
-        const findTextContent = (keywords) => {
-          const elements = document.querySelectorAll('*');
-          for (const el of elements) {
-            const text = el.textContent?.trim() || '';
-            if (keywords.some(k => text.toLowerCase().includes(k.toLowerCase()))) {
-              return text;
-            }
-          }
-          return null;
-        };
+        // 三个 API 并行调用
+        const [r1, r2, r3] = await Promise.all([
+          fetch('/api/dashboard/usage/query?ctoken=' + ctoken, postOpts).then(r => r.text()).catch(() => ''),
+          fetch('/api/dashboard/cost/query/cost?ctoken=' + ctoken, { ...postOpts, body: postBody }).then(r => r.text()).catch(() => ''),
+          fetch('/api/payment/transtion/get_credits?ctoken=' + ctoken).then(r => r.text()).catch(() => ''),
+        ]);
 
-        // 提取各项数据
-        const data = {
-          total_requests: 0,
-          total_cost: 0,
-          balance: 0,
-          monthly_requests: 0,
-          monthly_cost: 0,
-        };
+        result.data = {};
+        try { result.data.usage = JSON.parse(r1); } catch(e) {}
+        try { result.data.costDetail = JSON.parse(r2); } catch(e) {}
+        try { result.data.credits = JSON.parse(r3); } catch(e) {}
 
-        // 尝试从页面提取数据
-        // 注意: 实际的选择器需要根据Zenmux页面的实际结构来调整
-        const allText = document.body.innerText;
-        
-        // 简单的数据提取逻辑(需要根据实际页面调整)
-        const balanceMatch = allText.match(/balance[:\s]+\$?([\d,.]+)/i);
-        if (balanceMatch) data.balance = extractNumber(balanceMatch[1]);
-
-        const costMatch = allText.match(/total.*cost[:\s]+\$?([\d,.]+)/i);
-        if (costMatch) data.total_cost = extractNumber(costMatch[1]);
-
-        const requestsMatch = allText.match(/total.*requests?[:\s]+([\d,.]+)/i);
-        if (requestsMatch) data.total_requests = extractNumber(requestsMatch[1]);
-
-        result.ok = true;
-        result.data = data;
         return result;
       } catch (error) {
-        result.reason = error.message || 'extraction-error';
+        result.error = (error && error.message) || 'unknown-error';
         return result;
       }
     })();
   `;
 
-  const extractResult = await win.webContents.executeJavaScript(script, true) as any;
-
-  if (!extractResult?.ok) {
-    throw new Error(`请先在登录窗口完成 Zenmux 登录 (${extractResult?.reason || 'unknown'})`);
+  try {
+    const res = await zenmuxUsageWindow.webContents.executeJavaScript(script, true);
+    // ctoken 过期（API 返回非 JSON / 登录页）则清除缓存，下次会重新加载页面
+    if (res?.loginRequired || res?.error) cachedCtoken = null;
+    return res;
+  } catch (error) {
+    cachedCtoken = null;
+    return { error: (error as Error).message, loginRequired: false };
   }
-
-  const data = extractResult.data || {};
-  
-  return {
-    category: 'Zenmux',
-    totalRequests: data.total_requests || 0,
-    totalCost: data.total_cost || 0,
-    balance: data.balance || 0,
-    monthlyRequests: data.monthly_requests || 0,
-    monthlyCost: data.monthly_cost || 0,
-    lastUpdated: Date.now(),
-    source: 'browser-dom',
-  };
 }
 
 ipcMain.handle('open-zenmux-login', async () => {
@@ -627,9 +606,17 @@ ipcMain.handle('open-zenmux-login', async () => {
 
 ipcMain.handle('fetch-zenmux-usage-browser', async () => {
   try {
-    return await fetchZenmuxUsageFromBrowser();
+    return await fetchZenmuxDashboardData();
   } catch (error) {
     throw new Error((error as Error).message || '同步数据失败');
+  }
+});
+
+ipcMain.handle('fetch-zenmux-dashboard-data', async () => {
+  try {
+    return await fetchZenmuxDashboardData();
+  } catch (error) {
+    return { error: (error as Error).message, loginRequired: false };
   }
 });
 

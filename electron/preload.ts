@@ -58,6 +58,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openCodexUsageLogin: () => ipcRenderer.invoke('open-codex-usage-login'),
   fetchCodexUsageFromBrowser: () => ipcRenderer.invoke('fetch-codex-usage-browser'),
 
+  // Zenmux Usage API
+  openZenmuxLogin: () => ipcRenderer.invoke('open-zenmux-login'),
+  fetchZenmuxUsageFromBrowser: () => ipcRenderer.invoke('fetch-zenmux-usage-browser'),
+  fetchZenmuxDashboardData: () => ipcRenderer.invoke('fetch-zenmux-dashboard-data'),
+
   // Email API
   sendEmail: (params: { config: any; subject: string; content: string }) => ipcRenderer.invoke('send-email', params),
   testEmailConfig: (config: any) => ipcRenderer.invoke('test-email-config', config),

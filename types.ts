@@ -222,6 +222,7 @@ export interface ElectronAPI {
   // Zenmux Usage API
   openZenmuxLogin: () => Promise<boolean>;
   fetchZenmuxUsageFromBrowser: () => Promise<ZenmuxUsage>;
+  fetchZenmuxDashboardData: () => Promise<any>;
   // Email API
   sendEmail: (params: { config: import('./types').EmailConfig; subject: string; content: string }) => Promise<{ success: boolean; error?: string }>;
   testEmailConfig: (config: import('./types').EmailConfig) => Promise<{ success: boolean; error?: string }>;
@@ -338,6 +339,7 @@ export interface DataCenterConfig {
     ojHeatmap: boolean;
     resourceCenter: boolean;
     passwordManager: boolean;
+    zenmuxUsage: boolean;
   };
 }
 

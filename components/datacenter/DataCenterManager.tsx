@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart3, Flame, Package, Settings, X, ToggleLeft, ToggleRight, Mail, Server, Key, Send, Loader2, CheckCircle, AlertCircle, Shield } from 'lucide-react';
+import { BarChart3, Flame, Package, Settings, X, ToggleLeft, ToggleRight, Mail, Server, Key, Send, Loader2, CheckCircle, AlertCircle, Shield, Activity } from 'lucide-react';
 import { OJHeatmapContainer } from './OJHeatmapContainer';
 import { ResourceCenter } from './ResourceCenter';
 import { PasswordManager } from './PasswordManager';
+import { ZenmuxUsagePanel } from './ZenmuxUsagePanel';
 import type { OJHeatmapData, ResourceCenterData, DataCenterConfig, EmailConfig } from '../../types';
 
 // localStorage 存储键
@@ -15,6 +16,7 @@ const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
     ojHeatmap: true,
     resourceCenter: true,
     passwordManager: true,
+    zenmuxUsage: true,
   },
 };
 
@@ -161,6 +163,18 @@ const DataCenterSettingsModal: React.FC<{
                 </button>
               </div>
 
+              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <Activity className="w-4 h-4 text-violet-500" />
+                  <span className="text-sm text-gray-900 dark:text-white">Zenmux 用量</span>
+                </div>
+                <button
+                  onClick={() => handleModuleToggle('zenmuxUsage')}
+                  className={`transition-colors ${config.modules.zenmuxUsage ? 'text-blue-500' : 'text-gray-400'}`}
+                >
+                  {config.modules.zenmuxUsage ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
+                </button>
+              </div>
 
             </div>
           </div>
@@ -337,7 +351,7 @@ interface DataCenterManagerProps {
   onUpdateResourceData: (data: ResourceCenterData) => void;
 }
 
-type SubPage = 'oj-heatmap' | 'resource-center' | 'password-manager';
+type SubPage = 'oj-heatmap' | 'resource-center' | 'password-manager' | 'zenmux-usage';
 
 interface NavItem {
   id: SubPage;
@@ -364,6 +378,12 @@ const NAV_ITEMS: NavItem[] = [
     name: '网站管理',
     icon: <Shield className="w-4 h-4" />,
     configKey: 'passwordManager',
+  },
+  {
+    id: 'zenmux-usage',
+    name: 'Zenmux 用量',
+    icon: <Activity className="w-4 h-4" />,
+    configKey: 'zenmuxUsage',
   },
 ];
 
@@ -486,6 +506,9 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
         )}
         {activePage === 'password-manager' && (
           <PasswordManager />
+        )}
+        {activePage === 'zenmux-usage' && (
+          <ZenmuxUsagePanel />
         )}
       </div>
     </div>
