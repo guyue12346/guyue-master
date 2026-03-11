@@ -9,7 +9,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { MarkdownNote } from '../types';
 import { LearningCategoryModal } from './LearningCategoryModal';
 import { LearningCourseModal } from './LearningCourseModal';
-import { deleteCategoryFolder, deleteCourseFolder } from '../utils/learningStorage';
+import { deleteCategoryFolder, deleteCourseFolder, migrateToIdBasedPaths } from '../utils/learningStorage';
 import { getCategoryIcon, colorMap } from './LearningConstants';
 
 // All courses
@@ -68,6 +68,18 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
     return () => { if (courseSaveTimerRef.current) clearTimeout(courseSaveTimerRef.current); };
   }, [courses]);
 
+  // 一次性：将磁盘目录从名称命名迁移到 ID 命名
+  const migrationDoneRef = useRef(false);
+  useEffect(() => {
+    if (migrationDoneRef.current || !window.electronAPI) return;
+    migrationDoneRef.current = true;
+    migrateToIdBasedPaths(categories, courses).then(migratedCourses => {
+      if (JSON.stringify(migratedCourses) !== JSON.stringify(courses)) {
+        setCourses(migratedCourses as CourseData[]);
+      }
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Modal States
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<CourseCategory | undefined>(undefined);
@@ -75,57 +87,9 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
   const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState<CourseData | undefined>(undefined);
 
-  const handleSaveCategory = async (category: CourseCategory) => {
+  // 学习方向保存：磁盘文件夹用 categoryId 命名，改名只需更新显示名称
+  const handleSaveCategory = (category: CourseCategory) => {
     if (editingCategory) {
-      // 检查名称是否改变，如果改变则重命名文件夹
-      if (editingCategory.name !== category.name) {
-        const { renameCategoryFolder, sanitizeName } = await import('../utils/learningStorage');
-        const result = await renameCategoryFolder(editingCategory.name, category.name);
-
-        if (result.success) {
-          // 更新所有该分类下课程的文件路径
-          const oldSanitized = sanitizeName(editingCategory.name);
-          const newSanitized = sanitizeName(category.name);
-
-          setCourses(prev => prev.map(course => {
-            if (course.categoryId !== category.id) return course;
-
-            // 更新 modules 中的文件路径
-            const updatedModules = course.modules.map(m => ({
-              ...m,
-              lectures: m.lectures.map(l => ({
-                ...l,
-                materials: l.materials?.replace(`/${oldSanitized}/`, `/${newSanitized}/`)
-              }))
-            }));
-
-            // 更新 assignmentModules 中的文件路径
-            const updatedAssignmentModules = (course.assignmentModules || []).map(m => ({
-              ...m,
-              items: m.items.map(item => ({
-                ...item,
-                link: item.link?.replace(`/${oldSanitized}/`, `/${newSanitized}/`)
-              }))
-            }));
-
-            // 更新 personalModules 中的文件路径
-            const updatedPersonalModules = (course.personalModules || []).map(m => ({
-              ...m,
-              items: m.items.map(item => ({
-                ...item,
-                link: item.link?.replace(`/${oldSanitized}/`, `/${newSanitized}/`)
-              }))
-            }));
-
-            return {
-              ...course,
-              modules: updatedModules,
-              assignmentModules: updatedAssignmentModules,
-              personalModules: updatedPersonalModules
-            };
-          }));
-        }
-      }
       setCategories(prev => prev.map(c => c.id === category.id ? category : c));
     } else {
       setCategories(prev => [...prev, category]);
@@ -140,76 +104,20 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
       message: '确定要删除该学习方向吗？这将同时删除该方向下的所有课程及其文件。',
       variant: 'danger',
       onConfirm: async () => {
-        const categoryToDelete = categories.find(c => c.id === id);
         setCategories(prev => prev.filter(c => c.id !== id));
         setCourses(prev => prev.filter(c => c.categoryId !== id));
         if (selectedCategoryId === id) setSelectedCategoryId(null);
-        if (categoryToDelete) await deleteCategoryFolder(categoryToDelete.name);
+        await deleteCategoryFolder(id); // 用 ID 删除
         setConfirmState(null);
       },
     });
   };
 
-  const handleSaveCourse = async (courseData: Partial<CourseData>) => {
+  // 课程保存：磁盘文件夹用 courseId 命名，改名只需更新显示标题
+  const handleSaveCourse = (courseData: Partial<CourseData>) => {
     if (editingCourse) {
-      // 检查标题是否改变，如果改变则重命名文件夹
-      if (editingCourse.title !== courseData.title) {
-        const category = categories.find(c => c.id === editingCourse.categoryId);
-        if (category) {
-          const { renameCourseFolder, sanitizeName } = await import('../utils/learningStorage');
-          const result = await renameCourseFolder(category.name, editingCourse.title, courseData.title!);
-
-          if (result.success) {
-            // 更新课程中的文件路径
-            const oldSanitized = sanitizeName(editingCourse.title);
-            const newSanitized = sanitizeName(courseData.title!);
-
-            setCourses(prev => prev.map(c => {
-              if (c.id !== courseData.id) return c;
-
-              // 更新 modules 中的文件路径
-              const updatedModules = c.modules.map(m => ({
-                ...m,
-                lectures: m.lectures.map(l => ({
-                  ...l,
-                  materials: l.materials?.replace(`/${oldSanitized}/`, `/${newSanitized}/`)
-                }))
-              }));
-
-              // 更新 assignmentModules 中的文件路径
-              const updatedAssignmentModules = (c.assignmentModules || []).map(m => ({
-                ...m,
-                items: m.items.map(item => ({
-                  ...item,
-                  link: item.link?.replace(`/${oldSanitized}/`, `/${newSanitized}/`)
-                }))
-              }));
-
-              // 更新 personalModules 中的文件路径
-              const updatedPersonalModules = (c.personalModules || []).map(m => ({
-                ...m,
-                items: m.items.map(item => ({
-                  ...item,
-                  link: item.link?.replace(`/${oldSanitized}/`, `/${newSanitized}/`)
-                }))
-              }));
-
-              return {
-                ...c,
-                ...courseData,
-                modules: updatedModules,
-                assignmentModules: updatedAssignmentModules,
-                personalModules: updatedPersonalModules
-              } as CourseData;
-            }));
-            setEditingCourse(undefined);
-            return;
-          }
-        }
-      }
       setCourses(prev => prev.map(c => c.id === courseData.id ? { ...c, ...courseData } as CourseData : c));
     } else {
-      // Create new course with default structure
       const newCourse: CourseData = {
         ...courseData,
         id: `course_${Date.now()}`,
@@ -220,7 +128,6 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
         assignments: [],
         introMarkdown: '# 学习总览\n\n在这里编写学习总览...',
       };
-      console.log('Creating new course:', newCourse);
       setCourses(prev => [...prev, newCourse]);
     }
     setEditingCourse(undefined);
@@ -234,10 +141,11 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
       message: `确定要删除「${courseToDelete?.title || ''}」吗？这将同时删除课程内的所有文件。`,
       variant: 'danger',
       onConfirm: async () => {
-        const category = courseToDelete ? categories.find(cat => cat.id === courseToDelete.categoryId) : null;
         setCourses(prev => prev.filter(c => c.id !== id));
         if (selectedCourseId === id) setSelectedCourseId(null);
-        if (courseToDelete && category) await deleteCourseFolder(category.name, courseToDelete.title);
+        if (courseToDelete) {
+          await deleteCourseFolder(courseToDelete.categoryId, courseToDelete.id); // 用 ID 删除
+        }
         setConfirmState(null);
       },
     });
@@ -577,13 +485,14 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
         <div className="max-w-5xl mx-auto w-full">
           <div className="flex items-center justify-between mb-8">
             <div>
-              <button
-                onClick={() => { setSelectedCategoryId(null); setSearchQuery(''); }}
-                className="flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600 transition-colors mb-2"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                返回
-              </button>
+              <div className="flex items-center gap-3 mb-3">
+                <button
+                  onClick={() => { setSelectedCategoryId(null); setSearchQuery(''); }}
+                  className="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+              </div>
               <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
                 <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: colors.bgColor }}>
                   <IconComponent className="w-5 h-5" style={{ color: colors.textColor }} />
@@ -853,16 +762,15 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
       {/* Left Sidebar: Course Content List */}
       {!isImmersive && (
         <div className="flex flex-col border-r border-gray-200 h-full w-80 flex-shrink-0 transition-all duration-300">
-          <div className="h-12 flex items-center px-4 border-b border-gray-200 bg-gray-50" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+          <div className="h-12 flex items-center px-3 border-b border-gray-200 bg-gray-50" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
             <button 
               onClick={() => { setSelectedCourseId(null); setSearchQuery(''); }}
-              className="flex items-center gap-1 text-sm text-gray-600 hover:text-blue-600 transition-colors"
+              className="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
               style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+              title="返回课程列表"
             >
-              <ChevronLeft className="w-4 h-4" />
-              返回
+              <ChevronLeft className="w-5 h-5" />
             </button>
-
           </div>
           {selectedCourse ? (
             <LearningList 

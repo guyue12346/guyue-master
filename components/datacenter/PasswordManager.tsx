@@ -517,6 +517,22 @@ const TagManagerModal: React.FC<{
   );
 };
 
+// ======== Favicon 持久化缓存 ========
+const FAVICON_CACHE_KEY = 'linkmaster_favicon_cache_v1';
+
+const getFaviconCache = (): Record<string, string | null> => {
+  try { return JSON.parse(localStorage.getItem(FAVICON_CACHE_KEY) || '{}'); }
+  catch { return {}; }
+};
+
+const saveFaviconToCache = (hostname: string, dataUrl: string | null) => {
+  try {
+    const cache = getFaviconCache();
+    cache[hostname] = dataUrl;
+    localStorage.setItem(FAVICON_CACHE_KEY, JSON.stringify(cache));
+  } catch {}
+};
+
 // ======== 可拖拽密码行组件 ========
 const SortablePasswordRow: React.FC<{
   entry: PasswordEntry;
@@ -534,21 +550,56 @@ const SortablePasswordRow: React.FC<{
     opacity: isDragging ? 0.85 : 1,
   };
 
-  const displayDomain = useMemo(() => {
+  const { hostname, displayDomain } = useMemo(() => {
     try {
-      if (!entry.url) return '—';
+      if (!entry.url) return { hostname: null, displayDomain: '—' };
       const urlObj = new URL(entry.url.startsWith('http') ? entry.url : `https://${entry.url}`);
-      return urlObj.hostname;
-    } catch { return entry.url || '—'; }
+      return { hostname: urlObj.hostname, displayDomain: urlObj.hostname };
+    } catch { return { hostname: null, displayDomain: entry.url || '—' }; }
   }, [entry.url]);
 
-  const faviconUrl = useMemo(() => {
+  // 从缓存初始化，未缓存时先用 Google URL
+  const [faviconSrc, setFaviconSrc] = useState<string | null>(() => {
+    if (!hostname) return null;
+    const cache = getFaviconCache();
+    if (hostname in cache) return cache[hostname];
+    return `https://www.google.com/s2/favicons?domain=${hostname}&sz=32`;
+  });
+
+  useEffect(() => {
+    if (!hostname) { setFaviconSrc(null); return; }
+    const cache = getFaviconCache();
+    if (hostname in cache) {
+      setFaviconSrc(cache[hostname]);
+    } else {
+      setFaviconSrc(`https://www.google.com/s2/favicons?domain=${hostname}&sz=32`);
+    }
+  }, [hostname]);
+
+  // 首次加载成功后，将图标下载为 base64 并持久化
+  const handleFaviconLoad = useCallback(async () => {
+    if (!hostname) return;
+    const cache = getFaviconCache();
+    // 已缓存为 base64 则跳过
+    if (hostname in cache && cache[hostname] !== null && !cache[hostname]!.startsWith('http')) return;
     try {
-      if (!entry.url) return null;
-      const urlObj = new URL(entry.url.startsWith('http') ? entry.url : `https://${entry.url}`);
-      return `https://www.google.com/s2/favicons?domain=${urlObj.hostname}&sz=32`;
-    } catch { return null; }
-  }, [entry.url]);
+      const resp = await fetch(`https://www.google.com/s2/favicons?domain=${hostname}&sz=32`);
+      const blob = await resp.blob();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      saveFaviconToCache(hostname, dataUrl);
+      setFaviconSrc(dataUrl);
+    } catch { /* 网络失败不影响正常显示 */ }
+  }, [hostname]);
+
+  const handleFaviconError = useCallback(() => {
+    if (hostname) saveFaviconToCache(hostname, null);
+    setFaviconSrc(null);
+  }, [hostname]);
 
   const maskedPassword = useMemo(() => {
     if (!entry.password) return '';
@@ -571,9 +622,10 @@ const SortablePasswordRow: React.FC<{
 
       {/* 网址 + Favicon */}
       <div className="flex items-center gap-2 min-w-0 flex-shrink">
-        {faviconUrl ? (
-          <img src={faviconUrl} alt="" className="w-4 h-4 rounded flex-shrink-0"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+        {faviconSrc ? (
+          <img src={faviconSrc} alt="" className="w-4 h-4 rounded flex-shrink-0"
+            onLoad={handleFaviconLoad}
+            onError={handleFaviconError} />
         ) : (
           <Globe className="w-4 h-4 text-gray-400 flex-shrink-0" />
         )}

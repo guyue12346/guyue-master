@@ -423,26 +423,28 @@ export const LearningList: React.FC<LearningListProps> = ({
       return;
     }
 
-    // 创建磁盘上的文件夹
+    // 先生成 ID，再用 ID 构建磁盘路径（与标题解耦）
+    const moduleId = `mod_${Date.now()}`;
     const category = categories.find(c => c.id === course.categoryId);
-    const categoryName = category ? category.name : 'Uncategorized';
 
     try {
       const { getModulePath } = await import('../utils/learningStorage');
-      const modulePath = await getModulePath(categoryName, course.title, addingModuleSection as SectionType, newModuleTitle);
-
-      // 确保目录存在
+      const modulePath = await getModulePath(
+        category?.id || course.categoryId,
+        course.id,
+        addingModuleSection as SectionType,
+        moduleId
+      );
       if (window.electronAPI) {
         await window.electronAPI.ensureDir(modulePath);
       }
     } catch (error) {
       console.error('Failed to create module folder:', error);
-      // 继续创建模块数据，即使文件夹创建失败
     }
 
     if (addingModuleSection === 'resources') {
       const newModule: Module = {
-        id: `mod_${Date.now()}`,
+        id: moduleId,
         title: newModuleTitle,
         description: newModuleDesc,
         lectures: []
@@ -454,7 +456,7 @@ export const LearningList: React.FC<LearningListProps> = ({
       onUpdateCourse(updatedCourse);
     } else if (addingModuleSection === 'assignments') {
       const newModule: AssignmentModule = {
-        id: `assign_mod_${Date.now()}`,
+        id: moduleId,
         title: newModuleTitle,
         description: newModuleDesc,
         items: []
@@ -467,7 +469,7 @@ export const LearningList: React.FC<LearningListProps> = ({
       onUpdateCourse(updatedCourse);
     } else if (addingModuleSection === 'personal') {
       const newModule: PersonalModule = {
-        id: `personal_mod_${Date.now()}`,
+        id: moduleId,
         title: newModuleTitle,
         description: newModuleDesc,
         items: []
@@ -492,23 +494,22 @@ export const LearningList: React.FC<LearningListProps> = ({
       variant: 'danger',
       onConfirm: async () => {
         const category = categories.find(c => c.id === course.categoryId);
-        const categoryName = category ? category.name : 'Uncategorized';
-        let moduleName = '';
-        
+
         if (section === 'resources') {
-          const module = course.modules.find(m => m.id === moduleId);
-          moduleName = module ? module.title : '';
           onUpdateCourse({ ...course, modules: course.modules.filter(m => m.id !== moduleId) });
         } else if (section === 'assignments') {
-          const module = (course.assignmentModules || []).find(m => m.id === moduleId);
-          moduleName = module ? module.title : '';
           onUpdateCourse({ ...course, assignmentModules: (course.assignmentModules || []).filter(m => m.id !== moduleId) });
         } else {
-          const module = (course.personalModules || []).find(m => m.id === moduleId);
-          moduleName = module ? module.title : '';
           onUpdateCourse({ ...course, personalModules: (course.personalModules || []).filter(m => m.id !== moduleId) });
         }
-        if (moduleName) await deleteModuleFolder(categoryName, course.title, section as SectionType, moduleName);
+
+        // 用 ID 删除磁盘文件夹，无需依赖名称
+        await deleteModuleFolder(
+          category?.id || course.categoryId,
+          course.id,
+          section as SectionType,
+          moduleId
+        );
         setConfirmState(null);
       },
     });
@@ -603,36 +604,26 @@ export const LearningList: React.FC<LearningListProps> = ({
     if (!mdModalModuleId || !window.electronAPI) return;
 
     const category = categories.find(c => c.id === course.categoryId);
-    const categoryName = category ? category.name : 'Uncategorized';
-    
+
     try {
-      // 动态导入 getModulePath 和 ensureDirectory
       const { getModulePath } = await import('../utils/learningStorage');
-      
-      // 获取模块路径并确保目录存在
-      const modulePath = await getModulePath(categoryName, course.title, mdModalSection as SectionType, mdModalModuleName);
-      
-      // 确保目录存在
+      // 用 moduleId 定位路径，与模块标题无关
+      const modulePath = await getModulePath(
+        category?.id || course.categoryId,
+        course.id,
+        mdModalSection as SectionType,
+        mdModalModuleId
+      );
+
       const dirCreated = await window.electronAPI.ensureDir(modulePath);
-      if (!dirCreated) {
-        alert('创建目录失败');
-        return;
-      }
-      
-      // 构建文件完整路径
+      if (!dirCreated) { alert('创建目录失败'); return; }
+
       const filePath = await window.electronAPI.pathJoin(modulePath, fileName);
-      
-      // 创建空的MD文件内容
       const emptyContent = `# ${fileName.replace('.md', '')}\n\n`;
-      
-      // 写入文件
+
       const success = await window.electronAPI.writeFile(filePath, emptyContent);
-      if (!success) {
-        alert('创建文件失败');
-        return;
-      }
-      
-      // 添加到模块
+      if (!success) { alert('创建文件失败'); return; }
+
       addMDToModule(filePath, fileName, mdModalModuleId, mdModalSection);
     } catch (error) {
       console.error('Failed to create MD file:', error);
@@ -712,39 +703,21 @@ export const LearningList: React.FC<LearningListProps> = ({
 
     if (shouldCopy) {
       const category = categories.find(c => c.id === course.categoryId);
-      const categoryName = category ? category.name : 'Uncategorized';
-      const courseName = course.title;
-      
-      let moduleName = 'General';
+      const categoryId = category?.id || course.categoryId;
+
       let sectionType: SectionType = 'personal';
-      
-      if (section === 'resources') {
-        sectionType = 'resources';
-        const module = course.modules.find(m => m.id === targetId);
-        moduleName = module ? module.title : 'General';
-      } else if (section === 'assignments') {
-        sectionType = 'assignments';
-        const module = (course.assignmentModules || []).find(m => m.id === targetId);
-        moduleName = module ? module.title : 'General';
-      } else if (section === 'personal') {
-        sectionType = 'personal';
-        const module = (course.personalModules || []).find(m => m.id === targetId);
-        moduleName = module ? module.title : 'General';
-      } else {
-        // Custom section – store under 'personal' directory
-        sectionType = 'personal';
-        const customSec = (course.customSections || []).find(s => s.id === section);
-        const module = customSec?.modules.find(m => m.id === targetId);
-        moduleName = module ? module.title : 'General';
-      }
-      
-      // 使用新的存储工具复制文件
+      if (section === 'resources') sectionType = 'resources';
+      else if (section === 'assignments') sectionType = 'assignments';
+      else if (section === 'personal') sectionType = 'personal';
+      // custom section → store under personal
+
+      // 直接用 targetId（= moduleId）构建路径，与模块标题无关
       const destPath = await copyFileToDestination(
         file.path,
-        categoryName,
-        courseName,
+        categoryId,
+        course.id,
         sectionType,
-        moduleName,
+        targetId,
         file.name
       );
       
@@ -859,85 +832,30 @@ export const LearningList: React.FC<LearningListProps> = ({
 
     const { type, section, moduleId, itemId, filePath, currentTitle } = renameTarget;
 
-    // 章节重命名
+    // 章节重命名：磁盘文件夹以 moduleId 命名，改名只需更新显示标题
     if (type === 'module') {
-      const category = categories.find(c => c.id === course.categoryId);
-      const categoryName = category ? category.name : 'Uncategorized';
-
-      // 获取章节文件夹路径（使用 sanitizeName 确保路径正确）
-      const { getModulePath, sanitizeName } = await import('../utils/learningStorage');
-      const oldModulePath = await getModulePath(categoryName, course.title, section as SectionType, currentTitle);
-      const newModulePath = await getModulePath(categoryName, course.title, section as SectionType, newTitle);
-
-      // 旧目录名和新目录名（经过 sanitize 处理）
-      const oldSanitizedName = sanitizeName(currentTitle);
-      const newSanitizedName = sanitizeName(newTitle);
-
-      // 重命名文件夹
-      const success = await window.electronAPI.renameFile(oldModulePath, newModulePath);
-      if (!success) {
-        // 文件夹可能不存在（用户还没上传任何文件），尝试创建新文件夹
-        console.log('Folder rename skipped, creating new folder instead');
-        await window.electronAPI.ensureDir(newModulePath);
-      }
-
-      // 更新课程数据中的章节名称和文件路径
       if (section === 'resources') {
-        const updatedCourse = {
+        onUpdateCourse({
           ...course,
-          modules: course.modules.map(m => {
-            if (m.id === moduleId) {
-              return {
-                ...m,
-                title: newTitle,
-                lectures: m.lectures.map(l => ({
-                  ...l,
-                  materials: l.materials?.replace(`/${oldSanitizedName}/`, `/${newSanitizedName}/`)
-                }))
-              };
-            }
-            return m;
-          })
-        };
-        onUpdateCourse(updatedCourse);
+          modules: course.modules.map(m =>
+            m.id === moduleId ? { ...m, title: newTitle } : m
+          )
+        });
       } else if (section === 'assignments') {
-        const updatedCourse = {
+        onUpdateCourse({
           ...course,
-          assignmentModules: (course.assignmentModules || []).map(m => {
-            if (m.id === moduleId) {
-              return {
-                ...m,
-                title: newTitle,
-                items: m.items.map(item => ({
-                  ...item,
-                  link: item.link?.replace(`/${oldSanitizedName}/`, `/${newSanitizedName}/`)
-                }))
-              };
-            }
-            return m;
-          })
-        };
-        onUpdateCourse(updatedCourse);
+          assignmentModules: (course.assignmentModules || []).map(m =>
+            m.id === moduleId ? { ...m, title: newTitle } : m
+          )
+        });
       } else if (section === 'personal') {
-        const updatedCourse = {
+        onUpdateCourse({
           ...course,
-          personalModules: (course.personalModules || []).map(m => {
-            if (m.id === moduleId) {
-              return {
-                ...m,
-                title: newTitle,
-                items: m.items.map(item => ({
-                  ...item,
-                  link: item.link?.replace(`/${oldSanitizedName}/`, `/${newSanitizedName}/`)
-                }))
-              };
-            }
-            return m;
-          })
-        };
-        onUpdateCourse(updatedCourse);
+          personalModules: (course.personalModules || []).map(m =>
+            m.id === moduleId ? { ...m, title: newTitle } : m
+          )
+        });
       }
-
       setIsRenameModalOpen(false);
       setRenameTarget(null);
       return;

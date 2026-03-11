@@ -25,14 +25,14 @@ export const SECTION_NAMES = {
   personal: '其它资源'
 } as const;
 
-// 旧的目录名称（用于迁移）
+// 旧的目录名称（仅迁移函数使用）
 const LEGACY_SECTION_NAMES: Record<string, string> = {
   resources: '学习资源'
 };
 
 export type SectionType = keyof typeof SECTION_NAMES;
 
-// 安全的目录名称（去除特殊字符）
+// 安全的目录名称（去除特殊字符，仅用于迁移阶段读取旧路径）
 export const sanitizeName = (name: string): string => {
   return name.replace(/[\\/:*?"<>|]/g, '_').trim();
 };
@@ -77,133 +77,57 @@ export const getLearningRootPath = async (): Promise<string> => {
 };
 
 /**
- * 获取学习方向目录路径
+ * 获取学习方向目录路径（使用 categoryId 作为目录名，重命名不影响路径）
  */
-export const getCategoryPath = async (categoryName: string): Promise<string> => {
+export const getCategoryPath = async (categoryId: string): Promise<string> => {
   const learningRoot = await getLearningRootPath();
-  return await window.electronAPI.pathJoin(learningRoot, sanitizeName(categoryName));
+  return await window.electronAPI.pathJoin(learningRoot, categoryId);
 };
 
 /**
- * 获取课程目录路径
+ * 获取课程目录路径（使用 courseId 作为目录名）
  */
-export const getCoursePath = async (categoryName: string, courseName: string): Promise<string> => {
-  const categoryPath = await getCategoryPath(categoryName);
-  return await window.electronAPI.pathJoin(categoryPath, sanitizeName(courseName));
+export const getCoursePath = async (categoryId: string, courseId: string): Promise<string> => {
+  const categoryPath = await getCategoryPath(categoryId);
+  return await window.electronAPI.pathJoin(categoryPath, courseId);
 };
 
 /**
- * 迁移旧的目录名称到新名称
- * 例如：将"学习资源"迁移到"学习内容"
- */
-export const migrateLegacySectionFolder = async (
-  categoryName: string,
-  courseName: string,
-  section: SectionType
-): Promise<boolean> => {
-  const legacyName = LEGACY_SECTION_NAMES[section];
-  if (!legacyName) return false; // 没有需要迁移的旧名称
-
-  try {
-    const coursePath = await getCoursePath(categoryName, courseName);
-    const legacyPath = await window.electronAPI.pathJoin(coursePath, legacyName);
-    const newPath = await window.electronAPI.pathJoin(coursePath, SECTION_NAMES[section]);
-
-    // 检查旧文件夹是否存在
-    const legacyFiles = await window.electronAPI.listDir(legacyPath);
-    if (legacyFiles.length === 0) {
-      // 旧文件夹不存在或为空，不需要迁移
-      return false;
-    }
-
-    // 检查新文件夹是否存在
-    const newFiles = await window.electronAPI.listDir(newPath);
-
-    if (newFiles.length === 0) {
-      // 新文件夹不存在，直接重命名旧文件夹
-      console.log(`Migrating folder: ${legacyPath} -> ${newPath}`);
-      const success = await window.electronAPI.renameFile(legacyPath, newPath);
-      if (success) {
-        console.log('Migration successful');
-        return true;
-      }
-    } else {
-      // 两个文件夹都存在，需要合并（移动旧文件夹的内容到新文件夹）
-      console.log(`Both folders exist, merging: ${legacyPath} -> ${newPath}`);
-      for (const file of legacyFiles) {
-        const oldPath = file.path;
-        const newFilePath = await window.electronAPI.pathJoin(newPath, file.name);
-        // 检查目标是否已存在
-        try {
-          await window.electronAPI.renameFile(oldPath, newFilePath);
-          console.log(`Moved: ${file.name}`);
-        } catch (e) {
-          console.warn(`Failed to move ${file.name}, may already exist`);
-        }
-      }
-      // 尝试删除空的旧文件夹
-      try {
-        await window.electronAPI.deleteDir(legacyPath);
-        console.log(`Deleted legacy folder: ${legacyPath}`);
-      } catch (e) {
-        console.warn('Failed to delete legacy folder');
-      }
-      return true;
-    }
-  } catch (error) {
-    console.error('Migration failed:', error);
-  }
-  return false;
-};
-
-/**
- * 获取资源类型目录路径（学习内容/学习练习/其它资源）
- * 会自动迁移旧的目录名称
+ * 获取资源类型目录路径（分区名称是固定常量，不会变化）
  */
 export const getSectionPath = async (
-  categoryName: string,
-  courseName: string,
+  categoryId: string,
+  courseId: string,
   section: SectionType
 ): Promise<string> => {
-  const coursePath = await getCoursePath(categoryName, courseName);
-  const sectionPath = await window.electronAPI.pathJoin(coursePath, SECTION_NAMES[section]);
-
-  // 尝试迁移旧的目录（只在首次访问时执行）
-  if (LEGACY_SECTION_NAMES[section]) {
-    const migrationKey = `migrated_${categoryName}_${courseName}_${section}`;
-    if (!sessionStorage.getItem(migrationKey)) {
-      sessionStorage.setItem(migrationKey, 'true');
-      await migrateLegacySectionFolder(categoryName, courseName, section);
-    }
-  }
-
-  return sectionPath;
+  const coursePath = await getCoursePath(categoryId, courseId);
+  return await window.electronAPI.pathJoin(coursePath, SECTION_NAMES[section]);
 };
 
 /**
- * 获取章节目录路径
+ * 获取章节目录路径（使用 moduleId 作为目录名，重命名不影响路径）
  */
 export const getModulePath = async (
-  categoryName: string, 
-  courseName: string, 
-  section: SectionType, 
-  moduleName: string
+  categoryId: string,
+  courseId: string,
+  section: SectionType,
+  moduleId: string
 ): Promise<string> => {
-  const sectionPath = await getSectionPath(categoryName, courseName, section);
-  return await window.electronAPI.pathJoin(sectionPath, sanitizeName(moduleName));
+  const sectionPath = await getSectionPath(categoryId, courseId, section);
+  return await window.electronAPI.pathJoin(sectionPath, moduleId);
 };
 
 /**
  * 获取文件完整路径
  */
 export const getFilePath = async (
-  categoryName: string, 
-  courseName: string, 
-  section: SectionType, 
-  moduleName: string,
+  categoryId: string,
+  courseId: string,
+  section: SectionType,
+  moduleId: string,
   fileName: string
 ): Promise<string> => {
-  const modulePath = await getModulePath(categoryName, courseName, section, moduleName);
+  const modulePath = await getModulePath(categoryId, courseId, section, moduleId);
   return await window.electronAPI.pathJoin(modulePath, fileName);
 };
 
@@ -417,45 +341,15 @@ export const deleteCourseFolder = async (categoryName: string, courseName: strin
 };
 
 /**
- * 重命名课程文件夹
- * 同时返回路径映射，用于更新模块中的文件路径
- */
-export const renameCourseFolder = async (
-  categoryName: string,
-  oldCourseName: string,
-  newCourseName: string
-): Promise<{ success: boolean; oldPath: string; newPath: string }> => {
-  const oldPath = await getCoursePath(categoryName, oldCourseName);
-  const newPath = await getCoursePath(categoryName, newCourseName);
-
-  console.log('Renaming course folder:', oldPath, '->', newPath);
-
-  try {
-    // 尝试重命名
-    const success = await window.electronAPI.renameFile(oldPath, newPath);
-    if (!success) {
-      // 文件夹可能不存在，尝试创建新文件夹
-      console.log('Course folder rename failed, creating new folder');
-      await ensureDirectory(newPath);
-    }
-    return { success: true, oldPath, newPath };
-  } catch (error) {
-    console.error('Failed to rename course folder:', error);
-    return { success: false, oldPath, newPath };
-  }
-};
-
-/**
  * 删除章节文件夹及其所有内容
  */
 export const deleteModuleFolder = async (
-  categoryName: string, 
-  courseName: string, 
-  section: SectionType, 
-  moduleName: string
+  categoryId: string,
+  courseId: string,
+  section: SectionType,
+  moduleId: string
 ): Promise<boolean> => {
-  const modulePath = await getModulePath(categoryName, courseName, section, moduleName);
-  console.log('Deleting module folder:', modulePath);
+  const modulePath = await getModulePath(categoryId, courseId, section, moduleId);
   return await deleteDirectory(modulePath);
 };
 
@@ -464,17 +358,104 @@ export const deleteModuleFolder = async (
  */
 export const deleteResourceFile = async (filePath: string): Promise<boolean> => {
   if (!filePath || !filePath.startsWith('/')) {
-    // 不是本地文件路径（可能是URL），不需要删除
     return true;
   }
-  
   const isInModule = await isFileInLearningModule(filePath);
-  if (!isInModule) {
-    // 文件不在学习模块目录内，不删除（可能是外部引用）
-    console.log('File is not in learning module, skipping delete:', filePath);
-    return true;
-  }
-  
-  console.log('Deleting resource file:', filePath);
+  if (!isInModule) return true;
   return await deleteFile(filePath);
+};
+
+// ==================== 一次性路径迁移（名称 → ID）====================
+
+interface _CategoryRef { id: string; name: string; }
+interface _ModuleRef { id: string; title: string; }
+interface _CourseRef {
+  id: string; title: string; categoryId: string;
+  modules: Array<_ModuleRef & { lectures: Array<{ materials?: string; [k: string]: any }> }>;
+  assignmentModules?: Array<_ModuleRef & { items: Array<{ link?: string; [k: string]: any }> }>;
+  personalModules?: Array<_ModuleRef & { items: Array<{ link?: string; [k: string]: any }> }>;
+  [key: string]: any;
+}
+
+/**
+ * 将磁盘目录从「显示名称」命名迁移到「ID」命名（一次性，由 localStorage 标记控制）。
+ * - 整体移动模块文件夹：[catName]/[courseName]/section/[modName]  →  [catId]/[courseId]/section/[modId]
+ * - 同步更新 lecture.materials / item.link 中存储的绝对路径。
+ */
+export const migrateToIdBasedPaths = async (
+  categories: _CategoryRef[],
+  courses: _CourseRef[]
+): Promise<_CourseRef[]> => {
+  if (!window.electronAPI) return courses;
+  const MIGRATION_KEY = 'learning_id_path_migration_v1';
+  if (localStorage.getItem(MIGRATION_KEY)) return courses;
+
+  const learningRoot = await getLearningRootPath();
+  const updatedCourses: _CourseRef[] = JSON.parse(JSON.stringify(courses));
+  let anyChanged = false;
+
+  for (const course of updatedCourses) {
+    const category = categories.find(c => c.id === course.categoryId);
+    if (!category) continue;
+
+    for (const sectionKey of ['resources', 'assignments', 'personal'] as SectionType[]) {
+      const sectionName = SECTION_NAMES[sectionKey];
+      const mods: _ModuleRef[] =
+        sectionKey === 'resources' ? course.modules
+        : sectionKey === 'assignments' ? (course.assignmentModules || [])
+        : (course.personalModules || []);
+
+      for (const mod of mods) {
+        const oldModuleDir = await window.electronAPI.pathJoin(
+          learningRoot, sanitizeName(category.name), sanitizeName(course.title), sectionName, sanitizeName(mod.title)
+        );
+        const newModuleDir = await window.electronAPI.pathJoin(
+          learningRoot, category.id, course.id, sectionName, mod.id
+        );
+
+        const oldFiles = await window.electronAPI.listDir(oldModuleDir);
+        if (oldFiles.length === 0) continue;
+
+        const newFiles = await window.electronAPI.listDir(newModuleDir);
+        if (newFiles.length > 0) continue; // 已迁移
+
+        const newSectionDir = await window.electronAPI.pathJoin(learningRoot, category.id, course.id, sectionName);
+        await window.electronAPI.ensureDir(newSectionDir);
+
+        const moved = await window.electronAPI.renameFile(oldModuleDir, newModuleDir);
+        if (!moved) {
+          console.warn(`[Migration] 移动失败: ${oldModuleDir} -> ${newModuleDir}`);
+          continue;
+        }
+
+        anyChanged = true;
+        const updatePath = (p?: string) =>
+          p?.startsWith(oldModuleDir) ? newModuleDir + p.slice(oldModuleDir.length) : p;
+
+        if (sectionKey === 'resources') {
+          course.modules = course.modules.map((m: any) =>
+            m.id !== mod.id ? m : {
+              ...m, lectures: m.lectures.map((l: any) => ({ ...l, materials: updatePath(l.materials) }))
+            }
+          );
+        } else if (sectionKey === 'assignments') {
+          course.assignmentModules = (course.assignmentModules || []).map((m: any) =>
+            m.id !== mod.id ? m : {
+              ...m, items: m.items.map((i: any) => ({ ...i, link: updatePath(i.link) }))
+            }
+          );
+        } else {
+          course.personalModules = (course.personalModules || []).map((m: any) =>
+            m.id !== mod.id ? m : {
+              ...m, items: m.items.map((i: any) => ({ ...i, link: updatePath(i.link) }))
+            }
+          );
+        }
+      }
+    }
+  }
+
+  localStorage.setItem(MIGRATION_KEY, '1');
+  console.log(`[Migration] ID路径迁移完成，${anyChanged ? '有数据变更已写入' : '无需变更'}`);
+  return anyChanged ? updatedCourses : courses;
 };

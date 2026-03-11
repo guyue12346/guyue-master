@@ -794,21 +794,15 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
                     key={conv.id}
                     onClick={() => setActiveConversationId(conv.id)}
                     className={`
-                      w-full flex items-start gap-2.5 px-3 py-2.5 rounded-xl text-left group transition-all
+                      w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left group transition-all
                       ${isActive
                         ? 'bg-purple-50 text-purple-700 shadow-sm'
                         : 'hover:bg-gray-50 text-gray-700'
                       }
                     `}
                   >
-                    <div className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${isActive ? 'bg-purple-500' : 'bg-gray-300'}`} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{conv.title}</p>
-                      {msgCount > 0 && (
-                        <p className={`text-[11px] mt-0.5 ${isActive ? 'text-purple-400' : 'text-gray-400'}`}>
-                          {msgCount} 条消息{dateStr ? ` · ${dateStr}` : ''}
-                        </p>
-                      )}
                     </div>
                     <button
                       onClick={(e) => handleDeleteConversation(conv.id, e)}
