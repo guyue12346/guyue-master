@@ -4,7 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { SplashScreen } from './components/SplashScreen';
 import { FloatingChatWindow } from './components/FloatingChatWindow';
 import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig } from './types';
-import { Plus, Search, Command, Loader2 } from 'lucide-react';
+import { Plus, Search, Command, Loader2, ChevronRight } from 'lucide-react';
 
 // Lazy load components to improve initial load performance
 const NoteList = React.lazy(() => import('./components/NoteList').then(m => ({ default: m.NoteList })));
@@ -1403,10 +1403,12 @@ const App: React.FC = () => {
       const newTodo: TodoItem = {
         id: crypto.randomUUID(),
         content: todoData.content!,
+        description: todoData.description,
         isCompleted: false,
         priority: todoData.priority || 'medium',
         category: catName,
         dueDate: todoData.dueDate,
+        subtasks: todoData.subtasks,
         createdAt: Date.now(),
       };
       setTodos(prev => [newTodo, ...prev]);
@@ -1421,7 +1423,14 @@ const App: React.FC = () => {
   };
 
   const handleToggleTodo = (id: string) => {
-    setTodos(prev => prev.map(t => t.id === id ? { ...t, isCompleted: !t.isCompleted } : t));
+    setTodos(prev => prev.map(t => t.id === id ? { ...t, isCompleted: !t.isCompleted, completedAt: !t.isCompleted ? Date.now() : undefined } : t));
+  };
+
+  const handleToggleSubtask = (todoId: string, subtaskId: string) => {
+    setTodos(prev => prev.map(t => {
+      if (t.id !== todoId || !t.subtasks) return t;
+      return { ...t, subtasks: t.subtasks.map(s => s.id === subtaskId ? { ...s, isCompleted: !s.isCompleted } : s) };
+    }));
   };
 
   const handleEditTodo = (todo: TodoItem) => {
@@ -1793,29 +1802,7 @@ const App: React.FC = () => {
               </div>
            </div>
            <div className="flex items-center gap-3 ml-4">
-              {appMode === 'todo' && (
-                <button 
-                  onClick={() => setShowTodoPlan(!showTodoPlan)}
-                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded-xl hover:from-purple-600 hover:to-blue-600 transition-all shadow-lg shadow-purple-500/30"
-                >
-                  {showTodoPlan ? (
-                    <>
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                      </svg>
-                      <span className="font-medium">具体事项</span>
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      <span className="font-medium">总体规划</span>
-                    </>
-                  )}
-                </button>
-              )}
-              {appMode !== 'image-hosting' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (appMode !== 'todo' || !showTodoPlan) && (
+              {appMode !== 'image-hosting' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
               <button 
                 onClick={() => {
                   switch (appMode) {
@@ -1871,31 +1858,30 @@ const App: React.FC = () => {
             {appMode === 'ssh' && <SSHList records={filteredSSHRecords} onDelete={handleDeleteSSH} onEdit={handleEditSSH} onOpenInTerminal={handleOpenSSHInTerminal} />}
             {appMode === 'api' && <APIList records={filteredAPIRecords} onDelete={handleDeleteAPI} onEdit={handleEditAPI} />}
             {appMode === 'todo' && (
-              showTodoPlan ? (
-                <div className="h-full p-6 overflow-y-auto">
-                  <MarkdownEditor
-                      note={{
-                        id: 'todo-plan',
-                        title: '近期总体规划',
-                        content: todoPlanContent,
-                        category: '',
-                        createdAt: 0,
-                        updatedAt: 0
-                      }}
-                      onUpdate={(id, updates) => {
-                        if (updates.content !== undefined) {
-                          setTodoPlanContent(updates.content);
-                        }
-                      }}
+              <div className="space-y-6">
+                {/* Collapsible plan section */}
+                <details className="group bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                  <summary className="flex items-center gap-2 px-4 py-3 cursor-pointer select-none hover:bg-gray-50 transition-colors">
+                    <ChevronRight className="w-4 h-4 text-gray-400 transition-transform group-open:rotate-90" />
+                    <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <span className="text-sm font-semibold text-gray-600">总体规划</span>
+                  </summary>
+                  <div className="border-t border-gray-100 p-4">
+                    <MarkdownEditor
+                      note={{ id: 'todo-plan', title: '近期总体规划', content: todoPlanContent, category: '', createdAt: 0, updatedAt: 0 }}
+                      onUpdate={(_id, updates) => { if (updates.content !== undefined) setTodoPlanContent(updates.content); }}
                       isFullscreen={false}
                       onToggleFullscreen={() => {}}
                       hideMetadata={true}
                       showViewToggle={false}
                     />
-                </div>
-              ) : (
-                <TodoList todos={filteredTodos} onDelete={handleDeleteTodo} onEdit={handleEditTodo} onToggle={handleToggleTodo} />
-              )
+                  </div>
+                </details>
+                {/* Task list */}
+                <TodoList todos={filteredTodos} onDelete={handleDeleteTodo} onEdit={handleEditTodo} onToggle={handleToggleTodo} onToggleSubtask={handleToggleSubtask} />
+              </div>
             )}
             
             {appMode === 'files' && (

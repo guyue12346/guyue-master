@@ -580,7 +580,7 @@ const SortablePasswordRow: React.FC<{
         <span className="text-sm text-gray-700 dark:text-gray-200 truncate font-medium" title={entry.url}>
           {entry.shortName || displayDomain}
         </span>
-        {entry.url && <CopyButton text={entry.url} label="网址" />}
+        {entry.url && <span className="opacity-0 group-hover:opacity-100 transition-opacity"><CopyButton text={entry.url} label="网址" /></span>}
         {entry.url && (
           <button
             onClick={(e) => {
@@ -588,7 +588,7 @@ const SortablePasswordRow: React.FC<{
               const url = entry.url.startsWith('http') ? entry.url : `https://${entry.url}`;
               window.open(url, '_blank');
             }}
-            className="p-1 rounded text-gray-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-900/30 transition-all flex-shrink-0"
+            className="p-1 rounded text-gray-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-900/30 transition-all flex-shrink-0 opacity-0 group-hover:opacity-100"
             title="在浏览器中打开"
           >
             <ExternalLink className="w-3.5 h-3.5" />
@@ -622,9 +622,8 @@ const SortablePasswordRow: React.FC<{
         )}
         {/* 备注：始终显示，过长省略 */}
         {entry.note && (
-          <div className="flex items-center gap-1.5 min-w-0 flex-1">
-            <StickyNote className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-            <span className="text-xs text-gray-400 truncate" title={entry.note}>{entry.note}</span>
+          <div className="min-w-0 flex-1">
+            <span className="text-xs text-gray-400 dark:text-gray-500 truncate block" title={entry.note}>— {entry.note}</span>
           </div>
         )}
       </div>

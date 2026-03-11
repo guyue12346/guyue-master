@@ -166,7 +166,7 @@ const DataCenterSettingsModal: React.FC<{
               <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
                 <div className="flex items-center gap-3">
                   <Activity className="w-4 h-4 text-violet-500" />
-                  <span className="text-sm text-gray-900 dark:text-white">Zenmux 用量</span>
+                  <span className="text-sm text-gray-900 dark:text-white">Zenmux</span>
                 </div>
                 <button
                   onClick={() => handleModuleToggle('zenmuxUsage')}
@@ -381,7 +381,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     id: 'zenmux-usage',
-    name: 'Zenmux 用量',
+    name: 'Zenmux',
     icon: <Activity className="w-4 h-4" />,
     configKey: 'zenmuxUsage',
   },

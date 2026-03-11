@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Loader2, LogIn, ExternalLink, CheckCircle2, AlertCircle, Wallet, Clock } from 'lucide-react';
+import { RefreshCw, Loader2, LogIn, ExternalLink, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
 
 /* ─── 工具函数 ─── */
 
@@ -184,7 +184,6 @@ export const ZenmuxUsagePanel: React.FC = () => {
           <ZenmuxLogo />
           <div>
             <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Zenmux Dashboard</h2>
-            <p className="text-[11px] text-gray-400 dark:text-gray-500">用量与消费统计</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -287,8 +286,7 @@ export const ZenmuxUsagePanel: React.FC = () => {
           <div className="space-y-5 max-w-2xl mx-auto">
             {/* 余额卡片 */}
             <div className="bg-gradient-to-br from-indigo-500 to-violet-600 rounded-2xl p-5 text-white shadow-lg shadow-indigo-500/20">
-              <div className="flex items-center gap-2 mb-3 opacity-90">
-                <Wallet className="w-4 h-4" />
+              <div className="mb-3 opacity-90">
                 <span className="text-sm font-medium">账户余额</span>
               </div>
               {balance ? (

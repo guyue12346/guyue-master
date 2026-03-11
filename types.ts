@@ -33,13 +33,22 @@ export interface APIRecord {
   createdAt: number;
 }
 
+export interface SubTask {
+  id: string;
+  content: string;
+  isCompleted: boolean;
+}
+
 export interface TodoItem {
   id: string;
   content: string;
+  description?: string;
   isCompleted: boolean;
   priority: 'high' | 'medium' | 'low';
   category: string;
   dueDate?: number; // timestamp
+  subtasks?: SubTask[];
+  completedAt?: number; // timestamp when completed
   createdAt: number;
 }
 
