@@ -7,11 +7,12 @@ interface TodoModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (todo: Partial<TodoItem>) => void;
+  onAutoSave?: (subtasks: SubTask[]) => void;
   initialData?: TodoItem | null;
   categories: string[];
 }
 
-export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, initialData, categories }) => {
+export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, onAutoSave, initialData, categories }) => {
   const [content, setContent] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
@@ -50,8 +51,11 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, i
   const handleAddSubtask = () => {
     const text = newSubtask.trim();
     if (!text) return;
-    setSubtasks(prev => [...prev, { id: crypto.randomUUID(), content: text, isCompleted: false }]);
+    const newItem: SubTask = { id: crypto.randomUUID(), content: text, isCompleted: false };
+    const next = [...subtasks, newItem];
+    setSubtasks(next);
     setNewSubtask('');
+    if (initialData) onAutoSave?.(next);
   };
 
   const handleSubtaskKeyDown = (e: React.KeyboardEvent) => {
@@ -62,7 +66,9 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, i
   };
 
   const handleRemoveSubtask = (id: string) => {
-    setSubtasks(prev => prev.filter(s => s.id !== id));
+    const next = subtasks.filter(s => s.id !== id);
+    setSubtasks(next);
+    if (initialData) onAutoSave?.(next);
   };
 
   const handleToggleSubtask = (id: string) => {

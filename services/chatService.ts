@@ -22,7 +22,7 @@ export interface ChatConversation {
 }
 
 export interface ChatConfig {
-  provider: 'zenmux' | 'gemini' | 'openai' | 'anthropic' | 'ollama' | 'custom';
+  provider: 'zenmux' | 'gemini' | 'openai' | 'anthropic' | 'ollama' | 'custom' | 'deepseek' | 'zhipu' | 'moonshot' | 'minimax';
   apiKey: string;
   baseUrl?: string;
   model: string;
@@ -45,30 +45,53 @@ import { ZENMUX_MODELS } from './zenmuxModels';
 export const AVAILABLE_MODELS: Record<string, { id: string; name: string; provider: string; category?: string; description?: string }[]> = {
   zenmux: ZENMUX_MODELS,
   gemini: [
-    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini' },
+    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview', provider: 'gemini', description: '最新旗舰' },
+    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', provider: 'gemini' },
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini' },
-    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview', provider: 'gemini' },
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini', description: '性价比' },
+    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: 'gemini', description: '最快最省' },
   ],
   openai: [
-    { id: 'gpt-5.1', name: 'GPT-5.1', provider: 'openai' },
-    { id: 'gpt-5.1-mini', name: 'GPT-5.1 Mini', provider: 'openai' },
+    { id: 'gpt-5.4', name: 'GPT-5.4', provider: 'openai', description: '旗舰模型' },
+    { id: 'gpt-5-mini', name: 'GPT-5 Mini', provider: 'openai', description: '高性价比' },
     { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai' },
     { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' },
-    { id: 'o3', name: 'o3', provider: 'openai' },
-    { id: 'o3-mini', name: 'o3 Mini', provider: 'openai' },
+    { id: 'o3', name: 'o3', provider: 'openai', description: '推理' },
   ],
   anthropic: [
-    { id: 'claude-opus-4-20250514', name: 'Claude Opus 4.5', provider: 'anthropic' },
-    { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: 'anthropic' },
-    { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', provider: 'anthropic' },
-    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', provider: 'anthropic' },
+    { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', provider: 'anthropic', description: '最强智能' },
+    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'anthropic', description: '速度与智能' },
+    { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', provider: 'anthropic', description: '最快' },
   ],
   ollama: [
     { id: 'llama3.3', name: 'Llama 3.3', provider: 'ollama' },
     { id: 'qwen3', name: 'Qwen 3', provider: 'ollama' },
     { id: 'deepseek-r1', name: 'DeepSeek R1', provider: 'ollama' },
     { id: 'gemma3', name: 'Gemma 3', provider: 'ollama' },
-  ]
+  ],
+  deepseek: [
+    { id: 'deepseek-chat', name: 'DeepSeek-V3', provider: 'deepseek', description: '对话模型' },
+    { id: 'deepseek-reasoner', name: 'DeepSeek-R1', provider: 'deepseek', description: '推理模型' },
+  ],
+  zhipu: [
+    { id: 'glm-4-plus', name: 'GLM-4-Plus', provider: 'zhipu', description: '旗舰' },
+    { id: 'glm-4-air-250414', name: 'GLM-4-Air', provider: 'zhipu', description: '高性价比' },
+    { id: 'glm-4-flash-250414', name: 'GLM-4-Flash', provider: 'zhipu', description: '免费' },
+    { id: 'glm-z1-air', name: 'GLM-Z1-Air', provider: 'zhipu', description: '推理' },
+    { id: 'glm-z1-flash', name: 'GLM-Z1-Flash', provider: 'zhipu', description: '免费推理' },
+  ],
+  moonshot: [
+    { id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'moonshot', description: '最新旗舰' },
+    { id: 'kimi-k2-turbo-preview', name: 'Kimi K2 Turbo', provider: 'moonshot', description: '高速版' },
+    { id: 'kimi-k2-thinking', name: 'Kimi K2 Thinking', provider: 'moonshot', description: '推理' },
+    { id: 'moonshot-v1-128k', name: 'Moonshot (128k)', provider: 'moonshot', description: '长文本' },
+  ],
+  minimax: [
+    { id: 'MiniMax-M2.5', name: 'MiniMax M2.5', provider: 'minimax', description: '最新旗舰' },
+    { id: 'MiniMax-M2.5-highspeed', name: 'MiniMax M2.5 Highspeed', provider: 'minimax', description: '极速版' },
+    { id: 'MiniMax-M2.1', name: 'MiniMax M2.1', provider: 'minimax' },
+    { id: 'MiniMax-M2', name: 'MiniMax M2', provider: 'minimax' },
+  ],
 };
 
 export const DEFAULT_CHAT_CONFIG: ChatConfig = {
@@ -112,6 +135,10 @@ export class ChatService {
         case 'anthropic':
         case 'ollama':
         case 'custom':
+        case 'deepseek':
+        case 'zhipu':
+        case 'moonshot':
+        case 'minimax':
           await this.sendOpenAICompatible(messages, callbacks);
           break;
         default:
@@ -213,6 +240,18 @@ export class ChatService {
           break;
         case 'ollama':
           baseUrl = 'http://localhost:11434/v1';
+          break;
+        case 'deepseek':
+          baseUrl = 'https://api.deepseek.com/v1';
+          break;
+        case 'zhipu':
+          baseUrl = 'https://open.bigmodel.cn/api/paas/v4';
+          break;
+        case 'moonshot':
+          baseUrl = 'https://api.moonshot.cn/v1';
+          break;
+        case 'minimax':
+          baseUrl = 'https://api.minimax.chat/v1';
           break;
         default:
           throw new Error('自定义提供商需要配置 Base URL');

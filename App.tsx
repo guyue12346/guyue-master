@@ -4,7 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { SplashScreen } from './components/SplashScreen';
 import { FloatingChatWindow } from './components/FloatingChatWindow';
 import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig } from './types';
-import { Plus, Search, Command, Loader2, ChevronRight } from 'lucide-react';
+import { Plus, Search, Command, Loader2, ChevronRight, Upload, Edit3, Save, List } from 'lucide-react';
 import type { VaultFileEntry } from './components/VaultImportModal';
 
 // Lazy load components to improve initial load performance
@@ -302,6 +302,7 @@ const App: React.FC = () => {
   const [isTodoModalOpen, setIsTodoModalOpen] = useState(false);
   const [isFileModalOpen, setIsFileModalOpen] = useState(false);
   const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
+  const [isSkillImportOpen, setIsSkillImportOpen] = useState(false);
   
   const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
   const [initialCategoryEditId, setInitialCategoryEditId] = useState<string | null>(null);
@@ -318,23 +319,24 @@ const App: React.FC = () => {
   
   // Todo Plan State
   const [showTodoPlan, setShowTodoPlan] = useState(true);
+  const [todoPlanEditing, setTodoPlanEditing] = useState(false);
+  const [todoPlanShowTOC, setTodoPlanShowTOC] = useState(false);
+  const [todoPlanHasTOC, setTodoPlanHasTOC] = useState(false);
   const [todoPlanContent, setTodoPlanContent] = useState<string>(() => {
     const saved = localStorage.getItem(STORAGE_KEY_TODO_PLAN);
     if (saved) {
-      // 检查是否是JSON字符串格式（以引号开头）
-      if (saved.startsWith('"') && saved.endsWith('"')) {
-        try {
-          // 是JSON格式，需要解析（兼容旧数据）
-          return JSON.parse(saved);
-        } catch {
-          // 解析失败，去掉首尾引号后返回
-          return saved.slice(1, -1).replace(/\\n/g, '\n').replace(/\\"/g, '"');
+      let raw = saved;
+      // 兼容旧JSON字符串格式
+      if (raw.startsWith('"') && raw.endsWith('"')) {
+        try { raw = JSON.parse(raw); } catch {
+          raw = raw.slice(1, -1).replace(/\\n/g, '\n').replace(/\\"/g, '"');
         }
       }
-      // 不是JSON格式，直接返回原始字符串
-      return saved;
+      // 迁移：去掉旧默认的 # 总体规划 标题行
+      raw = raw.replace(/^#\s*总体规划\s*\n+/, '');
+      return raw || '在这里记录你的总体规划和目标...\n';
     }
-    return '# 总体规划\n\n在这里记录你的总体规划和目标...\n';
+    return '在这里记录你的总体规划和目标...\n';
   });
 
   // Heatmap State
@@ -364,18 +366,24 @@ const App: React.FC = () => {
 
   // Shortcut handling
   const isTabPressed = React.useRef(false);
+  const tabComboUsed = React.useRef(false); // whether Tab was used with a combo key
   const fileSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Tab') {
         isTabPressed.current = true;
+        tabComboUsed.current = false;
+        // Prevent browser default focus-jump when Tab is used as our nav modifier
+        e.preventDefault();
+        return;
       }
 
-      // Check for shortcuts
+      // Check for shortcuts while Tab is held
       if (isTabPressed.current) {
         // Check if a number or letter key is pressed
         if (/^[\da-zA-Z]$/.test(e.key)) {
+          tabComboUsed.current = true;
           const key = e.key.toLowerCase();
           // Find module with matching shortcut
           const targetModule = moduleConfig.find(m => {
@@ -394,6 +402,7 @@ const App: React.FC = () => {
 
         // Check for Tilde (~) / Backquote (`) to toggle sidebar
         if (e.code === 'Backquote') {
+          tabComboUsed.current = true;
           e.preventDefault();
           setIsSidebarVisible(prev => !prev);
         }
@@ -402,12 +411,25 @@ const App: React.FC = () => {
 
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'Tab') {
+        if (!tabComboUsed.current) {
+          // Pure Tab press (no combo) → cycle to next enabled module from current
+          setAppMode(prev => {
+            const enabled = moduleConfig
+              .filter(m => m.enabled)
+              .sort((a, b) => a.priority - b.priority);
+            const cur = enabled.findIndex(m => m.id === prev);
+            const next = enabled[(cur + 1) % enabled.length];
+            return next ? next.id : prev;
+          });
+        }
         isTabPressed.current = false;
+        tabComboUsed.current = false;
       }
     };
 
     const handleBlur = () => {
       isTabPressed.current = false;
+      tabComboUsed.current = false;
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -1442,6 +1464,15 @@ const App: React.FC = () => {
     }));
   };
 
+  const handleAutoSaveTodoSubtasks = (subtasks: import('./types').SubTask[]) => {
+    if (editingTodo) {
+      setTodos(prev => prev.map(t => t.id === editingTodo.id
+        ? { ...t, subtasks: subtasks.length > 0 ? subtasks : undefined }
+        : t
+      ));
+    }
+  };
+
   const handleEditTodo = (todo: TodoItem) => {
     setEditingTodo(todo);
     setIsTodoModalOpen(true);
@@ -1919,6 +1950,15 @@ const App: React.FC = () => {
               </div>
            </div>
            <div className="flex items-center gap-3 ml-4">
+              {appMode === 'prompts' && (
+              <button
+                onClick={() => setIsSkillImportOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 border border-purple-200 text-purple-600 rounded-xl hover:bg-purple-50 transition-colors"
+              >
+                <Upload className="w-4 h-4" />
+                <span className="font-medium">导入</span>
+              </button>
+              )}
               {appMode !== 'image-hosting' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
               <button 
                 onClick={() => {
@@ -1977,15 +2017,37 @@ const App: React.FC = () => {
             {appMode === 'todo' && (
               <div className="space-y-6">
                 {/* Collapsible plan section */}
-                <details className="group bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                <details className="group bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden" open>
                   <summary className="flex items-center gap-2 px-4 py-3 cursor-pointer select-none hover:bg-gray-50 transition-colors">
                     <ChevronRight className="w-4 h-4 text-gray-400 transition-transform group-open:rotate-90" />
                     <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
                     <span className="text-sm font-semibold text-gray-600">总体规划</span>
+                    <div className="ml-auto flex items-center gap-1 opacity-0 group-open:opacity-100 transition-opacity">
+                      {todoPlanHasTOC && !todoPlanEditing && (
+                        <button
+                          onClick={(e) => { e.preventDefault(); setTodoPlanShowTOC(v => !v); }}
+                          className={`p-1.5 rounded-lg transition-colors ${
+                            todoPlanShowTOC ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                          }`}
+                          title={todoPlanShowTOC ? "隐藏目录" : "显示目录"}
+                        >
+                          <List className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      <button
+                        onClick={(e) => { e.preventDefault(); setTodoPlanEditing(v => !v); }}
+                        className={`p-1.5 rounded-lg transition-colors ${
+                          todoPlanEditing ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                        }`}
+                        title={todoPlanEditing ? "保存" : "编辑"}
+                      >
+                        {todoPlanEditing ? <Save className="w-3.5 h-3.5" /> : <Edit3 className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
                   </summary>
-                  <div className="border-t border-gray-100 p-4">
+                  <div className="p-4">
                     <MarkdownEditor
                       note={{ id: 'todo-plan', title: '总体规划', content: todoPlanContent, category: '', createdAt: 0, updatedAt: 0 }}
                       onUpdate={(_id, updates) => { if (updates.content !== undefined) setTodoPlanContent(updates.content); }}
@@ -1993,6 +2055,17 @@ const App: React.FC = () => {
                       onToggleFullscreen={() => {}}
                       hideMetadata={true}
                       showViewToggle={false}
+                      hideHeaderTitle={true}
+                      hideFullscreen={true}
+                      hideEditButton={true}
+                      hideToolbar={true}
+                      compact={true}
+                      externalIsEditing={todoPlanEditing}
+                      onEditingChange={setTodoPlanEditing}
+                      hideTOCButton={true}
+                      externalShowTOC={todoPlanShowTOC}
+                      onShowTOCChange={setTodoPlanShowTOC}
+                      onTOCAvailableChange={setTodoPlanHasTOC}
                     />
                   </div>
                 </details>
@@ -2074,7 +2147,7 @@ const App: React.FC = () => {
                )
             )}
 
-            {appMode === 'prompts' && <PromptList prompts={filteredPrompts} onDelete={handleDeletePrompt} onDeleteMany={handleDeleteManyPrompts} onEdit={handleEditPrompt} onImport={handleImportSkills} />}
+            {appMode === 'prompts' && <PromptList prompts={filteredPrompts} onDelete={handleDeletePrompt} onDeleteMany={handleDeleteManyPrompts} onEdit={handleEditPrompt} onImport={handleImportSkills} isImportOpen={isSkillImportOpen} onImportOpenChange={setIsSkillImportOpen} />}
             
             {appMode === 'image-hosting' && (
               <ImageHosting 
@@ -2210,6 +2283,7 @@ const App: React.FC = () => {
           isOpen={isTodoModalOpen}
           onClose={() => setIsTodoModalOpen(false)}
           onSave={handleSaveTodo}
+          onAutoSave={handleAutoSaveTodoSubtasks}
           initialData={editingTodo}
           categories={(categoriesMap[appMode] || DEFAULT_CATEGORIES).map(c => c.name)}
         />

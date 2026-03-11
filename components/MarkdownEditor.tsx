@@ -23,6 +23,17 @@ interface MarkdownEditorProps {
   hideCategory?: boolean;
   initialEditMode?: boolean;
   onExitEdit?: () => void;
+  hideHeaderTitle?: boolean;
+  hideFullscreen?: boolean;
+  hideEditButton?: boolean;
+  externalIsEditing?: boolean;
+  onEditingChange?: (v: boolean) => void;
+  hideTOCButton?: boolean;
+  externalShowTOC?: boolean;
+  onShowTOCChange?: (v: boolean) => void;
+  onTOCAvailableChange?: (available: boolean) => void;
+  hideToolbar?: boolean;
+  compact?: boolean;
 }
 
 export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ 
@@ -35,14 +46,64 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   hideMetadata = false,
   hideCategory = false,
   initialEditMode = false,
-  onExitEdit
+  onExitEdit,
+  hideHeaderTitle = false,
+  hideFullscreen = false,
+  hideEditButton = false,
+  externalIsEditing,
+  onEditingChange,
+  hideTOCButton = false,
+  externalShowTOC,
+  onShowTOCChange,
+  onTOCAvailableChange,
+  hideToolbar = false,
+  compact = false
 }) => {
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditingInternal] = useState(false);
+  const isEditingRef = useRef(false);
+  const setIsEditing = useCallback((value: boolean) => {
+    isEditingRef.current = value;
+    setIsEditingInternal(value);
+    onEditingChange?.(value);
+  }, [onEditingChange]);
+  // Sync external editing state — save before exiting
+  const noteRef = useRef(note);
+  const contentRef = useRef('');
+  const titleRef = useRef('');
+  const categoryRef = useRef('');
+  useEffect(() => { noteRef.current = note; }, [note]);
+  useEffect(() => {
+    if (externalIsEditing !== undefined) {
+      if (externalIsEditing === false && isEditingRef.current) {
+        // Exiting edit mode externally — flush save immediately
+        const n = noteRef.current;
+        if (n) {
+          onUpdate(n.id, { content: contentRef.current, title: titleRef.current, category: categoryRef.current, updatedAt: Date.now() });
+        }
+      }
+      isEditingRef.current = externalIsEditing;
+      setIsEditingInternal(externalIsEditing);
+    }
+  }, [externalIsEditing]);
   const [activeTab, setActiveTab] = useState<'edit' | 'preview'>('edit');
   const [content, setContent] = useState('');
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('');
-  const [showTOC, setShowTOC] = useState(false);
+  // Keep refs in sync for external save
+  useEffect(() => { contentRef.current = content; }, [content]);
+  useEffect(() => { titleRef.current = title; }, [title]);
+  useEffect(() => { categoryRef.current = category; }, [category]);
+  const [showTOC, setShowTOCInternal] = useState(false);
+  const setShowTOC = useCallback((v: boolean) => {
+    setShowTOCInternal(v);
+    onShowTOCChange?.(v);
+  }, [onShowTOCChange]);
+  // Sync external showTOC
+  useEffect(() => {
+    if (externalShowTOC !== undefined) {
+      setShowTOCInternal(externalShowTOC);
+    }
+  }, [externalShowTOC]);
   const [toc, setToc] = useState<{ level: number; text: string; id: string }[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -169,8 +230,10 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         }
       });
       setToc(headers);
+      onTOCAvailableChange?.(headers.length > 0);
     } else {
       setToc([]);
+      onTOCAvailableChange?.(false);
     }
   }, [content]);
 
@@ -201,7 +264,8 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       setHasUnsavedChanges(false);
       lastSavedContentRef.current = '';
     }
-  }, [note, onExitEdit, initialEditMode]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [note?.id, onExitEdit, initialEditMode]);
 
   if (!note) {
     return (
@@ -605,6 +669,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   return (
     <div className="relative h-full flex flex-col bg-white">
       {/* Toolbar */}
+      {!hideToolbar && (
       <div className="h-14 border-b border-gray-100 flex items-center justify-between px-6 shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
         {isEditing ? (
           <div className="flex items-center gap-4 w-full mr-4" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
@@ -628,19 +693,22 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                 )}
               </>
             )}
-            {hideMetadata && (
+            {hideMetadata && !hideHeaderTitle && (
                <span className="text-xl font-bold text-gray-800 flex-1">{title}</span>
             )}
+            {hideHeaderTitle && <div className="flex-1" />}
           </div>
         ) : (
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-bold text-gray-800">{note.title}</h1>
-            {!hideMetadata && !hideCategory && (
-              <span className="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full">
-                {note.category || '未分类'}
-              </span>
-            )}
-          </div>
+          hideHeaderTitle ? <div className="flex-1" /> : (
+            <div className="flex items-center gap-3">
+              <h1 className="text-xl font-bold text-gray-800">{note.title}</h1>
+              {!hideMetadata && !hideCategory && (
+                <span className="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full">
+                  {note.category || '未分类'}
+                </span>
+              )}
+            </div>
+          )
         )}
 
         <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
@@ -689,6 +757,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
             </div>
           )}
 
+          {!hideEditButton && (
           <button
             onClick={async () => {
               if (onExitEdit) {
@@ -709,9 +778,10 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           >
             {onExitEdit ? <Book className="w-4 h-4" /> : (isEditing ? <Save className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />)}
           </button>
+          )}
 
           {/* TOC Button - only show when not editing and has headers */}
-          {!isEditing && toc.length > 0 && (
+          {!hideTOCButton && !isEditing && toc.length > 0 && (
             <button
               onClick={() => setShowTOC(!showTOC)}
               className={`p-2 rounded-lg transition-colors shrink-0 ${
@@ -723,6 +793,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
             </button>
           )}
 
+          {!hideFullscreen && (
           <button 
             onClick={onToggleFullscreen}
             className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-colors shrink-0"
@@ -730,8 +801,10 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           >
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
+          )}
         </div>
       </div>
+      )}
 
       {/* Editor / Preview Area */}
       <div className="flex-1 overflow-hidden flex">
@@ -818,7 +891,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
               </div>
             )}
             {/* Content */}
-            <div className="flex-1 h-full overflow-y-auto bg-white p-8 md:p-12 lg:p-16 select-text">
+            <div className={`flex-1 h-full overflow-y-auto bg-white select-text ${compact ? 'p-[10px]' : 'p-8 md:p-12 lg:p-16'}`}>
               <div className="prose prose-slate max-w-4xl mx-auto">
                 {renderMarkdown(content)}
               </div>

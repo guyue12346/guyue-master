@@ -46,6 +46,8 @@ interface SkillListProps {
   onDeleteMany: (ids: string[]) => void;
   onEdit: (prompt: PromptRecord) => void;
   onImport: (skills: PromptRecord[]) => void;
+  isImportOpen?: boolean;
+  onImportOpenChange?: (open: boolean) => void;
 }
 
 // ===== Skill Card =====
@@ -450,8 +452,13 @@ const ImportModal: React.FC<{
 };
 
 // ===== Main Component =====
-export const PromptList: React.FC<SkillListProps> = ({ prompts, onDelete, onDeleteMany, onEdit, onImport }) => {
-  const [isImportOpen, setIsImportOpen] = useState(false);
+export const PromptList: React.FC<SkillListProps> = ({ prompts, onDelete, onDeleteMany, onEdit, onImport, isImportOpen: externalImportOpen, onImportOpenChange }) => {
+  const [internalImportOpen, setInternalImportOpen] = useState(false);
+  const isImportOpen = externalImportOpen !== undefined ? externalImportOpen : internalImportOpen;
+  const setIsImportOpen = (v: boolean) => {
+    setInternalImportOpen(v);
+    onImportOpenChange?.(v);
+  };
 
   if (prompts.length === 0) {
     return (
@@ -462,10 +469,6 @@ export const PromptList: React.FC<SkillListProps> = ({ prompts, onDelete, onDele
           </div>
           <h3 className="text-lg font-medium text-gray-600 mb-1">暂无 Skills</h3>
           <p className="text-sm mb-4">创建你的第一个 Skill，或从外部导入 SkillPack</p>
-          <button onClick={() => setIsImportOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 text-sm text-purple-600 border border-purple-200 rounded-xl hover:bg-purple-50 transition-colors">
-            <Upload className="w-4 h-4" />导入 SkillPack
-          </button>
         </div>
         <ImportModal isOpen={isImportOpen} onClose={() => setIsImportOpen(false)} onImport={onImport} />
       </>
@@ -474,12 +477,6 @@ export const PromptList: React.FC<SkillListProps> = ({ prompts, onDelete, onDele
 
   return (
     <>
-      <div className="flex justify-end mb-4">
-        <button onClick={() => setIsImportOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 text-sm text-purple-600 border border-purple-200 rounded-xl hover:bg-purple-50 transition-colors">
-          <Upload className="w-4 h-4" />导入 SkillPack
-        </button>
-      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {prompts.map(skill => (
           <SkillCard key={skill.id} skill={skill} onEdit={() => onEdit(skill)} onDelete={() => onDelete(skill.id)} />

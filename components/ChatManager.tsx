@@ -346,10 +346,14 @@ const SettingsPanel: React.FC<{
             }}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           >
-            <option value="zenmux">Zenmux (推荐)</option>
-            <option value="gemini">Google Gemini</option>
+            <option value="zenmux">Zenmux</option>
+            <option value="gemini">Google</option>
             <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic Claude</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="zhipu">智谱 GLM</option>
+            <option value="moonshot">月之暗面</option>
+            <option value="minimax">MiniMax</option>
             <option value="ollama">Ollama (本地)</option>
             <option value="custom">自定义 API</option>
           </select>
@@ -384,9 +388,6 @@ const SettingsPanel: React.FC<{
               }
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
-            {localConfig.provider === 'zenmux' && (
-              <p className="text-xs text-gray-500 mt-1">Zenmux 聚合多个 AI 模型提供商的 API</p>
-            )}
           </div>
         )}
 
@@ -436,11 +437,6 @@ const SettingsPanel: React.FC<{
               placeholder="输入模型名称"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
-          )}
-          {localConfig.provider === 'zenmux' && (
-            <p className="text-xs text-gray-500 mt-1">
-              💡 推荐: Claude Sonnet 4.5 (平衡) / GPT-4o (全能) / Gemini 2.5 Pro (专业)
-            </p>
           )}
         </div>
 
@@ -709,6 +705,19 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const hasAutoOpenedLogin = useRef(false);
+
+  // Auto-open Zenmux login when provider is zenmux but no API key configured
+  useEffect(() => {
+    if (
+      config.provider === 'zenmux' &&
+      !config.apiKey &&
+      !hasAutoOpenedLogin.current
+    ) {
+      hasAutoOpenedLogin.current = true;
+      (window as any).electronAPI?.openZenmuxLogin?.();
+    }
+  }, [config.provider, config.apiKey]);
 
   // Auto resize textarea based on content (max 4 lines)
   const adjustTextareaHeight = useCallback(() => {
@@ -860,6 +869,10 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
           setError(err.message);
           setIsStreaming(false);
           setStreamingContent('');
+          // Auto-open Zenmux login on 401 (token expired)
+          if (config.provider === 'zenmux' && /401|unauthorized/i.test(err.message)) {
+            (window as any).electronAPI?.openZenmuxLogin?.();
+          }
         }
       });
     } catch (err) {
@@ -1051,9 +1064,9 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
                 <button
                   onClick={() => setShowPromptPanel(true)}
                   className={`p-1.5 rounded-lg transition-colors relative ${
-                    activeConversation?.systemPrompt !== undefined
+                    activeConversation?.systemPrompt !== undefined && activeConversation.systemPrompt !== ''
                       ? 'bg-purple-100 text-purple-600 hover:bg-purple-200'
-                      : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                      : 'text-purple-400 hover:text-purple-600 hover:bg-purple-50'
                   }`}
                   title={activeConversation?.systemPrompt !== undefined ? '已设置对话预设词（点击编辑）' : '为此对话设置预设词'}
                 >
