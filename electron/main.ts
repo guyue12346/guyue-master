@@ -339,6 +339,16 @@ ipcMain.handle('read-file-base64', async (_, filePath) => {
   }
 });
 
+// IPC: 检查文件是否存在
+ipcMain.handle('check-file-exists', async (_, filePath: string) => {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+});
+
 // IPC: 写入文件
 ipcMain.handle('write-file', async (_, filePath, content) => {
   try {

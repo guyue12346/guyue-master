@@ -15,6 +15,7 @@ const ARCHIVE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export const TodoList: React.FC<TodoListProps> = ({ todos, onToggle, onDelete, onEdit, onToggleSubtask }) => {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [showCompleted, setShowCompleted] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
 
   const now = Date.now();
@@ -207,13 +208,19 @@ export const TodoList: React.FC<TodoListProps> = ({ todos, onToggle, onDelete, o
       {/* Recently completed */}
       {recentCompleted.length > 0 && (
         <div className="space-y-3">
-          <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider flex items-center gap-2 px-1">
+          <button
+            onClick={() => setShowCompleted(!showCompleted)}
+            className="flex items-center gap-2 px-1 text-sm font-bold text-gray-400 uppercase tracking-wider hover:text-gray-500 transition-colors"
+          >
             <CheckCircle2 className="w-4 h-4" />
             已完成 ({recentCompleted.length})
-          </h3>
-          <div className="grid grid-cols-1 gap-3">
-            {recentCompleted.map(todo => <TodoItemCard key={todo.id} todo={todo} />)}
-          </div>
+            {showCompleted ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          </button>
+          {showCompleted && (
+            <div className="grid grid-cols-1 gap-3">
+              {recentCompleted.map(todo => <TodoItemCard key={todo.id} todo={todo} />)}
+            </div>
+          )}
         </div>
       )}
 

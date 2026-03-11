@@ -61,6 +61,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onUpdateModules
 }) => {
   const [archivePath, setArchivePath] = useState<string>('');
+  const [vaultPath, setVaultPath] = useState<string>('');
   const [localModules, setLocalModules] = useState<ModuleConfig[]>([]);
   const [openIconSelectorId, setOpenIconSelectorId] = useState<string | null>(null);
   const [browserStartPage, setBrowserStartPage] = useState<string>('');
@@ -89,6 +90,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   useEffect(() => {
     const savedPath = localStorage.getItem('linkmaster_archive_path');
     if (savedPath) setArchivePath(savedPath);
+    
+    const savedVaultPath = localStorage.getItem('linkmaster_vault_path');
+    if (savedVaultPath) setVaultPath(savedVaultPath);
     
     const savedStartPage = localStorage.getItem('linkmaster_browser_start_page');
     if (savedStartPage) setBrowserStartPage(savedStartPage);
@@ -202,6 +206,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       }
     } else {
       alert('此功能仅在桌面版应用中可用');
+    }
+  };
+
+  const handleSelectVaultDir = async () => {
+    if (window.electronAPI && window.electronAPI.selectDirectory) {
+      const path = await window.electronAPI.selectDirectory();
+      if (path) {
+        setVaultPath(path);
+        localStorage.setItem('linkmaster_vault_path', path);
+      }
     }
   };
 
@@ -583,6 +597,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <span>{archivePath}</span>
                 ) : (
                   <span>未设置 (请选择文件夹以启用归档功能)</span>
+                )}
+              </div>
+            </div>
+
+            {/* Obsidian Vault Path */}
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <h4 className="text-sm font-medium text-gray-700">Obsidian Vault 路径</h4>
+                  <p className="text-xs text-gray-400 mt-1">配置后可在文件管理中快速导入 Vault 中的笔记</p>
+                </div>
+                <button 
+                  onClick={handleSelectVaultDir}
+                  className="p-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-all text-gray-600"
+                  title="选择 Vault 文件夹"
+                >
+                  <FolderOpen className="w-4 h-4" />
+                </button>
+              </div>
+              
+              <div className={`text-xs font-mono border rounded-lg p-2 break-all flex items-center gap-2 ${vaultPath ? 'bg-white border-gray-200 text-gray-600' : 'bg-gray-100 border-gray-100 text-gray-400'}`}>
+                {vaultPath ? (
+                  <span>{vaultPath}</span>
+                ) : (
+                  <span>未设置 (可选)</span>
                 )}
               </div>
             </div>

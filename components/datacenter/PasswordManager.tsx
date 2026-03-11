@@ -622,8 +622,9 @@ const SortablePasswordRow: React.FC<{
         )}
         {/* 备注：始终显示，过长省略 */}
         {entry.note && (
-          <div className="min-w-0 flex-1">
-            <span className="text-xs text-gray-400 dark:text-gray-500 truncate block" title={entry.note}>— {entry.note}</span>
+          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+            <StickyNote className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+            <span className="text-xs text-gray-400 truncate" title={entry.note}>{entry.note}</span>
           </div>
         )}
       </div>

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { FileRecord, Category } from '../types';
-import { Folder, ChevronRight, ChevronDown, FileText, Image, FileCode, Archive, File, Edit2, Trash2, AlertCircle, FolderPlus, Upload, FilePlus, Plus, Settings2 } from 'lucide-react';
+import { Folder, ChevronRight, ChevronDown, FileText, Image, FileCode, Archive, File, Edit2, Trash2, AlertCircle, FolderPlus, Upload, FilePlus, Plus, Settings2, BookOpen } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 
 interface ArchiveSidebarProps {
@@ -15,6 +15,7 @@ interface ArchiveSidebarProps {
   onCreateNoteInFolder: (folder: string) => void;
   onEditCategory: (category: Category) => void;
   onDeleteCategory: (id: string) => void;
+  onImportFromVault?: () => void;
   activeFileId: string | null;
 }
 
@@ -30,9 +31,16 @@ export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({
   onCreateNoteInFolder,
   onEditCategory,
   onDeleteCategory,
+  onImportFromVault,
   activeFileId
 }) => {
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('guyue-archive-sidebar-expanded');
+      if (saved) return new Set(JSON.parse(saved) as string[]);
+    } catch {}
+    return new Set<string>();
+  });
 
   const getFileIcon = (type: string) => {
     const t = type.toLowerCase().replace('.', '');
@@ -89,11 +97,17 @@ export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({
       newExpanded.add(folder);
     }
     setExpandedFolders(newExpanded);
+    localStorage.setItem('guyue-archive-sidebar-expanded', JSON.stringify([...newExpanded]));
   };
 
-  // Initialize expanded folders (expand all by default)
+  // Expand all folders on first load only (when no saved state)
   React.useEffect(() => {
-    setExpandedFolders(new Set(Object.keys(groupedArchives)));
+    const saved = localStorage.getItem('guyue-archive-sidebar-expanded');
+    if (!saved) {
+      const allKeys = Object.keys(groupedArchives);
+      setExpandedFolders(new Set(allKeys));
+      localStorage.setItem('guyue-archive-sidebar-expanded', JSON.stringify(allKeys));
+    }
   }, [groupedArchives]);
 
   return (
@@ -132,6 +146,15 @@ export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({
         >
           <FilePlus className="w-4 h-4" />
         </button>
+        {onImportFromVault && (
+          <button 
+            onClick={onImportFromVault}
+            className="p-1.5 text-gray-500 hover:bg-gray-200/50 rounded-lg transition-colors"
+            title="从 Obsidian Vault 导入"
+          >
+            <BookOpen className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* File Tree */}

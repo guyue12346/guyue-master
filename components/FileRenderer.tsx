@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -8,32 +8,86 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import 'katex/dist/katex.min.css';
 import { FileRecord } from '../types';
-import { FileText, Maximize2, Minimize2, Info, Lightbulb, AlertCircle, AlertTriangle, ShieldAlert, Edit, List } from 'lucide-react';
+import { FileText, Maximize2, Minimize2, Info, Lightbulb, AlertCircle, AlertTriangle, ShieldAlert, Edit, List, FolderSearch, RefreshCw, Type, Minus, Plus } from 'lucide-react';
+
+type ReadingTheme = 'default' | 'sepia' | 'dark';
+
+interface ReadingSettings {
+  fontSize: number;   // 14-22
+  lineHeight: number;  // 1.6-2.4
+  theme: ReadingTheme;
+}
+
+const READING_SETTINGS_KEY = 'linkmaster_reading_settings';
+
+const loadReadingSettings = (): ReadingSettings => {
+  try {
+    const saved = localStorage.getItem(READING_SETTINGS_KEY);
+    if (saved) return JSON.parse(saved);
+  } catch {}
+  return { fontSize: 16, lineHeight: 1.8, theme: 'default' };
+};
+
+const themeStyles: Record<ReadingTheme, { bg: string; text: string; prose: string; label: string }> = {
+  default: { bg: 'bg-white', text: 'text-gray-800', prose: 'prose-slate', label: '默认' },
+  sepia:   { bg: 'bg-amber-50/60', text: 'text-amber-950', prose: 'prose-stone', label: '护眼' },
+  dark:    { bg: 'bg-gray-900', text: 'text-gray-200', prose: 'prose-invert', label: '暗色' },
+};
 
 interface FileRendererProps {
   file: FileRecord | null;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
   onEdit?: () => void;
+  onRelocate?: (file: FileRecord) => void;
 }
 
 export const FileRenderer: React.FC<FileRendererProps> = ({ 
   file,
   isFullscreen,
   onToggleFullscreen,
-  onEdit
+  onEdit,
+  onRelocate
 }) => {
   const [content, setContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [showTOC, setShowTOC] = useState(false);
   const [toc, setToc] = useState<{ level: number; text: string; id: string }[]>([]);
+  const [fileNotFound, setFileNotFound] = useState(false);
+  const [readingSettings, setReadingSettings] = useState<ReadingSettings>(loadReadingSettings);
+  const [showReadingControls, setShowReadingControls] = useState(false);
+  const [activeTocId, setActiveTocId] = useState<string>('');
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  const updateSettings = useCallback((partial: Partial<ReadingSettings>) => {
+    setReadingSettings(prev => {
+      const next = { ...prev, ...partial };
+      localStorage.setItem(READING_SETTINGS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     const loadContent = async () => {
       if (!file) {
         setContent('');
         setToc([]);
+        setFileNotFound(false);
         return;
+      }
+
+      setFileNotFound(false);
+
+      // Check file existence first
+      if (window.electronAPI?.checkFileExists) {
+        const exists = await window.electronAPI.checkFileExists(file.path);
+        if (!exists) {
+          setFileNotFound(true);
+          setLoading(false);
+          setContent('');
+          setToc([]);
+          return;
+        }
       }
 
       const ext = file.type.toLowerCase().replace('.', '');
@@ -43,6 +97,10 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
         try {
           if (window.electronAPI && window.electronAPI.readFile) {
             const text = await window.electronAPI.readFile(file.path);
+            if (text === null) {
+              setFileNotFound(true);
+              return;
+            }
             setContent(text || '');
             
             // Generate TOC for markdown
@@ -76,7 +134,7 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
           }
         } catch (err) {
           console.error(err);
-          setContent('读取文件出错');
+          setFileNotFound(true);
         } finally {
           setLoading(false);
         }
@@ -89,6 +147,31 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
     loadContent();
   }, [file]);
 
+  // TOC scroll spy
+  useEffect(() => {
+    if (!showTOC || toc.length === 0) return;
+    const container = contentRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const scrollContainer = container.querySelector('.overflow-y-auto') || container;
+      const headings = toc.map(t => document.getElementById(t.id)).filter(Boolean) as HTMLElement[];
+      let activeId = '';
+      for (const heading of headings) {
+        const rect = heading.getBoundingClientRect();
+        if (rect.top <= 120) {
+          activeId = heading.id;
+        }
+      }
+      setActiveTocId(activeId);
+    };
+
+    const scrollEl = container.querySelector('.overflow-y-auto') || container;
+    scrollEl.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll();
+    return () => scrollEl.removeEventListener('scroll', handleScroll);
+  }, [showTOC, toc]);
+
   if (!file) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-gray-400 bg-white">
@@ -98,18 +181,107 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
     );
   }
 
+  if (fileNotFound) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full bg-white">
+        <div className="text-center space-y-4 max-w-sm">
+          <div className="w-16 h-16 rounded-full bg-orange-50 flex items-center justify-center mx-auto">
+            <AlertTriangle className="w-8 h-8 text-orange-400" />
+          </div>
+          <h2 className="text-lg font-semibold text-gray-700">文件未找到</h2>
+          <p className="text-sm text-gray-400">文件可能已被移动、重命名或删除</p>
+          <p className="text-xs text-gray-300 font-mono break-all bg-gray-50 p-3 rounded-lg border border-gray-100">{file.path}</p>
+          <div className="flex items-center justify-center gap-3 pt-2">
+            {onRelocate && (
+              <button
+                onClick={() => onRelocate(file)}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white text-sm rounded-lg hover:bg-blue-600 transition-colors"
+              >
+                <FolderSearch className="w-4 h-4" />
+                重新定位
+              </button>
+            )}
+            <button
+              onClick={() => { setFileNotFound(false); setContent(''); }}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-600 text-sm rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              重试
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const isMarkdown = ['md', 'markdown'].includes(file.type.toLowerCase().replace('.', ''));
+  const ts = themeStyles[readingSettings.theme];
+
   return (
-    <div className="flex flex-col h-full bg-white overflow-hidden relative">
+    <div className={`flex flex-col h-full overflow-hidden relative ${isMarkdown ? ts.bg : 'bg-white'}`} ref={contentRef}>
       {/* Header */}
-      <div className="h-16 border-b border-gray-100 flex items-center justify-between px-8 bg-white z-10 shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+      <div className={`h-16 border-b flex items-center justify-between px-8 z-10 shrink-0 ${
+        readingSettings.theme === 'dark' && isMarkdown ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-100'
+      }`} style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
         <div className="flex flex-col min-w-0">
-           <h1 className="text-xl font-bold text-gray-800 truncate" title={file.name}>
+           <h1 className={`text-xl font-bold truncate ${
+             readingSettings.theme === 'dark' && isMarkdown ? 'text-gray-100' : 'text-gray-800'
+           }`} title={file.name}>
              {file.name}
            </h1>
         </div>
         
-        <div className="flex items-center gap-2 ml-4 shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-          {['md', 'markdown'].includes(file.type.toLowerCase().replace('.', '')) && (
+        <div className="flex items-center gap-1 ml-4 shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          {/* Reading controls toggle */}
+          {isMarkdown && (
+            <div className="relative">
+              <button 
+                onClick={() => setShowReadingControls(!showReadingControls)}
+                className={`p-2 rounded-lg transition-colors ${showReadingControls ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'}`}
+                title="阅读设置"
+              >
+                <Type className="w-5 h-5" />
+              </button>
+              {showReadingControls && (
+                <div className="absolute right-0 top-12 w-56 bg-white rounded-xl shadow-xl border border-gray-200 p-4 space-y-4 z-50">
+                  {/* Font size */}
+                  <div>
+                    <label className="text-xs font-medium text-gray-500 mb-2 block">字体大小 ({readingSettings.fontSize}px)</label>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => updateSettings({ fontSize: Math.max(12, readingSettings.fontSize - 1) })} className="p-1 rounded hover:bg-gray-100"><Minus className="w-3.5 h-3.5" /></button>
+                      <input type="range" min="12" max="24" value={readingSettings.fontSize} onChange={e => updateSettings({ fontSize: +e.target.value })} className="flex-1 accent-blue-500" />
+                      <button onClick={() => updateSettings({ fontSize: Math.min(24, readingSettings.fontSize + 1) })} className="p-1 rounded hover:bg-gray-100"><Plus className="w-3.5 h-3.5" /></button>
+                    </div>
+                  </div>
+                  {/* Line height */}
+                  <div>
+                    <label className="text-xs font-medium text-gray-500 mb-2 block">行距 ({readingSettings.lineHeight.toFixed(1)})</label>
+                    <input type="range" min="1.4" max="2.6" step="0.1" value={readingSettings.lineHeight} onChange={e => updateSettings({ lineHeight: +e.target.value })} className="w-full accent-blue-500" />
+                  </div>
+                  {/* Theme */}
+                  <div>
+                    <label className="text-xs font-medium text-gray-500 mb-2 block">阅读主题</label>
+                    <div className="flex gap-2">
+                      {(Object.keys(themeStyles) as ReadingTheme[]).map(theme => (
+                        <button
+                          key={theme}
+                          onClick={() => updateSettings({ theme })}
+                          className={`flex-1 py-1.5 text-xs rounded-lg border transition-all ${
+                            readingSettings.theme === theme
+                              ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
+                              : 'border-gray-200 hover:bg-gray-50 text-gray-600'
+                          }`}
+                        >
+                          {themeStyles[theme].label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {isMarkdown && (
             <button 
               onClick={() => setShowTOC(!showTOC)}
               className={`p-2 rounded-lg transition-colors ${showTOC ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'}`}
@@ -118,7 +290,7 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
               <List className="w-5 h-5" />
             </button>
           )}
-          {onEdit && ['md', 'markdown'].includes(file.type.toLowerCase().replace('.', '')) && (
+          {onEdit && isMarkdown && (
             <button 
               onClick={onEdit}
               className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
@@ -146,34 +318,45 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
         ) : (
           <>
             <div className={`flex-1 overflow-hidden relative ${showTOC ? 'mr-64' : ''}`}>
-               {renderFileContent(file, content)}
+               {renderFileContent(file, content, readingSettings)}
             </div>
             
-            {/* TOC Sidebar */}
-            {showTOC && ['md', 'markdown'].includes(file.type.toLowerCase().replace('.', '')) && (
-              <div className="absolute top-0 right-0 bottom-0 w-64 bg-gray-50 border-l border-gray-200 overflow-y-auto p-4 animate-in slide-in-from-right duration-200">
-                <h3 className="font-semibold text-gray-700 mb-4 px-2">目录</h3>
+            {/* TOC Sidebar with active highlighting */}
+            {showTOC && isMarkdown && (
+              <div className={`absolute top-0 right-0 bottom-0 w-64 border-l overflow-y-auto p-4 animate-in slide-in-from-right duration-200 ${
+                readingSettings.theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-gray-50 border-gray-200'
+              }`}>
+                <h3 className={`font-semibold mb-4 px-2 ${readingSettings.theme === 'dark' ? 'text-gray-200' : 'text-gray-700'}`}>目录</h3>
                 {toc.length === 0 ? (
                   <p className="text-sm text-gray-400 px-2">暂无目录</p>
                 ) : (
-                  <nav className="space-y-1">
-                    {toc.map((item, index) => (
-                      <a
-                        key={index}
-                        href={`#${item.id}`}
-                        className="block text-sm text-gray-600 hover:text-blue-600 hover:bg-blue-50 px-2 py-1.5 rounded transition-colors truncate"
-                        style={{ paddingLeft: `${(item.level - 1) * 12 + 8}px` }}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          const element = document.getElementById(item.id);
-                          if (element) {
-                            element.scrollIntoView({ behavior: 'smooth' });
-                          }
-                        }}
-                      >
-                        {item.text}
-                      </a>
-                    ))}
+                  <nav className="space-y-0.5">
+                    {toc.map((item, index) => {
+                      const isActive = activeTocId === item.id;
+                      return (
+                        <a
+                          key={index}
+                          href={`#${item.id}`}
+                          className={`block text-sm px-2 py-1.5 rounded transition-all truncate ${
+                            isActive
+                              ? 'text-blue-600 bg-blue-50 font-medium'
+                              : readingSettings.theme === 'dark'
+                                ? 'text-gray-400 hover:text-blue-400 hover:bg-gray-700'
+                                : 'text-gray-600 hover:text-blue-600 hover:bg-blue-50'
+                          }`}
+                          style={{ paddingLeft: `${(item.level - 1) * 12 + 8}px` }}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            const element = document.getElementById(item.id);
+                            if (element) {
+                              element.scrollIntoView({ behavior: 'smooth' });
+                            }
+                          }}
+                        >
+                          {item.text}
+                        </a>
+                      );
+                    })}
                   </nav>
                 )}
               </div>
@@ -185,7 +368,7 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
   );
 };
 
-const renderFileContent = (file: FileRecord, content: string) => {
+const renderFileContent = (file: FileRecord, content: string, settings?: ReadingSettings) => {
   const ext = file.type.toLowerCase().replace('.', '');
 
   if (ext === 'pdf') {
@@ -220,8 +403,12 @@ const renderFileContent = (file: FileRecord, content: string) => {
       return `![${args || ''}](${filename})`;
     });
 
+    const ts = settings ? themeStyles[settings.theme] : themeStyles.default;
+    const fontSize = settings?.fontSize || 16;
+    const lineHeight = settings?.lineHeight || 1.8;
+
     return (
-      <div className="h-full overflow-y-auto p-8 md:p-12 lg:p-16 bg-white select-text">
+      <div className={`h-full overflow-y-auto p-8 md:p-12 lg:p-16 ${ts.bg} ${ts.text} select-text transition-colors duration-200`}>
         {/* Custom Styles for Math and Alerts */}
         <style>{`
           /* KaTeX Center Alignment */
@@ -328,7 +515,7 @@ const renderFileContent = (file: FileRecord, content: string) => {
           .bq-cyan { border-color: #06b6d4 !important; background-color: #ecfeff !important; }
           .bq-teal { border-color: #14b8a6 !important; background-color: #f0fdfa !important; }
         `}</style>
-        <div className="prose prose-slate max-w-4xl mx-auto">
+        <div className={`prose ${ts.prose} max-w-4xl mx-auto`} style={{ fontSize: `${fontSize}px`, lineHeight: lineHeight }}>
           <ReactMarkdown 
             remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
             rehypePlugins={[rehypeKatex]}

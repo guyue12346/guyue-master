@@ -56,7 +56,7 @@ export interface FileRecord {
   id: string;
   name: string;
   path: string; // Simulated path or real path in Electron
-  size: string; // e.g. "2.5 MB"
+  size: number; // File size in bytes
   type: string; // Extension, e.g. "pdf"
   importance: number; // 1-100
   category: string;

@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectFile: () => ipcRenderer.invoke('select-file'),
   readFile: (path: string) => ipcRenderer.invoke('read-file', path),
   readFileBase64: (path: string) => ipcRenderer.invoke('read-file-base64', path),
+  checkFileExists: (path: string) => ipcRenderer.invoke('check-file-exists', path),
   writeFile: (path: string, content: string) => ipcRenderer.invoke('write-file', path, content),
   deleteFile: (path: string) => ipcRenderer.invoke('delete-file', path),
   renameFile: (oldPath: string, newPath: string) => ipcRenderer.invoke('rename-file', oldPath, newPath),
@@ -82,6 +83,7 @@ export interface ElectronAPI {
   selectFile: () => Promise<{ path: string; name: string; size: number; type: string } | null>;
   readFile: (path: string) => Promise<string>;
   readFileBase64: (path: string) => Promise<string>;
+  checkFileExists: (path: string) => Promise<boolean>;
   writeFile: (path: string, content: string) => Promise<boolean>;
   deleteFile: (path: string) => Promise<boolean>;
   listDir: (path: string) => Promise<Array<{ name: string; isDirectory: boolean; path: string }>>;

@@ -18,7 +18,7 @@ type StorageType = 'reference' | 'local_archive' | 'cloud';
 export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, initialData, categories, mode = 'file', defaultCategory }) => {
   const [name, setName] = useState('');
   const [path, setPath] = useState('');
-  const [size, setSize] = useState('');
+  const [size, setSize] = useState<number>(0);
   const [type, setType] = useState('');
   const [category, setCategory] = useState('');
   const [note, setNote] = useState('');
@@ -45,7 +45,7 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
       }
       if (mode === 'note') {
         setType('MARKDOWN');
-        setSize('0 B');
+        setSize(0);
         setPath('internal://new');
       }
     }
@@ -54,7 +54,7 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
   const resetForm = () => {
     setName('');
     setPath('');
-    setSize('');
+    setSize(0);
     setType('');
     setCategory('');
     setNote('');
@@ -76,7 +76,7 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
       const fileInfo = await window.electronAPI.selectFile();
       if (fileInfo) {
         setName(fileInfo.name);
-        setSize(formatFileSize(fileInfo.size));
+        setSize(fileInfo.size);
         setType(fileInfo.type);
         setPath(fileInfo.path);
       }
@@ -90,7 +90,7 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
     const file = e.target.files?.[0];
     if (file) {
       setName(file.name);
-      setSize(formatFileSize(file.size));
+      setSize(file.size);
       const ext = file.name.split('.').pop() || 'file';
       setType(ext.toUpperCase());
       setPath(file.name); // Web fallback
@@ -279,7 +279,7 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
              <div className="grid grid-cols-2 gap-4">
                  <div className="bg-gray-50 p-2 rounded-lg border border-gray-100 text-xs text-gray-500 flex justify-between">
                     <span>Size:</span>
-                    <span className="font-mono text-gray-800">{size || '--'}</span>
+                    <span className="font-mono text-gray-800">{size ? formatFileSize(size) : '--'}</span>
                  </div>
                  <div className="bg-gray-50 p-2 rounded-lg border border-gray-100 text-xs text-gray-500 flex justify-between">
                     <span>Type:</span>

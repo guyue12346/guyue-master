@@ -1,20 +1,19 @@
-import React, { useState, useEffect, useMemo, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, Suspense } from 'react';
 import { NavRail } from './components/NavRail';
 import { Sidebar } from './components/Sidebar';
 import { SplashScreen } from './components/SplashScreen';
 import { FloatingChatWindow } from './components/FloatingChatWindow';
 import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig } from './types';
 import { Plus, Search, Command, Loader2, ChevronRight } from 'lucide-react';
+import type { VaultFileEntry } from './components/VaultImportModal';
 
 // Lazy load components to improve initial load performance
 const NoteList = React.lazy(() => import('./components/NoteList').then(m => ({ default: m.NoteList })));
 const SSHList = React.lazy(() => import('./components/SSHList').then(m => ({ default: m.SSHList })));
 const APIList = React.lazy(() => import('./components/APIList').then(m => ({ default: m.APIList })));
 const TodoList = React.lazy(() => import('./components/TodoList').then(m => ({ default: m.TodoList })));
-const FileList = React.lazy(() => import('./components/FileList').then(m => ({ default: m.FileList })));
 const PromptList = React.lazy(() => import('./components/PromptList').then(m => ({ default: m.PromptList })));
 const MarkdownSidebar = React.lazy(() => import('./components/MarkdownSidebar').then(m => ({ default: m.MarkdownSidebar })));
-const FileSidebar = React.lazy(() => import('./components/FileSidebar').then(m => ({ default: m.FileSidebar })));
 const ArchiveSidebar = React.lazy(() => import('./components/ArchiveSidebar').then(m => ({ default: m.ArchiveSidebar })));
 const MarkdownEditor = React.lazy(() => import('./components/MarkdownEditor').then(m => ({ default: m.MarkdownEditor })));
 const FileRenderer = React.lazy(() => import('./components/FileRenderer').then(m => ({ default: m.FileRenderer })));
@@ -38,6 +37,7 @@ const FileModal = React.lazy(() => import('./components/FileModal').then(m => ({
 const PromptModal = React.lazy(() => import('./components/PromptModal').then(m => ({ default: m.PromptModal })));
 const CategoryManagerModal = React.lazy(() => import('./components/CategoryManagerModal').then(m => ({ default: m.CategoryManagerModal })));
 const SettingsModal = React.lazy(() => import('./components/SettingsModal').then(m => ({ default: m.SettingsModal })));
+const VaultImportModal = React.lazy(() => import('./components/VaultImportModal').then(m => ({ default: m.VaultImportModal })));
 
 // Storage version for migration management
 const STORAGE_VERSION = 'v1';
@@ -52,7 +52,6 @@ const STORAGE_KEY_TODO_PLAN = 'linkmaster_todo_plan_v1';
 const STORAGE_KEY_FILES = 'linkmaster_files_v1';
 const STORAGE_KEY_PROMPTS = 'linkmaster_prompts_v1';
 const STORAGE_KEY_MARKDOWN = 'linkmaster_markdown_v1';
-const STORAGE_KEY_RENDER_FILES = 'linkmaster_render_files_v1';
 const STORAGE_KEY_MODULES = 'linkmaster_modules_v1';
 const STORAGE_KEY_IMAGE_RECORDS = 'linkmaster_image_records_v1';
 const STORAGE_KEY_IMAGE_CONFIG = 'linkmaster_image_config_v1';
@@ -117,7 +116,6 @@ const migrateStorageData = () => {
       { old: 'linkmaster_files', new: STORAGE_KEY_FILES },
       { old: 'linkmaster_prompts', new: STORAGE_KEY_PROMPTS },
       { old: 'linkmaster_markdown', new: STORAGE_KEY_MARKDOWN },
-      { old: 'linkmaster_render_files', new: STORAGE_KEY_RENDER_FILES },
       { old: 'linkmaster_modules', new: STORAGE_KEY_MODULES },
       { old: 'linkmaster_image_records', new: STORAGE_KEY_IMAGE_RECORDS },
       { old: 'linkmaster_image_config', new: STORAGE_KEY_IMAGE_CONFIG },
@@ -308,6 +306,7 @@ const App: React.FC = () => {
   const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
   const [initialCategoryEditId, setInitialCategoryEditId] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [vaultImportFiles, setVaultImportFiles] = useState<VaultFileEntry[] | null>(null);
   
   const [editingNote, setEditingNote] = useState<Note | null>(null);
   const [editingSSH, setEditingSSH] = useState<SSHRecord | null>(null);
@@ -335,7 +334,7 @@ const App: React.FC = () => {
       // 不是JSON格式，直接返回原始字符串
       return saved;
     }
-    return '# 近期总体规划\n\n在这里记录你的总体规划和目标...\n';
+    return '# 总体规划\n\n在这里记录你的总体规划和目标...\n';
   });
 
   // Heatmap State
@@ -365,6 +364,7 @@ const App: React.FC = () => {
 
   // Shortcut handling
   const isTabPressed = React.useRef(false);
+  const fileSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1035,10 +1035,6 @@ const App: React.FC = () => {
   }, [imageHostingConfig, saveToStorage, isAppReady]);
 
   useEffect(() => {
-    saveToStorage(STORAGE_KEY_RENDER_FILES, fileRecords, 500); // Longer delay for file records
-  }, [fileRecords, saveToStorage]);
-
-  useEffect(() => {
     if (moduleConfig.length > 0) {
       saveToStorage(STORAGE_KEY_MODULES, moduleConfig);
     }
@@ -1468,7 +1464,7 @@ const App: React.FC = () => {
          id: crypto.randomUUID(),
          name: fileData.name!,
          path: fileData.path || fileData.name!,
-         size: fileData.size || '0 B',
+         size: fileData.size || 0,
          type: fileData.type || 'FILE',
          importance: fileData.importance || 50,
          category: catName,
@@ -1509,6 +1505,98 @@ const App: React.FC = () => {
     setEditingFile(file);
     setFileModalMode('file');
     setIsFileModalOpen(true);
+  };
+
+  const handleRelocateFile = async (file: FileRecord) => {
+    if (!window.electronAPI?.selectFile) return;
+    const fileInfo = await window.electronAPI.selectFile();
+    if (fileInfo) {
+      setFileRecords(prev => prev.map(f => 
+        f.id === file.id 
+          ? { ...f, path: fileInfo.path, name: fileInfo.name, size: fileInfo.size, type: fileInfo.type }
+          : f
+      ));
+    }
+  };
+
+  const handleImportFromVault = async () => {
+    const vaultPath = localStorage.getItem('linkmaster_vault_path');
+    if (!vaultPath) {
+      alert('请先在设置中配置 Obsidian Vault 路径');
+      return;
+    }
+    if (!window.electronAPI?.listDir) return;
+
+    try {
+      // Recursively scan vault for .md files (max 2 levels deep)
+      const scanDir = async (dir: string, depth: number = 0): Promise<{name: string; path: string}[]> => {
+        if (depth > 2) return [];
+        const entries = await window.electronAPI!.listDir(dir);
+        let results: {name: string; path: string}[] = [];
+        for (const entry of entries) {
+          if (entry.name.startsWith('.')) continue; // Skip hidden files/folders
+          if (entry.isDirectory) {
+            const sub = await scanDir(entry.path, depth + 1);
+            results = results.concat(sub);
+          } else if (entry.name.endsWith('.md')) {
+            results.push({ name: entry.name, path: entry.path });
+          }
+        }
+        return results;
+      };
+
+      const mdFiles = await scanDir(vaultPath);
+      if (mdFiles.length === 0) {
+        alert('Vault 中未找到 Markdown 文件');
+        return;
+      }
+
+      // Filter out already-imported files
+      const existingPaths = new Set(fileRecords.map(f => f.path));
+      const newFiles = mdFiles.filter(f => !existingPaths.has(f.path));
+
+      if (newFiles.length === 0) {
+        alert('Vault 中的所有笔记已导入');
+        return;
+      }
+
+      // Build entries with relative path and folder info for the selection modal
+      const vaultEntries: VaultFileEntry[] = newFiles.map(f => {
+        const relativePath = f.path.replace(vaultPath + '/', '');
+        const parts = relativePath.split('/');
+        const folder = parts.length > 1 ? parts[0] : 'Vault';
+        return { name: f.name, path: f.path, relativePath, folder };
+      });
+
+      setVaultImportFiles(vaultEntries);
+    } catch (e) {
+      console.error('Failed to scan vault:', e);
+      alert('扫描 Vault 失败');
+    }
+  };
+
+  const handleVaultImportConfirm = (selected: VaultFileEntry[]) => {
+    if (selected.length === 0) return;
+
+    const importedRecords: FileRecord[] = selected.map(f => ({
+      id: crypto.randomUUID(),
+      name: f.name,
+      path: f.path,
+      size: 0,
+      type: 'MARKDOWN',
+      importance: 50,
+      category: f.folder,
+      note: '',
+      createdAt: Date.now(),
+    }));
+
+    // Ensure categories exist
+    const newCategories = new Set(importedRecords.map(r => r.category));
+    newCategories.forEach(cat => ensureCategoryExists(cat));
+
+    setFileRecords(prev => [...importedRecords, ...prev]);
+    setVaultImportFiles(null);
+    alert(`成功导入 ${importedRecords.length} 篇笔记`);
   };
 
   // --- Handlers: Prompts ---
@@ -1603,26 +1691,32 @@ const App: React.FC = () => {
         return;
     }
     
+    // 弹窗让用户输入文件名
+    const userInput = prompt('请输入笔记文件名（不需要输入 .md 后缀）:', '');
+    if (userInput === null) return; // 用户取消
+    const trimmed = userInput.trim();
+    if (!trimmed) {
+      alert('文件名不能为空');
+      return;
+    }
+    const fileName = trimmed.endsWith('.md') ? trimmed : `${trimmed}.md`;
+    
     try {
-      // 1. Generate unique name
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const fileName = `Note-${timestamp}.md`;
-      
-      // 2. Construct path
+      // Construct path
       const safeCategory = categoryName.replace(/[\\/:*?"<>|]/g, '_');
       const targetDir = await window.electronAPI.pathJoin(archiveRoot, safeCategory, 'MARKDOWN');
       await window.electronAPI.ensureDir(targetDir);
       const targetPath = await window.electronAPI.pathJoin(targetDir, fileName);
       
-      // 3. Create file
+      // Create file
       await window.electronAPI.writeFile(targetPath, '');
       
-      // 4. Update state
+      // Update state
       const newFile: FileRecord = {
          id: crypto.randomUUID(),
          name: fileName,
          path: targetPath,
-         size: '0 B',
+         size: 0,
          type: 'MARKDOWN',
          importance: 50,
          category: categoryName,
@@ -1766,6 +1860,7 @@ const App: React.FC = () => {
               }}
               onEditCategory={handleEditCategory}
               onDeleteCategory={handleDeleteCategory}
+              onImportFromVault={handleImportFromVault}
             />
           </Suspense>
         )
@@ -1870,7 +1965,7 @@ const App: React.FC = () => {
                   </summary>
                   <div className="border-t border-gray-100 p-4">
                     <MarkdownEditor
-                      note={{ id: 'todo-plan', title: '近期总体规划', content: todoPlanContent, category: '', createdAt: 0, updatedAt: 0 }}
+                      note={{ id: 'todo-plan', title: '总体规划', content: todoPlanContent, category: '', createdAt: 0, updatedAt: 0 }}
                       onUpdate={(_id, updates) => { if (updates.content !== undefined) setTodoPlanContent(updates.content); }}
                       isFullscreen={false}
                       onToggleFullscreen={() => {}}
@@ -1897,21 +1992,37 @@ const App: React.FC = () => {
                         updatedAt: 0
                       }}
                       onUpdate={async (id, updates) => {
-                        if (updates.content !== undefined && window.electronAPI) {
-                          const file = fileRecords.find(f => f.id === id);
-                          if (file) {
-                            await window.electronAPI.writeFile(file.path, updates.content);
-                            setEditingFileContent(updates.content);
-                            // Force update file record to ensure FileRenderer re-reads content
-                            setFileRecords(prev => prev.map(f => f.id === id ? { ...f } : f));
-                          }
+                        if (updates.content !== undefined) {
+                          setEditingFileContent(updates.content);
+                          // Debounced auto-save to disk (1.5s)
+                          if (fileSaveTimerRef.current) clearTimeout(fileSaveTimerRef.current);
+                          fileSaveTimerRef.current = setTimeout(async () => {
+                            if (window.electronAPI) {
+                              const file = fileRecords.find(f => f.id === id);
+                              if (file) {
+                                await window.electronAPI.writeFile(file.path, updates.content!);
+                                setFileRecords(prev => prev.map(f => f.id === id ? { ...f } : f));
+                              }
+                            }
+                          }, 1500);
                         }
                       }}
                       isFullscreen={isRendererFullscreen}
                       onToggleFullscreen={() => setIsRendererFullscreen(!isRendererFullscreen)}
                       hideMetadata={true}
                       showViewToggle={true}
-                      onExitEdit={() => setIsEditingFile(false)}
+                      onExitEdit={async () => {
+                        // Flush pending save before exiting
+                        if (fileSaveTimerRef.current) {
+                          clearTimeout(fileSaveTimerRef.current);
+                          fileSaveTimerRef.current = null;
+                          if (window.electronAPI && activeRenderFileId) {
+                            const file = fileRecords.find(f => f.id === activeRenderFileId);
+                            if (file) await window.electronAPI.writeFile(file.path, editingFileContent);
+                          }
+                        }
+                        setIsEditingFile(false);
+                      }}
                     />
                   ) : (
                     <FileRenderer 
@@ -1931,6 +2042,7 @@ const App: React.FC = () => {
                            }
                         }
                       }}
+                      onRelocate={handleRelocateFile}
                     />
                   )
                ) : (
@@ -2175,6 +2287,14 @@ const App: React.FC = () => {
           }}
           onDeleteCategory={handleDeleteCategory}
         />
+
+        {vaultImportFiles && (
+          <VaultImportModal
+            files={vaultImportFiles}
+            onImport={handleVaultImportConfirm}
+            onClose={() => setVaultImportFiles(null)}
+          />
+        )}
 
         <SettingsModal
           isOpen={isSettingsOpen}
