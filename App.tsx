@@ -1464,13 +1464,11 @@ const App: React.FC = () => {
     }));
   };
 
-  const handleAutoSaveTodoSubtasks = (subtasks: import('./types').SubTask[]) => {
-    if (editingTodo) {
-      setTodos(prev => prev.map(t => t.id === editingTodo.id
-        ? { ...t, subtasks: subtasks.length > 0 ? subtasks : undefined }
-        : t
-      ));
-    }
+  const handleAutoSaveTodoSubtasks = (todoId: string, subtasks: import('./types').SubTask[]) => {
+    setTodos(prev => prev.map(t => t.id === todoId
+      ? { ...t, subtasks: subtasks.length > 0 ? subtasks : undefined }
+      : t
+    ));
   };
 
   const handleEditTodo = (todo: TodoItem) => {

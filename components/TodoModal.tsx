@@ -7,7 +7,7 @@ interface TodoModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (todo: Partial<TodoItem>) => void;
-  onAutoSave?: (subtasks: SubTask[]) => void;
+  onAutoSave?: (id: string, subtasks: SubTask[]) => void;
   initialData?: TodoItem | null;
   categories: string[];
 }
@@ -55,7 +55,7 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
     const next = [...subtasks, newItem];
     setSubtasks(next);
     setNewSubtask('');
-    if (initialData) onAutoSave?.(next);
+    if (initialData?.id) onAutoSave?.(initialData.id, next);
   };
 
   const handleSubtaskKeyDown = (e: React.KeyboardEvent) => {
@@ -68,7 +68,7 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
   const handleRemoveSubtask = (id: string) => {
     const next = subtasks.filter(s => s.id !== id);
     setSubtasks(next);
-    if (initialData) onAutoSave?.(next);
+    if (initialData?.id) onAutoSave?.(initialData.id, next);
   };
 
   const handleToggleSubtask = (id: string) => {
