@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { X, Check, Brain, Cpu, Server, Code, Wrench, BookOpen, GraduationCap, Globe, Database, Cloud, Terminal, Layout, Layers, Box, Circle, Disc, Rocket, Lightbulb, Target, Puzzle, Microscope, FlaskConical, Atom, Network, FileCode, GitBranch, Zap, Shield, Lock, Key, Monitor, Smartphone, Wifi, Radio, Sparkles, Star } from 'lucide-react';
+import { X, Check } from 'lucide-react';
 import { CourseData } from './LearningData';
+import { AVAILABLE_ICONS } from './LearningConstants';
 
 interface LearningCourseModalProps {
   isOpen: boolean;
@@ -10,46 +11,6 @@ interface LearningCourseModalProps {
   categoryId: string;
   isEditing: boolean;
 }
-
-const AVAILABLE_ICONS = [
-  { name: 'Brain', icon: Brain },
-  { name: 'Cpu', icon: Cpu },
-  { name: 'Server', icon: Server },
-  { name: 'Code', icon: Code },
-  { name: 'Wrench', icon: Wrench },
-  { name: 'BookOpen', icon: BookOpen },
-  { name: 'GraduationCap', icon: GraduationCap },
-  { name: 'Globe', icon: Globe },
-  { name: 'Database', icon: Database },
-  { name: 'Cloud', icon: Cloud },
-  { name: 'Terminal', icon: Terminal },
-  { name: 'Layout', icon: Layout },
-  { name: 'Layers', icon: Layers },
-  { name: 'Box', icon: Box },
-  { name: 'Circle', icon: Circle },
-  { name: 'Disc', icon: Disc },
-  // New icons
-  { name: 'Rocket', icon: Rocket },
-  { name: 'Lightbulb', icon: Lightbulb },
-  { name: 'Target', icon: Target },
-  { name: 'Puzzle', icon: Puzzle },
-  { name: 'Microscope', icon: Microscope },
-  { name: 'FlaskConical', icon: FlaskConical },
-  { name: 'Atom', icon: Atom },
-  { name: 'Network', icon: Network },
-  { name: 'FileCode', icon: FileCode },
-  { name: 'GitBranch', icon: GitBranch },
-  { name: 'Zap', icon: Zap },
-  { name: 'Shield', icon: Shield },
-  { name: 'Lock', icon: Lock },
-  { name: 'Key', icon: Key },
-  { name: 'Monitor', icon: Monitor },
-  { name: 'Smartphone', icon: Smartphone },
-  { name: 'Wifi', icon: Wifi },
-  { name: 'Radio', icon: Radio },
-  { name: 'Sparkles', icon: Sparkles },
-  { name: 'Star', icon: Star },
-];
 
 export const LearningCourseModal: React.FC<LearningCourseModalProps> = ({
   isOpen,

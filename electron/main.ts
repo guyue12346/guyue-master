@@ -17,24 +17,35 @@ const isDev = process.env.NODE_ENV === 'development';
 let mainWindow: BrowserWindow | null = null;
 let zenmuxUsageWindow: BrowserWindow | null = null;
 
+const isMac = process.platform === 'darwin';
+const isWin = process.platform === 'win32';
+
 function createWindow() {
-  mainWindow = new BrowserWindow({
+  const windowOptions: Electron.BrowserWindowConstructorOptions = {
     width: 1400,
     height: 900,
     minWidth: 1000,
     minHeight: 600,
-    show: false, // 先隐藏窗口，等内容准备好再显示
-    titleBarStyle: 'hiddenInset', // macOS 风格标题栏
-    trafficLightPosition: { x: 15, y: 15 }, // 红绿灯位置
-    backgroundColor: '#f5f5f7', // 与应用背景色保持一致
+    show: false,
+    backgroundColor: '#f5f5f7',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      webviewTag: true, // Enable webview tag
+      webviewTag: true,
     },
-  });
+  };
+
+  if (isMac) {
+    windowOptions.titleBarStyle = 'hiddenInset';
+    windowOptions.trafficLightPosition = { x: 15, y: 15 };
+  } else {
+    // Windows/Linux: use default system frame
+    windowOptions.autoHideMenuBar = true;
+  }
+
+  mainWindow = new BrowserWindow(windowOptions);
 
   // 当页面准备好显示时再展示窗口，避免白屏/黑屏闪烁
   mainWindow.once('ready-to-show', () => {

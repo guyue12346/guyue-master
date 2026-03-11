@@ -55,37 +55,100 @@ export interface PersonalModule {
   items: ResourceItem[];
 }
 
-// Keep old interfaces for backward compatibility
+// Legacy interfaces (kept for migration only)
+/** @deprecated Use AssignmentModule + ResourceItem instead */
 export interface Assignment {
   id: string;
   title: string;
   desc: string;
   link: string;
-  moduleId?: string; // Link assignment to a module
+  moduleId?: string;
 }
 
+/** @deprecated Use PersonalModule + ResourceItem instead */
 export interface PersonalResource {
   id: string;
   title: string;
   link: string;
-  moduleId?: string; // Link resource to a module
+  moduleId?: string;
 }
 
 export interface CourseData {
   id: string;
   title: string;
   description: string;
-  categoryId: string; // Reference to category
+  categoryId: string;
   modules: Module[];
-  // Old structure (deprecated)
+  /** @deprecated Kept for migration. Use assignmentModules. */
   assignments: Assignment[];
+  /** @deprecated Kept for migration. Use personalModules. */
   personalResources?: PersonalResource[];
-  // New structure with independent modules
   assignmentModules?: AssignmentModule[];
   personalModules?: PersonalModule[];
-  introMarkdown?: string; // Optional markdown content for course introduction
-  icon?: string; // Optional icon for the course
-  priority?: number; // 1-100, lower number = higher priority
+  introMarkdown?: string;
+  icon?: string;
+  priority?: number;
+}
+
+/**
+ * Auto-migrate legacy assignments/personalResources to new module structure.
+ * Called once per course during initialization.
+ */
+export const migrateCourseData = (course: CourseData): CourseData => {
+  let migrated = { ...course };
+  let changed = false;
+
+  // Migrate old assignments → assignmentModules
+  if (migrated.assignments.length > 0 && (!migrated.assignmentModules || migrated.assignmentModules.length === 0)) {
+    const moduleMap: Record<string, ResourceItem[]> = {};
+    migrated.assignments.forEach(a => {
+      const key = a.moduleId || '_general';
+      if (!moduleMap[key]) moduleMap[key] = [];
+      moduleMap[key].push({ id: a.id, title: a.title, link: a.link });
+    });
+
+    migrated.assignmentModules = Object.entries(moduleMap).map(([key, items]) => {
+      const sourceModule = migrated.modules.find(m => m.id === key);
+      return {
+        id: `migrated_assign_${key}`,
+        title: sourceModule?.title || '通用练习',
+        description: sourceModule?.description || '',
+        items,
+      };
+    });
+    migrated.assignments = [];
+    changed = true;
+  }
+
+  // Migrate old personalResources → personalModules
+  if (migrated.personalResources && migrated.personalResources.length > 0 && (!migrated.personalModules || migrated.personalModules.length === 0)) {
+    const moduleMap: Record<string, ResourceItem[]> = {};
+    migrated.personalResources.forEach(r => {
+      const key = r.moduleId || '_general';
+      if (!moduleMap[key]) moduleMap[key] = [];
+      moduleMap[key].push({ id: r.id, title: r.title, link: r.link });
+    });
+
+    migrated.personalModules = Object.entries(moduleMap).map(([key, items]) => {
+      const sourceModule = migrated.modules.find(m => m.id === key);
+      return {
+        id: `migrated_personal_${key}`,
+        title: sourceModule?.title || '其它资源',
+        description: sourceModule?.description || '',
+        items,
+      };
+    });
+    migrated.personalResources = [];
+    changed = true;
+  }
+
+  // Ensure introMarkdown exists
+  if (!migrated.introMarkdown) {
+    migrated.introMarkdown = `# ${migrated.title}\n\n${migrated.description}\n\n在这里编写学习总览...`;
+    changed = true;
+  }
+
+  return changed ? migrated : course;
 }
 
 export interface CourseCategory {

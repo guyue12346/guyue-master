@@ -207,6 +207,7 @@ export interface ElectronAPI {
   readFileBase64: (path: string) => Promise<string>;
   writeFile: (path: string, content: string) => Promise<boolean>;
   deleteFile: (path: string) => Promise<boolean>;
+  checkFileExists: (path: string) => Promise<boolean>;
   renameFile: (oldPath: string, newPath: string) => Promise<boolean>;
   deleteDir: (path: string) => Promise<boolean>;
   listDir: (path: string) => Promise<Array<{ name: string; isDirectory: boolean; path: string }>>;

@@ -1,8 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import ReactDOM from 'react-dom';
-import { ChevronDown, ChevronRight, PlayCircle, FileText, Code, CheckCircle2, Circle, Folder, Info, Trash2, FileUp, Plus, Link, Edit2, Book, Globe, Music, Image, GripVertical } from 'lucide-react';
+import { ChevronDown, ChevronRight, PlayCircle, FileText, Code, CheckCircle2, Circle, Folder, Info, Trash2, FileUp, Plus, Link, Edit2, Book, Globe, Music, Image, GripVertical, Search, ArrowRightLeft } from 'lucide-react';
 import { CourseData, Module, Lecture, AssignmentModule, PersonalModule, ResourceItem, CourseCategory, LectureIcon, LECTURE_ICONS } from './LearningData';
 import { LearningMDModal } from './LearningMDModal';
+import { ConfirmDialog } from './ConfirmDialog';
 import {
   copyFileToDestination,
   deleteResourceFile,
@@ -225,72 +226,29 @@ export const LearningList: React.FC<LearningListProps> = ({
     })
   );
 
-  // Handle drag end for lectures (resources section)
-  const handleLectureDragEnd = (moduleId: string) => (event: DragEndEvent) => {
+  // #3: Unified drag end handler for all sections
+  const handleDragEnd = (moduleId: string, section: 'resources' | 'assignments' | 'personal') => (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    const module = course.modules.find(m => m.id === moduleId);
-    if (!module) return;
-
-    const oldIndex = module.lectures.findIndex(l => l.id === active.id);
-    const newIndex = module.lectures.findIndex(l => l.id === over.id);
-
-    if (oldIndex !== -1 && newIndex !== -1) {
-      const newLectures = arrayMove(module.lectures, oldIndex, newIndex);
-      const updatedCourse = {
-        ...course,
-        modules: course.modules.map(m =>
-          m.id === moduleId ? { ...m, lectures: newLectures } : m
-        )
-      };
-      onUpdateCourse(updatedCourse);
-    }
-  };
-
-  // Handle drag end for assignment items
-  const handleAssignmentDragEnd = (moduleId: string) => (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    const module = (course.assignmentModules || []).find(m => m.id === moduleId);
-    if (!module) return;
-
-    const oldIndex = module.items.findIndex(i => i.id === active.id);
-    const newIndex = module.items.findIndex(i => i.id === over.id);
-
-    if (oldIndex !== -1 && newIndex !== -1) {
-      const newItems = arrayMove(module.items, oldIndex, newIndex);
-      const updatedCourse = {
-        ...course,
-        assignmentModules: (course.assignmentModules || []).map(m =>
-          m.id === moduleId ? { ...m, items: newItems } : m
-        )
-      };
-      onUpdateCourse(updatedCourse);
-    }
-  };
-
-  // Handle drag end for personal items
-  const handlePersonalDragEnd = (moduleId: string) => (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    const module = (course.personalModules || []).find(m => m.id === moduleId);
-    if (!module) return;
-
-    const oldIndex = module.items.findIndex(i => i.id === active.id);
-    const newIndex = module.items.findIndex(i => i.id === over.id);
-
-    if (oldIndex !== -1 && newIndex !== -1) {
-      const newItems = arrayMove(module.items, oldIndex, newIndex);
-      const updatedCourse = {
-        ...course,
-        personalModules: (course.personalModules || []).map(m =>
-          m.id === moduleId ? { ...m, items: newItems } : m
-        )
-      };
-      onUpdateCourse(updatedCourse);
+    if (section === 'resources') {
+      const module = course.modules.find(m => m.id === moduleId);
+      if (!module) return;
+      const oldIndex = module.lectures.findIndex(l => l.id === active.id);
+      const newIndex = module.lectures.findIndex(l => l.id === over.id);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        onUpdateCourse({ ...course, modules: course.modules.map(m => m.id === moduleId ? { ...m, lectures: arrayMove(m.lectures, oldIndex, newIndex) } : m) });
+      }
+    } else {
+      const key = section === 'assignments' ? 'assignmentModules' : 'personalModules';
+      const modules = course[key] || [];
+      const module = modules.find(m => m.id === moduleId);
+      if (!module) return;
+      const oldIndex = module.items.findIndex(i => i.id === active.id);
+      const newIndex = module.items.findIndex(i => i.id === over.id);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        onUpdateCourse({ ...course, [key]: modules.map(m => m.id === moduleId ? { ...m, items: arrayMove(m.items, oldIndex, newIndex) } : m) });
+      }
     }
   };
 
@@ -323,6 +281,86 @@ export const LearningList: React.FC<LearningListProps> = ({
   // Dropdown Menu State for + button
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
   const dropdownRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+
+  // #13: Custom confirm dialog state
+  const [confirmState, setConfirmState] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    variant?: 'danger' | 'default';
+  } | null>(null);
+
+  // #11: In-course search
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // #12: Cross-chapter move
+  const [moveTarget, setMoveTarget] = useState<{
+    itemId: string;
+    sourceModuleId: string;
+    section: 'resources' | 'assignments' | 'personal';
+  } | null>(null);
+
+  // #14: Batch operations
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchSelected, setBatchSelected] = useState<Set<string>>(new Set());
+  const [batchSection, setBatchSection] = useState<'resources' | 'assignments' | 'personal' | null>(null);
+  const [batchModuleId, setBatchModuleId] = useState<string | null>(null);
+
+  const toggleBatchSelect = (id: string, section: 'resources' | 'assignments' | 'personal', moduleId: string) => {
+    if (batchSection && batchSection !== section) return; // 不允许跨 section 选择
+    if (batchModuleId && batchModuleId !== moduleId) return; // 不允许跨 module 选择
+    setBatchSection(section);
+    setBatchModuleId(moduleId);
+    setBatchSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const exitBatchMode = () => {
+    setBatchMode(false);
+    setBatchSelected(new Set());
+    setBatchSection(null);
+    setBatchModuleId(null);
+  };
+
+  const handleBatchDelete = () => {
+    if (batchSelected.size === 0 || !batchSection || !batchModuleId) return;
+    setConfirmState({
+      title: '批量删除',
+      message: `确定要删除选中的 ${batchSelected.size} 项吗？`,
+      variant: 'danger',
+      onConfirm: () => {
+        const ids = batchSelected;
+        if (batchSection === 'resources') {
+          onUpdateCourse({
+            ...course,
+            modules: course.modules.map(m =>
+              m.id === batchModuleId ? { ...m, lectures: m.lectures.filter(l => !ids.has(l.id)) } : m
+            )
+          });
+        } else if (batchSection === 'assignments') {
+          onUpdateCourse({
+            ...course,
+            assignmentModules: (course.assignmentModules || []).map(m =>
+              m.id === batchModuleId ? { ...m, items: m.items.filter(i => !ids.has(i.id)) } : m
+            )
+          });
+        } else {
+          onUpdateCourse({
+            ...course,
+            personalModules: (course.personalModules || []).map(m =>
+              m.id === batchModuleId ? { ...m, items: m.items.filter(i => !ids.has(i.id)) } : m
+            )
+          });
+        }
+        exitBatchMode();
+        setConfirmState(null);
+      },
+    });
+  };
 
   // ==================== Module Management ====================
   
@@ -401,45 +439,89 @@ export const LearningList: React.FC<LearningListProps> = ({
     setNewModuleTitle('');
   };
 
-  const handleDeleteModule = async (moduleId: string, section: 'resources' | 'assignments' | 'personal', e: React.MouseEvent) => {
+  const handleDeleteModule = (moduleId: string, section: 'resources' | 'assignments' | 'personal', e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('确定要删除该章节吗？这将同时删除章节内的所有文件。')) return;
-    
-    // 获取章节名称用于删除文件夹
-    const category = categories.find(c => c.id === course.categoryId);
-    const categoryName = category ? category.name : 'Uncategorized';
-    let moduleName = '';
-    
+    setConfirmState({
+      title: '删除章节',
+      message: '确定要删除该章节吗？这将同时删除章节内的所有文件。',
+      variant: 'danger',
+      onConfirm: async () => {
+        const category = categories.find(c => c.id === course.categoryId);
+        const categoryName = category ? category.name : 'Uncategorized';
+        let moduleName = '';
+        
+        if (section === 'resources') {
+          const module = course.modules.find(m => m.id === moduleId);
+          moduleName = module ? module.title : '';
+          onUpdateCourse({ ...course, modules: course.modules.filter(m => m.id !== moduleId) });
+        } else if (section === 'assignments') {
+          const module = (course.assignmentModules || []).find(m => m.id === moduleId);
+          moduleName = module ? module.title : '';
+          onUpdateCourse({ ...course, assignmentModules: (course.assignmentModules || []).filter(m => m.id !== moduleId) });
+        } else {
+          const module = (course.personalModules || []).find(m => m.id === moduleId);
+          moduleName = module ? module.title : '';
+          onUpdateCourse({ ...course, personalModules: (course.personalModules || []).filter(m => m.id !== moduleId) });
+        }
+        if (moduleName) await deleteModuleFolder(categoryName, course.title, section as SectionType, moduleName);
+        setConfirmState(null);
+      },
+    });
+  };
+
+  // ==================== Cross-chapter Move (#12) ====================
+
+  const handleStartMove = (itemId: string, sourceModuleId: string, section: 'resources' | 'assignments' | 'personal', e: React.MouseEvent) => {
+    e.stopPropagation();
+    setMoveTarget({ itemId, sourceModuleId, section });
+  };
+
+  const handleConfirmMove = (targetModuleId: string) => {
+    if (!moveTarget || targetModuleId === moveTarget.sourceModuleId) {
+      setMoveTarget(null);
+      return;
+    }
+    const { itemId, sourceModuleId, section } = moveTarget;
     if (section === 'resources') {
-      const module = course.modules.find(m => m.id === moduleId);
-      moduleName = module ? module.title : '';
-      const updatedCourse = {
+      const srcMod = course.modules.find(m => m.id === sourceModuleId);
+      const item = srcMod?.lectures.find(l => l.id === itemId);
+      if (!item) { setMoveTarget(null); return; }
+      onUpdateCourse({
         ...course,
-        modules: course.modules.filter(m => m.id !== moduleId)
-      };
-      onUpdateCourse(updatedCourse);
+        modules: course.modules.map(m => {
+          if (m.id === sourceModuleId) return { ...m, lectures: m.lectures.filter(l => l.id !== itemId) };
+          if (m.id === targetModuleId) return { ...m, lectures: [...m.lectures, item] };
+          return m;
+        })
+      });
     } else if (section === 'assignments') {
-      const module = (course.assignmentModules || []).find(m => m.id === moduleId);
-      moduleName = module ? module.title : '';
-      const updatedCourse = {
+      const mods = course.assignmentModules || [];
+      const srcMod = mods.find(m => m.id === sourceModuleId);
+      const item = srcMod?.items.find(i => i.id === itemId);
+      if (!item) { setMoveTarget(null); return; }
+      onUpdateCourse({
         ...course,
-        assignmentModules: (course.assignmentModules || []).filter(m => m.id !== moduleId)
-      };
-      onUpdateCourse(updatedCourse);
-    } else if (section === 'personal') {
-      const module = (course.personalModules || []).find(m => m.id === moduleId);
-      moduleName = module ? module.title : '';
-      const updatedCourse = {
+        assignmentModules: mods.map(m => {
+          if (m.id === sourceModuleId) return { ...m, items: m.items.filter(i => i.id !== itemId) };
+          if (m.id === targetModuleId) return { ...m, items: [...m.items, item] };
+          return m;
+        })
+      });
+    } else {
+      const mods = course.personalModules || [];
+      const srcMod = mods.find(m => m.id === sourceModuleId);
+      const item = srcMod?.items.find(i => i.id === itemId);
+      if (!item) { setMoveTarget(null); return; }
+      onUpdateCourse({
         ...course,
-        personalModules: (course.personalModules || []).filter(m => m.id !== moduleId)
-      };
-      onUpdateCourse(updatedCourse);
+        personalModules: mods.map(m => {
+          if (m.id === sourceModuleId) return { ...m, items: m.items.filter(i => i.id !== itemId) };
+          if (m.id === targetModuleId) return { ...m, items: [...m.items, item] };
+          return m;
+        })
+      });
     }
-    
-    // 删除本地文件夹
-    if (moduleName) {
-      await deleteModuleFolder(categoryName, course.title, section as SectionType, moduleName);
-    }
+    setMoveTarget(null);
   };
 
   // ==================== File Upload ====================
@@ -973,74 +1055,58 @@ export const LearningList: React.FC<LearningListProps> = ({
 
   // ==================== Delete Functions ====================
 
-  const handleDeleteLecture = async (moduleId: string, lectureId: string, e: React.MouseEvent) => {
+  const handleDeleteLecture = (moduleId: string, lectureId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('确定要删除该资料吗？')) return;
-    
-    // 查找要删除的 lecture，获取其文件路径
-    const module = course.modules.find(m => m.id === moduleId);
-    const lecture = module?.lectures.find(l => l.id === lectureId);
-    
-    // 删除本地文件（如果是本地文件）
-    if (lecture?.materials) {
-      await deleteResourceFile(lecture.materials);
-    }
-    
-    const updatedCourse = {
-      ...course,
-      modules: course.modules.map(m => {
-        if (m.id === moduleId) {
-          return { ...m, lectures: m.lectures.filter(l => l.id !== lectureId) };
-        }
-        return m;
-      })
-    };
-    onUpdateCourse(updatedCourse);
+    setConfirmState({
+      title: '删除资料',
+      message: '确定要删除该资料吗？',
+      variant: 'danger',
+      onConfirm: async () => {
+        const module = course.modules.find(m => m.id === moduleId);
+        const lecture = module?.lectures.find(l => l.id === lectureId);
+        if (lecture?.materials) await deleteResourceFile(lecture.materials);
+        onUpdateCourse({
+          ...course,
+          modules: course.modules.map(m =>
+            m.id === moduleId ? { ...m, lectures: m.lectures.filter(l => l.id !== lectureId) } : m
+          )
+        });
+        setConfirmState(null);
+      },
+    });
   };
 
-  const handleDeleteItem = async (moduleId: string, itemId: string, section: 'assignments' | 'personal', e: React.MouseEvent) => {
+  const handleDeleteItem = (moduleId: string, itemId: string, section: 'assignments' | 'personal', e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('确定要删除该资源吗？')) return;
-    
-    // 查找要删除的 item，获取其文件路径
-    let itemLink = '';
-    
-    if (section === 'assignments') {
-      const module = (course.assignmentModules || []).find(m => m.id === moduleId);
-      const item = module?.items.find(i => i.id === itemId);
-      itemLink = item?.link || '';
-      
-      const updatedCourse = {
-        ...course,
-        assignmentModules: (course.assignmentModules || []).map(m => {
-          if (m.id === moduleId) {
-            return { ...m, items: m.items.filter(item => item.id !== itemId) };
-          }
-          return m;
-        })
-      };
-      onUpdateCourse(updatedCourse);
-    } else {
-      const module = (course.personalModules || []).find(m => m.id === moduleId);
-      const item = module?.items.find(i => i.id === itemId);
-      itemLink = item?.link || '';
-      
-      const updatedCourse = {
-        ...course,
-        personalModules: (course.personalModules || []).map(m => {
-          if (m.id === moduleId) {
-            return { ...m, items: m.items.filter(item => item.id !== itemId) };
-          }
-          return m;
-        })
-      };
-      onUpdateCourse(updatedCourse);
-    }
-    
-    // 删除本地文件（如果是本地文件）
-    if (itemLink) {
-      await deleteResourceFile(itemLink);
-    }
+    setConfirmState({
+      title: '删除资源',
+      message: '确定要删除该资源吗？',
+      variant: 'danger',
+      onConfirm: async () => {
+        let itemLink = '';
+        if (section === 'assignments') {
+          const module = (course.assignmentModules || []).find(m => m.id === moduleId);
+          itemLink = module?.items.find(i => i.id === itemId)?.link || '';
+          onUpdateCourse({
+            ...course,
+            assignmentModules: (course.assignmentModules || []).map(m =>
+              m.id === moduleId ? { ...m, items: m.items.filter(item => item.id !== itemId) } : m
+            )
+          });
+        } else {
+          const module = (course.personalModules || []).find(m => m.id === moduleId);
+          itemLink = module?.items.find(i => i.id === itemId)?.link || '';
+          onUpdateCourse({
+            ...course,
+            personalModules: (course.personalModules || []).map(m =>
+              m.id === moduleId ? { ...m, items: m.items.filter(item => item.id !== itemId) } : m
+            )
+          });
+        }
+        if (itemLink) await deleteResourceFile(itemLink);
+        setConfirmState(null);
+      },
+    });
   };
 
   // ==================== UI Helpers ====================
@@ -1060,11 +1126,55 @@ export const LearningList: React.FC<LearningListProps> = ({
     );
   };
 
+  // #11: 搜索过滤逻辑
+  const sq = searchQuery.trim().toLowerCase();
+  const filteredModules = useMemo(() => {
+    if (!sq) return sortByTitle(course.modules);
+    return sortByTitle(course.modules).filter(m =>
+      m.title.toLowerCase().includes(sq) || m.lectures.some(l => l.title.toLowerCase().includes(sq))
+    );
+  }, [course.modules, sq]);
+  const filteredAssignmentModules = useMemo(() => {
+    const mods = course.assignmentModules || [];
+    if (!sq) return sortByTitle(mods);
+    return sortByTitle(mods).filter(m =>
+      m.title.toLowerCase().includes(sq) || m.items.some(i => i.title.toLowerCase().includes(sq))
+    );
+  }, [course.assignmentModules, sq]);
+  const filteredPersonalModules = useMemo(() => {
+    const mods = course.personalModules || [];
+    if (!sq) return sortByTitle(mods);
+    return sortByTitle(mods).filter(m =>
+      m.title.toLowerCase().includes(sq) || m.items.some(i => i.title.toLowerCase().includes(sq))
+    );
+  }, [course.personalModules, sq]);
+
   return (
     <div className="w-80 flex-shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col h-full overflow-hidden">
       <div className="p-4 border-b border-gray-200 bg-white">
         <h2 className="font-bold text-gray-800">{course.title}</h2>
         <p className="text-xs text-gray-500 mt-1">{course.description}</p>
+        <div className="mt-2 flex items-center gap-1">
+          <div className="flex-1 relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="搜索章节或资料..."
+              className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 bg-gray-50"
+            />
+          </div>
+          <button
+            onClick={() => batchMode ? exitBatchMode() : setBatchMode(true)}
+            className={`p-1.5 rounded-lg text-xs font-medium transition-colors flex-shrink-0 ${
+              batchMode ? 'bg-blue-100 text-blue-700' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
+            }`}
+            title={batchMode ? '退出批量模式' : '批量操作'}
+          >
+            <CheckCircle2 className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-2 space-y-2">
@@ -1178,7 +1288,7 @@ export const LearningList: React.FC<LearningListProps> = ({
           
           {expandedSections['resources'] && (
             <div className="">
-              {sortByTitle(course.modules).map((module) => (
+              {filteredModules.map((module) => (
                 <div key={module.id} className="border-b border-gray-100 last:border-0 group/module">
                   <div className="flex items-center justify-between hover:bg-gray-50 transition-colors pr-2">
                     <button 
@@ -1308,7 +1418,7 @@ export const LearningList: React.FC<LearningListProps> = ({
                       <DndContext
                         sensors={sensors}
                         collisionDetection={closestCenter}
-                        onDragEnd={handleLectureDragEnd(module.id)}
+                        onDragEnd={handleDragEnd(module.id, 'resources')}
                       >
                         <SortableContext
                           items={module.lectures.map(l => l.id)}
@@ -1323,9 +1433,14 @@ export const LearningList: React.FC<LearningListProps> = ({
                                   className={`px-2 py-1.5 flex items-center justify-between cursor-pointer transition-colors
                                     ${isActive ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}
                                   `}
-                                  onClick={() => onSelectItem('note', lec.id)}
+                                  onClick={() => batchMode ? toggleBatchSelect(lec.id, 'resources', module.id) : onSelectItem('note', lec.id)}
                                 >
                                   <div className="flex items-center gap-2 overflow-hidden">
+                                    {batchMode && (
+                                      <span className="flex-shrink-0">
+                                        {batchSelected.has(lec.id) ? <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" /> : <Circle className="w-3.5 h-3.5 text-gray-300" />}
+                                      </span>
+                                    )}
                                     {lec.icon ? (
                                       renderIcon(lec.icon)
                                     ) : lec.materials?.startsWith('http') ? (
@@ -1343,6 +1458,15 @@ export const LearningList: React.FC<LearningListProps> = ({
                                         title="修改文件名"
                                       >
                                         <Edit2 className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                    {course.modules.length > 1 && (
+                                      <button
+                                        onClick={(e) => handleStartMove(lec.id, module.id, 'resources', e)}
+                                        className="p-1 hover:text-orange-500 transition-colors"
+                                        title="移动到其它章节"
+                                      >
+                                        <ArrowRightLeft className="w-3 h-3" />
                                       </button>
                                     )}
                                     <button
@@ -1423,7 +1547,7 @@ export const LearningList: React.FC<LearningListProps> = ({
               {(course.assignmentModules || []).length === 0 ? (
                 <div className="text-xs text-gray-400 text-center py-4">暂无章节，点击 + 添加</div>
               ) : (
-                sortByTitle(course.assignmentModules || []).map((module) => (
+                filteredAssignmentModules.map((module) => (
                   <div key={module.id} className="border-b border-gray-100 last:border-0 group/module">
                     <div className="flex items-center justify-between hover:bg-gray-50 transition-colors pr-2">
                       <button 
@@ -1554,7 +1678,7 @@ export const LearningList: React.FC<LearningListProps> = ({
                           <DndContext
                             sensors={sensors}
                             collisionDetection={closestCenter}
-                            onDragEnd={handleAssignmentDragEnd(module.id)}
+                            onDragEnd={handleDragEnd(module.id, 'assignments')}
                           >
                             <SortableContext
                               items={module.items.map(i => i.id)}
@@ -1565,16 +1689,22 @@ export const LearningList: React.FC<LearningListProps> = ({
                                 return (
                                   <SortableResourceItem key={item.id} id={item.id}>
                                     <div
-                                      onClick={() => onSelectItem('assignment', item.link)}
+                                      onClick={() => batchMode ? toggleBatchSelect(item.id, 'assignments', module.id) : onSelectItem('assignment', item.link)}
                                       className="px-2 py-1.5 flex items-center justify-between cursor-pointer transition-colors text-gray-600 hover:bg-gray-100"
                                     >
                                       <div className="flex items-center gap-2 overflow-hidden flex-1">
-                                        <button
-                                          onClick={(e) => { e.stopPropagation(); onToggleProgress(item.id); }}
-                                          className="flex-shrink-0 text-gray-300 hover:text-green-500 transition-colors"
-                                        >
-                                          {progress[item.id] ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> : <Circle className="w-3.5 h-3.5" />}
-                                        </button>
+                                        {batchMode ? (
+                                          <span className="flex-shrink-0">
+                                            {batchSelected.has(item.id) ? <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" /> : <Circle className="w-3.5 h-3.5 text-gray-300" />}
+                                          </span>
+                                        ) : (
+                                          <button
+                                            onClick={(e) => { e.stopPropagation(); onToggleProgress(item.id); }}
+                                            className="flex-shrink-0 text-gray-300 hover:text-green-500 transition-colors"
+                                          >
+                                            {progress[item.id] ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> : <Circle className="w-3.5 h-3.5" />}
+                                          </button>
+                                        )}
                                         {item.icon ? (
                                           renderIcon(item.icon)
                                         ) : item.link.startsWith('http') ? (
@@ -1592,6 +1722,15 @@ export const LearningList: React.FC<LearningListProps> = ({
                                             title="修改文件名"
                                           >
                                             <Edit2 className="w-3 h-3" />
+                                          </button>
+                                        )}
+                                        {(course.assignmentModules || []).length > 1 && (
+                                          <button
+                                            onClick={(e) => handleStartMove(item.id, module.id, 'assignments', e)}
+                                            className="p-1 hover:text-orange-500 transition-colors"
+                                            title="移动到其它章节"
+                                          >
+                                            <ArrowRightLeft className="w-3 h-3" />
                                           </button>
                                         )}
                                         <button
@@ -1674,7 +1813,7 @@ export const LearningList: React.FC<LearningListProps> = ({
               {(course.personalModules || []).length === 0 ? (
                 <div className="text-xs text-gray-400 text-center py-4">暂无章节，点击 + 添加</div>
               ) : (
-                sortByTitle(course.personalModules || []).map((module) => (
+                filteredPersonalModules.map((module) => (
                   <div key={module.id} className="border-b border-gray-100 last:border-0 group/module">
                     <div className="flex items-center justify-between hover:bg-gray-50 transition-colors pr-2">
                       <button 
@@ -1805,7 +1944,7 @@ export const LearningList: React.FC<LearningListProps> = ({
                           <DndContext
                             sensors={sensors}
                             collisionDetection={closestCenter}
-                            onDragEnd={handlePersonalDragEnd(module.id)}
+                            onDragEnd={handleDragEnd(module.id, 'personal')}
                           >
                             <SortableContext
                               items={module.items.map(i => i.id)}
@@ -1816,10 +1955,15 @@ export const LearningList: React.FC<LearningListProps> = ({
                                 return (
                                   <SortableResourceItem key={item.id} id={item.id}>
                                     <div
-                                      onClick={() => onSelectItem('personal-resource', item.link)}
+                                      onClick={() => batchMode ? toggleBatchSelect(item.id, 'personal', module.id) : onSelectItem('personal-resource', item.link)}
                                       className="px-2 py-1.5 flex items-center justify-between cursor-pointer transition-colors text-gray-600 hover:bg-gray-100"
                                     >
                                       <div className="flex items-center gap-2 overflow-hidden flex-1">
+                                        {batchMode && (
+                                          <span className="flex-shrink-0">
+                                            {batchSelected.has(item.id) ? <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" /> : <Circle className="w-3.5 h-3.5 text-gray-300" />}
+                                          </span>
+                                        )}
                                         {item.icon ? (
                                           renderIcon(item.icon)
                                         ) : item.link.startsWith('http') ? (
@@ -1837,6 +1981,15 @@ export const LearningList: React.FC<LearningListProps> = ({
                                             title="修改文件名"
                                           >
                                             <Edit2 className="w-3 h-3" />
+                                          </button>
+                                        )}
+                                        {(course.personalModules || []).length > 1 && (
+                                          <button
+                                            onClick={(e) => handleStartMove(item.id, module.id, 'personal', e)}
+                                            className="p-1 hover:text-orange-500 transition-colors"
+                                            title="移动到其它章节"
+                                          >
+                                            <ArrowRightLeft className="w-3 h-3" />
                                           </button>
                                         )}
                                         <button
@@ -1865,12 +2018,69 @@ export const LearningList: React.FC<LearningListProps> = ({
 
       </div>
 
+      {/* Batch Action Bar (#14) */}
+      {batchMode && batchSelected.size > 0 && (
+        <div className="border-t border-gray-200 bg-white px-3 py-2 flex items-center justify-between">
+          <span className="text-xs text-gray-600">已选 <strong>{batchSelected.size}</strong> 项</span>
+          <div className="flex items-center gap-2">
+            <button onClick={exitBatchMode} className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">取消</button>
+            <button onClick={handleBatchDelete} className="text-xs bg-red-500 text-white px-3 py-1.5 rounded-lg hover:bg-red-600 transition-colors flex items-center gap-1">
+              <Trash2 className="w-3 h-3" />
+              删除
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Move Target Picker (#12) */}
+      {moveTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setMoveTarget(null)}>
+          <div className="bg-white rounded-xl shadow-2xl w-80 max-h-96 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+              <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                <ArrowRightLeft className="w-4 h-4 text-orange-500" />
+                移动到章节
+              </h3>
+              <p className="text-xs text-gray-500 mt-0.5">选择目标章节</p>
+            </div>
+            <div className="overflow-y-auto max-h-72 p-2 space-y-1">
+              {(moveTarget.section === 'resources' ? course.modules : moveTarget.section === 'assignments' ? (course.assignmentModules || []) : (course.personalModules || []))
+                .filter(m => m.id !== moveTarget.sourceModuleId)
+                .map(m => (
+                  <button
+                    key={m.id}
+                    onClick={() => handleConfirmMove(m.id)}
+                    className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-blue-50 hover:text-blue-700 transition-colors flex items-center gap-2"
+                  >
+                    <Folder className="w-4 h-4 text-gray-400" />
+                    {m.title}
+                  </button>
+                ))
+              }
+            </div>
+            <div className="px-4 py-2 border-t border-gray-100 flex justify-end">
+              <button onClick={() => setMoveTarget(null)} className="text-xs text-gray-500 hover:text-gray-700 px-3 py-1.5">取消</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MD Modal */}
       <LearningMDModal
         isOpen={isMDModalOpen}
         onClose={() => setIsMDModalOpen(false)}
         onSave={handleCreateMD}
         moduleName={mdModalModuleName}
+      />
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={confirmState !== null}
+        title={confirmState?.title || ''}
+        message={confirmState?.message || ''}
+        variant={confirmState?.variant as 'danger' | 'default' || 'danger'}
+        onConfirm={() => confirmState?.onConfirm?.()}
+        onCancel={() => setConfirmState(null)}
       />
 
       {/* Rename Modal */}

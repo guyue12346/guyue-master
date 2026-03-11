@@ -2112,12 +2112,7 @@ const App: React.FC = () => {
 
             {(hasExcalidrawMounted || appMode === 'excalidraw') && (
               <div className={appMode === 'excalidraw' ? 'h-full' : 'hidden'}>
-                <ExcalidrawEditor
-                  imageRecords={imageRecords}
-                  onUpdateImageRecords={setImageRecords}
-                  imageHostingConfig={imageHostingConfig}
-                  imageCategories={(categoriesMap['image-hosting'] || DEFAULT_CATEGORIES).map(c => c.name)}
-                />
+                <ExcalidrawEditor />
               </div>
             )}
 

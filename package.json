@@ -14,7 +14,9 @@
     "electron:dev": "concurrently \"cross-env NODE_ENV=development npm run dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .\"",
     "electron:build": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder",
     "electron:build:mac": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder --mac",
-    "electron:build:dmg": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder --mac dmg"
+    "electron:build:dmg": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder --mac dmg",
+    "electron:build:win": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder --win",
+    "electron:build:linux": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder --linux"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -99,6 +101,32 @@
         "width": 540,
         "height": 380
       }
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${arch}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Guyue Master"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        }
+      ],
+      "category": "Utility",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "extraMetadata": {
       "main": "dist-electron/main.js"

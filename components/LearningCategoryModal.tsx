@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { X, Check, Brain, Cpu, Server, Code, Wrench, BookOpen, GraduationCap, Globe, Database, Cloud, Terminal, Layout, Layers, Box, Circle, Disc, Rocket, Lightbulb, Target, Puzzle, Microscope, FlaskConical, Atom, Network, FileCode, GitBranch, Zap, Shield, Lock, Key, Monitor, Smartphone, Wifi, Radio, Sparkles, Star } from 'lucide-react';
+import { X, Check } from 'lucide-react';
 import { CourseCategory } from './LearningData';
+import { AVAILABLE_ICONS, AVAILABLE_COLORS } from './LearningConstants';
 
 interface LearningCategoryModalProps {
   isOpen: boolean;
@@ -9,59 +10,6 @@ interface LearningCategoryModalProps {
   initialData?: CourseCategory;
   isEditing: boolean;
 }
-
-const AVAILABLE_ICONS = [
-  { name: 'Brain', icon: Brain },
-  { name: 'Cpu', icon: Cpu },
-  { name: 'Server', icon: Server },
-  { name: 'Code', icon: Code },
-  { name: 'Wrench', icon: Wrench },
-  { name: 'BookOpen', icon: BookOpen },
-  { name: 'GraduationCap', icon: GraduationCap },
-  { name: 'Globe', icon: Globe },
-  { name: 'Database', icon: Database },
-  { name: 'Cloud', icon: Cloud },
-  { name: 'Terminal', icon: Terminal },
-  { name: 'Layout', icon: Layout },
-  { name: 'Layers', icon: Layers },
-  { name: 'Box', icon: Box },
-  { name: 'Circle', icon: Circle },
-  { name: 'Disc', icon: Disc },
-  // New icons
-  { name: 'Rocket', icon: Rocket },
-  { name: 'Lightbulb', icon: Lightbulb },
-  { name: 'Target', icon: Target },
-  { name: 'Puzzle', icon: Puzzle },
-  { name: 'Microscope', icon: Microscope },
-  { name: 'FlaskConical', icon: FlaskConical },
-  { name: 'Atom', icon: Atom },
-  { name: 'Network', icon: Network },
-  { name: 'FileCode', icon: FileCode },
-  { name: 'GitBranch', icon: GitBranch },
-  { name: 'Zap', icon: Zap },
-  { name: 'Shield', icon: Shield },
-  { name: 'Lock', icon: Lock },
-  { name: 'Key', icon: Key },
-  { name: 'Monitor', icon: Monitor },
-  { name: 'Smartphone', icon: Smartphone },
-  { name: 'Wifi', icon: Wifi },
-  { name: 'Radio', icon: Radio },
-  { name: 'Sparkles', icon: Sparkles },
-  { name: 'Star', icon: Star },
-];
-
-const AVAILABLE_COLORS = [
-  { name: 'purple', bg: 'bg-purple-100', text: 'text-purple-600', border: 'border-purple-200' },
-  { name: 'blue', bg: 'bg-blue-100', text: 'text-blue-600', border: 'border-blue-200' },
-  { name: 'green', bg: 'bg-green-100', text: 'text-green-600', border: 'border-green-200' },
-  { name: 'orange', bg: 'bg-orange-100', text: 'text-orange-600', border: 'border-orange-200' },
-  { name: 'cyan', bg: 'bg-cyan-100', text: 'text-cyan-600', border: 'border-cyan-200' },
-  { name: 'gray', bg: 'bg-gray-100', text: 'text-gray-600', border: 'border-gray-200' },
-  { name: 'red', bg: 'bg-red-100', text: 'text-red-600', border: 'border-red-200' },
-  { name: 'yellow', bg: 'bg-yellow-100', text: 'text-yellow-600', border: 'border-yellow-200' },
-  { name: 'pink', bg: 'bg-pink-100', text: 'text-pink-600', border: 'border-pink-200' },
-  { name: 'indigo', bg: 'bg-indigo-100', text: 'text-indigo-600', border: 'border-indigo-200' },
-];
 
 export const LearningCategoryModal: React.FC<LearningCategoryModalProps> = ({
   isOpen,

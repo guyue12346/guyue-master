@@ -96,7 +96,8 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
 
     onUpdateRecords([newRecord, ...records]);
     setIsAddLinkModalOpen(false);
-    showToast('链接已添加');
+    setToastMessage('链接已添加');
+    setTimeout(() => setToastMessage(null), 2000);
   };
 
   const handleEditRecord = (record: ImageRecord) => {
@@ -117,7 +118,8 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
 
     onUpdateRecords(updatedRecords);
     setIsEditModalOpen(false);
-    showToast('记录已更新');
+    setToastMessage('记录已更新');
+    setTimeout(() => setToastMessage(null), 2000);
   };
 
   const confirmUpload = async () => {
