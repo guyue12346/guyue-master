@@ -1066,8 +1066,21 @@ const App: React.FC = () => {
   const activeCategories = useMemo(() => {
     if (appMode === 'notes') return noteCategories;
     if (appMode === 'files') return categoriesMap['files'] || DEFAULT_CATEGORIES;
+    if (appMode === 'prompts') {
+      const base = categoriesMap['prompts'] || DEFAULT_CATEGORIES;
+      const baseNames = new Set(base.map(c => c.name));
+      // Always keep 导入 as a permanent category
+      const importCat = !baseNames.has('导入')
+        ? [{ id: 'import', name: '导入', icon: 'Download' }]
+        : [];
+      const dataCategories = Array.from(new Set(prompts.map(p => p.category).filter(Boolean))) as string[];
+      const extra = dataCategories
+        .filter(name => !baseNames.has(name) && name !== '导入')
+        .map(name => ({ id: name.toLowerCase().replace(/\s+/g, '-'), name, icon: 'Tag' }));
+      return [...base, ...importCat, ...extra];
+    }
     return categoriesMap[appMode] || DEFAULT_CATEGORIES;
-  }, [appMode, noteCategories, categoriesMap]);
+  }, [appMode, noteCategories, categoriesMap, prompts]);
 
   // Derived State: Filtered Items
   const filteredNotes = useMemo(() => {
@@ -1227,7 +1240,7 @@ const App: React.FC = () => {
       case 'api': return '添加API';
       case 'todo': return '添加待办';
       case 'files': return '添加文件';
-      case 'prompts': return '添加Prompt';
+      case 'prompts': return '新建 Skill';
       case 'markdown': return '添加Markdown笔记';
       case 'image-hosting': return '上传图片';
       default: return '添加';
@@ -1239,7 +1252,7 @@ const App: React.FC = () => {
     if (appMode === 'api') return '搜索 API...';
     if (appMode === 'todo') return '搜索任务...';
     if (appMode === 'files') return '搜索文件...';
-    if (appMode === 'prompts') return '搜索 Prompt...';
+    if (appMode === 'prompts') return '搜索 Skills...';
     if (appMode === 'files') return '搜索文件...';
     if (appMode === 'markdown') return '搜索笔记...';
     if (appMode === 'browser') return '搜索网页...';
@@ -1630,6 +1643,15 @@ const App: React.FC = () => {
 
   const handleDeletePrompt = (id: string) => {
     setPrompts(prompts.filter(p => p.id !== id));
+  };
+
+  const handleDeleteManyPrompts = (ids: string[]) => {
+    const idSet = new Set(ids);
+    setPrompts(prev => prev.filter(p => !idSet.has(p.id)));
+  };
+
+  const handleImportSkills = (newSkills: PromptRecord[]) => {
+    setPrompts(prev => [...newSkills, ...prev]);
   };
 
   const handleEditPrompt = (prompt: PromptRecord) => {
@@ -2052,7 +2074,7 @@ const App: React.FC = () => {
                )
             )}
 
-            {appMode === 'prompts' && <PromptList prompts={filteredPrompts} onDelete={handleDeletePrompt} onEdit={handleEditPrompt} />}
+            {appMode === 'prompts' && <PromptList prompts={filteredPrompts} onDelete={handleDeletePrompt} onDeleteMany={handleDeleteManyPrompts} onEdit={handleEditPrompt} onImport={handleImportSkills} />}
             
             {appMode === 'image-hosting' && (
               <ImageHosting 

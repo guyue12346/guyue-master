@@ -99,7 +99,7 @@ export const NavRail: React.FC<NavRailProps> = ({
           if (module.id === 'api') label = 'APIManager';
           if (module.id === 'files') label = 'FileManager';
           if (module.id === 'notes') label = 'NoteMaster';
-          if (module.id === 'prompts') label = 'PromptLab';
+          if (module.id === 'prompts') label = 'Skills';
 
           return (
             <NavItem 

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   MessageSquarePlus, Send, Settings2, Trash2, StopCircle, Copy, Check,
   ChevronDown, Bot, User, Sparkles, AlertCircle, Loader2, Plus, X,
-  PanelLeftClose, PanelLeftOpen, RotateCcw, Download, Globe, Columns, Square, Zap
+  PanelLeftClose, PanelLeftOpen, RotateCcw, Download, Globe, Columns, Square, Zap, Wand2, Search
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -27,6 +27,7 @@ import {
   createNewConversation,
 } from '../services/chatService';
 import { Terminal as TerminalComponent } from './Terminal';
+import { PromptRecord } from '../types';
 
 interface ChatManagerProps {
   compact?: boolean;
@@ -520,6 +521,165 @@ const SettingsPanel: React.FC<{
   );
 };
 
+// ==================== System Prompt Panel ====================
+
+const SKILLS_STORAGE_KEY = 'linkmaster_prompts_v1';
+
+const SystemPromptPanel: React.FC<{
+  conversation: ChatConversation | undefined;
+  globalPrompt: string;
+  onApply: (prompt: string) => void;
+  onClose: () => void;
+}> = ({ conversation, globalPrompt, onApply, onClose }) => {
+  const [promptText, setPromptText] = useState(
+    conversation?.systemPrompt !== undefined ? conversation.systemPrompt : (globalPrompt || '')
+  );
+  const [skills, setSkills] = useState<PromptRecord[]>([]);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(SKILLS_STORAGE_KEY);
+      if (stored) setSkills(JSON.parse(stored));
+    } catch {}
+  }, []);
+
+  const filtered = skills.filter(s =>
+    s.title.toLowerCase().includes(search.toLowerCase()) ||
+    s.content.toLowerCase().includes(search.toLowerCase()) ||
+    (s.description || '').toLowerCase().includes(search.toLowerCase())
+  );
+
+  const hasCustomPrompt = conversation?.systemPrompt !== undefined;
+  const isUsingCustom = hasCustomPrompt && conversation!.systemPrompt !== '';
+
+  return (
+    <div className="absolute inset-0 bg-white z-50 flex flex-col">
+      {/* Header */}
+      <div className="h-14 border-b border-gray-200 flex items-center justify-between px-4" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+        <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <div className="w-7 h-7 rounded-lg bg-purple-100 flex items-center justify-center">
+            <Wand2 className="w-4 h-4 text-purple-600" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-gray-800 text-sm leading-tight">对话预设词</h3>
+            <p className="text-[10px] text-gray-400 leading-tight">
+              {isUsingCustom ? '🟣 已启用自定义预设' : hasCustomPrompt ? '⚪ 已清除预设（无系统提示）' : '🔵 使用全局默认'}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          className="p-2 hover:bg-gray-100 rounded-lg"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
+          <X className="w-5 h-5 text-gray-500" />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        {/* Prompt editor */}
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-sm font-medium text-gray-700">预设词内容</label>
+            {globalPrompt && (
+              <button
+                onClick={() => setPromptText(globalPrompt)}
+                className="text-xs text-blue-500 hover:text-blue-700"
+              >
+                填入全局默认
+              </button>
+            )}
+          </div>
+          <textarea
+            value={promptText}
+            onChange={e => setPromptText(e.target.value)}
+            placeholder={globalPrompt ? `全局默认: ${globalPrompt.substring(0, 60)}...` : '输入系统预设词，例如：你是一位专业的前端工程师，请用简洁的技术语言回答...'}
+            rows={6}
+            className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-purple-300 focus:border-purple-400 outline-none resize-none leading-relaxed text-gray-800 placeholder-gray-300"
+          />
+          <p className="text-[11px] text-gray-400 mt-1">此预设词仅对当前对话生效，不影响其他对话和全局设置。</p>
+        </div>
+
+        {/* Skills picker */}
+        <div>
+          <label className="text-sm font-medium text-gray-700 mb-2 block">从 Skills 库选择</label>
+          {skills.length === 0 ? (
+            <div className="text-center py-6 text-gray-300 text-sm border border-dashed border-gray-200 rounded-xl">
+              <Wand2 className="w-6 h-6 mx-auto mb-1.5 opacity-40" />
+              Skills 库为空，请先在 Skills 模块添加内容
+            </div>
+          ) : (
+            <>
+              <div className="relative mb-2">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="搜索 Skills..."
+                  className="w-full pl-8 pr-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+                />
+              </div>
+              <div className="space-y-1.5 max-h-52 overflow-y-auto pr-0.5">
+                {filtered.length === 0 ? (
+                  <p className="text-sm text-gray-400 text-center py-4">没有匹配的 Skill</p>
+                ) : (
+                  filtered.map(skill => (
+                    <button
+                      key={skill.id}
+                      onClick={() => setPromptText(skill.content)}
+                      className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all group ${
+                        promptText === skill.content
+                          ? 'border-purple-300 bg-purple-50'
+                          : 'border-gray-100 hover:border-purple-200 hover:bg-purple-50/50'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-medium truncate ${promptText === skill.content ? 'text-purple-700' : 'text-gray-800 group-hover:text-purple-600'}`}>
+                            {skill.title}
+                          </p>
+                          {skill.description && (
+                            <p className="text-xs text-gray-400 truncate mt-0.5">{skill.description}</p>
+                          )}
+                        </div>
+                        {skill.category && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded-full flex-shrink-0">
+                            {skill.category}
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="p-4 border-t border-gray-100 flex gap-2.5">
+        <button
+          onClick={() => { onApply('__RESET__'); onClose(); }}
+          className="px-4 py-2 border border-gray-200 text-gray-500 rounded-xl hover:bg-gray-50 text-sm transition-colors"
+          title="恢复使用全局默认系统提示词"
+        >
+          恢复默认
+        </button>
+        <button
+          onClick={() => { onApply(promptText); onClose(); }}
+          className="flex-1 py-2 font-medium text-sm rounded-xl text-white transition-colors"
+          style={{ background: 'linear-gradient(135deg, #7c3aed 0%, #9333ea 100%)' }}
+        >
+          应用到此对话
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // ==================== Main ChatManager Component ====================
 
 export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => {
@@ -534,6 +694,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
   const [error, setError] = useState<string | null>(null);
   
   const [showSettings, setShowSettings] = useState(false);
+  const [showPromptPanel, setShowPromptPanel] = useState(false);
   const [showSidebar, setShowSidebar] = useState(() => !compact);
   const [layoutMode, setLayoutMode] = useState<'single' | 'split'>('single'); // single or split view
   const [showTerminal, setShowTerminal] = useState(false); // show terminal pane
@@ -602,6 +763,15 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
     setError(null);
   };
 
+  // Handle set conversation-level system prompt
+  const handleSetConversationPrompt = (prompt: string) => {
+    setConversations(prev => prev.map(c =>
+      c.id === activeConversationId
+        ? { ...c, systemPrompt: prompt === '__RESET__' ? undefined : prompt }
+        : c
+    ));
+  };
+
   // Handle delete conversation
   const handleDeleteConversation = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -649,9 +819,12 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
     setIsStreaming(true);
     setStreamingContent('');
 
-    // Prepare messages for API (include system prompt)
-    const apiMessages: ChatMessage[] = config.systemPrompt 
-      ? [{ id: 'system', role: 'system', content: config.systemPrompt, timestamp: 0 }, ...updatedMessages]
+    // Prepare messages for API (conversation prompt > global prompt)
+    const effectiveSystemPrompt = conv!.systemPrompt !== undefined
+      ? conv!.systemPrompt
+      : (config.systemPrompt || '');
+    const apiMessages: ChatMessage[] = effectiveSystemPrompt
+      ? [{ id: 'system', role: 'system', content: effectiveSystemPrompt, timestamp: 0 }, ...updatedMessages]
       : updatedMessages;
 
     try {
@@ -874,6 +1047,21 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
                 <div className="px-2.5 py-1 bg-purple-50 text-purple-600 rounded-full text-[11px] font-medium border border-purple-100 max-w-[160px] truncate">
                   {config.model.split('/').pop() || config.model}
                 </div>
+                {/* Per-conversation System Prompt */}
+                <button
+                  onClick={() => setShowPromptPanel(true)}
+                  className={`p-1.5 rounded-lg transition-colors relative ${
+                    activeConversation?.systemPrompt !== undefined
+                      ? 'bg-purple-100 text-purple-600 hover:bg-purple-200'
+                      : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                  }`}
+                  title={activeConversation?.systemPrompt !== undefined ? '已设置对话预设词（点击编辑）' : '为此对话设置预设词'}
+                >
+                  <Wand2 className="w-4 h-4" />
+                  {activeConversation?.systemPrompt !== undefined && activeConversation.systemPrompt !== '' && (
+                    <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-purple-500 border border-white" />
+                  )}
+                </button>
                 <button
                   onClick={() => setLayoutMode(layoutMode === 'single' ? 'split' : 'single')}
                   className={`p-1.5 rounded-lg transition-colors ${
@@ -1040,6 +1228,16 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
           )}
         </div>
       </div>
+
+      {/* System Prompt Panel */}
+      {showPromptPanel && (
+        <SystemPromptPanel
+          conversation={activeConversation}
+          globalPrompt={config.systemPrompt || ''}
+          onApply={handleSetConversationPrompt}
+          onClose={() => setShowPromptPanel(false)}
+        />
+      )}
 
       {/* Settings Panel */}
       {showSettings && (

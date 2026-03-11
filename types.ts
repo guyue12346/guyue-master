@@ -67,12 +67,25 @@ export interface FileRecord {
 export interface PromptRecord {
   id: string;
   title: string;
-  content: string;
+  content: string;           // Markdown supported
+  description?: string;      // 简短描述（新增）
   tags: string[];
   category: string;
-  note: string;
+  note: string;              // 保留向后兼容
+  author?: string;           // 来源作者（新增）
+  source?: string;           // 来源 URL（新增）
   createdAt: number;
   updatedAt: number;
+}
+
+/** 可导入/导出的 Skills 包格式 */
+export interface SkillPack {
+  name: string;
+  description?: string;
+  author?: string;
+  version?: string;
+  sourceUrl?: string;
+  skills: Array<Omit<PromptRecord, 'id' | 'createdAt' | 'updatedAt'>>;
 }
 
 export interface MarkdownNote {
@@ -133,7 +146,7 @@ export const DEFAULT_MODULE_CONFIG: ModuleConfig[] = [
   { id: 'api', name: 'API管理', enabled: true, priority: 2, icon: 'Webhook', shortcut: 'Tab+3' },
   { id: 'todo', name: '待办事项', enabled: true, priority: 3, icon: 'ListTodo', shortcut: 'Tab+4' },
   { id: 'files', name: '文件管理', enabled: true, priority: 4, icon: 'FolderOpen', shortcut: 'Tab+5' },
-  { id: 'prompts', name: 'Prompt管理', enabled: true, priority: 5, icon: 'Sparkles', shortcut: 'Tab+6' },
+  { id: 'prompts', name: 'Skills', enabled: true, priority: 5, icon: 'Sparkles', shortcut: 'Tab+6' },
   { id: 'terminal', name: '本地终端', enabled: true, priority: 6, icon: 'Command', shortcut: 'Tab+0' },
   { id: 'browser', name: '内置浏览器', enabled: true, priority: 7, icon: 'Globe', shortcut: 'Tab+B' },
   { id: 'leetcode', name: 'Code', enabled: true, priority: 8, icon: 'Code2', shortcut: 'Tab+L' },

@@ -116,7 +116,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       case 'api': return 'APIManager';
       case 'todo': return 'TodoMaster';
       case 'files': return 'FileManager';
-      case 'prompts': return 'PromptLab';
+      case 'prompts': return 'Skills';
       case 'renderer': return 'Reader';
       case 'image-hosting': return 'ImageHost';
       default: return 'LinkMaster';

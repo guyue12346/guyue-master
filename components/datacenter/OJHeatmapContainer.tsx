@@ -60,50 +60,6 @@ const DEFAULT_SITES: OJSite[] = [
 ];
 
 // 生成 LeetCode 初始数据（基于爬取的统计：简单20、中等82、困难9）
-const generateInitialSubmissions = (): OJSubmission[] => {
-  const submissions: OJSubmission[] = [];
-  const today = formatDate(new Date());
-  const baseTimestamp = Date.now();
-
-  // LeetCode 简单题 20 道
-  for (let i = 0; i < 20; i++) {
-    submissions.push({
-      id: `init_lc_easy_${i}`,
-      siteId: 'leetcode',
-      categoryId: 'easy',
-      problemId: `E${i + 1}`,
-      timestamp: baseTimestamp - i * 1000,
-      date: today,
-    });
-  }
-
-  // LeetCode 中等题 82 道
-  for (let i = 0; i < 82; i++) {
-    submissions.push({
-      id: `init_lc_medium_${i}`,
-      siteId: 'leetcode',
-      categoryId: 'medium',
-      problemId: `M${i + 1}`,
-      timestamp: baseTimestamp - (20 + i) * 1000,
-      date: today,
-    });
-  }
-
-  // LeetCode 困难题 9 道
-  for (let i = 0; i < 9; i++) {
-    submissions.push({
-      id: `init_lc_hard_${i}`,
-      siteId: 'leetcode',
-      categoryId: 'hard',
-      problemId: `H${i + 1}`,
-      timestamp: baseTimestamp - (102 + i) * 1000,
-      date: today,
-    });
-  }
-
-  return submissions;
-};
-
 export const OJHeatmapContainer: React.FC<OJHeatmapContainerProps> = ({
   data,
   onUpdateData,
@@ -126,10 +82,10 @@ export const OJHeatmapContainer: React.FC<OJHeatmapContainerProps> = ({
   // 初始化数据（如果没有网站则使用默认网站和初始数据，或者补充现有网站的分类）
   useEffect(() => {
     if (data.sites.length === 0 && data.submissions.length === 0) {
-      // 首次使用：加载默认网站和 LeetCode 初始数据
+      // 首次使用：加载默认网站配置，提交记录为空
       onUpdateData({
         sites: DEFAULT_SITES,
-        submissions: generateInitialSubmissions(),
+        submissions: [],
       });
     } else if (data.sites.length === 0) {
       // 只有提交记录没有网站配置
