@@ -51,7 +51,11 @@ export const TodoList: React.FC<TodoListProps> = ({ todos, onToggle, onDelete, o
   };
 
   const TodoItemCard = ({ todo }: { todo: TodoItem }) => {
-    const isOverdue = !todo.isCompleted && todo.dueDate && todo.dueDate < now;
+    const isOverdue = !todo.isCompleted && (
+      (todo.timeType === 'range' && todo.timeEnd && todo.timeEnd < now) ||
+      (todo.timeType === 'point' && todo.dueDate && todo.dueDate < now) ||
+      (!todo.timeType && todo.dueDate && todo.dueDate < now)
+    );
     const isExpanded = expandedIds.has(todo.id);
     const hasExtra = !!(todo.description || (todo.subtasks && todo.subtasks.length > 0));
     const subtasks = todo.subtasks || [];
@@ -99,7 +103,34 @@ export const TodoList: React.FC<TodoListProps> = ({ todos, onToggle, onDelete, o
                 {todo.category}
               </span>
 
-              {todo.dueDate && (
+              {/* Time display */}
+              {todo.timeType === 'point' && todo.dueDate && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded border flex items-center gap-1 font-medium
+                  ${isOverdue ? 'text-red-600 bg-red-50 border-red-100' : 'text-gray-500 bg-gray-50 border-gray-100'}
+                `}>
+                  <Clock className="w-3 h-3" />
+                  {new Date(todo.dueDate).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}{' '}
+                  {new Date(todo.dueDate).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                  {isOverdue && ' (已过期)'}
+                </span>
+              )}
+              {todo.timeType === 'range' && todo.timeStart && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded border flex items-center gap-1 font-medium
+                  ${isOverdue ? 'text-red-600 bg-red-50 border-red-100' : 'text-blue-600 bg-blue-50 border-blue-100'}
+                `}>
+                  <Clock className="w-3 h-3" />
+                  {new Date(todo.timeStart).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}{' '}
+                  {new Date(todo.timeStart).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                  {' — '}
+                  {todo.timeEnd ? (
+                    new Date(todo.timeStart).toDateString() === new Date(todo.timeEnd).toDateString()
+                      ? new Date(todo.timeEnd).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+                      : `${new Date(todo.timeEnd).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })} ${new Date(todo.timeEnd).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`
+                  ) : '?'}
+                  {isOverdue && ' (已过期)'}
+                </span>
+              )}
+              {!todo.timeType && todo.dueDate && (
                 <span className={`text-[10px] px-1.5 py-0.5 rounded border flex items-center gap-1 font-medium
                   ${isOverdue ? 'text-red-600 bg-red-50 border-red-100' : 'text-gray-500 bg-gray-50 border-gray-100'}
                 `}>

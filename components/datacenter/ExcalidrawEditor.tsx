@@ -324,7 +324,7 @@ const ExportToHostingModal: React.FC<{
 }> = ({ isOpen, onClose, onExport, isUploading, defaultName, availableCategories }) => {
   const [name, setName] = useState(defaultName);
   const [format, setFormat] = useState<'png' | 'svg'>('png');
-  const [category, setCategory] = useState('绘图');
+  const [category, setCategory] = useState('');
   const [customCategory, setCustomCategory] = useState('');
   const [isCustom, setIsCustom] = useState(false);
 
@@ -332,24 +332,22 @@ const ExportToHostingModal: React.FC<{
     if (isOpen) {
       setName(defaultName);
       setFormat('png');
-      // 优先使用已有分类中的"绘图"，没有则用第一个，或允许新建
-      if (availableCategories.includes('绘图')) {
-        setCategory('绘图');
-        setIsCustom(false);
-      } else if (availableCategories.length > 0) {
+      setCustomCategory('');
+      if (availableCategories.length > 0) {
         setCategory(availableCategories[0]);
         setIsCustom(false);
       } else {
-        setCategory('绘图');
-        setIsCustom(false);
+        // 无已有分类，直接进入新建状态
+        setCategory('');
+        setIsCustom(true);
       }
-      setCustomCategory('');
     }
   }, [isOpen, defaultName, availableCategories]);
 
   if (!isOpen) return null;
 
-  const finalCategory = isCustom ? (customCategory.trim() || '绘图') : category;
+  const finalCategory = isCustom ? customCategory.trim() : category;
+  const canSubmit = !isUploading && name.trim() && finalCategory.length > 0;
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50" onClick={onClose}>
@@ -370,43 +368,50 @@ const ExportToHostingModal: React.FC<{
             />
           </div>
           <div>
-            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 block">图片分类</label>
-            <div className="flex gap-2 mb-2 flex-wrap">
-              {['绘图', ...availableCategories.filter(c => c !== '绘图')].map(cat => (
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 block">
+              图片分类 <span className="text-red-400">*</span>
+            </label>
+            {availableCategories.length > 0 && (
+              <div className="flex gap-2 mb-2 flex-wrap">
+                {availableCategories.map(cat => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => { setCategory(cat); setIsCustom(false); }}
+                    className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
+                      !isCustom && category === cat
+                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600'
+                        : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
                 <button
-                  key={cat}
                   type="button"
-                  onClick={() => { setCategory(cat); setIsCustom(false); }}
+                  onClick={() => { setIsCustom(true); setCategory(''); }}
                   className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
-                    !isCustom && category === cat
+                    isCustom
                       ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600'
                       : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                   }`}
                 >
-                  {cat}
+                  + 新建
                 </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setIsCustom(true)}
-                className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
-                  isCustom
-                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600'
-                    : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-                }`}
-              >
-                + 新建
-              </button>
-            </div>
-            {isCustom && (
+              </div>
+            )}
+            {(isCustom || availableCategories.length === 0) && (
               <input
                 type="text"
                 value={customCategory}
                 onChange={e => setCustomCategory(e.target.value)}
-                placeholder="输入新分类名称..."
+                placeholder={availableCategories.length === 0 ? '请先建立分类，输入新分类名称...' : '输入新分类名称...'}
                 autoFocus
                 className="w-full px-3 py-2 text-sm border border-blue-300 dark:border-blue-500 rounded-xl bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/30"
               />
+            )}
+            {!isCustom && !category && availableCategories.length > 0 && (
+              <p className="text-xs text-red-400 mt-1">请选择一个分类</p>
             )}
           </div>
           <div>
@@ -427,9 +432,9 @@ const ExportToHostingModal: React.FC<{
           <div className="flex justify-end gap-2 pt-1">
             <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl">取消</button>
             <button
-              onClick={() => { if (name.trim()) onExport(name.trim(), format, finalCategory); }}
-              disabled={isUploading || !name.trim()}
-              className="px-4 py-2 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-xl flex items-center gap-1.5 disabled:opacity-50"
+              onClick={() => { if (canSubmit) onExport(name.trim(), format, finalCategory); }}
+              disabled={!canSubmit}
+              className="px-4 py-2 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-xl flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
               {isUploading ? '上传中...' : '上传到图床'}
@@ -473,7 +478,7 @@ export const ExcalidrawEditor: React.FC = () => {
       const recordCats: string[] = rawRecords
         ? (JSON.parse(rawRecords) as Array<{ category?: string }>)
             .map(r => r.category)
-            .filter(Boolean) as string[]
+            .filter((c): c is string => !!c && c !== '未分类' && c !== '全部')
         : [];
       // 来源二：分类管理器内建立的 image-hosting 分类
       const rawCats = localStorage.getItem('linkmaster_categories_v1');
@@ -483,9 +488,9 @@ export const ExcalidrawEditor: React.FC = () => {
             .map(c => c.name)
         : [];
       const merged = Array.from(new Set([...recordCats, ...managerCats]));
-      setImageCategories(merged.length > 0 ? merged : ['绘图']);
+      setImageCategories(merged);
     } catch {
-      setImageCategories(['绘图']);
+      setImageCategories([]);
     }
   }, []);
 
@@ -799,9 +804,14 @@ export const ExcalidrawEditor: React.FC = () => {
     try {
       const blob = await exportUtils.exportToBlob({
         elements,
-        appState: { ...api.getAppState(), exportWithDarkMode: isDark, exportBackground: true },
+        appState: {
+          exportWithDarkMode: isDark,
+          exportBackground: true,
+          viewBackgroundColor: api.getAppState().viewBackgroundColor,
+        },
         files: api.getFiles(),
-        getDimensions: (width: number, height: number) => ({ width, height, scale: 3 }),
+        maxWidthOrHeight: 8192,
+        exportPadding: 16,
       });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -872,9 +882,14 @@ export const ExcalidrawEditor: React.FC = () => {
       if (format === 'png') {
         const blob = await exportUtils.exportToBlob({
           elements,
-          appState: { ...api.getAppState(), exportWithDarkMode: isDark, exportBackground: true },
+          appState: {
+            exportWithDarkMode: isDark,
+            exportBackground: true,
+            viewBackgroundColor: api.getAppState().viewBackgroundColor,
+          },
           files: api.getFiles(),
-          getDimensions: (width: number, height: number) => ({ width, height, scale: 3 }),
+          maxWidthOrHeight: 8192,
+          exportPadding: 16,
         });
         const arrayBuffer = await blob.arrayBuffer();
         const bytes = new Uint8Array(arrayBuffer);
@@ -906,7 +921,7 @@ export const ExcalidrawEditor: React.FC = () => {
         message: `Upload ${name}.${ext} via Guyue Master Excalidraw`,
       });
 
-      // 添加到图床记录
+      // 添加到图床记录（通过事件通知 App.tsx，单一数据源）
       const newRecord = {
         id: timestamp.toString(),
         filename,
@@ -914,23 +929,21 @@ export const ExcalidrawEditor: React.FC = () => {
         url: data.content.download_url,
         sha: data.content.sha,
         path: data.content.path,
-        category: category || '绘图',
+        category: category,
         createdAt: Date.now(),
       };
 
-      try {
-        const existingRaw = localStorage.getItem(STORAGE_KEY_IMAGE_RECORDS);
-        const existingRecords = existingRaw ? JSON.parse(existingRaw) : [];
-        const updatedRecords = [newRecord, ...existingRecords];
-        localStorage.setItem(STORAGE_KEY_IMAGE_RECORDS, JSON.stringify(updatedRecords));
+      // 通知 App.tsx 添加新记录（App.tsx 负责统一保存到 localStorage + 文件存储）
+      window.dispatchEvent(new CustomEvent('guyue:image-record-added', { detail: newRecord }));
 
-        // 更新本地可用分类列表
-        const cats = Array.from(new Set(updatedRecords.map((r: any) => r.category).filter(Boolean) as string[]));
-        setImageCategories(cats);
-
-        // 通知 App.tsx 刷新图床 records（自定义事件）
-        window.dispatchEvent(new CustomEvent('guyue:image-records-updated'));
-      } catch {}
+      // 更新本地分类列表
+      if (category) {
+        setImageCategories(prev => {
+          const s = new Set(prev);
+          s.add(category);
+          return Array.from(s);
+        });
+      }
 
       // 复制 Markdown 链接到剪贴板
       const mdLink = `![${name}](${data.content.download_url})`;

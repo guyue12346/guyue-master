@@ -11,6 +11,7 @@ import type { VaultFileEntry } from './components/VaultImportModal';
 const NoteList = React.lazy(() => import('./components/NoteList').then(m => ({ default: m.NoteList })));
 const SSHList = React.lazy(() => import('./components/SSHList').then(m => ({ default: m.SSHList })));
 const TodoList = React.lazy(() => import('./components/TodoList').then(m => ({ default: m.TodoList })));
+const ScheduleView = React.lazy(() => import('./components/ScheduleView').then(m => ({ default: m.ScheduleView })));
 const PromptList = React.lazy(() => import('./components/PromptList').then(m => ({ default: m.PromptList })));
 const MarkdownSidebar = React.lazy(() => import('./components/MarkdownSidebar').then(m => ({ default: m.MarkdownSidebar })));
 const ArchiveSidebar = React.lazy(() => import('./components/ArchiveSidebar').then(m => ({ default: m.ArchiveSidebar })));
@@ -162,6 +163,7 @@ const App: React.FC = () => {
     return pickRandomSplashQuote(quotes);
   });
   const [isAppReady, setIsAppReady] = useState(false);
+  const imageDataLoadedRef = useRef(false);  // 图床数据是否已完成初始加载
   
   // Performance: Cache for loaded data to prevent re-parsing
   const [dataCache] = useState(() => new Map<string, any>());
@@ -510,6 +512,8 @@ const App: React.FC = () => {
             console.error("Failed to parse image config", e);
           }
         }
+        // 标记加载完成（使用 rAF 确保在 React 处理完状态更新后的渲染周期之后再标记）
+        requestAnimationFrame(() => { imageDataLoadedRef.current = true; });
         return;
       }
 
@@ -518,7 +522,8 @@ const App: React.FC = () => {
         const fileData = await window.electronAPI.loadAppData('image-records');
         if (fileData && Array.isArray(fileData) && fileData.length > 0) {
           setImageRecords(fileData);
-          console.log("Loaded image records from file storage:", fileData.length, "items");
+          // 同步回 localStorage 保证一致性
+          localStorage.setItem(STORAGE_KEY_IMAGE_RECORDS, JSON.stringify(fileData));
         } else {
           // 回退到 localStorage（兼容旧数据）
           const savedImageRecords = localStorage.getItem(STORAGE_KEY_IMAGE_RECORDS);
@@ -528,7 +533,6 @@ const App: React.FC = () => {
               setImageRecords(parsed);
               // 迁移到文件存储
               await window.electronAPI.saveAppData('image-records', parsed);
-              console.log("Migrated image records to file storage");
             }
           }
         }
@@ -539,25 +543,25 @@ const App: React.FC = () => {
       // 加载图床配置 - 优先从文件存储
       try {
         const fileData = await window.electronAPI.loadAppData('image-config');
-        if (fileData && fileData.accessToken) {
+        if (fileData && typeof fileData === 'object') {
           setImageHostingConfig(fileData);
-          console.log("Loaded image config from file storage");
+          localStorage.setItem(STORAGE_KEY_IMAGE_CONFIG, JSON.stringify(fileData));
         } else {
-          // 回退到 localStorage（兼容旧数据）
           const savedImageConfig = localStorage.getItem(STORAGE_KEY_IMAGE_CONFIG);
           if (savedImageConfig) {
             const parsed = JSON.parse(savedImageConfig);
-            if (parsed && parsed.accessToken) {
+            if (parsed && typeof parsed === 'object') {
               setImageHostingConfig(parsed);
-              // 迁移到文件存储
               await window.electronAPI.saveAppData('image-config', parsed);
-              console.log("Migrated image config to file storage");
             }
           }
         }
       } catch (e) {
         console.error("Failed to load image config:", e);
       }
+
+      // 标记加载完成
+      requestAnimationFrame(() => { imageDataLoadedRef.current = true; });
     };
 
     loadImageData();
@@ -1034,48 +1038,45 @@ const App: React.FC = () => {
   }, [markdownNotes, saveToStorage]);
 
   useEffect(() => {
-    // 只在应用就绪后保存图床记录，避免覆盖已有数据
-    if (isAppReady && imageRecords.length > 0) {
-      saveToStorage(STORAGE_KEY_IMAGE_RECORDS, imageRecords);
-      // 同时创建备份
+    // 只在初始加载完成后才保存，避免空数组覆盖已有数据
+    if (!imageDataLoadedRef.current) return;
+    saveToStorage(STORAGE_KEY_IMAGE_RECORDS, imageRecords);
+    // 同步写入备份（非 debounced，保证一致性）
+    try {
       localStorage.setItem(STORAGE_KEY_IMAGE_RECORDS + '_backup', JSON.stringify(imageRecords));
-      // 保存到文件存储（持久化）
-      if (window.electronAPI) {
-        window.electronAPI.saveAppData('image-records', imageRecords);
-      }
+    } catch {}
+    // 持久化到文件存储
+    if (window.electronAPI) {
+      window.electronAPI.saveAppData('image-records', imageRecords);
     }
-  }, [imageRecords, saveToStorage, isAppReady]);
+  }, [imageRecords, saveToStorage]);
 
-  // 监听 Excalidraw 等组件直接写入图床记录后发出的事件，同步 state
+  // 监听 Excalidraw 等外部组件添加图床记录（通过事件传递数据，不再从 localStorage 读取）
   useEffect(() => {
-    const handleImageRecordsUpdated = () => {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY_IMAGE_RECORDS);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) {
-            setImageRecords(parsed);
-          }
-        }
-      } catch (e) {
-        console.error('Failed to sync image records:', e);
-      }
+    const handleImageRecordAdded = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail || !detail.id) return;
+      setImageRecords(prev => {
+        // 去重：避免同一条记录被添加多次
+        if (prev.some(r => r.id === detail.id)) return prev;
+        return [detail, ...prev];
+      });
     };
-    window.addEventListener('guyue:image-records-updated', handleImageRecordsUpdated);
-    return () => window.removeEventListener('guyue:image-records-updated', handleImageRecordsUpdated);
+    window.addEventListener('guyue:image-record-added', handleImageRecordAdded);
+    return () => window.removeEventListener('guyue:image-record-added', handleImageRecordAdded);
   }, []);
 
   useEffect(() => {
-    if (isAppReady && imageHostingConfig.accessToken) {
-      saveToStorage(STORAGE_KEY_IMAGE_CONFIG, imageHostingConfig);
-      // 同时创建备份
+    // 只在初始加载完成后才保存配置
+    if (!imageDataLoadedRef.current) return;
+    saveToStorage(STORAGE_KEY_IMAGE_CONFIG, imageHostingConfig);
+    try {
       localStorage.setItem(STORAGE_KEY_IMAGE_CONFIG + '_backup', JSON.stringify(imageHostingConfig));
-      // 保存到文件存储（持久化）
-      if (window.electronAPI) {
-        window.electronAPI.saveAppData('image-config', imageHostingConfig);
-      }
+    } catch {}
+    if (window.electronAPI) {
+      window.electronAPI.saveAppData('image-config', imageHostingConfig);
     }
-  }, [imageHostingConfig, saveToStorage, isAppReady]);
+  }, [imageHostingConfig, saveToStorage]);
 
   useEffect(() => {
     if (moduleConfig.length > 0) {
@@ -1426,6 +1427,9 @@ const App: React.FC = () => {
         priority: todoData.priority || 'medium',
         category: catName,
         dueDate: todoData.dueDate,
+        timeType: todoData.timeType,
+        timeStart: todoData.timeStart,
+        timeEnd: todoData.timeEnd,
         subtasks: todoData.subtasks,
         createdAt: Date.now(),
       };
@@ -2056,6 +2060,8 @@ const App: React.FC = () => {
                     />
                   </div>
                 </details>
+                {/* Schedule calendar */}
+                <ScheduleView todos={filteredTodos} onEditTodo={handleEditTodo} onToggleTodo={handleToggleTodo} />
                 {/* Task list */}
                 <TodoList todos={filteredTodos} onDelete={handleDeleteTodo} onEdit={handleEditTodo} onToggle={handleToggleTodo} onToggleSubtask={handleToggleSubtask} />
               </div>

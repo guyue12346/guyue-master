@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { TodoItem, SubTask } from '../types';
-import { X, Calendar, Flag, Tag, CheckSquare, Plus, Trash2, AlignLeft } from 'lucide-react';
+import { X, Calendar, Flag, Tag, CheckSquare, Plus, Trash2, AlignLeft, Clock, MapPin, ArrowRight } from 'lucide-react';
 
 interface TodoModalProps {
   isOpen: boolean;
@@ -12,14 +12,26 @@ interface TodoModalProps {
   categories: string[];
 }
 
+/** Convert a timestamp to a `datetime-local` string in local time */
+const toLocalDatetime = (ts: number): string => {
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
 export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, onAutoSave, initialData, categories }) => {
   const [content, setContent] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
   const [priority, setPriority] = useState<'high' | 'medium' | 'low'>('medium');
-  const [dueDate, setDueDate] = useState('');
   const [subtasks, setSubtasks] = useState<SubTask[]>([]);
   const [newSubtask, setNewSubtask] = useState('');
+
+  // Time mode states
+  const [timeMode, setTimeMode] = useState<'none' | 'point' | 'range'>('none');
+  const [timePointValue, setTimePointValue] = useState('');
+  const [timeStartValue, setTimeStartValue] = useState('');
+  const [timeEndValue, setTimeEndValue] = useState('');
 
   useEffect(() => {
     if (initialData) {
@@ -28,10 +40,28 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
       setCategory(initialData.category);
       setPriority(initialData.priority);
       setSubtasks(initialData.subtasks || []);
-      if (initialData.dueDate) {
-        setDueDate(new Date(initialData.dueDate).toISOString().split('T')[0]);
+      // Restore time mode from existing data
+      if (initialData.timeType === 'range' && initialData.timeStart) {
+        setTimeMode('range');
+        setTimeStartValue(toLocalDatetime(initialData.timeStart));
+        setTimeEndValue(initialData.timeEnd ? toLocalDatetime(initialData.timeEnd) : '');
+        setTimePointValue('');
+      } else if (initialData.timeType === 'point' && initialData.dueDate) {
+        setTimeMode('point');
+        setTimePointValue(toLocalDatetime(initialData.dueDate));
+        setTimeStartValue('');
+        setTimeEndValue('');
+      } else if (initialData.dueDate) {
+        // Legacy date-only item → show as point
+        setTimeMode('point');
+        setTimePointValue(toLocalDatetime(initialData.dueDate));
+        setTimeStartValue('');
+        setTimeEndValue('');
       } else {
-        setDueDate('');
+        setTimeMode('none');
+        setTimePointValue('');
+        setTimeStartValue('');
+        setTimeEndValue('');
       }
     } else {
       resetForm();
@@ -43,9 +73,27 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
     setDescription('');
     setCategory('');
     setPriority('medium');
-    setDueDate('');
+    setTimeMode('none');
+    setTimePointValue('');
+    setTimeStartValue('');
+    setTimeEndValue('');
     setSubtasks([]);
     setNewSubtask('');
+  };
+
+  /** When switching time mode, carry values over for convenience */
+  const handleTimeModeChange = (mode: 'none' | 'point' | 'range') => {
+    if (mode === 'point' && timeMode === 'range' && timeStartValue) {
+      setTimePointValue(timeStartValue);
+    } else if (mode === 'range' && timeMode === 'point' && timePointValue) {
+      setTimeStartValue(timePointValue);
+      if (!timeEndValue) {
+        const start = new Date(timePointValue);
+        start.setHours(start.getHours() + 1);
+        setTimeEndValue(toLocalDatetime(start.getTime()));
+      }
+    }
+    setTimeMode(mode);
   };
 
   const handleAddSubtask = () => {
@@ -81,13 +129,23 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    let timeFields: Partial<TodoItem> = {};
+    if (timeMode === 'point' && timePointValue) {
+      timeFields = { timeType: 'point', dueDate: new Date(timePointValue).getTime(), timeStart: undefined, timeEnd: undefined };
+    } else if (timeMode === 'range' && timeStartValue) {
+      timeFields = { timeType: 'range', dueDate: undefined, timeStart: new Date(timeStartValue).getTime(), timeEnd: timeEndValue ? new Date(timeEndValue).getTime() : undefined };
+    } else {
+      timeFields = { timeType: undefined, dueDate: undefined, timeStart: undefined, timeEnd: undefined };
+    }
+
     onSave({
       id: initialData?.id,
       content,
       description: description.trim() || undefined,
       category,
       priority,
-      dueDate: dueDate ? new Date(dueDate).getTime() : undefined,
+      ...timeFields,
       subtasks: subtasks.length > 0 ? subtasks : undefined,
     });
     onClose();
@@ -190,20 +248,69 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
               </div>
             </div>
             
-            {/* Due Date */}
+            {/* ───── Time Settings ───── */}
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wide">截止日期 (可选)</label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Calendar className="h-4 w-4 text-gray-400" />
-                </div>
-                <input 
-                  type="date" 
-                  value={dueDate}
-                  onChange={(e) => setDueDate(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm"
-                />
+              <label className="block text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">
+                <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" />时间设置</span>
+              </label>
+
+              {/* Segmented control */}
+              <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-3">
+                {([['none', '无时间', X], ['point', '时间点', MapPin], ['range', '时间段', ArrowRight]] as const).map(([key, label, Icon]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => handleTimeModeChange(key as any)}
+                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200
+                      ${timeMode === key ? 'bg-white shadow-sm text-gray-800 ring-1 ring-gray-200' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    {label}
+                  </button>
+                ))}
               </div>
+
+              {/* Time Point Input */}
+              {timeMode === 'point' && (
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Calendar className="h-4 w-4 text-blue-400" />
+                  </div>
+                  <input
+                    type="datetime-local"
+                    value={timePointValue}
+                    onChange={(e) => setTimePointValue(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2.5 bg-blue-50/50 border border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1 ml-1">选择一个具体的日期和时间</p>
+                </div>
+              )}
+
+              {/* Time Range Input */}
+              {timeMode === 'range' && (
+                <div className="space-y-2">
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <div className="w-4 h-4 flex items-center justify-center"><div className="w-2 h-2 rounded-full bg-emerald-500" /></div>
+                    </div>
+                    <input type="datetime-local" value={timeStartValue} onChange={(e) => setTimeStartValue(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2.5 bg-emerald-50/50 border border-emerald-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all text-sm" />
+                  </div>
+                  <div className="flex items-center gap-2 px-4">
+                    <div className="flex-1 border-t border-dashed border-gray-200" />
+                    <span className="text-[10px] text-gray-400 font-medium">至</span>
+                    <div className="flex-1 border-t border-dashed border-gray-200" />
+                  </div>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <div className="w-4 h-4 flex items-center justify-center"><div className="w-2 h-2 rounded-full bg-rose-500" /></div>
+                    </div>
+                    <input type="datetime-local" value={timeEndValue} onChange={(e) => setTimeEndValue(e.target.value)} min={timeStartValue}
+                      className="w-full pl-9 pr-3 py-2.5 bg-rose-50/50 border border-rose-200 rounded-xl focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none transition-all text-sm" />
+                  </div>
+                  <p className="text-[10px] text-gray-400 ml-1">选择开始和结束的日期时间</p>
+                </div>
+              )}
             </div>
 
             {/* Subtasks */}

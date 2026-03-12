@@ -46,7 +46,10 @@ export interface TodoItem {
   isCompleted: boolean;
   priority: 'high' | 'medium' | 'low';
   category: string;
-  dueDate?: number; // timestamp
+  dueDate?: number; // timestamp (legacy date-only or timeType='point' full datetime)
+  timeType?: 'point' | 'range'; // 'point' = specific datetime, 'range' = start–end
+  timeStart?: number; // range start timestamp
+  timeEnd?: number;   // range end timestamp
   subtasks?: SubTask[];
   completedAt?: number; // timestamp when completed
   createdAt: number;
