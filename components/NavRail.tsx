@@ -8,6 +8,7 @@ interface NavRailProps {
   currentMode: AppMode;
   onModeChange: (mode: AppMode) => void;
   onOpenSettings: () => void;
+  onOpenAgent: () => void;
   moduleConfig: ModuleConfig[];
 }
 
@@ -30,6 +31,7 @@ export const NavRail: React.FC<NavRailProps> = ({
   currentMode, 
   onModeChange,
   onOpenSettings,
+  onOpenAgent,
   moduleConfig
 }) => {
   
@@ -76,15 +78,22 @@ export const NavRail: React.FC<NavRailProps> = ({
 
   return (
     <div className="w-20 h-full flex-shrink-0 bg-[#1E1E1E] flex flex-col items-center py-6 z-30 shadow-xl">
-      {/* Top Logo / Spacer - Updated to 'Gu Yue' Design - Draggable Area */}
-      <div className="mb-8 relative group cursor-default" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
-        <div className="w-12 h-12 rounded-xl bg-gradient-to-b from-slate-700 to-slate-900 flex items-center justify-center shadow-lg shadow-black/20 overflow-hidden border border-white/10 group-hover:border-blue-500/30 transition-colors">
+      {/* Top Logo / Spacer - Updated to 'Gu Yue' Design - Clickable to open Agent */}
+      <div 
+        className="mb-8 relative group cursor-pointer" 
+        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        onClick={onOpenAgent}
+        title="打开古月助手"
+      >
+        <div className="w-12 h-12 rounded-xl bg-gradient-to-b from-slate-700 to-slate-900 flex items-center justify-center shadow-lg shadow-black/20 overflow-hidden border border-white/10 group-hover:border-blue-500/50 group-hover:shadow-blue-500/20 transition-all duration-300">
            {/* Characters */}
            <div className="flex flex-col items-center justify-center leading-none z-10 text-gray-200 group-hover:text-white transition-colors">
              <span className="font-serif text-sm font-bold -mb-0.5 tracking-widest text-shadow-sm">古</span>
              <span className="font-serif text-sm font-bold -mt-0.5 tracking-widest text-shadow-sm">月</span>
            </div>
         </div>
+        {/* Glow effect on hover */}
+        <div className="absolute inset-0 rounded-xl bg-blue-500/0 group-hover:bg-blue-500/10 transition-colors duration-300" />
       </div>
 
       {/* Main Nav Items */}

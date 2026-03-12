@@ -38,6 +38,7 @@ const PromptModal = React.lazy(() => import('./components/PromptModal').then(m =
 const CategoryManagerModal = React.lazy(() => import('./components/CategoryManagerModal').then(m => ({ default: m.CategoryManagerModal })));
 const SettingsModal = React.lazy(() => import('./components/SettingsModal').then(m => ({ default: m.SettingsModal })));
 const VaultImportModal = React.lazy(() => import('./components/VaultImportModal').then(m => ({ default: m.VaultImportModal })));
+const AgentPanel = React.lazy(() => import('./components/AgentPanel').then(m => ({ default: m.AgentPanel })));
 import { HelpModal } from './components/HelpModal';
 
 // Storage version for migration management
@@ -314,6 +315,7 @@ const App: React.FC = () => {
   const [initialCategoryEditId, setInitialCategoryEditId] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isAgentOpen, setIsAgentOpen] = useState(false);
   const [vaultImportFiles, setVaultImportFiles] = useState<VaultFileEntry[] | null>(null);
   
   const [editingNote, setEditingNote] = useState<Note | null>(null);
@@ -1857,6 +1859,7 @@ const App: React.FC = () => {
               currentMode={appMode} 
               onModeChange={setAppMode} 
               onOpenSettings={() => setIsSettingsOpen(true)}
+              onOpenAgent={() => setIsAgentOpen(true)}
               moduleConfig={moduleConfig}
             />
           )}
@@ -2414,6 +2417,27 @@ const App: React.FC = () => {
         moduleName={moduleConfig.find(m => m.id === appMode)?.name}
         isPlugin={moduleConfig.find(m => m.id === appMode)?.isPlugin}
       />
+
+      {/* Agent Panel */}
+      <Suspense fallback={null}>
+        <AgentPanel
+          isOpen={isAgentOpen}
+          onClose={() => setIsAgentOpen(false)}
+          onCreateTodo={(todoData) => {
+            const newTodo: TodoItem = {
+              id: crypto.randomUUID(),
+              content: todoData.content || '新事项',
+              description: todoData.description,
+              isCompleted: false,
+              priority: todoData.priority || 'medium',
+              category: todoData.category || '未分类',
+              dueDate: todoData.dueDate,
+              createdAt: Date.now(),
+            };
+            setTodos(prev => [newTodo, ...prev]);
+          }}
+        />
+      </Suspense>
         </div>
       )}
     </>
