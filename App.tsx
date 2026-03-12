@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, Suspense } from 'react';
 import { NavRail } from './components/NavRail';
 import { Sidebar } from './components/Sidebar';
+import { TodoSidebar, TodoSubMode } from './components/TodoSidebar';
 import { SplashScreen } from './components/SplashScreen';
 import { FloatingChatWindow } from './components/FloatingChatWindow';
 import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig } from './types';
@@ -169,6 +170,7 @@ const App: React.FC = () => {
   const [dataCache] = useState(() => new Map<string, any>());
 
   const [appMode, setAppMode] = useState<AppMode>('todo');
+  const [todoSubMode, setTodoSubMode] = useState<TodoSubMode>('tasks');
   const [moduleConfig, setModuleConfig] = useState<ModuleConfig[]>(() => {
     if (typeof window === 'undefined') {
       return DEFAULT_MODULE_CONFIG;
@@ -1430,6 +1432,7 @@ const App: React.FC = () => {
         timeType: todoData.timeType,
         timeStart: todoData.timeStart,
         timeEnd: todoData.timeEnd,
+        color: todoData.color,
         subtasks: todoData.subtasks,
         createdAt: Date.now(),
       };
@@ -1908,7 +1911,12 @@ const App: React.FC = () => {
             />
           </Suspense>
         )
-      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'excalidraw' && appMode !== 'datacenter' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
+      ) : appMode === 'todo' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible ? (
+        <TodoSidebar
+          subMode={todoSubMode}
+          onSubModeChange={setTodoSubMode}
+        />
+      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'excalidraw' && appMode !== 'datacenter' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
         <Sidebar 
           appMode={appMode}  
           categories={activeCategories} 
@@ -1926,7 +1934,7 @@ const App: React.FC = () => {
       ) : null}
 
       <div className="flex-1 flex flex-col min-w-0 bg-white relative">
-        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
+        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
         <div className="h-16 border-b border-gray-200 flex items-center justify-between px-6 bg-white shrink-0">
            <div className="flex items-center gap-4 flex-1 max-w-xl">
               <div className="relative flex-1">
@@ -1995,7 +2003,7 @@ const App: React.FC = () => {
         </div>
         )}
 
-        <div className={`flex-1 ${appMode === 'chat' ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'chat' || appMode === 'excalidraw' || appMode === 'datacenter' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : 'p-6'}`}>
+        <div className={`flex-1 ${appMode === 'chat' ? 'overflow-hidden' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'chat' || appMode === 'excalidraw' || appMode === 'datacenter' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'p-4' : 'p-6'}`}>
           <Suspense fallback={
             <div className="flex items-center justify-center h-full text-gray-400 gap-2">
               <Loader2 className="w-6 h-6 animate-spin" />
@@ -2005,66 +2013,63 @@ const App: React.FC = () => {
             {appMode === 'notes' && <NoteList notes={filteredNotes} onDelete={handleDeleteNote} onEdit={handleEditNote} />}
             {/* SSH模块已迁移到数据中心 */}
             {/* API模块已迁移到数据中心 */}
-            {appMode === 'todo' && (
-              <div className="space-y-6">
-                {/* Collapsible plan section */}
-                <details className="group bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden" open>
-                  <summary className="flex items-center gap-2 px-4 py-3 cursor-pointer select-none hover:bg-gray-50 transition-colors">
-                    <ChevronRight className="w-4 h-4 text-gray-400 transition-transform group-open:rotate-90" />
-                    <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <span className="text-sm font-semibold text-gray-600">总体规划</span>
-                    <div className="ml-auto flex items-center gap-1 opacity-0 group-open:opacity-100 transition-opacity">
-                      {todoPlanHasTOC && !todoPlanEditing && (
-                        <button
-                          onClick={(e) => { e.preventDefault(); setTodoPlanShowTOC(v => !v); }}
-                          className={`p-1.5 rounded-lg transition-colors ${
-                            todoPlanShowTOC ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-                          }`}
-                          title={todoPlanShowTOC ? "隐藏目录" : "显示目录"}
-                        >
-                          <List className="w-3.5 h-3.5" />
-                        </button>
-                      )}
+            {appMode === 'todo' && todoSubMode === 'plan' && (
+              <div className="h-full flex flex-col">
+                <div className="flex items-center justify-between px-2 mb-3">
+                  <h3 className="text-lg font-bold text-gray-800">总体规划</h3>
+                  <div className="flex items-center gap-1">
+                    {todoPlanHasTOC && !todoPlanEditing && (
                       <button
-                        onClick={(e) => { e.preventDefault(); setTodoPlanEditing(v => !v); }}
+                        onClick={() => setTodoPlanShowTOC(v => !v)}
                         className={`p-1.5 rounded-lg transition-colors ${
-                          todoPlanEditing ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                          todoPlanShowTOC ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
                         }`}
-                        title={todoPlanEditing ? "保存" : "编辑"}
+                        title={todoPlanShowTOC ? "隐藏目录" : "显示目录"}
                       >
-                        {todoPlanEditing ? <Save className="w-3.5 h-3.5" /> : <Edit3 className="w-3.5 h-3.5" />}
+                        <List className="w-4 h-4" />
                       </button>
-                    </div>
-                  </summary>
-                  <div className="p-4">
-                    <MarkdownEditor
-                      note={{ id: 'todo-plan', title: '总体规划', content: todoPlanContent, category: '', createdAt: 0, updatedAt: 0 }}
-                      onUpdate={(_id, updates) => { if (updates.content !== undefined) setTodoPlanContent(updates.content); }}
-                      isFullscreen={false}
-                      onToggleFullscreen={() => {}}
-                      hideMetadata={true}
-                      showViewToggle={false}
-                      hideHeaderTitle={true}
-                      hideFullscreen={true}
-                      hideEditButton={true}
-                      hideToolbar={true}
-                      compact={true}
-                      externalIsEditing={todoPlanEditing}
-                      onEditingChange={setTodoPlanEditing}
-                      hideTOCButton={true}
-                      externalShowTOC={todoPlanShowTOC}
-                      onShowTOCChange={setTodoPlanShowTOC}
-                      onTOCAvailableChange={setTodoPlanHasTOC}
-                    />
+                    )}
+                    <button
+                      onClick={() => setTodoPlanEditing(v => !v)}
+                      className={`p-1.5 rounded-lg transition-colors ${
+                        todoPlanEditing ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                      }`}
+                      title={todoPlanEditing ? "保存" : "编辑"}
+                    >
+                      {todoPlanEditing ? <Save className="w-4 h-4" /> : <Edit3 className="w-4 h-4" />}
+                    </button>
                   </div>
-                </details>
-                {/* Schedule calendar */}
-                <ScheduleView todos={filteredTodos} onEditTodo={handleEditTodo} onToggleTodo={handleToggleTodo} />
-                {/* Task list */}
-                <TodoList todos={filteredTodos} onDelete={handleDeleteTodo} onEdit={handleEditTodo} onToggle={handleToggleTodo} onToggleSubtask={handleToggleSubtask} />
+                </div>
+                <div className="flex-1 min-h-0 overflow-auto">
+                  <MarkdownEditor
+                    note={{ id: 'todo-plan', title: '总体规划', content: todoPlanContent, category: '', createdAt: 0, updatedAt: 0 }}
+                    onUpdate={(_id, updates) => { if (updates.content !== undefined) setTodoPlanContent(updates.content); }}
+                    isFullscreen={false}
+                    onToggleFullscreen={() => {}}
+                    hideMetadata={true}
+                    showViewToggle={false}
+                    hideHeaderTitle={true}
+                    hideFullscreen={true}
+                    hideEditButton={true}
+                    hideToolbar={true}
+                    compact={true}
+                    externalIsEditing={todoPlanEditing}
+                    onEditingChange={setTodoPlanEditing}
+                    hideTOCButton={true}
+                    externalShowTOC={todoPlanShowTOC}
+                    onShowTOCChange={setTodoPlanShowTOC}
+                    onTOCAvailableChange={setTodoPlanHasTOC}
+                  />
+                </div>
               </div>
+            )}
+            {appMode === 'todo' && todoSubMode === 'schedule' && (
+              <div className="h-full overflow-auto">
+                <ScheduleView todos={filteredTodos} onEditTodo={handleEditTodo} onToggleTodo={handleToggleTodo} />
+              </div>
+            )}
+            {appMode === 'todo' && todoSubMode === 'tasks' && (
+              <TodoList todos={filteredTodos} onDelete={handleDeleteTodo} onEdit={handleEditTodo} onToggle={handleToggleTodo} onToggleSubtask={handleToggleSubtask} categories={activeCategories} selectedCategory={selectedCategory} onSelectCategory={setSelectedCategory} onOpenManager={() => setIsCategoryManagerOpen(true)} />
             )}
             
             {appMode === 'files' && (

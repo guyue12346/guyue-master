@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { TodoItem } from '../types';
-import { ChevronLeft, ChevronRight, Check, Clock, Calendar as CalendarIcon, LayoutGrid, Columns3, AlignJustify } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon, LayoutGrid, Columns3, AlignJustify, Settings2 } from 'lucide-react';
 
 /* ─────────────────── Types ─────────────────── */
 
@@ -28,14 +28,31 @@ interface LayoutedEvent {
 /* ─────────────────── Constants ─────────────────── */
 
 const HOUR_HEIGHT = 56;
+const COMPRESSED_HOUR_HEIGHT = 12; // 0–6 compressed height per hour
 const WEEK_DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
-const PRIORITY_COLORS: Record<string, { bar: string; block: string; dot: string }> = {
-  high:   { bar: 'bg-rose-100 text-rose-700', block: 'bg-rose-50 border-l-[3px] border-l-rose-500 text-rose-800', dot: 'bg-rose-500' },
-  medium: { bar: 'bg-amber-100 text-amber-700', block: 'bg-amber-50 border-l-[3px] border-l-amber-500 text-amber-800', dot: 'bg-amber-500' },
-  low:    { bar: 'bg-sky-100 text-sky-700', block: 'bg-sky-50 border-l-[3px] border-l-sky-500 text-sky-800', dot: 'bg-sky-500' },
+const STORAGE_KEY_COMPRESS = 'guyue_schedule_compress_night';
+const STORAGE_KEY_TIMELINE = 'guyue_schedule_show_timeline';
+
+/** Event custom-color → Tailwind-style inline colors */
+const EVENT_COLOR_MAP: Record<string, { bar: string; block: string; text: string }> = {
+  '#3b82f6': { bar: 'bg-blue-100 text-blue-700', block: 'bg-blue-50 border-l-blue-500 text-blue-800', text: 'text-blue-700' },
+  '#8b5cf6': { bar: 'bg-violet-100 text-violet-700', block: 'bg-violet-50 border-l-violet-500 text-violet-800', text: 'text-violet-700' },
+  '#ec4899': { bar: 'bg-pink-100 text-pink-700', block: 'bg-pink-50 border-l-pink-500 text-pink-800', text: 'text-pink-700' },
+  '#ef4444': { bar: 'bg-red-100 text-red-700', block: 'bg-red-50 border-l-red-500 text-red-800', text: 'text-red-700' },
+  '#f97316': { bar: 'bg-orange-100 text-orange-700', block: 'bg-orange-50 border-l-orange-500 text-orange-800', text: 'text-orange-700' },
+  '#eab308': { bar: 'bg-yellow-100 text-yellow-700', block: 'bg-yellow-50 border-l-yellow-500 text-yellow-800', text: 'text-yellow-700' },
+  '#22c55e': { bar: 'bg-green-100 text-green-700', block: 'bg-green-50 border-l-green-500 text-green-800', text: 'text-green-700' },
+  '#14b8a6': { bar: 'bg-teal-100 text-teal-700', block: 'bg-teal-50 border-l-teal-500 text-teal-800', text: 'text-teal-700' },
+  '#6b7280': { bar: 'bg-gray-200 text-gray-700', block: 'bg-gray-100 border-l-gray-500 text-gray-800', text: 'text-gray-700' },
 };
-const COMPLETED_COLORS = { bar: 'bg-gray-100 text-gray-400 line-through', block: 'bg-gray-50 border-l-[3px] border-l-gray-300 text-gray-400 line-through', dot: 'bg-gray-300' };
+
+const PRIORITY_COLORS: Record<string, { bar: string; block: string; dot: string }> = {
+  high:   { bar: 'bg-rose-100 text-rose-700', block: 'bg-rose-50 border-l-rose-500 text-rose-800', dot: 'bg-rose-500' },
+  medium: { bar: 'bg-amber-100 text-amber-700', block: 'bg-amber-50 border-l-amber-500 text-amber-800', dot: 'bg-amber-500' },
+  low:    { bar: 'bg-sky-100 text-sky-700', block: 'bg-sky-50 border-l-sky-500 text-sky-800', dot: 'bg-sky-500' },
+};
+const COMPLETED_COLORS = { bar: 'bg-gray-100 text-gray-400 line-through', block: 'bg-gray-50 border-l-gray-300 text-gray-400 line-through', dot: 'bg-gray-300' };
 
 /* ─────────────────── Helpers ─────────────────── */
 
@@ -50,10 +67,6 @@ function getWeekStart(date: Date): Date {
   d.setDate(diff);
   d.setHours(0, 0, 0, 0);
   return d;
-}
-
-function getDaysInMonth(year: number, month: number): number {
-  return new Date(year, month + 1, 0).getDate();
 }
 
 function formatHM(date: Date): string {
@@ -99,7 +112,7 @@ function layoutEvents(dayEvents: CalendarEvent[]): LayoutedEvent[] {
   const timed = dayEvents.filter(e => !e.isAllDay);
   const sorted = [...timed].sort((a, b) => a.start.getTime() - b.start.getTime() || (b.end.getTime() - b.start.getTime()) - (a.end.getTime() - a.start.getTime()));
 
-  const columns: number[] = []; // end times per column
+  const columns: number[] = [];
   const result: LayoutedEvent[] = [];
 
   for (const event of sorted) {
@@ -113,8 +126,48 @@ function layoutEvents(dayEvents: CalendarEvent[]): LayoutedEvent[] {
   return result;
 }
 
-function getColors(todo: TodoItem) {
-  return todo.isCompleted ? COMPLETED_COLORS : (PRIORITY_COLORS[todo.priority] || PRIORITY_COLORS.medium);
+function getEventColors(todo: TodoItem): { bar: string; block: string } {
+  if (todo.isCompleted) return COMPLETED_COLORS;
+  if (todo.color && EVENT_COLOR_MAP[todo.color]) {
+    return EVENT_COLOR_MAP[todo.color];
+  }
+  return PRIORITY_COLORS[todo.priority] || PRIORITY_COLORS.medium;
+}
+
+/** Convert minutes to pixel position accounting for 0–6 compression */
+function minutesToPx(minutes: number, compress: boolean): number {
+  if (!compress) return (minutes / 60) * HOUR_HEIGHT;
+  // 0-6 = compressed zone (6 hours → 6 × COMPRESSED_HOUR_HEIGHT)
+  const compressedZoneEnd = 6 * 60; // 360 min
+  const compressedPx = 6 * COMPRESSED_HOUR_HEIGHT;
+  if (minutes <= compressedZoneEnd) {
+    return (minutes / compressedZoneEnd) * compressedPx;
+  }
+  return compressedPx + ((minutes - compressedZoneEnd) / 60) * HOUR_HEIGHT;
+}
+
+function totalGridHeight(compress: boolean): number {
+  if (!compress) return 24 * HOUR_HEIGHT;
+  return 6 * COMPRESSED_HOUR_HEIGHT + 18 * HOUR_HEIGHT;
+}
+
+/** Find earliest event hour across all visible days to auto-scroll to */
+function findSmartScrollTarget(events: CalendarEvent[], days: Date[], compress: boolean): number {
+  let earliestMinutes = Infinity;
+  for (const day of days) {
+    const dayEvts = eventsForDate(events, day).filter(e => !e.isAllDay);
+    for (const ev of dayEvts) {
+      const m = ev.start.getHours() * 60 + ev.start.getMinutes();
+      if (m < earliestMinutes) earliestMinutes = m;
+    }
+  }
+  // If we found events, scroll to 30 min before the earliest, else scroll to ~8am
+  if (earliestMinutes < Infinity) {
+    const target = Math.max(0, earliestMinutes - 30);
+    return minutesToPx(target, compress);
+  }
+  // Default: scroll to 8am area
+  return minutesToPx(8 * 60, compress);
 }
 
 /* ─────────────────── Month Grid Builder ─────────────────── */
@@ -133,7 +186,6 @@ function buildMonthGrid(year: number, month: number): { date: Date; isCurrentMon
       cur.setDate(cur.getDate() + 1);
     }
     grid.push(row);
-    // If all remaining cells would be next month and we have at least 5 rows, stop
     if (w >= 4 && row.every(c => !c.isCurrentMonth)) { grid.pop(); break; }
   }
   return grid;
@@ -147,25 +199,39 @@ function buildMonthGrid(year: number, month: number): { date: Date; isCurrentMon
 const EventBlock: React.FC<{
   le: LayoutedEvent;
   onClick: (todo: TodoItem) => void;
-  colWidth?: number; // percentage width of parent column
-}> = ({ le, onClick }) => {
+  compressNight: boolean;
+}> = ({ le, onClick, compressNight }) => {
   const { event, column, totalColumns } = le;
-  const colors = getColors(event.todo);
+  const colors = getEventColors(event.todo);
+  const customColor = event.todo.color;
 
   const startMinutes = event.start.getHours() * 60 + event.start.getMinutes();
   const endMinutes = event.end.getHours() * 60 + event.end.getMinutes();
-  const durationMinutes = Math.max(endMinutes - startMinutes, 20); // at least 20min visual height
+  const durationMinutes = Math.max(endMinutes - startMinutes, 20);
 
-  const top = (startMinutes / 60) * HOUR_HEIGHT;
-  const height = Math.max((durationMinutes / 60) * HOUR_HEIGHT, 22);
+  const top = minutesToPx(startMinutes, compressNight);
+  const height = Math.max(minutesToPx(startMinutes + durationMinutes, compressNight) - top, 22);
   const width = `calc(${(1 / totalColumns) * 100}% - 4px)`;
   const left = `calc(${(column / totalColumns) * 100}% + 2px)`;
+
+  // If custom color, use inline styles for border-left and bg
+  const blockStyle: React.CSSProperties = { top, height, width, left, zIndex: 10 + column };
+  let blockClass = `absolute rounded-md px-1.5 py-0.5 overflow-hidden cursor-pointer transition-opacity hover:opacity-80 text-left border-l-[3px]`;
+
+  if (customColor && !event.todo.isCompleted) {
+    blockStyle.borderLeftColor = customColor;
+    blockStyle.backgroundColor = customColor + '15'; // 8% opacity
+    blockStyle.color = customColor;
+    blockClass += ` ${EVENT_COLOR_MAP[customColor]?.text || ''}`;
+  } else {
+    blockClass += ` ${colors.block}`;
+  }
 
   return (
     <button
       onClick={() => onClick(event.todo)}
-      className={`absolute rounded-md px-1.5 py-0.5 overflow-hidden cursor-pointer transition-opacity hover:opacity-80 text-left ${colors.block}`}
-      style={{ top, height, width, left, zIndex: 10 + column }}
+      className={blockClass}
+      style={blockStyle}
       title={`${event.todo.content}\n${formatHM(event.start)} – ${formatHM(event.end)}`}
     >
       <div className="text-[11px] font-medium truncate leading-tight">{event.todo.content}</div>
@@ -204,6 +270,7 @@ const MonthView: React.FC<{
             const dayEvents = eventsForDate(events, cell.date);
             const isToday = isSameDay(cell.date, today);
             const overflow = dayEvents.length - MAX_VISIBLE;
+            const hasEvents = dayEvents.length > 0;
             return (
               <div
                 key={di}
@@ -212,20 +279,39 @@ const MonthView: React.FC<{
                 `}
                 onClick={() => onClickDay(cell.date)}
               >
-                <div className={`text-[11px] font-medium mb-0.5 w-6 h-6 flex items-center justify-center rounded-full
-                  ${isToday ? 'bg-blue-600 text-white' : cell.isCurrentMonth ? 'text-gray-700' : 'text-gray-300'}
-                  ${di >= 5 && !isToday ? (cell.isCurrentMonth ? 'text-gray-400' : 'text-gray-300') : ''}
-                `}>
-                  {cell.date.getDate()}
+                <div className="flex items-center gap-0.5">
+                  <div className={`text-[11px] font-medium w-6 h-6 flex items-center justify-center rounded-full
+                    ${isToday ? 'bg-blue-600 text-white' : cell.isCurrentMonth ? 'text-gray-700' : 'text-gray-300'}
+                    ${di >= 5 && !isToday ? (cell.isCurrentMonth ? 'text-gray-400' : 'text-gray-300') : ''}
+                  `}>
+                    {cell.date.getDate()}
+                  </div>
+                  {/* Event dot indicator */}
+                  {hasEvents && !isToday && (
+                    <div className="flex gap-[2px]">
+                      {dayEvents.slice(0, 3).map((ev, idx) => {
+                        const c = ev.todo.color;
+                        return (
+                          <div
+                            key={idx}
+                            className="w-1.5 h-1.5 rounded-full"
+                            style={{ backgroundColor: c || (ev.todo.priority === 'high' ? '#f43f5e' : ev.todo.priority === 'low' ? '#3b82f6' : '#f59e0b') }}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-                <div className="space-y-0.5">
+                <div className="space-y-0.5 mt-0.5">
                   {dayEvents.slice(0, MAX_VISIBLE).map(ev => {
-                    const colors = getColors(ev.todo);
+                    const colors = getEventColors(ev.todo);
+                    const customColor = ev.todo.color && !ev.todo.isCompleted;
                     return (
                       <button
                         key={ev.todo.id}
                         onClick={(e) => { e.stopPropagation(); onClickEvent(ev.todo); }}
-                        className={`w-full text-left text-[10px] px-1 py-[1px] rounded truncate leading-tight font-medium ${colors.bar}`}
+                        className={`w-full text-left text-[10px] px-1 py-[1px] rounded truncate leading-tight font-medium ${customColor ? '' : colors.bar}`}
+                        style={customColor ? { backgroundColor: ev.todo.color + '20', color: ev.todo.color! } : undefined}
                         title={ev.todo.content}
                       >
                         {!ev.isAllDay && <span className="opacity-60">{formatHM(ev.start)} </span>}
@@ -252,7 +338,9 @@ const TimeGrid: React.FC<{
   events: CalendarEvent[];
   onClickEvent: (todo: TodoItem) => void;
   scrollRef: React.RefObject<HTMLDivElement | null>;
-}> = ({ days, events, onClickEvent, scrollRef }) => {
+  compressNight: boolean;
+  showTimeLine: boolean;
+}> = ({ days, events, onClickEvent, scrollRef, compressNight, showTimeLine }) => {
   const today = new Date();
   const [now, setNow] = useState(new Date());
 
@@ -265,7 +353,7 @@ const TimeGrid: React.FC<{
 
   // Current-time indicator position
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
-  const nowTop = (nowMinutes / 60) * HOUR_HEIGHT;
+  const nowTop = minutesToPx(nowMinutes, compressNight);
 
   // Pre-compute layout for each day column
   const dayLayouts = useMemo(() => {
@@ -282,24 +370,36 @@ const TimeGrid: React.FC<{
 
   const hasAnyAllDay = allDayEvents.some(a => a.length > 0);
 
+  // Has-events marker per day
+  const dayHasEvents = useMemo(() => {
+    return days.map(day => eventsForDate(events, day).length > 0);
+  }, [days, events]);
+
+  const gridHeight = totalGridHeight(compressNight);
+
   return (
     <div className="flex flex-col">
       {/* Day headers */}
       <div className="flex border-b border-gray-100 sticky top-0 bg-white z-20">
         <div className="w-12 shrink-0" />
-        <div className={`flex-1 grid`} style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }}>
+        <div className="flex-1 grid" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }}>
           {days.map((day, i) => {
             const isToday = isSameDay(day, today);
             const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
+            const hasEvt = dayHasEvents[i];
             return (
-              <div key={i} className="text-center py-2 border-l border-gray-50 first:border-l-0">
+              <div key={i} className="text-center py-2 border-l border-gray-50 first:border-l-0 relative">
                 <div className={`text-[10px] font-medium ${isToday ? 'text-blue-600' : 'text-gray-400'}`}>
                   周{dayNames[day.getDay()]}
                 </div>
-                <div className={`text-lg font-bold leading-tight mt-0.5 w-8 h-8 mx-auto flex items-center justify-center rounded-full
+                <div className={`text-lg font-bold leading-tight mt-0.5 w-8 h-8 mx-auto flex items-center justify-center rounded-full relative
                   ${isToday ? 'bg-blue-600 text-white' : 'text-gray-800'}
                 `}>
                   {day.getDate()}
+                  {/* Dot marker for days with events */}
+                  {hasEvt && !isToday && (
+                    <div className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-blue-500" />
+                  )}
                 </div>
               </div>
             );
@@ -317,12 +417,14 @@ const TimeGrid: React.FC<{
             {allDayEvents.map((dayEvts, di) => (
               <div key={di} className="px-0.5 space-y-0.5 border-l border-gray-100 first:border-l-0">
                 {dayEvts.map(ev => {
-                  const colors = getColors(ev.todo);
+                  const colors = getEventColors(ev.todo);
+                  const customColor = ev.todo.color && !ev.todo.isCompleted;
                   return (
                     <button
                       key={ev.todo.id}
                       onClick={() => onClickEvent(ev.todo)}
-                      className={`w-full text-left text-[10px] px-1 py-[1px] rounded truncate font-medium ${colors.bar}`}
+                      className={`w-full text-left text-[10px] px-1 py-[1px] rounded truncate font-medium ${customColor ? '' : colors.bar}`}
+                      style={customColor ? { backgroundColor: ev.todo.color + '20', color: ev.todo.color! } : undefined}
                       title={ev.todo.content}
                     >
                       {ev.todo.content}
@@ -337,39 +439,59 @@ const TimeGrid: React.FC<{
 
       {/* Scrollable time grid */}
       <div ref={scrollRef} className="overflow-y-auto flex-1" style={{ maxHeight: '480px' }}>
-        <div className="flex relative" style={{ height: 24 * HOUR_HEIGHT }}>
+        <div className="flex relative" style={{ height: gridHeight }}>
           {/* Hour labels */}
           <div className="w-12 shrink-0 relative">
-            {hours.map(h => (
-              <div key={h} className="absolute right-2 text-[10px] text-gray-400 font-medium -translate-y-1/2" style={{ top: h * HOUR_HEIGHT }}>
-                {h === 0 ? '' : `${String(h).padStart(2, '0')}:00`}
-              </div>
-            ))}
+            {hours.map(h => {
+              const top = minutesToPx(h * 60, compressNight);
+              const isCompressed = compressNight && h < 6;
+              if (isCompressed && h !== 0 && h !== 6) return null; // Skip labels 1–5 in compressed mode
+              return (
+                <div key={h} className={`absolute right-2 text-[10px] font-medium -translate-y-1/2 ${isCompressed ? 'text-gray-300' : 'text-gray-400'}`} style={{ top }}>
+                  {h === 0 ? '' : `${String(h).padStart(2, '0')}:00`}
+                </div>
+              );
+            })}
           </div>
 
           {/* Day columns */}
           <div className="flex-1 relative grid" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }}>
             {/* Hour grid lines */}
-            {hours.map(h => (
-              <div key={h} className="absolute left-0 right-0 border-t border-gray-100" style={{ top: h * HOUR_HEIGHT }} />
-            ))}
-            {/* Half-hour grid lines */}
-            {hours.map(h => (
-              <div key={`h${h}`} className="absolute left-0 right-0 border-t border-gray-50" style={{ top: h * HOUR_HEIGHT + HOUR_HEIGHT / 2 }} />
-            ))}
+            {hours.map(h => {
+              const top = minutesToPx(h * 60, compressNight);
+              const isCompressed = compressNight && h < 6;
+              return (
+                <div key={h} className={`absolute left-0 right-0 ${isCompressed ? 'border-t border-gray-50' : 'border-t border-gray-100'}`} style={{ top }} />
+              );
+            })}
+            {/* Half-hour grid lines (skip in compressed zone) */}
+            {hours.map(h => {
+              if (compressNight && h < 6) return null;
+              const top = minutesToPx(h * 60 + 30, compressNight);
+              return (
+                <div key={`h${h}`} className="absolute left-0 right-0 border-t border-gray-50" style={{ top }} />
+              );
+            })}
+
+            {/* Compression zone label */}
+            {compressNight && (
+              <div className="absolute left-0 right-0 flex items-center justify-center pointer-events-none z-10"
+                style={{ top: 0, height: 6 * COMPRESSED_HOUR_HEIGHT }}>
+                <span className="text-[9px] text-gray-300 font-medium bg-white/80 px-2 rounded">0:00 — 6:00</span>
+              </div>
+            )}
 
             {/* Current-time indicator */}
-            {days.some(d => isSameDay(d, today)) && (
+            {showTimeLine && days.some(d => isSameDay(d, today)) && (
               <>
                 <div
-                  className="absolute left-0 right-0 border-t-2 border-red-500 z-20 pointer-events-none"
+                  className="absolute left-0 right-0 border-t-2 border-dashed border-red-400 z-20 pointer-events-none"
                   style={{ top: nowTop }}
                 />
-                {/* Red dot on the left edge of the "today" column */}
                 {days.map((d, i) => isSameDay(d, today) ? (
                   <div
                     key={`dot${i}`}
-                    className="absolute w-2.5 h-2.5 rounded-full bg-red-500 z-20 pointer-events-none -translate-y-1/2"
+                    className="absolute w-2.5 h-2.5 rounded-full bg-red-400 z-20 pointer-events-none -translate-y-1/2"
                     style={{ top: nowTop, left: `calc(${(i / days.length) * 100}%)` }}
                   />
                 ) : null)}
@@ -380,7 +502,7 @@ const TimeGrid: React.FC<{
             {dayLayouts.map((layouted, colIdx) => (
               <div key={colIdx} className="relative border-l border-gray-100 first:border-l-0">
                 {layouted.map(le => (
-                  <EventBlock key={le.event.todo.id} le={le} onClick={onClickEvent} />
+                  <EventBlock key={le.event.todo.id} le={le} onClick={onClickEvent} compressNight={compressNight} />
                 ))}
               </div>
             ))}
@@ -400,19 +522,60 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const timeGridRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to ~7am when switching to day/week view
+  // Night compression setting with localStorage memory
+  const [compressNight, setCompressNight] = useState(() => {
+    try { return localStorage.getItem(STORAGE_KEY_COMPRESS) !== 'false'; } catch { return true; } // default ON
+  });
+  const toggleCompress = useCallback(() => {
+    setCompressNight(prev => {
+      const next = !prev;
+      try { localStorage.setItem(STORAGE_KEY_COMPRESS, String(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  // Current-time indicator setting with localStorage memory
+  const [showTimeLine, setShowTimeLine] = useState(() => {
+    try { return localStorage.getItem(STORAGE_KEY_TIMELINE) !== 'false'; } catch { return true; }
+  });
+  const toggleTimeLine = useCallback(() => {
+    setShowTimeLine(prev => {
+      const next = !prev;
+      try { localStorage.setItem(STORAGE_KEY_TIMELINE, String(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  // Settings popover
+  const [showSettings, setShowSettings] = useState(false);
+  const settingsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if ((viewMode === 'week' || viewMode === 'day') && timeGridRef.current) {
-      requestAnimationFrame(() => {
-        timeGridRef.current?.scrollTo({ top: 7 * HOUR_HEIGHT, behavior: 'auto' });
-      });
-    }
-  }, [viewMode, currentDate]);
+    if (!showSettings) return;
+    const handleClick = (e: MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) setShowSettings(false);
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showSettings]);
 
   // Convert todos → calendar events
   const events = useMemo(() => {
     return todos.map(t => todoToEvent(t)).filter((e): e is CalendarEvent => e !== null);
   }, [todos]);
+
+  // Smart auto-scroll to the nearest event time
+  useEffect(() => {
+    if ((viewMode === 'week' || viewMode === 'day') && timeGridRef.current) {
+      const days = viewMode === 'week' ? (() => {
+        const ws = getWeekStart(currentDate);
+        return Array.from({ length: 7 }, (_, i) => { const d = new Date(ws); d.setDate(d.getDate() + i); return d; });
+      })() : [new Date(currentDate)];
+      const scrollTarget = findSmartScrollTarget(events, days, compressNight);
+      requestAnimationFrame(() => {
+        timeGridRef.current?.scrollTo({ top: scrollTarget, behavior: 'auto' });
+      });
+    }
+  }, [viewMode, currentDate, events, compressNight]);
 
   // Navigation
   const goToday = useCallback(() => setCurrentDate(new Date()), []);
@@ -460,7 +623,6 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
     return `${currentDate.getFullYear()}年${currentDate.getMonth() + 1}月${currentDate.getDate()}日 星期${dayNames[currentDate.getDay()]}`;
   }, [currentDate, viewMode]);
 
-  // Week days array
   const weekDays = useMemo(() => {
     const ws = getWeekStart(currentDate);
     return Array.from({ length: 7 }, (_, i) => {
@@ -470,12 +632,10 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
     });
   }, [currentDate]);
 
-  // Day array (single element for day view)
   const dayArray = useMemo(() => [new Date(currentDate)], [currentDate]);
 
   const isToday = isSameDay(currentDate, new Date());
 
-  // View mode buttons config
   const VIEW_MODES: { key: ViewMode; label: string; icon: React.FC<any> }[] = [
     { key: 'day', label: '日', icon: AlignJustify },
     { key: 'week', label: '周', icon: Columns3 },
@@ -483,85 +643,114 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
   ];
 
   if (events.length === 0) {
-    return null; // Don't render the schedule if there are no time-based events
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-gray-400">
+        <CalendarIcon className="w-12 h-12 mb-3 text-gray-300" />
+        <p className="text-sm">暂无日程事件</p>
+        <p className="text-xs mt-1">给待办事项设置时间即可在此显示</p>
+      </div>
+    );
   }
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+    <div className="h-full flex flex-col overflow-hidden">
       {/* ─── Header ─── */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 bg-white/80">
-        <div className="flex items-center gap-1">
-          <button
-            onClick={goPrev}
-            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <h3 className="text-sm font-semibold text-gray-700 min-w-[180px] text-center select-none">
-            {headerTitle}
-          </h3>
-          <button
-            onClick={goNext}
-            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-          <button
-            onClick={goToday}
-            className={`ml-2 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors
-              ${isToday
-                ? 'border-blue-200 bg-blue-50 text-blue-600'
-                : 'border-gray-200 hover:bg-gray-50 text-gray-600'
-              }`}
-          >
-            今天
-          </button>
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 bg-white/80 shrink-0">
+        <div className="flex items-center gap-2">
+          <h3 className="text-lg font-bold text-gray-800">日程表</h3>
+          <span className="text-xs text-gray-400">({events.length} 个事件)</span>
         </div>
 
-        {/* View mode switcher */}
-        <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
-          {VIEW_MODES.map(({ key, label, icon: Icon }) => (
-            <button
-              key={key}
-              onClick={() => setViewMode(key)}
-              className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md transition-all duration-200
-                ${viewMode === key
-                  ? 'bg-white shadow-sm text-gray-800 ring-1 ring-gray-200'
-                  : 'text-gray-500 hover:text-gray-700'
-                }`}
-            >
-              <Icon className="w-3.5 h-3.5" />
-              {label}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
+            <button onClick={goPrev} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors">
+              <ChevronLeft className="w-4 h-4" />
             </button>
-          ))}
+            <h3 className="text-sm font-semibold text-gray-700 min-w-[170px] text-center">{headerTitle}</h3>
+            <button onClick={goNext} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors">
+              <ChevronRight className="w-4 h-4" />
+            </button>
+            <button
+              onClick={goToday}
+              className={`ml-1 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors
+                ${isToday ? 'border-blue-200 bg-blue-50 text-blue-600' : 'border-gray-200 hover:bg-gray-50 text-gray-600'}`}
+            >
+              今天
+            </button>
+          </div>
+
+          {/* View mode switcher */}
+          <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
+            {VIEW_MODES.map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                onClick={() => setViewMode(key)}
+                className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md transition-all duration-200
+                  ${viewMode === key ? 'bg-white shadow-sm text-gray-800 ring-1 ring-gray-200' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Settings button */}
+          {(viewMode === 'week' || viewMode === 'day') && (
+            <div className="relative" ref={settingsRef}>
+              <button
+                onClick={() => setShowSettings(v => !v)}
+                className={`p-1.5 rounded-lg transition-colors ${showSettings ? 'bg-gray-200 text-gray-700' : 'hover:bg-gray-100 text-gray-400 hover:text-gray-600'}`}
+                title="视图设置"
+              >
+                <Settings2 className="w-3.5 h-3.5" />
+              </button>
+              {showSettings && (
+                <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 p-3 z-30 w-52">
+                  <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-700 hover:text-gray-900">
+                    <input
+                      type="checkbox"
+                      checked={compressNight}
+                      onChange={toggleCompress}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <div>
+                      <div className="font-medium text-xs">压缩凌晨时段</div>
+                      <div className="text-[10px] text-gray-400">将 0:00–6:00 缩小显示</div>
+                    </div>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-700 hover:text-gray-900 mt-2">
+                    <input
+                      type="checkbox"
+                      checked={showTimeLine}
+                      onChange={toggleTimeLine}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <div>
+                      <div className="font-medium text-xs">显示当前时间线</div>
+                      <div className="text-[10px] text-gray-400">在今天列显示时刻指示线</div>
+                    </div>
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
       {/* ─── Content ─── */}
-      {viewMode === 'month' && (
-        <MonthView
-          currentDate={currentDate}
-          events={events}
-          onClickEvent={onEditTodo}
-          onClickDay={handleClickDay}
-        />
-      )}
-      {viewMode === 'week' && (
-        <TimeGrid
-          days={weekDays}
-          events={events}
-          onClickEvent={onEditTodo}
-          scrollRef={timeGridRef}
-        />
-      )}
-      {viewMode === 'day' && (
-        <TimeGrid
-          days={dayArray}
-          events={events}
-          onClickEvent={onEditTodo}
-          scrollRef={timeGridRef}
-        />
-      )}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {viewMode === 'month' && (
+          <div className="h-full overflow-auto">
+            <MonthView currentDate={currentDate} events={events} onClickEvent={onEditTodo} onClickDay={handleClickDay} />
+          </div>
+        )}
+        {viewMode === 'week' && (
+          <TimeGrid days={weekDays} events={events} onClickEvent={onEditTodo} scrollRef={timeGridRef} compressNight={compressNight} showTimeLine={showTimeLine} />
+        )}
+        {viewMode === 'day' && (
+          <TimeGrid days={dayArray} events={events} onClickEvent={onEditTodo} scrollRef={timeGridRef} compressNight={compressNight} showTimeLine={showTimeLine} />
+        )}
+      </div>
     </div>
   );
 };

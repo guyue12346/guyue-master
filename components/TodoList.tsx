@@ -1,7 +1,8 @@
 
 import React, { useState } from 'react';
-import { TodoItem, SubTask } from '../types';
-import { Check, Trash2, Edit2, Calendar, AlertCircle, CheckCircle2, Clock, ChevronDown, ChevronRight, Archive, AlignLeft, ListChecks } from 'lucide-react';
+import { TodoItem, SubTask, Category } from '../types';
+import { Check, Trash2, Edit2, Calendar, AlertCircle, CheckCircle2, Clock, ChevronDown, ChevronRight, Archive, AlignLeft, ListChecks, Settings2 } from 'lucide-react';
+import * as LucideIcons from 'lucide-react';
 
 interface TodoListProps {
   todos: TodoItem[];
@@ -9,14 +10,27 @@ interface TodoListProps {
   onDelete: (id: string) => void;
   onEdit: (todo: TodoItem) => void;
   onToggleSubtask: (todoId: string, subtaskId: string) => void;
+  /** Category filtering */
+  categories: Category[];
+  selectedCategory: string;
+  onSelectCategory: (name: string) => void;
+  onOpenManager: () => void;
 }
 
 const ARCHIVE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-export const TodoList: React.FC<TodoListProps> = ({ todos, onToggle, onDelete, onEdit, onToggleSubtask }) => {
+export const TodoList: React.FC<TodoListProps> = ({ todos, onToggle, onDelete, onEdit, onToggleSubtask, categories, selectedCategory, onSelectCategory, onOpenManager }) => {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [showCompleted, setShowCompleted] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+
+  const getIcon = (iconName: string) => {
+    const Icon = (LucideIcons as any)[iconName] || LucideIcons.Folder;
+    return Icon;
+  };
+
+  const userCategories = categories.filter(c => c.id !== 'all' && c.name !== '全部' && !c.isSystem);
+  const systemCategory = categories.find(c => c.id === 'all' || c.name === '全部');
 
   const now = Date.now();
   const pendingTodos = todos.filter(t => !t.isCompleted);
@@ -209,20 +223,61 @@ export const TodoList: React.FC<TodoListProps> = ({ todos, onToggle, onDelete, o
     );
   };
 
+  const allCategories = [
+    ...(systemCategory ? [systemCategory] : []),
+    ...userCategories,
+  ];
+
+  const CategoryBar = () => (
+    <div className="flex items-center gap-2 mb-4 flex-wrap">
+      {allCategories.map(cat => {
+        const IconComponent = getIcon(cat.icon);
+        const isSelected = selectedCategory === cat.name;
+        return (
+          <button
+            key={cat.id}
+            onClick={() => onSelectCategory(cat.name)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border
+              ${isSelected
+                ? 'bg-blue-50 text-blue-700 border-blue-200 shadow-sm'
+                : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50 hover:text-gray-700 hover:border-gray-300'
+              }`}
+          >
+            <IconComponent className="w-3 h-3" />
+            {cat.name}
+            {cat.isSystem && <span className="text-[10px] opacity-60">({todos.length})</span>}
+          </button>
+        );
+      })}
+      <button
+        onClick={onOpenManager}
+        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-full text-xs text-gray-400 hover:text-blue-500 hover:bg-gray-50 transition-colors border border-transparent hover:border-gray-200"
+        title="管理分类"
+      >
+        <Settings2 className="w-3 h-3" />
+      </button>
+    </div>
+  );
+
   if (todos.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-[60vh] text-center text-gray-400">
-        <div className="w-20 h-20 bg-green-50 rounded-full flex items-center justify-center mb-4 shadow-inner">
-          <CheckCircle2 className="w-10 h-10 text-green-300" />
+      <div>
+        <CategoryBar />
+        <div className="flex flex-col items-center justify-center h-[50vh] text-center text-gray-400">
+          <div className="w-20 h-20 bg-green-50 rounded-full flex items-center justify-center mb-4 shadow-inner">
+            <CheckCircle2 className="w-10 h-10 text-green-300" />
+          </div>
+          <h3 className="text-lg font-medium text-gray-600">暂无待办事项</h3>
+          <p className="text-sm">点击右上角的 "+" 按钮添加新任务。</p>
         </div>
-        <h3 className="text-lg font-medium text-gray-600">暂无待办事项</h3>
-        <p className="text-sm">点击右上角的 "+" 按钮添加新任务。</p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 pb-10">
+    <div className="max-w-4xl mx-auto pb-10">
+      <CategoryBar />
+      <div className="space-y-8">
       {/* Pending */}
       {pendingTodos.length > 0 && (
         <div className="space-y-3">
@@ -273,6 +328,7 @@ export const TodoList: React.FC<TodoListProps> = ({ todos, onToggle, onDelete, o
           )}
         </div>
       )}
+      </div>
     </div>
   );
 };

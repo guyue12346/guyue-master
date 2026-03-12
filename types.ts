@@ -50,6 +50,7 @@ export interface TodoItem {
   timeType?: 'point' | 'range'; // 'point' = specific datetime, 'range' = start–end
   timeStart?: number; // range start timestamp
   timeEnd?: number;   // range end timestamp
+  color?: string; // event display color for calendar view
   subtasks?: SubTask[];
   completedAt?: number; // timestamp when completed
   createdAt: number;

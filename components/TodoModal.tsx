@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { TodoItem, SubTask } from '../types';
-import { X, Calendar, Flag, Tag, CheckSquare, Plus, Trash2, AlignLeft, Clock, MapPin, ArrowRight } from 'lucide-react';
+import { X, Calendar, Flag, Tag, CheckSquare, Plus, Trash2, AlignLeft, Clock, MapPin, ArrowRight, Palette } from 'lucide-react';
 
 interface TodoModalProps {
   isOpen: boolean;
@@ -32,6 +32,7 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
   const [timePointValue, setTimePointValue] = useState('');
   const [timeStartValue, setTimeStartValue] = useState('');
   const [timeEndValue, setTimeEndValue] = useState('');
+  const [eventColor, setEventColor] = useState('');
 
   useEffect(() => {
     if (initialData) {
@@ -40,6 +41,7 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
       setCategory(initialData.category);
       setPriority(initialData.priority);
       setSubtasks(initialData.subtasks || []);
+      setEventColor(initialData.color || '');
       // Restore time mode from existing data
       if (initialData.timeType === 'range' && initialData.timeStart) {
         setTimeMode('range');
@@ -77,6 +79,7 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
     setTimePointValue('');
     setTimeStartValue('');
     setTimeEndValue('');
+    setEventColor('');
     setSubtasks([]);
     setNewSubtask('');
   };
@@ -145,6 +148,7 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
       description: description.trim() || undefined,
       category,
       priority,
+      color: eventColor || undefined,
       ...timeFields,
       subtasks: subtasks.length > 0 ? subtasks : undefined,
     });
@@ -272,16 +276,18 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
 
               {/* Time Point Input */}
               {timeMode === 'point' && (
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Calendar className="h-4 w-4 text-blue-400" />
+                <div>
+                  <div className="relative flex items-center">
+                    <div className="absolute left-3 pointer-events-none">
+                      <Calendar className="h-4 w-4 text-blue-400" />
+                    </div>
+                    <input
+                      type="datetime-local"
+                      value={timePointValue}
+                      onChange={(e) => setTimePointValue(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2.5 bg-blue-50/50 border border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm"
+                    />
                   </div>
-                  <input
-                    type="datetime-local"
-                    value={timePointValue}
-                    onChange={(e) => setTimePointValue(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2.5 bg-blue-50/50 border border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm"
-                  />
                   <p className="text-[10px] text-gray-400 mt-1 ml-1">选择一个具体的日期和时间</p>
                 </div>
               )}
@@ -312,6 +318,42 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
                 </div>
               )}
             </div>
+
+            {/* ───── Event Color ───── */}
+            {timeMode !== 'none' && (
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">
+                  <span className="flex items-center gap-1.5"><Palette className="w-3.5 h-3.5" />事件颜色 (可选)</span>
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { value: '', label: '默认', bg: 'bg-gray-100', ring: 'ring-gray-300' },
+                    { value: '#3b82f6', label: '蓝', bg: 'bg-blue-500', ring: 'ring-blue-400' },
+                    { value: '#8b5cf6', label: '紫', bg: 'bg-violet-500', ring: 'ring-violet-400' },
+                    { value: '#ec4899', label: '粉', bg: 'bg-pink-500', ring: 'ring-pink-400' },
+                    { value: '#ef4444', label: '红', bg: 'bg-red-500', ring: 'ring-red-400' },
+                    { value: '#f97316', label: '橙', bg: 'bg-orange-500', ring: 'ring-orange-400' },
+                    { value: '#eab308', label: '黄', bg: 'bg-yellow-500', ring: 'ring-yellow-400' },
+                    { value: '#22c55e', label: '绿', bg: 'bg-green-500', ring: 'ring-green-400' },
+                    { value: '#14b8a6', label: '青', bg: 'bg-teal-500', ring: 'ring-teal-400' },
+                    { value: '#6b7280', label: '灰', bg: 'bg-gray-500', ring: 'ring-gray-400' },
+                  ].map(c => (
+                    <button
+                      key={c.value}
+                      type="button"
+                      onClick={() => setEventColor(c.value)}
+                      className={`w-7 h-7 rounded-full transition-all duration-150 flex items-center justify-center
+                        ${c.value === '' ? (eventColor === '' ? 'ring-2 ring-offset-2 ' + c.ring + ' ' + c.bg : c.bg + ' hover:scale-110') : (eventColor === c.value ? 'ring-2 ring-offset-2 ' + c.ring + ' ' + c.bg : c.bg + ' hover:scale-110')}`}
+                      title={c.label}
+                    >
+                      {((c.value === '' && eventColor === '') || eventColor === c.value) && (
+                        <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Subtasks */}
             <div>
