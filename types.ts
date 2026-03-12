@@ -365,6 +365,7 @@ export interface DataCenterConfig {
     passwordManager: boolean;
     zenmuxUsage: boolean;
   };
+  moduleOrder?: string[];
 }
 
 // 邮件SMTP配置

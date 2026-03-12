@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart3, Flame, Package, Settings, X, ToggleLeft, ToggleRight, Shield, Activity, Terminal, Webhook, HelpCircle } from 'lucide-react';
+import { BarChart3, Flame, Package, Settings, X, ToggleLeft, ToggleRight, Shield, Activity, Terminal, Webhook, HelpCircle, GripVertical } from 'lucide-react';
 import { OJHeatmapContainer } from './OJHeatmapContainer';
 import { ResourceCenter } from './ResourceCenter';
 import { PasswordManager } from './PasswordManager';
@@ -12,6 +12,9 @@ import type { OJHeatmapData, ResourceCenterData, DataCenterConfig, SSHRecord, Ca
 // localStorage 存储键
 const STORAGE_KEY_DATACENTER_CONFIG = 'linkmaster_datacenter_config';
 
+// 模块默认顺序
+const DEFAULT_MODULE_ORDER = ['ssh', 'apiManager', 'ojHeatmap', 'resourceCenter', 'passwordManager', 'zenmuxUsage'];
+
 // 默认配置
 const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
   modules: {
@@ -22,6 +25,7 @@ const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
     passwordManager: true,
     zenmuxUsage: true,
   },
+  moduleOrder: DEFAULT_MODULE_ORDER,
 };
 
 const normalizeDataCenterConfig = (rawConfig: Partial<DataCenterConfig> | null | undefined): DataCenterConfig => ({
@@ -29,7 +33,18 @@ const normalizeDataCenterConfig = (rawConfig: Partial<DataCenterConfig> | null |
     ...DEFAULT_DATACENTER_CONFIG.modules,
     ...(rawConfig?.modules ?? {}),
   },
+  moduleOrder: rawConfig?.moduleOrder ?? DEFAULT_MODULE_ORDER,
 });
+
+// 模块元数据（用于设置界面动态渲染）
+const MODULE_DEFS: { key: keyof DataCenterConfig['modules']; label: string; color: string; IconComp: React.ComponentType<{ className?: string }> }[] = [
+  { key: 'ssh',             label: 'SSH管理',  color: 'text-cyan-500',    IconComp: Terminal },
+  { key: 'apiManager',     label: 'API管理',  color: 'text-purple-500',  IconComp: Webhook  },
+  { key: 'ojHeatmap',      label: 'OJ热力图', color: 'text-orange-500',  IconComp: Flame    },
+  { key: 'resourceCenter', label: '资源中心', color: 'text-blue-500',    IconComp: Package  },
+  { key: 'passwordManager',label: '网站管理', color: 'text-emerald-500', IconComp: Shield   },
+  { key: 'zenmuxUsage',    label: 'Zenmux',   color: 'text-violet-500',  IconComp: Activity },
+];
 
 // 设置弹窗组件
 const DataCenterSettingsModal: React.FC<{
@@ -38,18 +53,28 @@ const DataCenterSettingsModal: React.FC<{
   config: DataCenterConfig;
   onUpdateConfig: (config: DataCenterConfig) => void;
 }> = ({ isOpen, onClose, config, onUpdateConfig }) => {
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
 
   if (!isOpen) return null;
 
-  const handleModuleToggle = (moduleKey: keyof DataCenterConfig['modules']) => {
-    const newConfig = {
-      ...config,
-      modules: {
-        ...config.modules,
-        [moduleKey]: !config.modules[moduleKey],
-      },
-    };
-    onUpdateConfig(newConfig);
+  const moduleOrder = config.moduleOrder ?? DEFAULT_MODULE_ORDER;
+  // 保证所有模块都在列表里（向前兼容）
+  const orderedKeys = [
+    ...moduleOrder,
+    ...DEFAULT_MODULE_ORDER.filter(k => !moduleOrder.includes(k)),
+  ] as (keyof DataCenterConfig['modules'])[];
+
+  const handleToggle = (key: keyof DataCenterConfig['modules']) => {
+    onUpdateConfig({ ...config, modules: { ...config.modules, [key]: !config.modules[key] } });
+  };
+
+  const handleDrop = (toIndex: number) => {
+    if (dragIndex === null || dragIndex === toIndex) return;
+    const newOrder = [...orderedKeys];
+    const [moved] = newOrder.splice(dragIndex, 1);
+    newOrder.splice(toIndex, 0, moved);
+    onUpdateConfig({ ...config, moduleOrder: newOrder });
   };
 
   return (
@@ -66,88 +91,46 @@ const DataCenterSettingsModal: React.FC<{
         </div>
 
         <div className="p-4 overflow-y-auto max-h-[calc(90vh-120px)] space-y-6">
-          {/* 模块管理 */}
           <div>
-            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">模块管理</h4>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <Terminal className="w-4 h-4 text-cyan-500" />
-                  <span className="text-sm text-gray-900 dark:text-white">SSH管理</span>
-                </div>
-                <button
-                  onClick={() => handleModuleToggle('ssh')}
-                  className={`transition-colors ${config.modules.ssh ? 'text-blue-500' : 'text-gray-400'}`}
-                >
-                  {config.modules.ssh ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <Webhook className="w-4 h-4 text-purple-500" />
-                  <span className="text-sm text-gray-900 dark:text-white">API管理</span>
-                </div>
-                <button
-                  onClick={() => handleModuleToggle('apiManager')}
-                  className={`transition-colors ${config.modules.apiManager ? 'text-blue-500' : 'text-gray-400'}`}
-                >
-                  {config.modules.apiManager ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <Flame className="w-4 h-4 text-orange-500" />
-                  <span className="text-sm text-gray-900 dark:text-white">OJ热力图</span>
-                </div>
-                <button
-                  onClick={() => handleModuleToggle('ojHeatmap')}
-                  className={`transition-colors ${config.modules.ojHeatmap ? 'text-blue-500' : 'text-gray-400'}`}
-                >
-                  {config.modules.ojHeatmap ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <Package className="w-4 h-4 text-blue-500" />
-                  <span className="text-sm text-gray-900 dark:text-white">资源中心</span>
-                </div>
-                <button
-                  onClick={() => handleModuleToggle('resourceCenter')}
-                  className={`transition-colors ${config.modules.resourceCenter ? 'text-blue-500' : 'text-gray-400'}`}
-                >
-                  {config.modules.resourceCenter ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <Shield className="w-4 h-4 text-emerald-500" />
-                  <span className="text-sm text-gray-900 dark:text-white">网站管理</span>
-                </div>
-                <button
-                  onClick={() => handleModuleToggle('passwordManager')}
-                  className={`transition-colors ${config.modules.passwordManager ? 'text-blue-500' : 'text-gray-400'}`}
-                >
-                  {config.modules.passwordManager ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <Activity className="w-4 h-4 text-violet-500" />
-                  <span className="text-sm text-gray-900 dark:text-white">Zenmux</span>
-                </div>
-                <button
-                  onClick={() => handleModuleToggle('zenmuxUsage')}
-                  className={`transition-colors ${config.modules.zenmuxUsage ? 'text-blue-500' : 'text-gray-400'}`}
-                >
-                  {config.modules.zenmuxUsage ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
-                </button>
-              </div>
-
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">模块管理</h4>
+              <span className="text-xs text-gray-400">拖拽排序 · 点击切换显示</span>
+            </div>
+            <div className="space-y-1">
+              {orderedKeys.map((key, index) => {
+                const def = MODULE_DEFS.find(d => d.key === key);
+                if (!def) return null;
+                const enabled = config.modules[key];
+                const isDragging = dragIndex === index;
+                const isDropTarget = dropIndex === index && dragIndex !== null && dragIndex !== index;
+                return (
+                  <div
+                    key={key}
+                    draggable
+                    onDragStart={() => setDragIndex(index)}
+                    onDragOver={(e) => { e.preventDefault(); setDropIndex(index); }}
+                    onDrop={() => { handleDrop(index); setDragIndex(null); setDropIndex(null); }}
+                    onDragEnd={() => { setDragIndex(null); setDropIndex(null); }}
+                    className={`flex items-center justify-between p-3 rounded-lg transition-all select-none
+                      ${isDragging ? 'opacity-40' : 'opacity-100'}
+                      ${isDropTarget ? 'ring-2 ring-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'bg-gray-50 dark:bg-gray-700/50'}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <GripVertical className="w-4 h-4 text-gray-300 cursor-grab active:cursor-grabbing shrink-0" />
+                      <def.IconComp className={`w-4 h-4 ${def.color}`} />
+                      <span className={`text-sm ${enabled ? 'text-gray-900 dark:text-white' : 'text-gray-400 dark:text-gray-500 line-through'}`}>
+                        {def.label}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => handleToggle(key)}
+                      className={`transition-colors shrink-0 ${enabled ? 'text-blue-500' : 'text-gray-400'}`}
+                    >
+                      {enabled ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -263,8 +246,12 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
     localStorage.setItem(STORAGE_KEY_DATACENTER_CONFIG, JSON.stringify(config));
   }, [config]);
 
-  // 过滤可见的导航项
-  const visibleNavItems = NAV_ITEMS.filter(item => config.modules[item.configKey]);
+  // 按配置顺序过滤可见导航项
+  const moduleOrder = config.moduleOrder ?? DEFAULT_MODULE_ORDER;
+  const orderedKeys = [...moduleOrder, ...DEFAULT_MODULE_ORDER.filter(k => !moduleOrder.includes(k))];
+  const visibleNavItems = orderedKeys
+    .map(key => NAV_ITEMS.find(item => item.configKey === key))
+    .filter((item): item is NavItem => item !== undefined && config.modules[item.configKey]);
 
   // 确保当前页面是可见的
   useEffect(() => {

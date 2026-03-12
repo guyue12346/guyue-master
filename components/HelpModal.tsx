@@ -290,7 +290,7 @@ const HELP_CONTENT: Record<string, HelpContent> = {
         items: [
           { text: 'SSH 管理：快速连接远程服务器，支持一键在终端打开' },
           { text: 'OJ 热力图：可视化 LeetCode、洛谷等 OJ 平台的提交记录' },
-          { text: '资源中心：管理订阅服务、域名等资源，支持到期邮件提醒' },
+          { text: '资源中心：管理订阅服务、域名等资源' },
           { text: '密码管理：安全存储账号密码，AES-256 加密保护' },
           { text: 'Zenmux：查看 AI 使用量并管理登录状态' },
         ],
@@ -298,7 +298,6 @@ const HELP_CONTENT: Record<string, HelpContent> = {
       {
         title: '使用技巧',
         items: [
-          { text: '在「设置 → 邮件提醒设置」中配置 SMTP，启用资源到期提醒' },
           { text: 'SSH 记录点击「连接」可直接在终端模块中打开' },
           { text: '密码管理需要设置主密码，请务必妥善保管' },
         ],

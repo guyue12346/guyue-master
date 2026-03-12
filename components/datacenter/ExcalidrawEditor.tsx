@@ -463,16 +463,38 @@ export const ExcalidrawEditor: React.FC = () => {
   const [isFileListOpen, setIsFileListOpen] = useState(false);
   const [isDark, setIsDark] = useState(false);
 
-  // 图床可用分类（从 localStorage 读取已有分类）
-  const [imageCategories, setImageCategories] = useState<string[]>(() => {
+  // 图床可用分类（同时读 records + categoriesMap）
+  const [imageCategories, setImageCategories] = useState<string[]>([]);
+
+  const refreshImageCategories = useCallback(() => {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY_IMAGE_RECORDS);
-      if (!raw) return ['绘图'];
-      const records = JSON.parse(raw) as Array<{ category?: string }>;
-      const cats = Array.from(new Set(records.map(r => r.category).filter(Boolean) as string[]));
-      return cats.length > 0 ? cats : ['绘图'];
-    } catch { return ['绘图']; }
-  });
+      // 来源一：已上传图片的 category
+      const rawRecords = localStorage.getItem(STORAGE_KEY_IMAGE_RECORDS);
+      const recordCats: string[] = rawRecords
+        ? (JSON.parse(rawRecords) as Array<{ category?: string }>)
+            .map(r => r.category)
+            .filter(Boolean) as string[]
+        : [];
+      // 来源二：分类管理器内建立的 image-hosting 分类
+      const rawCats = localStorage.getItem('linkmaster_categories_v1');
+      const managerCats: string[] = rawCats
+        ? ((JSON.parse(rawCats)['image-hosting'] || []) as Array<{ name: string; isSystem?: boolean }>)
+            .filter(c => !c.isSystem && c.name !== '全部' && c.name !== '未分类')
+            .map(c => c.name)
+        : [];
+      const merged = Array.from(new Set([...recordCats, ...managerCats]));
+      setImageCategories(merged.length > 0 ? merged : ['绘图']);
+    } catch {
+      setImageCategories(['绘图']);
+    }
+  }, []);
+
+  useEffect(() => { refreshImageCategories(); }, [refreshImageCategories]);
+
+  // 每次弹窗打开时刷新分类
+  useEffect(() => {
+    if (isExportModalOpen) refreshImageCategories();
+  }, [isExportModalOpen, refreshImageCategories]);
 
   // 素材库持久化
   const [libraryItems, setLibraryItems] = useState<any[]>(loadLibrary);
@@ -772,7 +794,7 @@ export const ExcalidrawEditor: React.FC = () => {
   const handleExportPNG = useCallback(async () => {
     if (!excalidrawAPIRef.current || !exportUtils) { showToast('绘图引擎未就绪', 'error'); return; }
     const api = excalidrawAPIRef.current;
-    const elements = api.getSceneElements();
+    const elements = api.getSceneElements().filter((el: any) => !el.isDeleted);
     if (!elements || !elements.length) { showToast('画布为空', 'error'); return; }
     try {
       const blob = await exportUtils.exportToBlob({
@@ -798,7 +820,7 @@ export const ExcalidrawEditor: React.FC = () => {
   const handleExportSVG = useCallback(async () => {
     if (!excalidrawAPIRef.current || !exportUtils) { showToast('绘图引擎未就绪', 'error'); return; }
     const api = excalidrawAPIRef.current;
-    const elements = api.getSceneElements();
+    const elements = api.getSceneElements().filter((el: any) => !el.isDeleted);
     if (!elements || !elements.length) { showToast('画布为空', 'error'); return; }
     try {
       const svg = await exportUtils.exportToSvg({
@@ -839,7 +861,7 @@ export const ExcalidrawEditor: React.FC = () => {
     }
 
     const api = excalidrawAPIRef.current;
-    const elements = api.getSceneElements();
+    const elements = api.getSceneElements().filter((el: any) => !el.isDeleted);
     if (!elements || !elements.length) { showToast('画布为空', 'error'); return; }
 
     setIsUploading(true);
