@@ -1,18 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart3, Flame, Package, Settings, X, ToggleLeft, ToggleRight, Mail, Server, Key, Send, Loader2, CheckCircle, AlertCircle, Shield, Activity } from 'lucide-react';
+import { BarChart3, Flame, Package, Settings, X, ToggleLeft, ToggleRight, Shield, Activity, Terminal, Webhook, HelpCircle } from 'lucide-react';
 import { OJHeatmapContainer } from './OJHeatmapContainer';
 import { ResourceCenter } from './ResourceCenter';
 import { PasswordManager } from './PasswordManager';
 import { ZenmuxUsagePanel } from './ZenmuxUsagePanel';
-import type { OJHeatmapData, ResourceCenterData, DataCenterConfig, EmailConfig } from '../../types';
+import { SSHManager } from './SSHManager';
+import { APIManager } from './APIManager';
+import { HelpModal } from '../HelpModal';
+import type { OJHeatmapData, ResourceCenterData, DataCenterConfig, SSHRecord, Category, APIRecord } from '../../types';
 
 // localStorage 存储键
 const STORAGE_KEY_DATACENTER_CONFIG = 'linkmaster_datacenter_config';
-const STORAGE_KEY_EMAIL_CONFIG = 'linkmaster_email_config';
 
 // 默认配置
 const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
   modules: {
+    ssh: true,
+    apiManager: true,
     ojHeatmap: true,
     resourceCenter: true,
     passwordManager: true,
@@ -27,38 +31,13 @@ const normalizeDataCenterConfig = (rawConfig: Partial<DataCenterConfig> | null |
   },
 });
 
-const DEFAULT_EMAIL_CONFIG: EmailConfig = {
-  enabled: false,
-  smtp: {
-    host: '',
-    port: 465,
-    secure: true,
-    user: '',
-    pass: '',
-  },
-  recipient: '',
-};
-
 // 设置弹窗组件
 const DataCenterSettingsModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
   config: DataCenterConfig;
   onUpdateConfig: (config: DataCenterConfig) => void;
-  emailConfig: EmailConfig;
-  onUpdateEmailConfig: (config: EmailConfig) => void;
-}> = ({ isOpen, onClose, config, onUpdateConfig, emailConfig, onUpdateEmailConfig }) => {
-  const [localEmailConfig, setLocalEmailConfig] = useState<EmailConfig>(emailConfig);
-  const [testStatus, setTestStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [testError, setTestError] = useState<string>('');
-
-  useEffect(() => {
-    if (isOpen) {
-      setLocalEmailConfig(emailConfig);
-      setTestStatus('idle');
-      setTestError('');
-    }
-  }, [isOpen, emailConfig]);
+}> = ({ isOpen, onClose, config, onUpdateConfig }) => {
 
   if (!isOpen) return null;
 
@@ -71,39 +50,6 @@ const DataCenterSettingsModal: React.FC<{
       },
     };
     onUpdateConfig(newConfig);
-  };
-
-  const handleTestEmail = async () => {
-    if (!localEmailConfig.smtp.host || !localEmailConfig.smtp.user || !localEmailConfig.smtp.pass || !localEmailConfig.recipient) {
-      setTestStatus('error');
-      setTestError('请填写完整的邮件配置');
-      return;
-    }
-
-    setTestStatus('loading');
-    setTestError('');
-
-    try {
-      if (window.electronAPI?.testEmailConfig) {
-        const result = await window.electronAPI.testEmailConfig(localEmailConfig);
-        if (result.success) {
-          setTestStatus('success');
-        } else {
-          setTestStatus('error');
-          setTestError(result.error || '发送失败');
-        }
-      } else {
-        setTestStatus('error');
-        setTestError('邮件功能仅在桌面端可用');
-      }
-    } catch (error) {
-      setTestStatus('error');
-      setTestError((error as Error).message);
-    }
-  };
-
-  const handleSaveEmailConfig = () => {
-    onUpdateEmailConfig(localEmailConfig);
   };
 
   return (
@@ -124,6 +70,32 @@ const DataCenterSettingsModal: React.FC<{
           <div>
             <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">模块管理</h4>
             <div className="space-y-2">
+              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <Terminal className="w-4 h-4 text-cyan-500" />
+                  <span className="text-sm text-gray-900 dark:text-white">SSH管理</span>
+                </div>
+                <button
+                  onClick={() => handleModuleToggle('ssh')}
+                  className={`transition-colors ${config.modules.ssh ? 'text-blue-500' : 'text-gray-400'}`}
+                >
+                  {config.modules.ssh ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <Webhook className="w-4 h-4 text-purple-500" />
+                  <span className="text-sm text-gray-900 dark:text-white">API管理</span>
+                </div>
+                <button
+                  onClick={() => handleModuleToggle('apiManager')}
+                  className={`transition-colors ${config.modules.apiManager ? 'text-blue-500' : 'text-gray-400'}`}
+                >
+                  {config.modules.apiManager ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
+                </button>
+              </div>
+
               <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
                 <div className="flex items-center gap-3">
                   <Flame className="w-4 h-4 text-orange-500" />
@@ -178,157 +150,6 @@ const DataCenterSettingsModal: React.FC<{
 
             </div>
           </div>
-
-          {/* 邮件提醒配置 */}
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">邮件到期提醒</h4>
-              <button
-                onClick={() => setLocalEmailConfig(prev => ({ ...prev, enabled: !prev.enabled }))}
-                className={`transition-colors ${localEmailConfig.enabled ? 'text-blue-500' : 'text-gray-400'}`}
-              >
-                {localEmailConfig.enabled ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
-              </button>
-            </div>
-
-            {localEmailConfig.enabled && (
-              <div className="space-y-3 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div>
-                  <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 mb-1">
-                    <Server className="w-3 h-3" />
-                    SMTP 服务器
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={localEmailConfig.smtp.host}
-                      onChange={(e) => setLocalEmailConfig(prev => ({
-                        ...prev,
-                        smtp: { ...prev.smtp, host: e.target.value }
-                      }))}
-                      placeholder="smtp.163.com"
-                      className="flex-1 px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                    />
-                    <input
-                      type="number"
-                      value={localEmailConfig.smtp.port}
-                      onChange={(e) => setLocalEmailConfig(prev => ({
-                        ...prev,
-                        smtp: { ...prev.smtp, port: parseInt(e.target.value) || 465 }
-                      }))}
-                      placeholder="465"
-                      className="w-20 px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <input
-                      type="checkbox"
-                      id="smtp-secure"
-                      checked={localEmailConfig.smtp.secure}
-                      onChange={(e) => setLocalEmailConfig(prev => ({
-                        ...prev,
-                        smtp: { ...prev.smtp, secure: e.target.checked }
-                      }))}
-                      className="rounded"
-                    />
-                    <label htmlFor="smtp-secure" className="text-xs text-gray-500 dark:text-gray-400">
-                      使用 SSL/TLS (端口 465 建议开启)
-                    </label>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 mb-1">
-                    <Mail className="w-3 h-3" />
-                    发件邮箱
-                  </label>
-                  <input
-                    type="email"
-                    value={localEmailConfig.smtp.user}
-                    onChange={(e) => setLocalEmailConfig(prev => ({
-                      ...prev,
-                      smtp: { ...prev.smtp, user: e.target.value }
-                    }))}
-                    placeholder="your-email@163.com"
-                    className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                  />
-                </div>
-
-                <div>
-                  <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 mb-1">
-                    <Key className="w-3 h-3" />
-                    授权码 (非邮箱密码)
-                  </label>
-                  <input
-                    type="password"
-                    value={localEmailConfig.smtp.pass}
-                    onChange={(e) => setLocalEmailConfig(prev => ({
-                      ...prev,
-                      smtp: { ...prev.smtp, pass: e.target.value }
-                    }))}
-                    placeholder="SMTP授权码"
-                    className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                  />
-                  <p className="text-xs text-gray-400 mt-1">
-                    163/QQ邮箱需要在设置中开启SMTP并获取授权码
-                  </p>
-                </div>
-
-                <div>
-                  <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 mb-1">
-                    <Mail className="w-3 h-3" />
-                    收件邮箱
-                  </label>
-                  <input
-                    type="email"
-                    value={localEmailConfig.recipient}
-                    onChange={(e) => setLocalEmailConfig(prev => ({
-                      ...prev,
-                      recipient: e.target.value
-                    }))}
-                    placeholder="receive@example.com"
-                    className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                  />
-                </div>
-
-                {/* 测试和保存按钮 */}
-                <div className="flex items-center gap-2 pt-2">
-                  <button
-                    onClick={handleTestEmail}
-                    disabled={testStatus === 'loading'}
-                    className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-200 rounded-lg transition-colors disabled:opacity-50"
-                  >
-                    {testStatus === 'loading' ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Send className="w-4 h-4" />
-                    )}
-                    发送测试邮件
-                  </button>
-                  <button
-                    onClick={handleSaveEmailConfig}
-                    className="flex items-center gap-2 px-3 py-2 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors"
-                  >
-                    保存配置
-                  </button>
-                </div>
-
-                {/* 测试结果 */}
-                {testStatus === 'success' && (
-                  <div className="flex items-center gap-2 text-green-500 text-sm">
-                    <CheckCircle className="w-4 h-4" />
-                    测试邮件发送成功！
-                  </div>
-                )}
-                {testStatus === 'error' && (
-                  <div className="flex items-center gap-2 text-red-500 text-sm">
-                    <AlertCircle className="w-4 h-4" />
-                    {testError}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
         </div>
 
         <div className="flex justify-end p-4 border-t border-gray-200 dark:border-gray-700">
@@ -349,9 +170,18 @@ interface DataCenterManagerProps {
   onUpdateOJHeatmapData: (data: OJHeatmapData) => void;
   resourceData: ResourceCenterData;
   onUpdateResourceData: (data: ResourceCenterData) => void;
+  sshRecords: SSHRecord[];
+  sshCategories: Category[];
+  onSaveSSH: (record: Partial<SSHRecord>) => void;
+  onDeleteSSH: (id: string) => void;
+  onOpenSSHInTerminal: (command: string, title: string) => void;
+  apiRecords: APIRecord[];
+  apiCategories: Category[];
+  onSaveAPI: (record: Partial<APIRecord>) => void;
+  onDeleteAPI: (id: string) => void;
 }
 
-type SubPage = 'oj-heatmap' | 'resource-center' | 'password-manager' | 'zenmux-usage';
+type SubPage = 'ssh' | 'api-manager' | 'oj-heatmap' | 'resource-center' | 'password-manager' | 'zenmux-usage';
 
 interface NavItem {
   id: SubPage;
@@ -361,6 +191,18 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
+  {
+    id: 'ssh',
+    name: 'SSH管理',
+    icon: <Terminal className="w-4 h-4" />,
+    configKey: 'ssh',
+  },
+  {
+    id: 'api-manager',
+    name: 'API管理',
+    icon: <Webhook className="w-4 h-4" />,
+    configKey: 'apiManager',
+  },
   {
     id: 'oj-heatmap',
     name: 'OJ热力图',
@@ -392,9 +234,19 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
   onUpdateOJHeatmapData,
   resourceData,
   onUpdateResourceData,
+  sshRecords,
+  sshCategories,
+  onSaveSSH,
+  onDeleteSSH,
+  onOpenSSHInTerminal,
+  apiRecords,
+  apiCategories,
+  onSaveAPI,
+  onDeleteAPI,
 }) => {
-  const [activePage, setActivePage] = useState<SubPage>('oj-heatmap');
+  const [activePage, setActivePage] = useState<SubPage>('ssh');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   // 数据中心配置
   const [config, setConfig] = useState<DataCenterConfig>(() => {
@@ -406,24 +258,10 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
     }
   });
 
-  // 邮件配置
-  const [emailConfig, setEmailConfig] = useState<EmailConfig>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_EMAIL_CONFIG);
-      return saved ? JSON.parse(saved) : DEFAULT_EMAIL_CONFIG;
-    } catch {
-      return DEFAULT_EMAIL_CONFIG;
-    }
-  });
-
   // 保存配置到 localStorage
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY_DATACENTER_CONFIG, JSON.stringify(config));
   }, [config]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_EMAIL_CONFIG, JSON.stringify(emailConfig));
-  }, [emailConfig]);
 
   // 过滤可见的导航项
   const visibleNavItems = NAV_ITEMS.filter(item => config.modules[item.configKey]);
@@ -446,13 +284,22 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
               数据中心
             </h2>
           </div>
-          <button
-            onClick={() => setIsSettingsOpen(true)}
-            className="p-1 text-gray-400 hover:text-blue-500 transition-colors"
-            title="设置"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setIsHelpOpen(true)}
+              className="p-1 text-gray-400 hover:text-blue-500 transition-colors"
+              title="使用帮助"
+            >
+              <HelpCircle className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-1 text-gray-400 hover:text-blue-500 transition-colors"
+              title="设置"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         <nav className="space-y-1 flex-1">
@@ -486,12 +333,27 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
         onClose={() => setIsSettingsOpen(false)}
         config={config}
         onUpdateConfig={setConfig}
-        emailConfig={emailConfig}
-        onUpdateEmailConfig={setEmailConfig}
       />
 
       {/* 右侧内容区域 */}
       <div className="flex-1 p-4 overflow-auto">
+        {activePage === 'ssh' && (
+          <SSHManager
+            records={sshRecords}
+            categories={sshCategories}
+            onSave={onSaveSSH}
+            onDelete={onDeleteSSH}
+            onOpenInTerminal={onOpenSSHInTerminal}
+          />
+        )}
+        {activePage === 'api-manager' && (
+          <APIManager
+            records={apiRecords}
+            categories={apiCategories}
+            onSave={onSaveAPI}
+            onDelete={onDeleteAPI}
+          />
+        )}
         {activePage === 'oj-heatmap' && (
           <OJHeatmapContainer
             data={ojHeatmapData}
@@ -511,6 +373,13 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
           <ZenmuxUsagePanel />
         )}
       </div>
+
+      {/* Help Modal */}
+      <HelpModal
+        isOpen={isHelpOpen}
+        onClose={() => setIsHelpOpen(false)}
+        appMode="datacenter"
+      />
     </div>
   );
 };

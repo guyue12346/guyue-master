@@ -794,12 +794,12 @@ const renderFileContent = (file: FileRecord, content: string, settings?: Reading
                 }
 
                 if (inline) {
-                  return <code className={className} {...props}>{children}</code>;
+                  return <code className="bg-gray-100 text-rose-600 border border-gray-200 px-1.5 py-0.5 rounded-md text-[0.82em] font-mono not-prose" {...props}>{children}</code>;
                 }
 
                 return (
-                  <pre className={`not-prose p-4 rounded-lg bg-gray-900 text-gray-100 overflow-x-auto ${className || ''}`} {...props}>
-                    <code className={`bg-transparent p-0 border-none ${className || ''}`} {...props}>
+                  <pre className="not-prose p-4 rounded-lg bg-gray-50 border border-gray-200 overflow-x-auto my-4">
+                    <code className="bg-transparent text-gray-800 font-mono text-sm" {...props}>
                       {children}
                     </code>
                   </pre>

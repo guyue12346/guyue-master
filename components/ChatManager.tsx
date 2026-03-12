@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   MessageSquarePlus, Send, Settings2, Trash2, StopCircle, Copy, Check,
   ChevronDown, Bot, User, Sparkles, AlertCircle, Loader2, Plus, X,
-  PanelLeftClose, PanelLeftOpen, RotateCcw, Download, Globe, Columns, Square, Zap, Wand2, Search
+  PanelLeftClose, PanelLeftOpen, RotateCcw, Download, Globe, Columns, Square, Zap, Wand2, Search, HelpCircle
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -28,6 +28,7 @@ import {
 } from '../services/chatService';
 import { Terminal as TerminalComponent } from './Terminal';
 import { PromptRecord } from '../types';
+import { HelpModal } from './HelpModal';
 
 interface ChatManagerProps {
   compact?: boolean;
@@ -691,6 +692,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
   
   const [showSettings, setShowSettings] = useState(false);
   const [showPromptPanel, setShowPromptPanel] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [showSidebar, setShowSidebar] = useState(() => !compact);
   const [layoutMode, setLayoutMode] = useState<'single' | 'split'>('single'); // single or split view
   const [showTerminal, setShowTerminal] = useState(false); // show terminal pane
@@ -705,19 +707,6 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const hasAutoOpenedLogin = useRef(false);
-
-  // Auto-open Zenmux login when provider is zenmux but no API key configured
-  useEffect(() => {
-    if (
-      config.provider === 'zenmux' &&
-      !config.apiKey &&
-      !hasAutoOpenedLogin.current
-    ) {
-      hasAutoOpenedLogin.current = true;
-      (window as any).electronAPI?.openZenmuxLogin?.();
-    }
-  }, [config.provider, config.apiKey]);
 
   // Auto resize textarea based on content (max 4 lines)
   const adjustTextareaHeight = useCallback(() => {
@@ -866,12 +855,13 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
           setStreamingContent('');
         },
         onError: (err) => {
-          setError(err.message);
           setIsStreaming(false);
           setStreamingContent('');
-          // Auto-open Zenmux login on 401 (token expired)
+          // On 401 hint user to re-login via DataCenter > Zenmux
           if (config.provider === 'zenmux' && /401|unauthorized/i.test(err.message)) {
-            (window as any).electronAPI?.openZenmuxLogin?.();
+            setError('Token 已失效，请在「数据中心 → Zenmux」页面重新登录');
+          } else {
+            setError(err.message);
           }
         }
       });
@@ -1076,6 +1066,13 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
                   )}
                 </button>
                 <button
+                  onClick={() => setIsHelpOpen(true)}
+                  className="p-1.5 rounded-lg transition-colors text-gray-400 hover:text-blue-500 hover:bg-blue-50"
+                  title="使用帮助"
+                >
+                  <HelpCircle className="w-4 h-4" />
+                </button>
+                <button
                   onClick={() => setLayoutMode(layoutMode === 'single' ? 'split' : 'single')}
                   className={`p-1.5 rounded-lg transition-colors ${
                     layoutMode === 'split'
@@ -1260,6 +1257,13 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
           onClose={() => setShowSettings(false)}
         />
       )}
+
+      {/* Help Modal */}
+      <HelpModal
+        isOpen={isHelpOpen}
+        onClose={() => setIsHelpOpen(false)}
+        appMode="chat"
+      />
     </div>
   );
 };

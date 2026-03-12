@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCw, Loader2, LogIn, ExternalLink, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
 
 /* ─── 工具函数 ─── */
@@ -126,6 +126,7 @@ export const ZenmuxUsagePanel: React.FC = () => {
   const [dashData, setDashData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasAutoOpenedLogin = useRef(false);
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
@@ -134,8 +135,19 @@ export const ZenmuxUsagePanel: React.FC = () => {
       if (window.electronAPI?.fetchZenmuxDashboardData) {
         const result = await window.electronAPI.fetchZenmuxDashboardData();
         setDashData(result);
-        if (result?.loginRequired) setError('login-required');
-        else if (result?.error) setError(result.error);
+        if (result?.loginRequired) {
+          setError('login-required');
+          // Auto-open login window on first detection
+          if (!hasAutoOpenedLogin.current) {
+            hasAutoOpenedLogin.current = true;
+            window.electronAPI?.openZenmuxLogin?.();
+          }
+        } else if (result?.error) {
+          setError(result.error);
+        } else {
+          // Successfully got data — reset auto-open flag so next token expiry also auto-opens
+          hasAutoOpenedLogin.current = false;
+        }
       } else {
         setError('仅在桌面端可用');
       }

@@ -142,19 +142,18 @@ export interface ModuleConfig {
 
 export const DEFAULT_MODULE_CONFIG: ModuleConfig[] = [
   { id: 'notes', name: '笔记备忘', enabled: true, priority: 0, icon: 'StickyNote', shortcut: 'Tab+1' },
-  { id: 'ssh', name: 'SSH连接', enabled: true, priority: 1, icon: 'Terminal', shortcut: 'Tab+2' },
-  { id: 'api', name: 'API管理', enabled: true, priority: 2, icon: 'Webhook', shortcut: 'Tab+3' },
-  { id: 'todo', name: '待办事项', enabled: true, priority: 3, icon: 'ListTodo', shortcut: 'Tab+4' },
-  { id: 'files', name: '文件管理', enabled: true, priority: 4, icon: 'FolderOpen', shortcut: 'Tab+5' },
-  { id: 'prompts', name: 'Skills', enabled: true, priority: 5, icon: 'Sparkles', shortcut: 'Tab+6' },
-  { id: 'terminal', name: '本地终端', enabled: true, priority: 6, icon: 'Command', shortcut: 'Tab+0' },
-  { id: 'browser', name: '内置浏览器', enabled: true, priority: 7, icon: 'Globe', shortcut: 'Tab+B' },
-  { id: 'leetcode', name: 'Code', enabled: true, priority: 8, icon: 'Code2', shortcut: 'Tab+L' },
-  { id: 'learning', name: '学习空间', enabled: true, priority: 9, icon: 'GraduationCap', shortcut: 'Tab+K' },
-  { id: 'image-hosting', name: '图床管理', enabled: true, priority: 10, icon: 'Image', shortcut: 'Tab+I' },
-  { id: 'chat', name: 'AI Chat', enabled: true, priority: 11, icon: 'MessageSquare', shortcut: 'Tab+C' },
-  { id: 'excalidraw', name: '绘图板', enabled: true, priority: 12, icon: 'Pencil', shortcut: 'Tab+E' },
-  { id: 'datacenter', name: '数据中心', enabled: true, priority: 13, icon: 'BarChart3', shortcut: 'Tab+D' }
+  { id: 'api', name: 'API管理', enabled: true, priority: 1, icon: 'Webhook', shortcut: 'Tab+2' },
+  { id: 'todo', name: '待办事项', enabled: true, priority: 2, icon: 'ListTodo', shortcut: 'Tab+3' },
+  { id: 'files', name: '文件管理', enabled: true, priority: 3, icon: 'FolderOpen', shortcut: 'Tab+4' },
+  { id: 'prompts', name: 'Skills', enabled: true, priority: 4, icon: 'Sparkles', shortcut: 'Tab+5' },
+  { id: 'terminal', name: '本地终端', enabled: true, priority: 5, icon: 'Command', shortcut: 'Tab+0' },
+  { id: 'browser', name: '内置浏览器', enabled: true, priority: 6, icon: 'Globe', shortcut: 'Tab+B' },
+  { id: 'leetcode', name: 'Code', enabled: true, priority: 7, icon: 'Code2', shortcut: 'Tab+L' },
+  { id: 'learning', name: '学习空间', enabled: true, priority: 8, icon: 'GraduationCap', shortcut: 'Tab+K' },
+  { id: 'image-hosting', name: '图床管理', enabled: true, priority: 9, icon: 'Image', shortcut: 'Tab+I' },
+  { id: 'chat', name: 'AI Chat', enabled: true, priority: 10, icon: 'MessageSquare', shortcut: 'Tab+C' },
+  { id: 'excalidraw', name: '绘图板', enabled: true, priority: 11, icon: 'Pencil', shortcut: 'Tab+E' },
+  { id: 'datacenter', name: '数据中心', enabled: true, priority: 12, icon: 'BarChart3', shortcut: 'Tab+D' }
 ];
 
 export interface Category {
@@ -359,6 +358,8 @@ export interface ZenmuxUsage {
 // 数据中心模块配置
 export interface DataCenterConfig {
   modules: {
+    ssh: boolean;
+    apiManager: boolean;
     ojHeatmap: boolean;
     resourceCenter: boolean;
     passwordManager: boolean;

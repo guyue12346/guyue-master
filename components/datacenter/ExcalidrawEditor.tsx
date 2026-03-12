@@ -25,7 +25,7 @@ interface DrawingFile {
 // ======== 存储键 ========
 const STORAGE_KEY_DRAWINGS = 'guyue_excalidraw_drawings';
 const STORAGE_KEY_ACTIVE = 'guyue_excalidraw_active';
-const STORAGE_KEY_IMAGE_CONFIG = 'linkmaster_image_hosting_config_v1';
+const STORAGE_KEY_IMAGE_CONFIG = 'linkmaster_image_config_v1';       // 与 App.tsx 保持一致
 const STORAGE_KEY_IMAGE_RECORDS = 'linkmaster_image_records_v1';
 const STORAGE_KEY_DEFAULTS = 'guyue_excalidraw_defaults';
 const STORAGE_KEY_LIBRARY = 'guyue_excalidraw_library';
@@ -317,14 +317,40 @@ const RenameModal: React.FC<{
 const ExportToHostingModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
-  onExport: (name: string, format: 'png' | 'svg') => void;
+  onExport: (name: string, format: 'png' | 'svg', category: string) => void;
   isUploading: boolean;
   defaultName: string;
-}> = ({ isOpen, onClose, onExport, isUploading, defaultName }) => {
+  availableCategories: string[];
+}> = ({ isOpen, onClose, onExport, isUploading, defaultName, availableCategories }) => {
   const [name, setName] = useState(defaultName);
   const [format, setFormat] = useState<'png' | 'svg'>('png');
-  useEffect(() => { if (isOpen) setName(defaultName); }, [isOpen, defaultName]);
+  const [category, setCategory] = useState('绘图');
+  const [customCategory, setCustomCategory] = useState('');
+  const [isCustom, setIsCustom] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setName(defaultName);
+      setFormat('png');
+      // 优先使用已有分类中的"绘图"，没有则用第一个，或允许新建
+      if (availableCategories.includes('绘图')) {
+        setCategory('绘图');
+        setIsCustom(false);
+      } else if (availableCategories.length > 0) {
+        setCategory(availableCategories[0]);
+        setIsCustom(false);
+      } else {
+        setCategory('绘图');
+        setIsCustom(false);
+      }
+      setCustomCategory('');
+    }
+  }, [isOpen, defaultName, availableCategories]);
+
   if (!isOpen) return null;
+
+  const finalCategory = isCustom ? (customCategory.trim() || '绘图') : category;
+
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-sm m-4 shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -344,6 +370,46 @@ const ExportToHostingModal: React.FC<{
             />
           </div>
           <div>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 block">图片分类</label>
+            <div className="flex gap-2 mb-2 flex-wrap">
+              {['绘图', ...availableCategories.filter(c => c !== '绘图')].map(cat => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => { setCategory(cat); setIsCustom(false); }}
+                  className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
+                    !isCustom && category === cat
+                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600'
+                      : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setIsCustom(true)}
+                className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
+                  isCustom
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600'
+                    : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                }`}
+              >
+                + 新建
+              </button>
+            </div>
+            {isCustom && (
+              <input
+                type="text"
+                value={customCategory}
+                onChange={e => setCustomCategory(e.target.value)}
+                placeholder="输入新分类名称..."
+                autoFocus
+                className="w-full px-3 py-2 text-sm border border-blue-300 dark:border-blue-500 rounded-xl bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/30"
+              />
+            )}
+          </div>
+          <div>
             <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 block">导出格式</label>
             <div className="flex gap-2">
               {(['png', 'svg'] as const).map(f => (
@@ -361,7 +427,7 @@ const ExportToHostingModal: React.FC<{
           <div className="flex justify-end gap-2 pt-1">
             <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl">取消</button>
             <button
-              onClick={() => { if (name.trim()) onExport(name.trim(), format); }}
+              onClick={() => { if (name.trim()) onExport(name.trim(), format, finalCategory); }}
               disabled={isUploading || !name.trim()}
               className="px-4 py-2 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-xl flex items-center gap-1.5 disabled:opacity-50"
             >
@@ -396,6 +462,17 @@ export const ExcalidrawEditor: React.FC = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [isFileListOpen, setIsFileListOpen] = useState(false);
   const [isDark, setIsDark] = useState(false);
+
+  // 图床可用分类（从 localStorage 读取已有分类）
+  const [imageCategories, setImageCategories] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_IMAGE_RECORDS);
+      if (!raw) return ['绘图'];
+      const records = JSON.parse(raw) as Array<{ category?: string }>;
+      const cats = Array.from(new Set(records.map(r => r.category).filter(Boolean) as string[]));
+      return cats.length > 0 ? cats : ['绘图'];
+    } catch { return ['绘图']; }
+  });
 
   // 素材库持久化
   const [libraryItems, setLibraryItems] = useState<any[]>(loadLibrary);
@@ -745,7 +822,7 @@ export const ExcalidrawEditor: React.FC = () => {
   }, [exportUtils, isDark, activeDrawing, showToast]);
 
   // 导出到图床
-  const handleExportToHosting = useCallback(async (name: string, format: 'png' | 'svg') => {
+  const handleExportToHosting = useCallback(async (name: string, format: 'png' | 'svg', category: string) => {
     if (!excalidrawAPIRef.current || !exportUtils) { showToast('绘图引擎未就绪', 'error'); return; }
 
     // 读取图床配置
@@ -796,13 +873,13 @@ export const ExcalidrawEditor: React.FC = () => {
 
       const timestamp = Date.now();
       const filename = `${timestamp}_${Math.random().toString(36).substring(2, 7)}.${ext}`;
-      const path = hostingConfig.path ? `${hostingConfig.path}/${filename}` : filename;
+      const uploadPath = hostingConfig.path ? `${hostingConfig.path}/${filename}` : filename;
 
       const data = await window.electronAPI.uploadImage({
         accessToken: hostingConfig.accessToken,
         owner: hostingConfig.owner,
         repo: hostingConfig.repo,
-        path,
+        path: uploadPath,
         content: base64Content,
         message: `Upload ${name}.${ext} via Guyue Master Excalidraw`,
       });
@@ -815,14 +892,22 @@ export const ExcalidrawEditor: React.FC = () => {
         url: data.content.download_url,
         sha: data.content.sha,
         path: data.content.path,
-        category: '绘图',
+        category: category || '绘图',
         createdAt: Date.now(),
       };
 
       try {
         const existingRaw = localStorage.getItem(STORAGE_KEY_IMAGE_RECORDS);
         const existingRecords = existingRaw ? JSON.parse(existingRaw) : [];
-        localStorage.setItem(STORAGE_KEY_IMAGE_RECORDS, JSON.stringify([newRecord, ...existingRecords]));
+        const updatedRecords = [newRecord, ...existingRecords];
+        localStorage.setItem(STORAGE_KEY_IMAGE_RECORDS, JSON.stringify(updatedRecords));
+
+        // 更新本地可用分类列表
+        const cats = Array.from(new Set(updatedRecords.map((r: any) => r.category).filter(Boolean) as string[]));
+        setImageCategories(cats);
+
+        // 通知 App.tsx 刷新图床 records（自定义事件）
+        window.dispatchEvent(new CustomEvent('guyue:image-records-updated'));
       } catch {}
 
       // 复制 Markdown 链接到剪贴板
@@ -830,7 +915,7 @@ export const ExcalidrawEditor: React.FC = () => {
       await navigator.clipboard.writeText(mdLink);
 
       setIsExportModalOpen(false);
-      showToast('已上传到图床，Markdown 链接已复制');
+      showToast(`已上传到「${category}」，Markdown 链接已复制`);
     } catch (err: any) {
       console.error('Upload to hosting error:', err);
       showToast(err.message || '上传失败', 'error');
@@ -1125,6 +1210,7 @@ export const ExcalidrawEditor: React.FC = () => {
         onExport={handleExportToHosting}
         isUploading={isUploading}
         defaultName={activeDrawing?.name || 'drawing'}
+        availableCategories={imageCategories}
       />
       <LatexEditModal
         isOpen={!!latexEditTarget}

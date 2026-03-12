@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { FileRecord, Category } from '../types';
-import { Folder, ChevronRight, ChevronDown, FileText, Image, FileCode, Archive, File, Edit2, Trash2, AlertCircle, FolderPlus, Upload, FilePlus, Plus, Settings2, BookOpen } from 'lucide-react';
+import { Folder, ChevronRight, ChevronDown, FileText, Image, FileCode, Archive, File, Edit2, Trash2, AlertCircle, FolderPlus, Upload, FilePlus, Plus, Settings2, BookOpen, HelpCircle } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 
 interface ArchiveSidebarProps {
@@ -16,6 +16,7 @@ interface ArchiveSidebarProps {
   onEditCategory: (category: Category) => void;
   onDeleteCategory: (id: string) => void;
   onImportFromVault?: () => void;
+  onHelp?: () => void;
   activeFileId: string | null;
 }
 
@@ -32,6 +33,7 @@ export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({
   onEditCategory,
   onDeleteCategory,
   onImportFromVault,
+  onHelp,
   activeFileId
 }) => {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => {
@@ -153,6 +155,15 @@ export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({
             title="从 Obsidian Vault 导入"
           >
             <BookOpen className="w-4 h-4" />
+          </button>
+        )}
+        {onHelp && (
+          <button
+            onClick={onHelp}
+            className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-gray-200/50 rounded-lg transition-colors"
+            title="使用帮助"
+          >
+            <HelpCircle className="w-4 h-4" />
           </button>
         )}
       </div>

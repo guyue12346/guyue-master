@@ -175,7 +175,21 @@ export const PromptModal: React.FC<PromptModalProps> = ({
               ) : (
                 <div className="min-h-[220px] max-h-[400px] overflow-y-auto px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl prose prose-sm max-w-none text-gray-700">
                   {content
-                    ? <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{content}</ReactMarkdown>
+                    ? <ReactMarkdown
+                        remarkPlugins={[remarkGfm, remarkBreaks]}
+                        components={{
+                          code: ({node, inline, className, children, ...props}: any) => {
+                            if (inline) {
+                              return <code className="bg-gray-100 text-rose-600 border border-gray-200 px-1.5 py-0.5 rounded-md text-[0.82em] font-mono not-prose" {...props}>{children}</code>;
+                            }
+                            return (
+                              <pre className="not-prose p-3 rounded-lg bg-gray-50 border border-gray-200 overflow-x-auto my-3">
+                                <code className="bg-transparent text-gray-800 font-mono text-sm" {...props}>{children}</code>
+                              </pre>
+                            );
+                          }
+                        }}
+                      >{content}</ReactMarkdown>
                     : <p className="text-gray-400 text-sm italic">暂无内容...</p>
                   }
                 </div>

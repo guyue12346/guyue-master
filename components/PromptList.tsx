@@ -138,7 +138,21 @@ const SkillCard: React.FC<{
       {expanded && (
         <div className="border-t border-gray-100">
           <div className="px-4 py-3 bg-gray-50/60 prose prose-sm max-w-none text-gray-700 overflow-auto">
-            <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm, remarkBreaks]}
+              components={{
+                code: ({node, inline, className, children, ...props}: any) => {
+                  if (inline) {
+                    return <code className="bg-gray-100 text-rose-600 border border-gray-200 px-1.5 py-0.5 rounded-md text-[0.82em] font-mono not-prose" {...props}>{children}</code>;
+                  }
+                  return (
+                    <pre className="not-prose p-3 rounded-lg bg-gray-50 border border-gray-200 overflow-x-auto my-3">
+                      <code className="bg-transparent text-gray-800 font-mono text-sm" {...props}>{children}</code>
+                    </pre>
+                  );
+                }
+              }}
+            >
               {skill.content || '*（暂无内容）*'}
             </ReactMarkdown>
           </div>

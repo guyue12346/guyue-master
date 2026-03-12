@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ImageRecord, ImageHostingConfig } from '../types';
-import { Upload, Settings, Copy, Trash2, ExternalLink, Image as ImageIcon, Loader2, X, FileText, Edit2 } from 'lucide-react';
+import { Upload, Settings, Copy, Trash2, ExternalLink, Image as ImageIcon, Loader2, X, FileText, Edit2, HelpCircle } from 'lucide-react';
 
 interface ImageHostingProps {
   records: ImageRecord[];
@@ -9,9 +9,10 @@ interface ImageHostingProps {
   categories: string[];
   onUpdateRecords: (records: ImageRecord[]) => void;
   onUpdateConfig: (config: ImageHostingConfig) => void;
+  onHelp?: () => void;
 }
 
-export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, selectedCategory, categories, onUpdateRecords, onUpdateConfig }) => {
+export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, selectedCategory, categories, onUpdateRecords, onUpdateConfig, onHelp }) => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -193,6 +194,15 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
           图床管理
         </h2>
         <div className="flex items-center gap-3">
+          {onHelp && (
+            <button
+              onClick={onHelp}
+              className="p-2 text-gray-400 hover:text-blue-500 hover:bg-gray-100 rounded-lg transition-colors"
+              title="使用帮助"
+            >
+              <HelpCircle className="w-5 h-5" />
+            </button>
+          )}
           <button
             onClick={() => setIsSettingsOpen(true)}
             className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"

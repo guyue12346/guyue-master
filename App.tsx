@@ -4,13 +4,12 @@ import { Sidebar } from './components/Sidebar';
 import { SplashScreen } from './components/SplashScreen';
 import { FloatingChatWindow } from './components/FloatingChatWindow';
 import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig } from './types';
-import { Plus, Search, Command, Loader2, ChevronRight, Upload, Edit3, Save, List } from 'lucide-react';
+import { Plus, Search, Command, Loader2, ChevronRight, Upload, Edit3, Save, List, HelpCircle } from 'lucide-react';
 import type { VaultFileEntry } from './components/VaultImportModal';
 
 // Lazy load components to improve initial load performance
 const NoteList = React.lazy(() => import('./components/NoteList').then(m => ({ default: m.NoteList })));
 const SSHList = React.lazy(() => import('./components/SSHList').then(m => ({ default: m.SSHList })));
-const APIList = React.lazy(() => import('./components/APIList').then(m => ({ default: m.APIList })));
 const TodoList = React.lazy(() => import('./components/TodoList').then(m => ({ default: m.TodoList })));
 const PromptList = React.lazy(() => import('./components/PromptList').then(m => ({ default: m.PromptList })));
 const MarkdownSidebar = React.lazy(() => import('./components/MarkdownSidebar').then(m => ({ default: m.MarkdownSidebar })));
@@ -31,13 +30,13 @@ const ExcalidrawEditor = React.lazy(() => import('./components/datacenter/Excali
 // Lazy load modals
 const NoteModal = React.lazy(() => import('./components/NoteModal').then(m => ({ default: m.NoteModal })));
 const SSHModal = React.lazy(() => import('./components/SSHModal').then(m => ({ default: m.SSHModal })));
-const APIModal = React.lazy(() => import('./components/APIModal').then(m => ({ default: m.APIModal })));
 const TodoModal = React.lazy(() => import('./components/TodoModal').then(m => ({ default: m.TodoModal })));
 const FileModal = React.lazy(() => import('./components/FileModal').then(m => ({ default: m.FileModal })));
 const PromptModal = React.lazy(() => import('./components/PromptModal').then(m => ({ default: m.PromptModal })));
 const CategoryManagerModal = React.lazy(() => import('./components/CategoryManagerModal').then(m => ({ default: m.CategoryManagerModal })));
 const SettingsModal = React.lazy(() => import('./components/SettingsModal').then(m => ({ default: m.SettingsModal })));
 const VaultImportModal = React.lazy(() => import('./components/VaultImportModal').then(m => ({ default: m.VaultImportModal })));
+import { HelpModal } from './components/HelpModal';
 
 // Storage version for migration management
 const STORAGE_VERSION = 'v1';
@@ -177,7 +176,9 @@ const App: React.FC = () => {
     if (savedModules) {
       try {
         const parsed: ModuleConfig[] = JSON.parse(savedModules);
-        const merged = DEFAULT_MODULE_CONFIG.map(defaultModule => {
+        const merged = DEFAULT_MODULE_CONFIG
+          .filter(m => m.id !== 'api') // API模块已并入数据中心
+          .map(defaultModule => {
           const existing = parsed.find(m => m.id === defaultModule.id);
           return existing ? { ...defaultModule, ...existing, name: defaultModule.name } : defaultModule;
         });
@@ -188,6 +189,8 @@ const App: React.FC = () => {
           (m.id as string) !== 'markdown' &&
           (m.id as string) !== 'vscode' &&
           (m.id as string) !== 'bookmarks' &&
+          (m.id as string) !== 'ssh' &&
+          (m.id as string) !== 'api' &&
           m.name !== '文件归档'
         );
         return [...merged, ...legacyExtras];
@@ -298,7 +301,6 @@ const App: React.FC = () => {
   // Modals
   const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
   const [isSSHModalOpen, setIsSSHModalOpen] = useState(false);
-  const [isAPIModalOpen, setIsAPIModalOpen] = useState(false);
   const [isTodoModalOpen, setIsTodoModalOpen] = useState(false);
   const [isFileModalOpen, setIsFileModalOpen] = useState(false);
   const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
@@ -307,11 +309,11 @@ const App: React.FC = () => {
   const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
   const [initialCategoryEditId, setInitialCategoryEditId] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [vaultImportFiles, setVaultImportFiles] = useState<VaultFileEntry[] | null>(null);
   
   const [editingNote, setEditingNote] = useState<Note | null>(null);
   const [editingSSH, setEditingSSH] = useState<SSHRecord | null>(null);
-  const [editingAPI, setEditingAPI] = useState<APIRecord | null>(null);
   const [editingTodo, setEditingTodo] = useState<TodoItem | null>(null);
   const [editingFile, setEditingFile] = useState<FileRecord | null>(null);
   const [fileModalMode, setFileModalMode] = useState<'file' | 'note'>('file');
@@ -1044,6 +1046,25 @@ const App: React.FC = () => {
     }
   }, [imageRecords, saveToStorage, isAppReady]);
 
+  // 监听 Excalidraw 等组件直接写入图床记录后发出的事件，同步 state
+  useEffect(() => {
+    const handleImageRecordsUpdated = () => {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY_IMAGE_RECORDS);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            setImageRecords(parsed);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to sync image records:', e);
+      }
+    };
+    window.addEventListener('guyue:image-records-updated', handleImageRecordsUpdated);
+    return () => window.removeEventListener('guyue:image-records-updated', handleImageRecordsUpdated);
+  }, []);
+
   useEffect(() => {
     if (isAppReady && imageHostingConfig.accessToken) {
       saveToStorage(STORAGE_KEY_IMAGE_CONFIG, imageHostingConfig);
@@ -1117,41 +1138,6 @@ const App: React.FC = () => {
       .filter(n => n.content.toLowerCase().includes(searchQuery.toLowerCase()))
       .sort((a, b) => b.createdAt - a.createdAt);
   }, [notes, searchQuery, appMode, selectedCategory]);
-
-  const filteredSSHRecords = useMemo(() => {
-    if (appMode !== 'ssh') return [];
-    return sshRecords
-      .filter(r => selectedCategory === '全部' || r.category === selectedCategory)
-      .filter(r => 
-        r.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        r.host.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        r.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        r.note.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-      .sort((a, b) => {
-        const pA = a.priority ?? 999;
-        const pB = b.priority ?? 999;
-        if (pA !== pB) return pA - pB;
-        return a.createdAt - b.createdAt;
-      });
-  }, [sshRecords, selectedCategory, searchQuery, appMode]);
-
-  const filteredAPIRecords = useMemo(() => {
-    if (appMode !== 'api') return [];
-    return apiRecords
-      .filter(r => selectedCategory === '全部' || r.category === selectedCategory)
-      .filter(r => 
-        r.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        r.endpoint.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        r.note.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-      .sort((a, b) => {
-        const pA = a.priority ?? 999;
-        const pB = b.priority ?? 999;
-        if (pA !== pB) return pA - pB;
-        return a.createdAt - b.createdAt;
-      });
-  }, [apiRecords, selectedCategory, searchQuery, appMode]);
 
   const filteredTodos = useMemo(() => {
     if (appMode !== 'todo') return [];
@@ -1229,10 +1215,7 @@ const App: React.FC = () => {
 
   const getCurrentCount = () => {
     if (appMode === 'notes') return filteredNotes.length;
-    if (appMode === 'ssh') return filteredSSHRecords.length;
-    if (appMode === 'api') return filteredAPIRecords.length;
     if (appMode === 'todo') return filteredTodos.length;
-    if (appMode === 'files') return filteredFileRecords.length;
     if (appMode === 'files') return filteredFileRecords.length;
     if (appMode === 'prompts') return filteredPrompts.length;
     if (appMode === 'markdown') return filteredMarkdownNotes.length;
@@ -1258,7 +1241,6 @@ const App: React.FC = () => {
   const getAddButtonLabel = () => {
     switch (appMode) {
       case 'notes': return '新建笔记';
-      case 'ssh': return '添加连接';
       case 'api': return '添加API';
       case 'todo': return '添加待办';
       case 'files': return '添加文件';
@@ -1270,8 +1252,6 @@ const App: React.FC = () => {
   };
 
   const getSearchPlaceholder = () => {
-    if (appMode === 'ssh') return '搜索服务器...';
-    if (appMode === 'api') return '搜索 API...';
     if (appMode === 'todo') return '搜索任务...';
     if (appMode === 'files') return '搜索文件...';
     if (appMode === 'prompts') return '搜索 Skills...';
@@ -1384,7 +1364,20 @@ const App: React.FC = () => {
 
   const handleSaveAPI = (record: Partial<APIRecord>) => {
     const catName = record.category || '未分类';
-    ensureCategoryExists(catName);
+    // 直接更新 api 分类（不依赖 appMode）
+    if (catName !== '全部' && catName !== '未分类') {
+      setCategoriesMap(prev => {
+        const currentCategories = prev['api'] || DEFAULT_CATEGORIES;
+        if (currentCategories.some(c => c.name === catName)) return prev;
+        const newCategory: Category = {
+          id: crypto.randomUUID(),
+          name: catName,
+          icon: 'Folder',
+          isSystem: false
+        };
+        return { ...prev, api: [...currentCategories, newCategory] };
+      });
+    }
 
     if (record.id) {
       setApiRecords(prev => prev.map(r => r.id === record.id ? { ...r, ...record } as APIRecord : r));
@@ -1408,18 +1401,12 @@ const App: React.FC = () => {
       };
       setApiRecords(prev => [newRecord, ...prev]);
     }
-    setEditingAPI(null);
   };
 
   const handleDeleteAPI = (id: string) => {
     if (confirm('确定要删除这个 API 记录吗?')) {
       setApiRecords(prev => prev.filter(r => r.id !== id));
     }
-  };
-
-  const handleEditAPI = (record: APIRecord) => {
-    setEditingAPI(record);
-    setIsAPIModalOpen(true);
   };
 
   // --- Handlers: Todo ---
@@ -1570,9 +1557,9 @@ const App: React.FC = () => {
     if (!window.electronAPI?.listDir) return;
 
     try {
-      // Recursively scan vault for .md files (max 2 levels deep)
+      // Recursively scan vault for .md files (max 5 levels deep)
       const scanDir = async (dir: string, depth: number = 0): Promise<{name: string; path: string}[]> => {
-        if (depth > 2) return [];
+        if (depth > 5) return [];
         const entries = await window.electronAPI!.listDir(dir);
         let results: {name: string; path: string}[] = [];
         for (const entry of entries) {
@@ -1603,10 +1590,11 @@ const App: React.FC = () => {
       }
 
       // Build entries with relative path and folder info for the selection modal
+      // Use the immediate parent directory as the folder name
       const vaultEntries: VaultFileEntry[] = newFiles.map(f => {
         const relativePath = f.path.replace(vaultPath + '/', '');
         const parts = relativePath.split('/');
-        const folder = parts.length > 1 ? parts[0] : 'Vault';
+        const folder = parts.length > 1 ? parts[parts.length - 2] : 'Vault';
         return { name: f.name, path: f.path, relativePath, folder };
       });
 
@@ -1912,6 +1900,7 @@ const App: React.FC = () => {
               onEditCategory={handleEditCategory}
               onDeleteCategory={handleDeleteCategory}
               onImportFromVault={handleImportFromVault}
+              onHelp={() => setIsHelpOpen(true)}
             />
           </Suspense>
         )
@@ -1932,7 +1921,7 @@ const App: React.FC = () => {
         />
       ) : null}
 
-      <div className="flex-1 flex flex-col min-w-0 bg-white">
+      <div className="flex-1 flex flex-col min-w-0 bg-white relative">
         {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
         <div className="h-16 border-b border-gray-200 flex items-center justify-between px-6 bg-white shrink-0">
            <div className="flex items-center gap-4 flex-1 max-w-xl">
@@ -1965,14 +1954,6 @@ const App: React.FC = () => {
                       setEditingNote(null);
                       setIsNoteModalOpen(true); 
                       break;
-                    case 'ssh': 
-                      setEditingSSH(null);
-                      setIsSSHModalOpen(true); 
-                      break;
-                    case 'api': 
-                      setEditingAPI(null);
-                      setIsAPIModalOpen(true); 
-                      break;
                     case 'todo': 
                       setEditingTodo(null);
                       setIsTodoModalOpen(true); 
@@ -1998,6 +1979,14 @@ const App: React.FC = () => {
                 <span className="font-medium">{getAddButtonLabel()}</span>
               </button>
               )}
+              {/* Help button */}
+              <button
+                onClick={() => setIsHelpOpen(true)}
+                className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-200 text-gray-400 hover:text-blue-500 hover:border-blue-300 hover:bg-blue-50 transition-all"
+                title="使用帮助"
+              >
+                <HelpCircle className="w-4 h-4" />
+              </button>
            </div>
         </div>
         )}
@@ -2010,8 +1999,8 @@ const App: React.FC = () => {
             </div>
           }>
             {appMode === 'notes' && <NoteList notes={filteredNotes} onDelete={handleDeleteNote} onEdit={handleEditNote} />}
-            {appMode === 'ssh' && <SSHList records={filteredSSHRecords} onDelete={handleDeleteSSH} onEdit={handleEditSSH} onOpenInTerminal={handleOpenSSHInTerminal} />}
-            {appMode === 'api' && <APIList records={filteredAPIRecords} onDelete={handleDeleteAPI} onEdit={handleEditAPI} />}
+            {/* SSH模块已迁移到数据中心 */}
+            {/* API模块已迁移到数据中心 */}
             {appMode === 'todo' && (
               <div className="space-y-6">
                 {/* Collapsible plan section */}
@@ -2087,33 +2076,20 @@ const App: React.FC = () => {
                       onUpdate={async (id, updates) => {
                         if (updates.content !== undefined) {
                           setEditingFileContent(updates.content);
-                          // Debounced auto-save to disk (1.5s)
-                          if (fileSaveTimerRef.current) clearTimeout(fileSaveTimerRef.current);
-                          fileSaveTimerRef.current = setTimeout(async () => {
-                            if (window.electronAPI) {
-                              const file = fileRecords.find(f => f.id === id);
-                              if (file) {
-                                await window.electronAPI.writeFile(file.path, updates.content!);
-                                setFileRecords(prev => prev.map(f => f.id === id ? { ...f } : f));
-                              }
+                          // Write directly to disk — MarkdownEditor already debounces internally
+                          if (window.electronAPI) {
+                            const file = fileRecords.find(f => f.id === id);
+                            if (file) {
+                              await window.electronAPI.writeFile(file.path, updates.content);
                             }
-                          }, 1500);
+                          }
                         }
                       }}
                       isFullscreen={isRendererFullscreen}
                       onToggleFullscreen={() => setIsRendererFullscreen(!isRendererFullscreen)}
                       hideMetadata={true}
                       showViewToggle={true}
-                      onExitEdit={async () => {
-                        // Flush pending save before exiting
-                        if (fileSaveTimerRef.current) {
-                          clearTimeout(fileSaveTimerRef.current);
-                          fileSaveTimerRef.current = null;
-                          if (window.electronAPI && activeRenderFileId) {
-                            const file = fileRecords.find(f => f.id === activeRenderFileId);
-                            if (file) await window.electronAPI.writeFile(file.path, editingFileContent);
-                          }
-                        }
+                      onExitEdit={() => {
                         setIsEditingFile(false);
                       }}
                     />
@@ -2155,16 +2131,26 @@ const App: React.FC = () => {
                 categories={(categoriesMap[appMode] || DEFAULT_CATEGORIES).map(c => c.name)}
                 onUpdateRecords={setImageRecords}
                 onUpdateConfig={setImageHostingConfig}
+                onHelp={() => setIsHelpOpen(true)}
               />
             )}
 
             {/* Plugin Rendering */}
             {moduleConfig.find(m => m.id === appMode && m.isPlugin) && (
-              <PluginContainer 
-                entryPath={moduleConfig.find(m => m.id === appMode)?.pluginPath || ''} 
-                pluginId={appMode}
-                onOpenInBrowser={handleOpenInBrowser}
-              />
+              <div className="relative h-full">
+                <button
+                  onClick={() => setIsHelpOpen(true)}
+                  className="absolute top-3 right-3 z-10 w-7 h-7 flex items-center justify-center rounded-full border border-gray-200 bg-white/90 text-gray-400 hover:text-blue-500 hover:border-blue-300 hover:bg-blue-50 transition-all shadow-sm"
+                  title="使用帮助"
+                >
+                  <HelpCircle className="w-3.5 h-3.5" />
+                </button>
+                <PluginContainer 
+                  entryPath={moduleConfig.find(m => m.id === appMode)?.pluginPath || ''} 
+                  pluginId={appMode}
+                  onOpenInBrowser={handleOpenInBrowser}
+                />
+              </div>
             )}
 
             {(hasTerminalMounted || appMode === 'terminal') && (
@@ -2204,7 +2190,16 @@ const App: React.FC = () => {
             )}
 
             {(hasExcalidrawMounted || appMode === 'excalidraw') && (
-              <div className={appMode === 'excalidraw' ? 'h-full' : 'hidden'}>
+              <div className={appMode === 'excalidraw' ? 'h-full relative' : 'hidden'}>
+                {appMode === 'excalidraw' && (
+                  <button
+                    onClick={() => setIsHelpOpen(true)}
+                    className="absolute top-3 right-16 z-10 w-7 h-7 flex items-center justify-center rounded-full border border-gray-200 bg-white/90 text-gray-400 hover:text-blue-500 hover:border-blue-300 hover:bg-blue-50 transition-all shadow-sm"
+                    title="使用帮助"
+                  >
+                    <HelpCircle className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 <ExcalidrawEditor />
               </div>
             )}
@@ -2216,6 +2211,15 @@ const App: React.FC = () => {
                   onUpdateOJHeatmapData={setOJHeatmapData}
                   resourceData={resourceData}
                   onUpdateResourceData={setResourceData}
+                  sshRecords={sshRecords}
+                  sshCategories={categoriesMap['ssh'] || DEFAULT_CATEGORIES}
+                  onSaveSSH={handleSaveSSH}
+                  onDeleteSSH={handleDeleteSSH}
+                  onOpenSSHInTerminal={handleOpenSSHInTerminal}
+                  apiRecords={apiRecords}
+                  apiCategories={categoriesMap['api'] || DEFAULT_CATEGORIES}
+                  onSaveAPI={handleSaveAPI}
+                  onDeleteAPI={handleDeleteAPI}
                 />
               </div>
             )}
@@ -2266,15 +2270,7 @@ const App: React.FC = () => {
           onClose={() => setIsSSHModalOpen(false)}
           onSave={handleSaveSSH}
           initialData={editingSSH}
-          categories={(categoriesMap[appMode] || DEFAULT_CATEGORIES).map(c => c.name)}
-        />
-
-        <APIModal
-          isOpen={isAPIModalOpen}
-          onClose={() => setIsAPIModalOpen(false)}
-          onSave={handleSaveAPI}
-          initialData={editingAPI}
-          categories={(categoriesMap[appMode] || DEFAULT_CATEGORIES).map(c => c.name)}
+          categories={(categoriesMap['ssh'] || DEFAULT_CATEGORIES).map(c => c.name)}
         />
 
         <TodoModal
@@ -2398,6 +2394,15 @@ const App: React.FC = () => {
           onUpdateModules={setModuleConfig}
         />
       </Suspense>
+
+      {/* Help Modal */}
+      <HelpModal
+        isOpen={isHelpOpen}
+        onClose={() => setIsHelpOpen(false)}
+        appMode={appMode}
+        moduleName={moduleConfig.find(m => m.id === appMode)?.name}
+        isPlugin={moduleConfig.find(m => m.id === appMode)?.isPlugin}
+      />
         </div>
       )}
     </>

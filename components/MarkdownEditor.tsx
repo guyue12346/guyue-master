@@ -125,7 +125,11 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     try {
       await onUpdate(note.id, { content, title, category, updatedAt: Date.now() });
       lastSavedContentRef.current = currentData;
-      setHasUnsavedChanges(false);
+      // Only clear unsaved flag if content hasn't changed during the async write
+      const latestData = JSON.stringify({ content: contentRef.current, title: titleRef.current, category: categoryRef.current });
+      if (latestData === currentData) {
+        setHasUnsavedChanges(false);
+      }
       setAutoSaveStatus('saved');
       // Reset status after 2 seconds
       setTimeout(() => setAutoSaveStatus('idle'), 2000);
@@ -144,10 +148,10 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       clearTimeout(autoSaveTimerRef.current);
     }
 
-    // Set new timer for 3 seconds
+    // Set new timer for 800ms (near-realtime)
     autoSaveTimerRef.current = setTimeout(() => {
       performAutoSave();
-    }, 3000);
+    }, 800);
 
     return () => {
       if (autoSaveTimerRef.current) {
@@ -603,7 +607,14 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                 </SyntaxHighlighter>
               );
             }
-            return <code className={className} {...props}>{children}</code>;
+            if (inline) {
+              return <code className="bg-gray-100 text-rose-600 border border-gray-200 px-1.5 py-0.5 rounded-md text-[0.82em] font-mono not-prose" {...props}>{children}</code>;
+            }
+            return (
+              <pre className="not-prose p-4 rounded-lg bg-gray-50 border border-gray-200 overflow-x-auto my-4">
+                <code className="bg-transparent text-gray-800 font-mono text-sm" {...props}>{children}</code>
+              </pre>
+            );
           },
           a: ({href, children, ...props}) => {
             const handleClick = (e: React.MouseEvent) => {
