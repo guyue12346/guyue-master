@@ -709,8 +709,8 @@ ipcMain.handle('fetch-gcp-billing-data', async (_, params: { serviceAccountJson:
 
     const scopes = [
       'https://www.googleapis.com/auth/monitoring.read',
-      'https://www.googleapis.com/auth/cloud-platform.read-only',
-      'https://www.googleapis.com/auth/cloud-billing.readonly',
+      'https://www.googleapis.com/auth/cloud-platform',
+      'https://www.googleapis.com/auth/cloud-billing',
     ];
     const accessToken = await getGCPAccessToken(client_email, private_key, scopes);
 
@@ -737,13 +737,21 @@ ipcMain.handle('fetch-gcp-billing-data', async (_, params: { serviceAccountJson:
       `&pageSize=50`;
 
     const billingInfoUrl = `https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`;
+    const resourceManagerUrl = `https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}`;
 
-    const [monitoringResp, billingInfoResp] = await Promise.all([
+    const [monitoringResp, billingInfoResp, rmResp] = await Promise.all([
       fetch(monitoringUrl, { headers }).catch(() => null),
       fetch(billingInfoUrl, { headers }).catch(() => null),
+      fetch(resourceManagerUrl, { headers }).catch(() => null),
     ]);
 
     const result: any = { lastUpdated: Date.now(), projectId };
+
+    // 获取项目编号（用于预算过滤）
+    try {
+      const rmJson = await rmResp?.json() as any;
+      if (rmJson?.projectNumber) result.projectNumber = rmJson.projectNumber;
+    } catch {}
 
     // 正确处理监控 API 响应：区分权限错误和真正的无数据
     try {
@@ -761,15 +769,16 @@ ipcMain.handle('fetch-gcp-billing-data', async (_, params: { serviceAccountJson:
       billingAccountId = result.billingInfo.billingAccountName.replace('billingAccounts/', '');
     }
 
-    // 获取预算数据（含实际花费）
+    // 获取预算数据（含实际花费）—— 必须用 v1beta1 才有 currentSpend 字段
     if (billingAccountId) {
-      const budgetsUrl = `https://billingbudgets.googleapis.com/v1/billingAccounts/${billingAccountId}/budgets?pageSize=20`;
+      const budgetsUrl = `https://billingbudgets.googleapis.com/v1beta1/billingAccounts/${billingAccountId}/budgets?pageSize=20`;
       try {
         const budgetsResp = await fetch(budgetsUrl, { headers });
         const budgetsJson = await budgetsResp.json() as any;
         if (budgetsJson?.error) {
           result.budgetsError = budgetsJson.error;
         } else {
+          // v1beta1 list 接口直接返回 currentSpend，无需再逐个 GET
           result.budgets = budgetsJson;
         }
       } catch {}
