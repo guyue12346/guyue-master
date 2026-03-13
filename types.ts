@@ -249,6 +249,8 @@ export interface ElectronAPI {
   openZenmuxLogin: () => Promise<boolean>;
   fetchZenmuxUsageFromBrowser: () => Promise<ZenmuxUsage>;
   fetchZenmuxDashboardData: () => Promise<any>;
+  // GCP Billing API
+  fetchGCPBillingData: (params: { serviceAccountJson: string; projectId: string; billingAccountId?: string }) => Promise<any>;
   // Email API
   sendEmail: (params: { config: import('./types').EmailConfig; subject: string; content: string }) => Promise<{ success: boolean; error?: string }>;
   testEmailConfig: (config: import('./types').EmailConfig) => Promise<{ success: boolean; error?: string }>;
@@ -368,6 +370,7 @@ export interface DataCenterConfig {
     resourceCenter: boolean;
     passwordManager: boolean;
     zenmuxUsage: boolean;
+    gcpBilling: boolean;
   };
   moduleOrder?: string[];
 }

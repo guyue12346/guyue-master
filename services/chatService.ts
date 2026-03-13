@@ -38,6 +38,37 @@ export interface StreamCallbacks {
   onError: (error: Error) => void;
 }
 
+export interface ChatTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, any>;
+}
+
+export interface ChatToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, any>;
+}
+
+export interface ChatToolRunResult {
+  text: string;
+  toolCalls: ChatToolCall[];
+}
+
+export interface ChatDebugEvent {
+  stage: string;
+  provider: ChatConfig['provider'];
+  endpoint?: string;
+  request?: any;
+  response?: any;
+  detail?: string;
+  timestamp: number;
+}
+
+export interface ChatRunOptions {
+  onDebugEvent?: (event: ChatDebugEvent) => void;
+}
+
 // ==================== Model Definitions ====================
 
 import { ZENMUX_MODELS } from './zenmuxModels';
@@ -119,6 +150,83 @@ export class ChatService {
     this.config = { ...this.config, ...config };
   }
 
+  supportsNativeTools(): boolean {
+    return ['openai', 'anthropic', 'gemini'].includes(this.config.provider);
+  }
+
+  async completeText(messages: ChatMessage[], options?: ChatRunOptions): Promise<string> {
+    return new Promise((resolve, reject) => {
+      let streamedText = '';
+
+      options?.onDebugEvent?.({
+        stage: 'text-completion:start',
+        provider: this.config.provider,
+        detail: '开始普通文本补全请求',
+        request: {
+          model: this.config.model,
+          messages: this.toOpenAIMessages(messages),
+        },
+        timestamp: Date.now(),
+      });
+
+      this.sendMessage(messages, {
+        onToken: (token) => {
+          streamedText += token;
+        },
+        onComplete: (fullText) => {
+          options?.onDebugEvent?.({
+            stage: 'text-completion:done',
+            provider: this.config.provider,
+            detail: '文本补全完成',
+            response: {
+              text: fullText || streamedText,
+            },
+            timestamp: Date.now(),
+          });
+          resolve(fullText || streamedText);
+        },
+        onError: (error) => {
+          options?.onDebugEvent?.({
+            stage: 'text-completion:error',
+            provider: this.config.provider,
+            detail: error.message,
+            response: { error: error.message },
+            timestamp: Date.now(),
+          });
+          reject(error);
+        },
+      }).catch(reject);
+    });
+  }
+
+  async runToolsConversation(
+    messages: ChatMessage[],
+    tools: ChatTool[],
+    executeToolCall: (toolCall: ChatToolCall) => Promise<any>,
+    options?: ChatRunOptions,
+  ): Promise<ChatToolRunResult> {
+    if (!this.supportsNativeTools() || tools.length === 0) {
+      return {
+        text: await this.completeText(messages, options),
+        toolCalls: [],
+      };
+    }
+
+    switch (this.config.provider) {
+      case 'openai':
+        return this.runOpenAIToolsConversation(messages, tools, executeToolCall, options);
+      case 'anthropic':
+        return this.runAnthropicToolsConversation(messages, tools, executeToolCall, options);
+      case 'gemini':
+        return this.runGeminiToolsConversation(messages, tools, executeToolCall, options);
+      default:
+        return {
+          text: await this.completeText(messages, options),
+          toolCalls: [],
+        };
+    }
+  }
+
   async sendMessage(
     messages: ChatMessage[],
     callbacks: StreamCallbacks
@@ -157,6 +265,507 @@ export class ChatService {
     if (this.abortController) {
       this.abortController.abort();
       this.abortController = null;
+    }
+  }
+
+  private getBaseUrl(): string {
+    if (this.config.baseUrl) {
+      return this.config.baseUrl;
+    }
+
+    switch (this.config.provider) {
+      case 'zenmux':
+        return 'https://zenmux.ai/api/v1';
+      case 'openai':
+        return 'https://api.openai.com/v1';
+      case 'anthropic':
+        return 'https://api.anthropic.com/v1';
+      case 'ollama':
+        return 'http://localhost:11434/v1';
+      case 'deepseek':
+        return 'https://api.deepseek.com/v1';
+      case 'zhipu':
+        return 'https://open.bigmodel.cn/api/paas/v4';
+      case 'moonshot':
+        return 'https://api.moonshot.cn/v1';
+      case 'minimax':
+        return 'https://api.minimax.chat/v1';
+      default:
+        throw new Error('自定义提供商需要配置 Base URL');
+    }
+  }
+
+  private getRequestHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (this.config.provider === 'anthropic') {
+      headers['x-api-key'] = this.config.apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+    } else if (this.config.apiKey) {
+      headers['Authorization'] = `Bearer ${this.config.apiKey}`;
+    }
+
+    return headers;
+  }
+
+  private toOpenAIMessages(messages: ChatMessage[]) {
+    const formattedMessages = messages.map(m => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    if (this.config.systemPrompt && !messages.some(m => m.role === 'system')) {
+      formattedMessages.unshift({
+        role: 'system',
+        content: this.config.systemPrompt,
+      });
+    }
+
+    return formattedMessages;
+  }
+
+  private toAnthropicMessages(messages: ChatMessage[]) {
+    return messages
+      .filter(m => m.role !== 'system')
+      .map(m => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: m.content,
+      }));
+  }
+
+  private getSystemPrompt(messages: ChatMessage[]): string | undefined {
+    return messages.find(m => m.role === 'system')?.content || this.config.systemPrompt;
+  }
+
+  private async runOpenAIToolsConversation(
+    messages: ChatMessage[],
+    tools: ChatTool[],
+    executeToolCall: (toolCall: ChatToolCall) => Promise<any>,
+    options?: ChatRunOptions,
+  ): Promise<ChatToolRunResult> {
+    const emitDebug = (event: Omit<ChatDebugEvent, 'provider' | 'timestamp'>) => {
+      options?.onDebugEvent?.({
+        ...event,
+        provider: this.config.provider,
+        timestamp: Date.now(),
+      });
+    };
+
+    const baseUrl = this.getBaseUrl();
+    const headers = this.getRequestHeaders();
+    const formattedMessages = this.toOpenAIMessages(messages);
+    const formattedTools = tools.map(tool => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.inputSchema,
+      },
+    }));
+
+    const firstRequestBody = {
+      model: this.config.model,
+      messages: formattedMessages,
+      tools: formattedTools,
+      tool_choice: 'auto',
+      stream: false,
+      temperature: this.config.temperature,
+      max_tokens: this.config.maxTokens,
+    };
+
+    emitDebug({
+      stage: 'openai:first-request',
+      endpoint: `${baseUrl}/chat/completions`,
+      detail: '发送第一轮请求（允许模型决定是否调用工具）',
+      request: firstRequestBody,
+    });
+
+    const firstResponse = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(firstRequestBody),
+      signal: this.abortController?.signal,
+    });
+
+    if (!firstResponse.ok) {
+      throw new Error(`API Error: ${firstResponse.status} - ${await firstResponse.text()}`);
+    }
+
+    const firstData = await firstResponse.json();
+    emitDebug({
+      stage: 'openai:first-response',
+      detail: '收到第一轮模型回复',
+      response: firstData,
+    });
+
+    const firstMessage = firstData.choices?.[0]?.message;
+    const toolCalls: ChatToolCall[] = (firstMessage?.tool_calls || []).map((toolCall: any) => ({
+      id: toolCall.id,
+      name: toolCall.function?.name,
+      arguments: this.safeParseJson(toolCall.function?.arguments),
+    }));
+
+    emitDebug({
+      stage: 'openai:tool-calls',
+      detail: toolCalls.length ? `模型返回 ${toolCalls.length} 个工具调用` : '模型未触发工具调用',
+      response: { toolCalls },
+    });
+
+    if (toolCalls.length === 0) {
+      return {
+        text: typeof firstMessage?.content === 'string' ? firstMessage.content : '',
+        toolCalls: [],
+      };
+    }
+
+    const toolResults = await Promise.all(toolCalls.map(async (toolCall) => ({
+      toolCall,
+      result: await executeToolCall(toolCall),
+    })));
+
+    const secondMessages = [
+      ...formattedMessages,
+      {
+        role: 'assistant',
+        content: firstMessage?.content || '',
+        tool_calls: (firstMessage?.tool_calls || []).map((toolCall: any) => ({
+          id: toolCall.id,
+          type: toolCall.type,
+          function: toolCall.function,
+        })),
+      },
+      ...toolResults.map(({ toolCall, result }) => ({
+        role: 'tool',
+        tool_call_id: toolCall.id,
+        content: JSON.stringify(result),
+      })),
+    ];
+
+    const secondRequestBody = {
+      model: this.config.model,
+      messages: secondMessages,
+      stream: false,
+      temperature: this.config.temperature,
+      max_tokens: this.config.maxTokens,
+    };
+
+    emitDebug({
+      stage: 'openai:second-request',
+      endpoint: `${baseUrl}/chat/completions`,
+      detail: '提交工具结果，发起第二轮总结回复',
+      request: secondRequestBody,
+    });
+
+    const secondResponse = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(secondRequestBody),
+      signal: this.abortController?.signal,
+    });
+
+    if (!secondResponse.ok) {
+      throw new Error(`API Error: ${secondResponse.status} - ${await secondResponse.text()}`);
+    }
+
+    const secondData = await secondResponse.json();
+    emitDebug({
+      stage: 'openai:second-response',
+      detail: '收到第二轮模型总结回复',
+      response: secondData,
+    });
+
+    return {
+      text: secondData.choices?.[0]?.message?.content || '',
+      toolCalls,
+    };
+  }
+
+  private async runAnthropicToolsConversation(
+    messages: ChatMessage[],
+    tools: ChatTool[],
+    executeToolCall: (toolCall: ChatToolCall) => Promise<any>,
+    options?: ChatRunOptions,
+  ): Promise<ChatToolRunResult> {
+    const emitDebug = (event: Omit<ChatDebugEvent, 'provider' | 'timestamp'>) => {
+      options?.onDebugEvent?.({
+        ...event,
+        provider: this.config.provider,
+        timestamp: Date.now(),
+      });
+    };
+
+    const baseUrl = this.getBaseUrl();
+    const headers = this.getRequestHeaders();
+    const system = this.getSystemPrompt(messages);
+    const anthropicMessages = this.toAnthropicMessages(messages);
+    const anthropicTools = tools.map(tool => ({
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.inputSchema,
+    }));
+
+    const firstRequestBody = {
+      model: this.config.model,
+      system,
+      messages: anthropicMessages,
+      tools: anthropicTools,
+      max_tokens: this.config.maxTokens,
+      temperature: this.config.temperature,
+      stream: false,
+    };
+
+    emitDebug({
+      stage: 'anthropic:first-request',
+      endpoint: `${baseUrl}/messages`,
+      detail: '发送第一轮请求（Claude 工具选择）',
+      request: firstRequestBody,
+    });
+
+    const firstResponse = await fetch(`${baseUrl}/messages`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(firstRequestBody),
+      signal: this.abortController?.signal,
+    });
+
+    if (!firstResponse.ok) {
+      throw new Error(`API Error: ${firstResponse.status} - ${await firstResponse.text()}`);
+    }
+
+    const firstData = await firstResponse.json();
+    emitDebug({
+      stage: 'anthropic:first-response',
+      detail: '收到第一轮 Claude 回复',
+      response: firstData,
+    });
+
+    const firstContent = firstData.content || [];
+    const toolCalls: ChatToolCall[] = firstContent
+      .filter((block: any) => block.type === 'tool_use')
+      .map((block: any) => ({
+        id: block.id,
+        name: block.name,
+        arguments: block.input || {},
+      }));
+
+    emitDebug({
+      stage: 'anthropic:tool-calls',
+      detail: toolCalls.length ? `Claude 返回 ${toolCalls.length} 个工具调用` : 'Claude 未触发工具调用',
+      response: { toolCalls },
+    });
+
+    if (toolCalls.length === 0) {
+      return {
+        text: firstContent.filter((block: any) => block.type === 'text').map((block: any) => block.text).join(''),
+        toolCalls: [],
+      };
+    }
+
+    const toolResults = await Promise.all(toolCalls.map(async (toolCall) => ({
+      toolCall,
+      result: await executeToolCall(toolCall),
+    })));
+
+    const secondRequestBody = {
+      model: this.config.model,
+      system,
+      messages: [
+        ...anthropicMessages,
+        { role: 'assistant', content: firstContent },
+        {
+          role: 'user',
+          content: toolResults.map(({ toolCall, result }) => ({
+            type: 'tool_result',
+            tool_use_id: toolCall.id,
+            content: JSON.stringify(result),
+          })),
+        },
+      ],
+      max_tokens: this.config.maxTokens,
+      temperature: this.config.temperature,
+      stream: false,
+    };
+
+    emitDebug({
+      stage: 'anthropic:second-request',
+      endpoint: `${baseUrl}/messages`,
+      detail: '提交 tool_result，触发第二轮总结回复',
+      request: secondRequestBody,
+    });
+
+    const secondResponse = await fetch(`${baseUrl}/messages`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(secondRequestBody),
+      signal: this.abortController?.signal,
+    });
+
+    if (!secondResponse.ok) {
+      throw new Error(`API Error: ${secondResponse.status} - ${await secondResponse.text()}`);
+    }
+
+    const secondData = await secondResponse.json();
+    emitDebug({
+      stage: 'anthropic:second-response',
+      detail: '收到第二轮 Claude 总结回复',
+      response: secondData,
+    });
+
+    return {
+      text: (secondData.content || []).filter((block: any) => block.type === 'text').map((block: any) => block.text).join(''),
+      toolCalls,
+    };
+  }
+
+  private async runGeminiToolsConversation(
+    messages: ChatMessage[],
+    tools: ChatTool[],
+    executeToolCall: (toolCall: ChatToolCall) => Promise<any>,
+    options?: ChatRunOptions,
+  ): Promise<ChatToolRunResult> {
+    const emitDebug = (event: Omit<ChatDebugEvent, 'provider' | 'timestamp'>) => {
+      options?.onDebugEvent?.({
+        ...event,
+        provider: this.config.provider,
+        timestamp: Date.now(),
+      });
+    };
+
+    if (!this.config.apiKey) {
+      throw new Error('请配置 Gemini API Key');
+    }
+
+    const ai = new GoogleGenAI({ apiKey: this.config.apiKey });
+    const systemPrompt = this.getSystemPrompt(messages);
+    const contents = messages
+      .filter(m => m.role !== 'system')
+      .map(m => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }],
+      }));
+
+    const config: any = {
+      temperature: this.config.temperature,
+      maxOutputTokens: this.config.maxTokens,
+      systemInstruction: systemPrompt,
+      tools: [{
+        functionDeclarations: tools.map(tool => ({
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.inputSchema,
+        })),
+      }],
+    };
+
+    const firstRequestBody = {
+      model: this.config.model,
+      contents,
+      config,
+    };
+
+    emitDebug({
+      stage: 'gemini:first-request',
+      endpoint: 'google-genai.models.generateContent',
+      detail: '发送第一轮 Gemini 请求（含 functionDeclarations）',
+      request: firstRequestBody,
+    });
+
+    const firstResponse: any = await ai.models.generateContent(firstRequestBody);
+
+    emitDebug({
+      stage: 'gemini:first-response',
+      detail: '收到第一轮 Gemini 回复',
+      response: firstResponse,
+    });
+
+    const firstParts = firstResponse?.candidates?.[0]?.content?.parts || [];
+    const toolCalls: ChatToolCall[] = firstParts
+      .filter((part: any) => part.functionCall)
+      .map((part: any, index: number) => ({
+        id: part.functionCall.id || `${part.functionCall.name}-${index}`,
+        name: part.functionCall.name,
+        arguments: part.functionCall.args || {},
+      }));
+
+    emitDebug({
+      stage: 'gemini:tool-calls',
+      detail: toolCalls.length ? `Gemini 返回 ${toolCalls.length} 个 functionCall` : 'Gemini 未触发 functionCall',
+      response: { toolCalls },
+    });
+
+    if (toolCalls.length === 0) {
+      return {
+        text: firstParts.filter((part: any) => part.text).map((part: any) => part.text).join('') || firstResponse?.text || '',
+        toolCalls: [],
+      };
+    }
+
+    const toolResults = await Promise.all(toolCalls.map(async (toolCall) => ({
+      toolCall,
+      result: await executeToolCall(toolCall),
+    })));
+
+    const secondContents = [
+      ...contents,
+      {
+        role: 'model',
+        parts: firstParts,
+      },
+      {
+        role: 'user',
+        parts: toolResults.map(({ toolCall, result }) => ({
+          functionResponse: {
+            name: toolCall.name,
+            response: { result },
+          },
+        })),
+      },
+    ];
+
+    emitDebug({
+      stage: 'gemini:second-request',
+      endpoint: 'google-genai.models.generateContent',
+      detail: '提交 functionResponse，触发第二轮总结回复',
+      request: {
+        model: this.config.model,
+        contents: secondContents,
+      },
+    });
+
+    const secondResponse: any = await ai.models.generateContent({
+      model: this.config.model,
+      contents: secondContents,
+      config: {
+        temperature: this.config.temperature,
+        maxOutputTokens: this.config.maxTokens,
+        systemInstruction: systemPrompt,
+      },
+    });
+
+    emitDebug({
+      stage: 'gemini:second-response',
+      detail: '收到第二轮 Gemini 总结回复',
+      response: secondResponse,
+    });
+
+    const secondParts = secondResponse?.candidates?.[0]?.content?.parts || [];
+    return {
+      text: secondParts.filter((part: any) => part.text).map((part: any) => part.text).join('') || secondResponse?.text || '',
+      toolCalls,
+    };
+  }
+
+  private safeParseJson(value: string | undefined): Record<string, any> {
+    if (!value) {
+      return {};
+    }
+
+    try {
+      return JSON.parse(value);
+    } catch {
+      return {};
     }
   }
 
@@ -225,63 +834,11 @@ export class ChatService {
       throw new Error(`请配置 ${this.config.provider} API Key`);
     }
 
-    // Determine base URL
-    let baseUrl = this.config.baseUrl;
-    if (!baseUrl) {
-      switch (this.config.provider) {
-        case 'zenmux':
-          baseUrl = 'https://zenmux.ai/api/v1';
-          break;
-        case 'openai':
-          baseUrl = 'https://api.openai.com/v1';
-          break;
-        case 'anthropic':
-          baseUrl = 'https://api.anthropic.com/v1';
-          break;
-        case 'ollama':
-          baseUrl = 'http://localhost:11434/v1';
-          break;
-        case 'deepseek':
-          baseUrl = 'https://api.deepseek.com/v1';
-          break;
-        case 'zhipu':
-          baseUrl = 'https://open.bigmodel.cn/api/paas/v4';
-          break;
-        case 'moonshot':
-          baseUrl = 'https://api.moonshot.cn/v1';
-          break;
-        case 'minimax':
-          baseUrl = 'https://api.minimax.chat/v1';
-          break;
-        default:
-          throw new Error('自定义提供商需要配置 Base URL');
-      }
-    }
+    const baseUrl = this.getBaseUrl();
 
     // Convert messages to OpenAI format
-    const formattedMessages = messages.map(m => ({
-      role: m.role,
-      content: m.content
-    }));
-
-    // Add system prompt if not already present
-    if (this.config.systemPrompt && !messages.some(m => m.role === 'system')) {
-      formattedMessages.unshift({
-        role: 'system',
-        content: this.config.systemPrompt
-      });
-    }
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-
-    if (this.config.provider === 'anthropic') {
-      headers['x-api-key'] = this.config.apiKey;
-      headers['anthropic-version'] = '2023-06-01';
-    } else if (this.config.apiKey) {
-      headers['Authorization'] = `Bearer ${this.config.apiKey}`;
-    }
+    const formattedMessages = this.toOpenAIMessages(messages);
+    const headers = this.getRequestHeaders();
 
     const body: any = {
       model: this.config.model,

@@ -77,7 +77,7 @@ export const NavRail: React.FC<NavRailProps> = ({
   };
 
   return (
-    <div className="w-20 h-full flex-shrink-0 bg-[#1E1E1E] flex flex-col items-center py-6 z-30 shadow-xl">
+    <div className="w-20 h-full flex-shrink-0 bg-[#1E1E1E] flex flex-col items-center py-6 z-30 shadow-xl" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
       {/* Top Logo / Spacer - Updated to 'Gu Yue' Design - Clickable to open Agent */}
       <div 
         className="mb-8 relative group cursor-pointer" 
@@ -97,7 +97,7 @@ export const NavRail: React.FC<NavRailProps> = ({
       </div>
 
       {/* Main Nav Items */}
-      <div className="flex-1 flex flex-col gap-4 w-full items-center overflow-y-auto no-scrollbar min-h-0">
+      <div className="flex-1 flex flex-col gap-4 w-full items-center overflow-y-auto no-scrollbar min-h-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         {sortedModules.map(module => {
           const Icon = getIcon(module.icon);
           // Map internal names to display labels if needed, or use module.name
@@ -122,7 +122,7 @@ export const NavRail: React.FC<NavRailProps> = ({
       </div>
 
       {/* Bottom Actions */}
-      <div className="mt-auto flex flex-col gap-4 pt-4 shrink-0">
+      <div className="mt-auto flex flex-col gap-4 pt-4 shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         <button
           onClick={onOpenSettings}
           className="w-12 h-12 flex items-center justify-center rounded-2xl text-gray-500 hover:bg-white/10 hover:text-white transition-all"

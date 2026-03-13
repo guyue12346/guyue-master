@@ -64,6 +64,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchZenmuxUsageFromBrowser: () => ipcRenderer.invoke('fetch-zenmux-usage-browser'),
   fetchZenmuxDashboardData: () => ipcRenderer.invoke('fetch-zenmux-dashboard-data'),
 
+  // GCP Billing API
+  fetchGCPBillingData: (params: { serviceAccountJson: string; projectId: string; billingAccountId?: string }) =>
+    ipcRenderer.invoke('fetch-gcp-billing-data', params),
+
   // Email API
   sendEmail: (params: { config: any; subject: string; content: string }) => ipcRenderer.invoke('send-email', params),
   testEmailConfig: (config: any) => ipcRenderer.invoke('test-email-config', config),
@@ -132,4 +136,6 @@ export interface ElectronAPI {
   // Email API
   sendEmail: (params: { config: any; subject: string; content: string }) => Promise<{ success: boolean; error?: string }>;
   testEmailConfig: (config: any) => Promise<{ success: boolean; error?: string }>;
+  // GCP Billing API
+  fetchGCPBillingData: (params: { serviceAccountJson: string; projectId: string; billingAccountId?: string }) => Promise<any>;
 }

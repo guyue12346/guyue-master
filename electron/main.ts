@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
+import { createSign } from 'crypto';
 import pty from 'node-pty';
 import os from 'os';
 import net from 'net';
@@ -582,20 +583,43 @@ async function fetchZenmuxDashboardData(): Promise<any> {
 
         const ctoken = ${ctokenLiteral};
         const ym = '' + new Date().getFullYear() + String(new Date().getMonth() + 1).padStart(2, '0');
-        const postBody = JSON.stringify({ queryDimension: 'BIZ_MTH', queryTime: ym, apiKeys: [], modelSlugs: [] });
-        const postOpts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: postBody };
 
-        // 三个 API 并行调用
-        const [r1, r2, r3] = await Promise.all([
-          fetch('/api/dashboard/usage/query?ctoken=' + ctoken, postOpts).then(r => r.text()).catch(() => ''),
-          fetch('/api/dashboard/cost/query/cost?ctoken=' + ctoken, { ...postOpts, body: postBody }).then(r => r.text()).catch(() => ''),
+        // 获取前 2 个月的月份字符串
+        const prevMonths = [];
+        for (let i = 1; i <= 2; i++) {
+          const d = new Date();
+          d.setDate(1);
+          d.setMonth(d.getMonth() - i);
+          prevMonths.push('' + d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0'));
+        }
+
+        const makePostBody = (month) => JSON.stringify({ queryDimension: 'BIZ_MTH', queryTime: month, apiKeys: [], modelSlugs: [] });
+        const postOpts = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+
+        // 当月 + 历史月份并行调用
+        const [r1, r2, r3, r4, r5, r6] = await Promise.all([
+          fetch('/api/dashboard/usage/query?ctoken=' + ctoken, postOpts(makePostBody(ym))).then(r => r.text()).catch(() => ''),
+          fetch('/api/dashboard/cost/query/cost?ctoken=' + ctoken, postOpts(makePostBody(ym))).then(r => r.text()).catch(() => ''),
           fetch('/api/payment/transtion/get_credits?ctoken=' + ctoken).then(r => r.text()).catch(() => ''),
+          // 前一个月
+          fetch('/api/dashboard/usage/query?ctoken=' + ctoken, postOpts(makePostBody(prevMonths[0]))).then(r => r.text()).catch(() => ''),
+          fetch('/api/dashboard/cost/query/cost?ctoken=' + ctoken, postOpts(makePostBody(prevMonths[0]))).then(r => r.text()).catch(() => ''),
+          // 前两个月
+          fetch('/api/dashboard/cost/query/cost?ctoken=' + ctoken, postOpts(makePostBody(prevMonths[1]))).then(r => r.text()).catch(() => ''),
         ]);
 
         result.data = {};
         try { result.data.usage = JSON.parse(r1); } catch(e) {}
         try { result.data.costDetail = JSON.parse(r2); } catch(e) {}
         try { result.data.credits = JSON.parse(r3); } catch(e) {}
+        // 历史月账单（含月份标识）
+        const historyMonths = [];
+        try { if (r4) historyMonths.push({ month: prevMonths[0], usage: JSON.parse(r4) }); } catch(e) {}
+        try { if (r5) historyMonths[0] && (historyMonths[0].cost = JSON.parse(r5)); } catch(e) {}
+        result.data.historyMonths = historyMonths;
+        result.data.prevMonthCost = null;
+        try { if (r6) { const c = JSON.parse(r6); result.data.prevMonthCost = { month: prevMonths[1], cost: c }; } } catch(e) {}
+        result.data.prevMonths = prevMonths;
 
         return result;
       } catch (error) {
@@ -641,7 +665,129 @@ ipcMain.handle('fetch-zenmux-dashboard-data', async () => {
   }
 });
 
-// --- Plugin System ---
+// --- GCP Billing ---
+
+function createGCPJWT(clientEmail: string, privateKey: string, scopes: string[]): string {
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    iss: clientEmail,
+    sub: clientEmail,
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600,
+    scope: scopes.join(' '),
+  };
+  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signingInput = `${header}.${body}`;
+  const sign = createSign('RSA-SHA256');
+  sign.update(signingInput);
+  const signature = sign.sign(privateKey, 'base64url');
+  return `${signingInput}.${signature}`;
+}
+
+async function getGCPAccessToken(clientEmail: string, privateKey: string, scopes: string[]): Promise<string> {
+  const jwt = createGCPJWT(clientEmail, privateKey, scopes);
+  const resp = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt,
+    }),
+  });
+  const data = await resp.json() as any;
+  if (data.error) throw new Error(data.error_description || data.error);
+  return data.access_token as string;
+}
+
+ipcMain.handle('fetch-gcp-billing-data', async (_, params: { serviceAccountJson: string; projectId: string; billingAccountId?: string }) => {
+  try {
+    const sa = JSON.parse(params.serviceAccountJson);
+    const { client_email, private_key } = sa;
+    if (!client_email || !private_key) throw new Error('无效的 Service Account JSON（缺少 client_email 或 private_key）');
+
+    const scopes = [
+      'https://www.googleapis.com/auth/monitoring.read',
+      'https://www.googleapis.com/auth/cloud-platform.read-only',
+      'https://www.googleapis.com/auth/cloud-billing.readonly',
+    ];
+    const accessToken = await getGCPAccessToken(client_email, private_key, scopes);
+
+    const projectId = params.projectId || sa.project_id;
+    let billingAccountId = params.billingAccountId || '';
+
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    // alignmentPeriod 必须不大于查询区间，否则 Monitoring API 返回空数据
+    const intervalSeconds = Math.max(Math.floor((now.getTime() - startOfMonth.getTime()) / 1000), 3600);
+
+    // 并行请求
+    const headers = { Authorization: `Bearer ${accessToken}` };
+
+    // 不带 resource.type 过滤，让 metric.type 单独匹配（兼容 Gemini/generativelanguage API）
+    const monitoringUrl = `https://monitoring.googleapis.com/v3/projects/${projectId}/timeSeries?` +
+      `filter=metric.type%3D%22serviceruntime.googleapis.com%2Fapi%2Frequest_count%22` +
+      `&interval.startTime=${encodeURIComponent(startOfMonth.toISOString())}` +
+      `&interval.endTime=${encodeURIComponent(now.toISOString())}` +
+      `&aggregation.alignmentPeriod=${intervalSeconds}s` +
+      `&aggregation.perSeriesAligner=ALIGN_SUM` +
+      `&aggregation.crossSeriesReducer=REDUCE_SUM` +
+      `&aggregation.groupByFields=resource.labels.service` +
+      `&pageSize=50`;
+
+    const billingInfoUrl = `https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`;
+
+    const [monitoringResp, billingInfoResp] = await Promise.all([
+      fetch(monitoringUrl, { headers }).catch(() => null),
+      fetch(billingInfoUrl, { headers }).catch(() => null),
+    ]);
+
+    const result: any = { lastUpdated: Date.now(), projectId };
+
+    // 正确处理监控 API 响应：区分权限错误和真正的无数据
+    try {
+      const monitoringJson = await monitoringResp?.json() as any;
+      if (monitoringJson?.error) {
+        result.monitoringError = monitoringJson.error; // { code, message, status }
+      } else {
+        result.monitoring = monitoringJson;
+      }
+    } catch {}
+    try { result.billingInfo = await billingInfoResp?.json(); } catch {}
+
+    // 从 billingInfo 自动提取 billingAccountId（格式：billingAccounts/XXXX-XXXX-XXXX）
+    if (!billingAccountId && result.billingInfo?.billingAccountName) {
+      billingAccountId = result.billingInfo.billingAccountName.replace('billingAccounts/', '');
+    }
+
+    // 获取预算数据（含实际花费）
+    if (billingAccountId) {
+      const budgetsUrl = `https://billingbudgets.googleapis.com/v1/billingAccounts/${billingAccountId}/budgets?pageSize=20`;
+      try {
+        const budgetsResp = await fetch(budgetsUrl, { headers });
+        const budgetsJson = await budgetsResp.json() as any;
+        if (budgetsJson?.error) {
+          result.budgetsError = budgetsJson.error;
+        } else {
+          result.budgets = budgetsJson;
+        }
+      } catch {}
+
+      const billingAccountUrl = `https://cloudbilling.googleapis.com/v1/billingAccounts/${billingAccountId}`;
+      try {
+        const baResp = await fetch(billingAccountUrl, { headers });
+        result.billingAccount = await baResp.json();
+      } catch {}
+    }
+
+    return result;
+  } catch (error) {
+    return { error: (error as Error).message };
+  }
+});
+
+
 ipcMain.handle('get-plugins', async () => {
   const pluginsDir = path.join(app.getPath('userData'), 'plugins');
   try {
