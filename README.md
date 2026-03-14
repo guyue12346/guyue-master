@@ -1,103 +1,60 @@
 # Guyue Master
 
-> 面向 macOS 的多合一知识与开发工作台，整合书签、学习、AI、终端与插件生态，帮助个人在一处完成日常知识与研发工作。
+面向 macOS 的个人生产力工作台。集笔记、待办、刷题、AI 助手、终端、文件管理于一体，所有数据本地存储。
 
-Guyue Master 基于 React + Electron 打造，提供 macOS 原生风格的玻璃拟物界面，覆盖书签收藏、LeetCode 刷题、Markdown 笔记、AI Chat、小型 API/SSH/终端工具箱以及插件容器等模块。所有数据默认保存在本地，可离线工作，也能按需连接云端服务与插件。
+## 功能模块
 
-## ✨ 功能亮点
+| 模块 | 说明 |
+|------|------|
+| **Markdown 笔记** | 编辑器 + 实时预览，支持 GFM、KaTeX、代码高亮、图片托管 |
+| **待办与日程** | Todo 列表 / 子任务 / 日历热力图，支持归档 |
+| **LeetCode 刷题** | Hot 100 / 自定义题单 / OJ 提交记录 / 做题热力图 |
+| **学习管理** | 课程 / 分类 / 进度追踪 / 学习数据面板 |
+| **AI 助手** | 多模型（Gemini / OpenAI / Anthropic），原生工具调用，多轮自动链式执行 |
+| **终端** | xterm.js + node-pty 多标签终端 |
+| **数据中心** | API 管理 / SSH 管理 / 密码库 / 资源中心 / GCP 账单 / Excalidraw 白板 |
+| **文件与图床** | 文件分类管理 + 图片托管上传 |
+| **邮件** | 通过 Nodemailer 发送邮件 |
+| **插件** | iframe 容器加载自定义插件 |
+| **浏览器** | 内置 Mini Browser 快速预览网页 |
 
-**知识与学习**  
-- 集成 `LeetCode Hot 100`、自定义课程与学习数据面板，支持刷题计划与进度追踪。
-- Markdown 编辑器支持同步预览、代码高亮、KaTeX 数学公式（例如 $E = mc^2$）与图片托管。
-- Prompt 库、学习清单、Todo、档案/归档视图等组件帮助整理日常知识体系。
+## 技术栈
 
-**信息管理**  
-- 书签 / API / 文件 / 图片等模块以卡片或分组形式展示，支持拖拽排序和多级分类。  
-- 内置 Web Browser 与 File Renderer，可直接在应用中预览网页、Markdown、PDF 或媒体文件。  
-- 浮窗聊天、侧边栏、导航轨道等 UI 组件可自由组合，打造个性化控制中心。
+React 19 · TypeScript · Vite 6 · Tailwind CSS · Electron 39 · node-pty · @google/genai · KaTeX · xterm.js
 
-**开发者工具**  
-- 集成 xterm.js + node-pty 的多标签终端，快捷运行 zsh 命令。  
-- SSH 管理器保存常用主机，一键连接。  
-- API 调试面板与文件浏览器便于联调接口或查看本地工程。  
-- Image Hosting、Plugin Container 等功能模块覆盖常见研发辅助场景。
+## 快速开始
 
-**AI 与自动化**  
-- Chat Manager 与 Floating Chat Window 支持多会话、多模型（通过 `@google/genai` 等 SDK）快速查询或生成内容。  
-- 学习/刷题记录可与 AI 笔记联动，实现题解、总结、提示自动化。
+```bash
+# 安装依赖
+npm install
 
-**桌面体验**  
-- macOS hiddenInset 标题栏、毛玻璃、暗色模式、动画过渡等细节营造原生体验。  
-- Electron 主进程提供安全的 preload 桥接，确保渲染进程调用系统能力时的隔离性。  
-- 通过 electron-builder 打包 DMG/ZIP，便于分发。
+# 开发模式（Vite + Electron 热重载）
+npm run electron:dev
 
-## 🧱 技术栈
+# 仅前端调试
+npm run dev
 
-- **UI**: React 19 · TypeScript · Vite 6 · Tailwind CSS · Lucide React
-- **桌面**: Electron 39、electron-builder、自定义 preload（IPC 安全桥）
-- **编辑器与渲染**: React Markdown、remark/rehype 插件族、React Syntax Highlighter、KaTeX
-- **终端与系统**: xterm.js、node-pty、文件系统桥接、SSH/HTTP 服务封装
-- **AI/插件**: `@google/genai`、插件容器与示例插件 (`example_plugins/`)
-
-## 📦 环境要求
-
-- macOS 10.15 (Catalina) 或更高版本
-- Node.js 18+（推荐 20 LTS）
-- npm 9+（或使用 pnpm/yarn，自行调整命令）
-
-## 🚀 快速开始
-
-1. **安装依赖**
-	```bash
-	npm install
-	```
-2. **启动开发模式**（Vite + Electron 热重载）
-	```bash
-	npm run electron:dev
-	```
-3. **浏览器调试**（仅渲染进程）
-	```bash
-	npm run dev
-	```
-
-### 常用脚本
-
-| 命令 | 说明 |
-| --- | --- |
-| `npm run dev` | 启动 Vite，仅调试前端界面 |
-| `npm run electron:dev` | 同时启动 Vite 与 Electron，适合日常开发 |
-| `npm run build` | 生成前端静态资源，输出到 `dist/` |
-| `npm run electron:build` | 构建前端 + 主进程，再执行 electron-builder（按照 `build` 配置输出） |
-| `npm run electron:build:mac` | 限定 macOS 平台打包 `.app` 和 `.zip` |
-| `npm run electron:build:dmg` | 打包 macOS DMG 安装包（默认产物位于 `release/`） |
-
-## 📦 构建与发布
-
-1. 执行 `npm run electron:build:dmg` 生成 DMG；或使用 `electron:build:mac` 输出 `.app`/`.zip`。
-2. 构建产物默认位于 `release/`（本地忽略），包含 `latest-mac.yml`、`.blockmap` 等自动更新文件。
-3. electron-builder 配置位于 `package.json -> build`，包含应用 ID、图标、签名参数、DMG 布局等，可按需调整。
-4. 若需 CI/CD，可在构建前运行 `npm run build && npx tsc -p electron/tsconfig.json` 以确保渲染层与主进程 TypeScript 完整编译。
-5. 发布时到 GitHub **Releases** 创建/更新对应 tag，将 `.dmg`、`.blockmap`、`latest-mac.yml` 上传至 Release Assets；若需记录元数据，可在 `latest-installers/` 填写下载链接与校验和。
-
-## 📂 目录概览
-
-```
-guyue-master/
-├── App.tsx / components/      # React 组件与 UI 模块
-├── electron/                  # 主进程、预加载脚本与配置
-├── services/                  # Chat / 学习 / API 等业务服务
-├── utils/                     # 存储、解析、工具函数
-├── build/                     # 图标与构建资源
-├── release/                   # 构建输出 (DMG、blockmap 等)
-├── example_plugins/           # 插件示例 (calculator, cs336-learning...)
-├── types.ts / metadata.json   # 全局类型与应用配置
-└── vite.config.ts / tsconfig  # 构建与 TypeScript 配置
+# 打包 DMG
+npm run electron:build:dmg
 ```
 
-## 🔌 插件与扩展
+## 目录结构
 
-- `example_plugins/` 提供 Calculator、CS 课程等 Demo，包含 `manifest.json` 与静态页面，可作为自定义插件模板。
-- 插件通过 Plugin Container 挂载，支持在渲染层读取 manifest、注入 iframe、与主进程交换数据。
+```
+├── App.tsx / components/    # React 组件
+├── electron/                # Electron 主进程 + preload
+├── services/                # 业务服务（AI Chat 等）
+├── utils/                   # 工具函数
+├── example_plugins/         # 插件示例
+├── build/                   # 图标与构建资源
+└── release/                 # 打包产物
+```
+
+## 环境要求
+
+- macOS 10.15+
+- Node.js 18+
+- npm 9+
 - 典型步骤：
   1. 在 `example_plugins/your-plugin/` 中编写前端页面与 `manifest.json`；
   2. 在应用设置中加载插件目录，或在代码中将 manifest 写入配置；
