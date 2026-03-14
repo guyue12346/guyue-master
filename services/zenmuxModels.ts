@@ -153,3 +153,18 @@ export const RECOMMENDED_MODELS = [
   'deepseek/deepseek-reasoner',
   'qwen/qwen3-max',
 ];
+
+// 支持 Tool Calling 的 Zenmux 模型（Agent 专用）
+// 排除：纯推理模型(R1)、图像专用模型、小参数开源模型(Gemma/Llama/MiMo)、InclusionAI
+const TOOL_CALLING_CATEGORIES = new Set(['Claude', 'GPT', 'Gemini', 'Grok', 'GLM', 'DeepSeek', 'Qwen', 'Kimi', 'MiniMax', 'Mistral', 'Doubao', 'ERNIE', 'StepFun', 'KAT']);
+const TOOL_CALLING_EXCLUDE_IDS = new Set([
+  'deepseek/deepseek-r1-0528',
+  'deepseek/deepseek-reasoner',
+  'google/gemma-3-12b-it',
+  'google/gemini-2.5-flash-image',
+  'google/gemini-3-pro-image-preview',
+]);
+
+export const ZENMUX_AGENT_MODELS = ZENMUX_MODELS.filter(
+  m => TOOL_CALLING_CATEGORIES.has(m.category) && !TOOL_CALLING_EXCLUDE_IDS.has(m.id)
+);

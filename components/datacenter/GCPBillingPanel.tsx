@@ -107,15 +107,37 @@ function parseMoney(m: any): number {
   return Number(m.units ?? 0) + Number(m.nanos ?? 0) / 1e9;
 }
 
-function parseBudgets(budgetsData: any, projectNumber?: string): BudgetStat[] {
+function extractProjectNumber(data: any): string | undefined {
+  // 优先从 Resource Manager 返回的 projectNumber（纯数字）
+  if (data?.projectNumber) return String(data.projectNumber);
+  // 兜底从 billingInfo.name 提取（格式：projects/{number}/billingInfo）
+  const billingName: string | undefined = data?.billingInfo?.name;
+  if (billingName) {
+    const parts = billingName.split('/');
+    if (parts.length >= 2 && /^\d+$/.test(parts[1])) return parts[1];
+  }
+  return undefined;
+}
+
+function extractProjectId(data: any): string | undefined {
+  return data?.projectId ? String(data.projectId) : undefined;
+}
+
+function parseBudgets(budgetsData: any, projectNumber?: string, projectId?: string): BudgetStat[] {
   const list: any[] = budgetsData?.budgets ?? [];
-  const filtered = projectNumber
-    ? list.filter(b => {
-        const projects: string[] = b?.budgetFilter?.projects ?? [];
-        // 仅展示明确绑定到此项目的预算；无项目过滤条件的账号级预算不展示在单个项目下
-        return projects.length > 0 && projects.includes(`projects/${projectNumber}`);
-      })
-    : list;
+  // 至少需要一种标识来匹配
+  if (!projectNumber && !projectId) return [];
+
+  // 构建所有可能的匹配值
+  const matchSet = new Set<string>();
+  if (projectNumber) matchSet.add(`projects/${projectNumber}`);
+  if (projectId) matchSet.add(`projects/${projectId}`);
+
+  const filtered = list.filter(b => {
+    const projects: string[] = b?.budgetFilter?.projects ?? [];
+    // 仅展示明确绑定到此项目的预算；账号级（无项目过滤）预算不展示在单个项目下
+    return projects.length > 0 && projects.some(p => matchSet.has(p));
+  });
   return filtered.map(b => {
     const specifiedAmount = b?.amount?.specifiedAmount;
     const budgetAmount = specifiedAmount ? parseMoney(specifiedAmount) : null;
@@ -449,8 +471,10 @@ const ProjectDetail: React.FC<{
   // 监控 API 权限错误（区别于"有权限但无数据"）
   const monitoringErr = state.data.monitoringError;
 
+  const projectNumber = extractProjectNumber(state.data);
+  const projectId = extractProjectId(state.data);
   const apiStats = parseApiUsage(state.data.monitoring);
-  const budgets = parseBudgets(state.data.budgets, state.data.projectNumber);
+  const budgets = parseBudgets(state.data.budgets, projectNumber, projectId);
   const budgetsError = state.data.budgetsError as { code: number; message: string; status: string } | undefined;
   const hasBillingAccount = !!(state.data.billingInfo?.billingAccountName || state.data.billingAccount);
   const totalRequests = apiStats.reduce((s, a) => s + a.requestCount, 0);
@@ -921,7 +945,7 @@ export const GCPBillingPanel: React.FC = () => {
                 const s = states[p.id];
                 const api = s?.data ? parseApiUsage(s.data.monitoring) : [];
                 const reqs = api.reduce((acc, a) => acc + a.requestCount, 0);
-                const buds = s?.data ? parseBudgets(s.data.budgets, s.data.projectNumber) : [];
+                const buds = s?.data ? parseBudgets(s.data.budgets, extractProjectNumber(s.data), extractProjectId(s.data)) : [];
                 const spend = buds.reduce((acc, b) => acc + b.currentSpend, 0);
                 const currency = buds[0]?.currency ?? '';
                 return { reqs, spend, currency, name: p.name || p.projectId, hasData: !!s?.data };

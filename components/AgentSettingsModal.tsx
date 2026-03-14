@@ -1,6 +1,6 @@
 import React from 'react';
 import { X, CheckCircle2, AlertCircle, Trash2, Sparkles } from 'lucide-react';
-import { AVAILABLE_MODELS, ChatConfig } from '../services/chatService';
+import { AGENT_AVAILABLE_MODELS, ChatConfig } from '../services/chatService';
 
 interface AgentSettingsModalProps {
   isOpen: boolean;
@@ -10,7 +10,7 @@ interface AgentSettingsModalProps {
   onClearHistory: () => void;
 }
 
-const NATIVE_TOOL_PROVIDERS = new Set(['openai', 'anthropic', 'gemini']);
+const NATIVE_TOOL_PROVIDERS = new Set(['openai', 'anthropic', 'gemini', 'zenmux']);
 
 export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   isOpen,
@@ -21,7 +21,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  const currentModels = AVAILABLE_MODELS[config.provider] || [];
+  const currentModels = AGENT_AVAILABLE_MODELS[config.provider] || [];
   const supportsNativeTools = NATIVE_TOOL_PROVIDERS.has(config.provider);
 
   return (
@@ -54,12 +54,12 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
                 value={config.provider}
                 onChange={(e) => {
                   const provider = e.target.value as ChatConfig['provider'];
-                  const nextModel = AVAILABLE_MODELS[provider]?.[0]?.id || '';
+                  const nextModel = AGENT_AVAILABLE_MODELS[provider]?.[0]?.id || '';
                   onChangeConfig({ ...config, provider, model: nextModel });
                 }}
                 className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
               >
-                {Object.keys(AVAILABLE_MODELS).map((provider) => (
+                {Object.keys(AGENT_AVAILABLE_MODELS).map((provider) => (
                   <option key={provider} value={provider}>
                     {provider}
                   </option>
@@ -132,7 +132,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
                 </p>
                 <p className="text-xs text-blue-700 leading-relaxed">
                   {supportsNativeTools
-                    ? 'OpenAI / Anthropic / Gemini 会优先走标准 tools 流程；未选模块时会先做一轮模块判断。'
+                    ? 'Zenmux / OpenAI / Anthropic / Gemini 会优先走标准 tools 流程；未选模块时会先做一轮模块判断。'
                     : '其他提供商会继续使用普通对话与 action block 兼容流程。'}
                 </p>
               </div>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, HelpCircle, Bot, Wrench, Compass } from 'lucide-react';
+import { X, HelpCircle, Bot, Wrench, Shield, Lightbulb } from 'lucide-react';
 
 interface AgentHelpModalProps {
   isOpen: boolean;
@@ -11,27 +11,45 @@ const helpSections = [
     icon: Bot,
     title: '如何工作',
     items: [
-      '如果你先选中模块，Agent 只会在该模块范围内调用工具。',
-      '如果你没有选模块，Agent 会先判断任务属于哪个模块，再决定是否调用工具。',
-      'OpenAI、Anthropic、Gemini 会优先走原生 Function Calling。',
+      '支持 OpenAI、Anthropic、Gemini、Zenmux —— 这些会走原生 Function Calling，调用更精准。',
+      '其他模型会自动回退到兼容模式（AI 在回复末尾输出结构化指令块）。',
+      '可以手动选中某个模块来限定工具范围，不选则 Agent 自动路由。',
     ],
   },
   {
     icon: Wrench,
     title: '当前能力',
     items: [
-      '目前已启用待办模块，可以直接创建待办事项。',
-      '其他模块图标会保留展示，但暂时不可点击。',
-      '不支持原生 tools 的提供商会自动回退到普通对话流程。',
+      '📝 待办事项：增删改查，支持子任务的查看、创建、修改和删除',
+      '📋 便签、Markdown 笔记、Prompt 技能卡的增删改查',
+      '📊 记录 OJ 做题（洛谷 / AcWing / LeetCode）、创建结构化题单',
+      '🎓 在学习中心创建课程和分类',
+      '🗄️ 资源中心条目的增删改查（云盘、服务器、订阅等）',
+      '📧 发送邮件（需在设置中配置邮件服务）',
+      '📁 本地文件管理：列出目录、读取文件、创建文件（需授权文件夹）',
+      '🖼️ 图床管理：查询已上传图片、上传新图片到 Gitee 图床',
     ],
   },
   {
-    icon: Compass,
+    icon: Shield,
+    title: '权限管理',
+    items: [
+      '🔒 数据权限：点击右侧 🔒 图标，逐项开启读取/写入权限（待办、刷题、资源、题单、课程）。',
+      '📂 文件夹权限：点击右侧 📂 图标，添加 Agent 可访问的本地文件夹。',
+      '✅ 权限会自动保存，下次打开无需重新勾选。',
+      '不开权限时，Agent 只能创建新内容，无法查询或修改已有数据。',
+    ],
+  },
+  {
+    icon: Lightbulb,
     title: '推荐用法',
     items: [
-      '先选中待办图标，再描述任务，会减少模块判断的额外开销。',
-      '描述里尽量包含时间、优先级、分类等信息。',
-      '如果没有配置 API Key，可以先点设置图标完成配置。',
+      '发图 + 描述：上传截图（如刷题记录、账单），Agent 自动提取信息创建条目。',
+      '"帮我总结上周刷题情况" —— 先解锁刷题统计权限，再提问。',
+      '"给任务 X 添加几个子任务" —— Agent 自动查询待办并创建子任务。',
+      '"新建一个动态规划题单，包含..." —— 直接描述分组和题目即可。',
+      '右侧 🗑️ 按钮可清空对话历史，📧 按钮可快速进入邮件模式。',
+      '先说清楚分类/优先级/时间，减少 Agent 的确认反复。',
     ],
   },
 ];
@@ -54,8 +72,8 @@ export const AgentHelpModal: React.FC<AgentHelpModalProps> = ({ isOpen, onClose 
               <HelpCircle className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Agent 使用帮助</h2>
-              <p className="text-sm text-gray-500 mt-1">了解模块选择、工具调用和兼容模式。</p>
+              <h2 className="text-lg font-semibold text-gray-900">Agent 使用指南</h2>
+              <p className="text-sm text-gray-500 mt-0.5">工具调用、权限管理和推荐用法</p>
             </div>
           </div>
           <button
@@ -66,18 +84,18 @@ export const AgentHelpModal: React.FC<AgentHelpModalProps> = ({ isOpen, onClose 
           </button>
         </div>
 
-        <div className="px-6 py-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="px-6 py-6 grid grid-cols-1 md:grid-cols-2 gap-4">
           {helpSections.map((section) => {
             const Icon = section.icon;
             return (
               <div key={section.title} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
-                <div className="w-10 h-10 rounded-2xl bg-white text-blue-600 flex items-center justify-center shadow-sm mb-3">
+                <div className="w-9 h-9 rounded-xl bg-white text-blue-600 flex items-center justify-center shadow-sm mb-3">
                   <Icon className="w-4 h-4" />
                 </div>
                 <h3 className="text-sm font-semibold text-gray-900 mb-2">{section.title}</h3>
-                <ul className="space-y-2">
+                <ul className="space-y-1.5">
                   {section.items.map((item) => (
-                    <li key={item} className="text-sm text-gray-600 leading-relaxed">
+                    <li key={item} className="text-[13px] text-gray-600 leading-relaxed">
                       {item}
                     </li>
                   ))}
@@ -92,12 +110,10 @@ export const AgentHelpModal: React.FC<AgentHelpModalProps> = ({ isOpen, onClose 
             onClick={onClose}
             className="w-full rounded-2xl bg-blue-600 text-white py-2.5 text-sm font-medium hover:bg-blue-700 transition-colors"
           >
-            我知道了
+            开始使用
           </button>
         </div>
       </div>
     </div>
   );
 };
-
-export default AgentHelpModal;

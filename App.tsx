@@ -2423,6 +2423,8 @@ const App: React.FC = () => {
         <AgentPanel
           isOpen={isAgentOpen}
           onClose={() => setIsAgentOpen(false)}
+          todos={todos}
+          notes={notes}
           onCreateTodo={(todoData) => {
             const newTodo: TodoItem = {
               id: crypto.randomUUID(),
@@ -2436,6 +2438,97 @@ const App: React.FC = () => {
             };
             setTodos(prev => [newTodo, ...prev]);
           }}
+          onUpdateTodo={(id, updates) => {
+            setTodos(prev => prev.map(t => t.id === id ? { ...t, ...updates } as TodoItem : t));
+          }}
+          onDeleteTodo={(id) => {
+            setTodos(prev => prev.filter(t => t.id !== id));
+          }}
+          onCreateNote={(noteData) => {
+            const newNote: Note = {
+              id: crypto.randomUUID(),
+              content: noteData.content || '新便签',
+              color: noteData.color || 'bg-yellow-100',
+              createdAt: Date.now(),
+            };
+            setNotes(prev => [newNote, ...prev]);
+          }}
+          onUpdateNote={(id, updates) => {
+            setNotes(prev => prev.map(n => n.id === id ? { ...n, ...updates } as Note : n));
+          }}
+          onDeleteNote={(id) => {
+            setNotes(prev => prev.filter(n => n.id !== id));
+          }}
+          onCreatePrompt={(promptData) => {
+            const newPrompt: PromptRecord = {
+              id: crypto.randomUUID(),
+              title: promptData.title || '未命名技能',
+              content: promptData.content || '',
+              description: promptData.description,
+              tags: promptData.tags || [],
+              category: promptData.category || '未分类',
+              note: '',
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            };
+            setPrompts(prev => [newPrompt, ...prev]);
+          }}
+          onCreateMarkdownNote={(noteData) => {
+            const newNote: MarkdownNote = {
+              id: Date.now().toString(),
+              title: noteData.title || '新笔记',
+              category: noteData.category || '',
+              content: noteData.content || '# 新笔记\n\n开始编写...',
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            };
+            setMarkdownNotes(prev => [...prev, newNote]);
+          }}
+          onCreateOJSubmission={(submission) => {
+            setOJHeatmapData(prev => ({
+              ...prev,
+              submissions: [...prev.submissions, submission],
+            }));
+          }}
+          ojHeatmapData={ojHeatmapData}
+          onCreateResource={(itemData) => {
+            const newItem = {
+              id: crypto.randomUUID(),
+              categoryId: itemData.categoryId || 'cloud',
+              name: itemData.name || '',
+              expireDate: itemData.expireDate,
+              capacity: itemData.capacity,
+              cost: itemData.cost,
+              url: itemData.url,
+              note: itemData.note,
+              account: itemData.account,
+              autoRenewal: itemData.autoRenewal,
+              createdAt: Date.now(),
+            };
+            setResourceData(prev => ({
+              categories: prev.categories.length > 0 ? prev.categories : [
+                { id: 'cloud', name: '云盘资源', icon: 'Cloud', color: '#3b82f6' },
+                { id: 'ai', name: 'AI资源', icon: 'Bot', color: '#8b5cf6' },
+                { id: 'server', name: '服务器', icon: 'Server', color: '#22c55e' },
+                { id: 'domain', name: '域名', icon: 'Globe', color: '#f59e0b' },
+                { id: 'subscription', name: '订阅服务', icon: 'CreditCard', color: '#ec4899' },
+              ],
+              items: [...prev.items, newItem],
+            }));
+          }}
+          onUpdateResource={(id, updates) => {
+            setResourceData(prev => ({
+              ...prev,
+              items: prev.items.map(i => i.id === id ? { ...i, ...updates } : i),
+            }));
+          }}
+          onDeleteResource={(id) => {
+            setResourceData(prev => ({
+              ...prev,
+              items: prev.items.filter(i => i.id !== id),
+            }));
+          }}
+          resourceData={resourceData}
         />
       </Suspense>
         </div>

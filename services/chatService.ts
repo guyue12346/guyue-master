@@ -2,6 +2,14 @@ import { GoogleGenAI } from "@google/genai";
 
 // ==================== Types ====================
 
+export interface ChatAttachment {
+  type: 'image' | 'file';
+  name: string;
+  mimeType: string;
+  base64: string; // base64 编码的文件内容
+  size?: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -9,6 +17,7 @@ export interface ChatMessage {
   timestamp: number;
   model?: string;
   tokens?: number;
+  attachments?: ChatAttachment[];
 }
 
 export interface ChatConversation {
@@ -71,7 +80,7 @@ export interface ChatRunOptions {
 
 // ==================== Model Definitions ====================
 
-import { ZENMUX_MODELS } from './zenmuxModels';
+import { ZENMUX_MODELS, ZENMUX_AGENT_MODELS } from './zenmuxModels';
 
 export const AVAILABLE_MODELS: Record<string, { id: string; name: string; provider: string; category?: string; description?: string }[]> = {
   zenmux: ZENMUX_MODELS,
@@ -125,6 +134,28 @@ export const AVAILABLE_MODELS: Record<string, { id: string; name: string; provid
   ],
 };
 
+// Agent 专用模型列表：只保留支持原生 Tool Calling 的提供商和模型
+export const AGENT_AVAILABLE_MODELS: Record<string, { id: string; name: string; provider: string; category?: string; description?: string }[]> = {
+  zenmux: ZENMUX_AGENT_MODELS,
+  gemini: [
+    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview', provider: 'gemini', description: '最新旗舰' },
+    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', provider: 'gemini' },
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini' },
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini', description: '性价比' },
+  ],
+  openai: [
+    { id: 'gpt-5.4', name: 'GPT-5.4', provider: 'openai', description: '旗舰模型' },
+    { id: 'gpt-5-mini', name: 'GPT-5 Mini', provider: 'openai', description: '高性价比' },
+    { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai' },
+    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' },
+  ],
+  anthropic: [
+    { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', provider: 'anthropic', description: '最强智能' },
+    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'anthropic', description: '速度与智能' },
+    { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', provider: 'anthropic', description: '最快' },
+  ],
+};
+
 export const DEFAULT_CHAT_CONFIG: ChatConfig = {
   provider: 'zenmux',
   apiKey: '',
@@ -151,7 +182,7 @@ export class ChatService {
   }
 
   supportsNativeTools(): boolean {
-    return ['openai', 'anthropic', 'gemini'].includes(this.config.provider);
+    return ['openai', 'anthropic', 'gemini', 'zenmux'].includes(this.config.provider);
   }
 
   async completeText(messages: ChatMessage[], options?: ChatRunOptions): Promise<string> {
@@ -213,6 +244,7 @@ export class ChatService {
     }
 
     switch (this.config.provider) {
+      case 'zenmux':
       case 'openai':
         return this.runOpenAIToolsConversation(messages, tools, executeToolCall, options);
       case 'anthropic':
@@ -311,16 +343,28 @@ export class ChatService {
   }
 
   private toOpenAIMessages(messages: ChatMessage[]) {
-    const formattedMessages = messages.map(m => ({
-      role: m.role,
-      content: m.content,
-    }));
+    const formattedMessages = messages.map(m => {
+      const images = (m.attachments || []).filter(a => a.type === 'image');
+      if (images.length > 0 && m.role === 'user') {
+        return {
+          role: m.role,
+          content: [
+            { type: 'text' as const, text: m.content },
+            ...images.map(img => ({
+              type: 'image_url' as const,
+              image_url: { url: `data:${img.mimeType};base64,${img.base64}` },
+            })),
+          ],
+        };
+      }
+      return { role: m.role, content: m.content };
+    });
 
     if (this.config.systemPrompt && !messages.some(m => m.role === 'system')) {
       formattedMessages.unshift({
         role: 'system',
         content: this.config.systemPrompt,
-      });
+      } as any);
     }
 
     return formattedMessages;
@@ -329,10 +373,29 @@ export class ChatService {
   private toAnthropicMessages(messages: ChatMessage[]) {
     return messages
       .filter(m => m.role !== 'system')
-      .map(m => ({
-        role: m.role === 'assistant' ? 'assistant' : 'user',
-        content: m.content,
-      }));
+      .map(m => {
+        const images = (m.attachments || []).filter(a => a.type === 'image');
+        if (images.length > 0 && m.role === 'user') {
+          return {
+            role: 'user' as const,
+            content: [
+              ...images.map(img => ({
+                type: 'image' as const,
+                source: {
+                  type: 'base64' as const,
+                  media_type: img.mimeType,
+                  data: img.base64,
+                },
+              })),
+              { type: 'text' as const, text: m.content },
+            ],
+          };
+        }
+        return {
+          role: (m.role === 'assistant' ? 'assistant' : 'user') as 'assistant' | 'user',
+          content: m.content,
+        };
+      });
   }
 
   private getSystemPrompt(messages: ChatMessage[]): string | undefined {
@@ -641,22 +704,32 @@ export class ChatService {
     const systemPrompt = this.getSystemPrompt(messages);
     const contents = messages
       .filter(m => m.role !== 'system')
-      .map(m => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }],
-      }));
+      .map(m => {
+        const parts: any[] = [{ text: m.content }];
+        const images = (m.attachments || []).filter(a => a.type === 'image');
+        for (const img of images) {
+          parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
+        }
+        return {
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts,
+        };
+      });
 
     const config: any = {
       temperature: this.config.temperature,
       maxOutputTokens: this.config.maxTokens,
       systemInstruction: systemPrompt,
-      tools: [{
-        functionDeclarations: tools.map(tool => ({
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.inputSchema,
-        })),
-      }],
+      // Gemini 不允许 functionDeclarations 和 codeExecution 同时存在
+      tools: [
+        {
+          functionDeclarations: tools.map(tool => ({
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.inputSchema,
+          })),
+        },
+      ],
     };
 
     const firstRequestBody = {
@@ -782,10 +855,17 @@ export class ChatService {
     // Build contents from messages
     const contents = messages
       .filter(m => m.role !== 'system')
-      .map(m => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }]
-      }));
+      .map(m => {
+        const parts: any[] = [{ text: m.content }];
+        const images = (m.attachments || []).filter(a => a.type === 'image');
+        for (const img of images) {
+          parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
+        }
+        return {
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts,
+        };
+      });
 
     // Get system prompt
     const systemPrompt = messages.find(m => m.role === 'system')?.content || this.config.systemPrompt;
@@ -793,16 +873,17 @@ export class ChatService {
     let fullText = '';
 
     try {
-      // Build config with optional Google Search tool
+      // Build config with optional built-in tools
       const config: any = {
         temperature: this.config.temperature,
         maxOutputTokens: this.config.maxTokens,
-        systemInstruction: systemPrompt
+        systemInstruction: systemPrompt,
+        tools: [{ codeExecution: {} }],
       };
 
       // Enable Google Search grounding if configured
       if (this.config.enableWebSearch) {
-        config.tools = [{ googleSearch: {} }];
+        config.tools.push({ googleSearch: {} });
       }
 
       const response = await ai.models.generateContentStream({
