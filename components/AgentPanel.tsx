@@ -1569,7 +1569,7 @@ const TOOL_REGISTRY: ToolRegistration[] = [
       }
       const limit = Math.min(Number(args.limit) || 20, 50);
       const result = items.slice(0, limit).map(f => ({ id: f.id, name: f.name, type: f.type, category: f.category, importance: f.importance, note: f.note || null }));
-      return { success: true, total: items.length, returned: result.length, files: result, authorizedCategories: ctx.filePermissions };
+      return { success: true, total: items.length, returned: result.length, files: result, authorizedCategories: ctx.filePermissions, hint: '以上仅为文件元信息。如需查看文件内容，请对每个文件调用 read_file 工具并传入对应的 id。' };
     },
   },
   {

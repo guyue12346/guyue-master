@@ -418,7 +418,6 @@ export class ChatService {
 
     const baseUrl = this.getBaseUrl();
     const headers = this.getRequestHeaders();
-    const formattedMessages = this.toOpenAIMessages(messages);
     const formattedTools = tools.map(tool => ({
       type: 'function',
       function: {
@@ -428,120 +427,120 @@ export class ChatService {
       },
     }));
 
-    const firstRequestBody = {
-      model: this.config.model,
-      messages: formattedMessages,
-      tools: formattedTools,
-      tool_choice: 'auto',
-      stream: false,
-      temperature: this.config.temperature,
-      max_tokens: this.config.maxTokens,
-    };
+    const MAX_ITERATIONS = 6;
+    let currentMessages = this.toOpenAIMessages(messages);
+    const allToolCalls: ChatToolCall[] = [];
 
-    emitDebug({
-      stage: 'openai:first-request',
-      endpoint: `${baseUrl}/chat/completions`,
-      detail: '发送第一轮请求（允许模型决定是否调用工具）',
-      request: firstRequestBody,
-    });
-
-    const firstResponse = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(firstRequestBody),
-      signal: this.abortController?.signal,
-    });
-
-    if (!firstResponse.ok) {
-      throw new Error(`API Error: ${firstResponse.status} - ${await firstResponse.text()}`);
-    }
-
-    const firstData = await firstResponse.json();
-    emitDebug({
-      stage: 'openai:first-response',
-      detail: '收到第一轮模型回复',
-      response: firstData,
-    });
-
-    const firstMessage = firstData.choices?.[0]?.message;
-    const toolCalls: ChatToolCall[] = (firstMessage?.tool_calls || []).map((toolCall: any) => ({
-      id: toolCall.id,
-      name: toolCall.function?.name,
-      arguments: this.safeParseJson(toolCall.function?.arguments),
-    }));
-
-    emitDebug({
-      stage: 'openai:tool-calls',
-      detail: toolCalls.length ? `模型返回 ${toolCalls.length} 个工具调用` : '模型未触发工具调用',
-      response: { toolCalls },
-    });
-
-    if (toolCalls.length === 0) {
-      return {
-        text: typeof firstMessage?.content === 'string' ? firstMessage.content : '',
-        toolCalls: [],
+    for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+      const includeTools = iteration < MAX_ITERATIONS - 1;
+      const requestBody: any = {
+        model: this.config.model,
+        messages: currentMessages,
+        stream: false,
+        temperature: this.config.temperature,
+        max_tokens: this.config.maxTokens,
       };
+      if (includeTools) {
+        requestBody.tools = formattedTools;
+        requestBody.tool_choice = 'auto';
+      }
+
+      emitDebug({
+        stage: iteration === 0 ? 'openai:first-request' : 'openai:second-request',
+        endpoint: `${baseUrl}/chat/completions`,
+        detail: iteration === 0
+          ? '发送第一轮请求（允许模型决定是否调用工具）'
+          : `提交工具结果，发起第 ${iteration + 1} 轮请求`,
+        request: requestBody,
+      });
+
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(requestBody),
+        signal: this.abortController?.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`API Error: ${response.status} - ${await response.text()}`);
+      }
+
+      const data = await response.json();
+      emitDebug({
+        stage: iteration === 0 ? 'openai:first-response' : 'openai:second-response',
+        detail: iteration === 0 ? '收到第一轮模型回复' : `收到第 ${iteration + 1} 轮模型回复`,
+        response: data,
+      });
+
+      const message = data.choices?.[0]?.message;
+      const toolCalls: ChatToolCall[] = (message?.tool_calls || []).map((tc: any) => ({
+        id: tc.id,
+        name: tc.function?.name,
+        arguments: this.safeParseJson(tc.function?.arguments),
+      }));
+
+      emitDebug({
+        stage: 'openai:tool-calls',
+        detail: toolCalls.length ? `模型返回 ${toolCalls.length} 个工具调用` : '模型未触发工具调用',
+        response: { toolCalls },
+      });
+
+      if (toolCalls.length === 0) {
+        return {
+          text: typeof message?.content === 'string' ? message.content : '',
+          toolCalls: allToolCalls,
+        };
+      }
+
+      allToolCalls.push(...toolCalls);
+      const toolResults = await Promise.all(toolCalls.map(async (toolCall) => ({
+        toolCall,
+        result: await executeToolCall(toolCall),
+      })));
+
+      currentMessages = [
+        ...currentMessages,
+        {
+          role: 'assistant',
+          content: message?.content || '',
+          tool_calls: (message?.tool_calls || []).map((tc: any) => ({
+            id: tc.id,
+            type: tc.type,
+            function: tc.function,
+          })),
+        },
+        ...toolResults.map(({ toolCall, result }) => ({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(result),
+        })),
+      ];
     }
 
-    const toolResults = await Promise.all(toolCalls.map(async (toolCall) => ({
-      toolCall,
-      result: await executeToolCall(toolCall),
-    })));
-
-    const secondMessages = [
-      ...formattedMessages,
-      {
-        role: 'assistant',
-        content: firstMessage?.content || '',
-        tool_calls: (firstMessage?.tool_calls || []).map((toolCall: any) => ({
-          id: toolCall.id,
-          type: toolCall.type,
-          function: toolCall.function,
-        })),
-      },
-      ...toolResults.map(({ toolCall, result }) => ({
-        role: 'tool',
-        tool_call_id: toolCall.id,
-        content: JSON.stringify(result),
-      })),
-    ];
-
-    const secondRequestBody = {
-      model: this.config.model,
-      messages: secondMessages,
-      stream: false,
-      temperature: this.config.temperature,
-      max_tokens: this.config.maxTokens,
-    };
-
+    // Max iterations reached — do a final request without tools
     emitDebug({
-      stage: 'openai:second-request',
-      endpoint: `${baseUrl}/chat/completions`,
-      detail: '提交工具结果，发起第二轮总结回复',
-      request: secondRequestBody,
+      stage: 'native:max-iterations',
+      detail: `达到最大迭代次数 (${MAX_ITERATIONS})，强制总结`,
     });
-
-    const secondResponse = await fetch(`${baseUrl}/chat/completions`, {
+    const finalResponse = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers,
-      body: JSON.stringify(secondRequestBody),
+      body: JSON.stringify({
+        model: this.config.model,
+        messages: currentMessages,
+        stream: false,
+        temperature: this.config.temperature,
+        max_tokens: this.config.maxTokens,
+      }),
       signal: this.abortController?.signal,
     });
-
-    if (!secondResponse.ok) {
-      throw new Error(`API Error: ${secondResponse.status} - ${await secondResponse.text()}`);
+    if (!finalResponse.ok) {
+      throw new Error(`API Error: ${finalResponse.status} - ${await finalResponse.text()}`);
     }
-
-    const secondData = await secondResponse.json();
-    emitDebug({
-      stage: 'openai:second-response',
-      detail: '收到第二轮模型总结回复',
-      response: secondData,
-    });
-
+    const finalData = await finalResponse.json();
     return {
-      text: secondData.choices?.[0]?.message?.content || '',
-      toolCalls,
+      text: finalData.choices?.[0]?.message?.content || '',
+      toolCalls: allToolCalls,
     };
   }
 
@@ -569,116 +568,118 @@ export class ChatService {
       input_schema: tool.inputSchema,
     }));
 
-    const firstRequestBody = {
-      model: this.config.model,
-      system,
-      messages: anthropicMessages,
-      tools: anthropicTools,
-      max_tokens: this.config.maxTokens,
-      temperature: this.config.temperature,
-      stream: false,
-    };
+    const MAX_ITERATIONS = 6;
+    let currentMessages = [...anthropicMessages];
+    const allToolCalls: ChatToolCall[] = [];
 
-    emitDebug({
-      stage: 'anthropic:first-request',
-      endpoint: `${baseUrl}/messages`,
-      detail: '发送第一轮请求（Claude 工具选择）',
-      request: firstRequestBody,
-    });
-
-    const firstResponse = await fetch(`${baseUrl}/messages`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(firstRequestBody),
-      signal: this.abortController?.signal,
-    });
-
-    if (!firstResponse.ok) {
-      throw new Error(`API Error: ${firstResponse.status} - ${await firstResponse.text()}`);
-    }
-
-    const firstData = await firstResponse.json();
-    emitDebug({
-      stage: 'anthropic:first-response',
-      detail: '收到第一轮 Claude 回复',
-      response: firstData,
-    });
-
-    const firstContent = firstData.content || [];
-    const toolCalls: ChatToolCall[] = firstContent
-      .filter((block: any) => block.type === 'tool_use')
-      .map((block: any) => ({
-        id: block.id,
-        name: block.name,
-        arguments: block.input || {},
-      }));
-
-    emitDebug({
-      stage: 'anthropic:tool-calls',
-      detail: toolCalls.length ? `Claude 返回 ${toolCalls.length} 个工具调用` : 'Claude 未触发工具调用',
-      response: { toolCalls },
-    });
-
-    if (toolCalls.length === 0) {
-      return {
-        text: firstContent.filter((block: any) => block.type === 'text').map((block: any) => block.text).join(''),
-        toolCalls: [],
+    for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+      const includeTools = iteration < MAX_ITERATIONS - 1;
+      const requestBody: any = {
+        model: this.config.model,
+        system,
+        messages: currentMessages,
+        max_tokens: this.config.maxTokens,
+        temperature: this.config.temperature,
+        stream: false,
       };
-    }
+      if (includeTools) {
+        requestBody.tools = anthropicTools;
+      }
 
-    const toolResults = await Promise.all(toolCalls.map(async (toolCall) => ({
-      toolCall,
-      result: await executeToolCall(toolCall),
-    })));
+      emitDebug({
+        stage: iteration === 0 ? 'anthropic:first-request' : 'anthropic:second-request',
+        endpoint: `${baseUrl}/messages`,
+        detail: iteration === 0
+          ? '发送第一轮请求（Claude 工具选择）'
+          : `提交 tool_result，发起第 ${iteration + 1} 轮请求`,
+        request: requestBody,
+      });
 
-    const secondRequestBody = {
-      model: this.config.model,
-      system,
-      messages: [
-        ...anthropicMessages,
-        { role: 'assistant', content: firstContent },
+      const response = await fetch(`${baseUrl}/messages`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(requestBody),
+        signal: this.abortController?.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`API Error: ${response.status} - ${await response.text()}`);
+      }
+
+      const data = await response.json();
+      emitDebug({
+        stage: iteration === 0 ? 'anthropic:first-response' : 'anthropic:second-response',
+        detail: iteration === 0 ? '收到第一轮 Claude 回复' : `收到第 ${iteration + 1} 轮 Claude 回复`,
+        response: data,
+      });
+
+      const content = data.content || [];
+      const toolCalls: ChatToolCall[] = content
+        .filter((block: any) => block.type === 'tool_use')
+        .map((block: any) => ({
+          id: block.id,
+          name: block.name,
+          arguments: block.input || {},
+        }));
+
+      emitDebug({
+        stage: 'anthropic:tool-calls',
+        detail: toolCalls.length ? `Claude 返回 ${toolCalls.length} 个工具调用` : 'Claude 未触发工具调用',
+        response: { toolCalls },
+      });
+
+      if (toolCalls.length === 0) {
+        return {
+          text: content.filter((block: any) => block.type === 'text').map((block: any) => block.text).join(''),
+          toolCalls: allToolCalls,
+        };
+      }
+
+      allToolCalls.push(...toolCalls);
+      const toolResults = await Promise.all(toolCalls.map(async (toolCall) => ({
+        toolCall,
+        result: await executeToolCall(toolCall),
+      })));
+
+      currentMessages = [
+        ...currentMessages,
+        { role: 'assistant' as const, content },
         {
-          role: 'user',
+          role: 'user' as const,
           content: toolResults.map(({ toolCall, result }) => ({
             type: 'tool_result',
             tool_use_id: toolCall.id,
             content: JSON.stringify(result),
           })),
         },
-      ],
-      max_tokens: this.config.maxTokens,
-      temperature: this.config.temperature,
-      stream: false,
-    };
-
-    emitDebug({
-      stage: 'anthropic:second-request',
-      endpoint: `${baseUrl}/messages`,
-      detail: '提交 tool_result，触发第二轮总结回复',
-      request: secondRequestBody,
-    });
-
-    const secondResponse = await fetch(`${baseUrl}/messages`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(secondRequestBody),
-      signal: this.abortController?.signal,
-    });
-
-    if (!secondResponse.ok) {
-      throw new Error(`API Error: ${secondResponse.status} - ${await secondResponse.text()}`);
+      ];
     }
 
-    const secondData = await secondResponse.json();
+    // Max iterations reached — do a final request without tools
     emitDebug({
-      stage: 'anthropic:second-response',
-      detail: '收到第二轮 Claude 总结回复',
-      response: secondData,
+      stage: 'native:max-iterations',
+      detail: `达到最大迭代次数 (${MAX_ITERATIONS})，强制总结`,
     });
-
+    const finalResponse = await fetch(`${baseUrl}/messages`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: this.config.model,
+        system,
+        messages: currentMessages,
+        max_tokens: this.config.maxTokens,
+        temperature: this.config.temperature,
+        stream: false,
+      }),
+      signal: this.abortController?.signal,
+    });
+    if (!finalResponse.ok) {
+      throw new Error(`API Error: ${finalResponse.status} - ${await finalResponse.text()}`);
+    }
+    const finalData = await finalResponse.json();
     return {
-      text: (secondData.content || []).filter((block: any) => block.type === 'text').map((block: any) => block.text).join(''),
-      toolCalls,
+      text: (finalData.content || []).filter((block: any) => block.type === 'text').map((block: any) => block.text).join(''),
+      toolCalls: allToolCalls,
     };
   }
 
@@ -702,7 +703,7 @@ export class ChatService {
 
     const ai = new GoogleGenAI({ apiKey: this.config.apiKey });
     const systemPrompt = this.getSystemPrompt(messages);
-    const contents = messages
+    let currentContents = messages
       .filter(m => m.role !== 'system')
       .map(m => {
         const parts: any[] = [{ text: m.content }];
@@ -716,117 +717,111 @@ export class ChatService {
         };
       });
 
-    const config: any = {
-      temperature: this.config.temperature,
-      maxOutputTokens: this.config.maxTokens,
-      systemInstruction: systemPrompt,
-      // Gemini 不允许 functionDeclarations 和 codeExecution 同时存在
-      tools: [
+    // Gemini 不允许 functionDeclarations 和 codeExecution 同时存在
+    const functionDeclarations = tools.map(tool => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.inputSchema,
+    }));
+
+    const MAX_ITERATIONS = 6;
+    const allToolCalls: ChatToolCall[] = [];
+
+    for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+      const includeTools = iteration < MAX_ITERATIONS - 1;
+      const config: any = {
+        temperature: this.config.temperature,
+        maxOutputTokens: this.config.maxTokens,
+        systemInstruction: systemPrompt,
+      };
+      if (includeTools) {
+        config.tools = [{ functionDeclarations }];
+      }
+
+      const requestBody = {
+        model: this.config.model,
+        contents: currentContents,
+        config,
+      };
+
+      emitDebug({
+        stage: iteration === 0 ? 'gemini:first-request' : 'gemini:second-request',
+        endpoint: 'google-genai.models.generateContent',
+        detail: iteration === 0
+          ? '发送第一轮 Gemini 请求（含 functionDeclarations）'
+          : `提交 functionResponse，发起第 ${iteration + 1} 轮请求`,
+        request: requestBody,
+      });
+
+      const response: any = await ai.models.generateContent(requestBody);
+
+      emitDebug({
+        stage: iteration === 0 ? 'gemini:first-response' : 'gemini:second-response',
+        detail: iteration === 0 ? '收到第一轮 Gemini 回复' : `收到第 ${iteration + 1} 轮 Gemini 回复`,
+        response,
+      });
+
+      const parts = response?.candidates?.[0]?.content?.parts || [];
+      const toolCalls: ChatToolCall[] = parts
+        .filter((part: any) => part.functionCall)
+        .map((part: any, index: number) => ({
+          id: part.functionCall.id || `${part.functionCall.name}-${index}`,
+          name: part.functionCall.name,
+          arguments: part.functionCall.args || {},
+        }));
+
+      emitDebug({
+        stage: 'gemini:tool-calls',
+        detail: toolCalls.length ? `Gemini 返回 ${toolCalls.length} 个 functionCall` : 'Gemini 未触发 functionCall',
+        response: { toolCalls },
+      });
+
+      if (toolCalls.length === 0) {
+        return {
+          text: parts.filter((part: any) => part.text).map((part: any) => part.text).join('') || response?.text || '',
+          toolCalls: allToolCalls,
+        };
+      }
+
+      allToolCalls.push(...toolCalls);
+      const toolResults = await Promise.all(toolCalls.map(async (toolCall) => ({
+        toolCall,
+        result: await executeToolCall(toolCall),
+      })));
+
+      currentContents = [
+        ...currentContents,
+        { role: 'model', parts },
         {
-          functionDeclarations: tools.map(tool => ({
-            name: tool.name,
-            description: tool.description,
-            parameters: tool.inputSchema,
+          role: 'user',
+          parts: toolResults.map(({ toolCall, result }) => ({
+            functionResponse: {
+              name: toolCall.name,
+              response: { result },
+            },
           })),
         },
-      ],
-    };
-
-    const firstRequestBody = {
-      model: this.config.model,
-      contents,
-      config,
-    };
-
-    emitDebug({
-      stage: 'gemini:first-request',
-      endpoint: 'google-genai.models.generateContent',
-      detail: '发送第一轮 Gemini 请求（含 functionDeclarations）',
-      request: firstRequestBody,
-    });
-
-    const firstResponse: any = await ai.models.generateContent(firstRequestBody);
-
-    emitDebug({
-      stage: 'gemini:first-response',
-      detail: '收到第一轮 Gemini 回复',
-      response: firstResponse,
-    });
-
-    const firstParts = firstResponse?.candidates?.[0]?.content?.parts || [];
-    const toolCalls: ChatToolCall[] = firstParts
-      .filter((part: any) => part.functionCall)
-      .map((part: any, index: number) => ({
-        id: part.functionCall.id || `${part.functionCall.name}-${index}`,
-        name: part.functionCall.name,
-        arguments: part.functionCall.args || {},
-      }));
-
-    emitDebug({
-      stage: 'gemini:tool-calls',
-      detail: toolCalls.length ? `Gemini 返回 ${toolCalls.length} 个 functionCall` : 'Gemini 未触发 functionCall',
-      response: { toolCalls },
-    });
-
-    if (toolCalls.length === 0) {
-      return {
-        text: firstParts.filter((part: any) => part.text).map((part: any) => part.text).join('') || firstResponse?.text || '',
-        toolCalls: [],
-      };
+      ];
     }
 
-    const toolResults = await Promise.all(toolCalls.map(async (toolCall) => ({
-      toolCall,
-      result: await executeToolCall(toolCall),
-    })));
-
-    const secondContents = [
-      ...contents,
-      {
-        role: 'model',
-        parts: firstParts,
-      },
-      {
-        role: 'user',
-        parts: toolResults.map(({ toolCall, result }) => ({
-          functionResponse: {
-            name: toolCall.name,
-            response: { result },
-          },
-        })),
-      },
-    ];
-
+    // Max iterations reached — do a final request without tools
     emitDebug({
-      stage: 'gemini:second-request',
-      endpoint: 'google-genai.models.generateContent',
-      detail: '提交 functionResponse，触发第二轮总结回复',
-      request: {
-        model: this.config.model,
-        contents: secondContents,
-      },
+      stage: 'native:max-iterations',
+      detail: `达到最大迭代次数 (${MAX_ITERATIONS})，强制总结`,
     });
-
-    const secondResponse: any = await ai.models.generateContent({
+    const finalResponse: any = await ai.models.generateContent({
       model: this.config.model,
-      contents: secondContents,
+      contents: currentContents,
       config: {
         temperature: this.config.temperature,
         maxOutputTokens: this.config.maxTokens,
         systemInstruction: systemPrompt,
       },
     });
-
-    emitDebug({
-      stage: 'gemini:second-response',
-      detail: '收到第二轮 Gemini 总结回复',
-      response: secondResponse,
-    });
-
-    const secondParts = secondResponse?.candidates?.[0]?.content?.parts || [];
+    const finalParts = finalResponse?.candidates?.[0]?.content?.parts || [];
     return {
-      text: secondParts.filter((part: any) => part.text).map((part: any) => part.text).join('') || secondResponse?.text || '',
-      toolCalls,
+      text: finalParts.filter((part: any) => part.text).map((part: any) => part.text).join('') || finalResponse?.text || '',
+      toolCalls: allToolCalls,
     };
   }
 
