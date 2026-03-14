@@ -2529,6 +2529,8 @@ const App: React.FC = () => {
             }));
           }}
           resourceData={resourceData}
+          fileRecords={fileRecords}
+          fileCategories={(categoriesMap['files'] || []).filter(c => c.id !== 'all').map(c => c.name)}
         />
       </Suspense>
         </div>

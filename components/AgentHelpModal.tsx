@@ -26,7 +26,7 @@ const helpSections = [
       '🎓 在学习中心创建课程和分类',
       '🗄️ 资源中心条目的增删改查（云盘、服务器、订阅等）',
       '📧 发送邮件（需在设置中配置邮件服务）',
-      '📁 本地文件管理：列出目录、读取文件、创建文件（需授权文件夹）',
+      '📁 文件管理：按分类查询文件列表、读取 Markdown 文件内容（需授权分类）',
       '🖼️ 图床管理：查询已上传图片、上传新图片到 Gitee 图床',
     ],
   },
@@ -35,7 +35,7 @@ const helpSections = [
     title: '权限管理',
     items: [
       '🔒 数据权限：点击右侧 🔒 图标，逐项开启读取/写入权限（待办、刷题、资源、题单、课程）。',
-      '📂 文件夹权限：点击右侧 📂 图标，添加 Agent 可访问的本地文件夹。',
+      '📂 文件分类权限：点击右侧 📂 图标，勾选 Agent 可访问的文件管理分类。',
       '✅ 权限会自动保存，下次打开无需重新勾选。',
       '不开权限时，Agent 只能创建新内容，无法查询或修改已有数据。',
     ],
@@ -63,10 +63,10 @@ export const AgentHelpModal: React.FC<AgentHelpModalProps> = ({ isOpen, onClose 
       onClick={onClose}
     >
       <div
-        className="w-full max-w-2xl rounded-3xl bg-white shadow-2xl border border-gray-200 overflow-hidden"
+        className="w-full max-w-2xl max-h-[85vh] rounded-3xl bg-white shadow-2xl border border-gray-200 overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
+        <div className="shrink-0 flex items-center justify-between px-6 py-5 border-b border-gray-100">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
               <HelpCircle className="w-5 h-5" />
@@ -84,7 +84,7 @@ export const AgentHelpModal: React.FC<AgentHelpModalProps> = ({ isOpen, onClose 
           </button>
         </div>
 
-        <div className="px-6 py-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="flex-1 overflow-y-auto px-6 py-6 grid grid-cols-1 md:grid-cols-2 gap-4">
           {helpSections.map((section) => {
             const Icon = section.icon;
             return (
@@ -105,7 +105,7 @@ export const AgentHelpModal: React.FC<AgentHelpModalProps> = ({ isOpen, onClose 
           })}
         </div>
 
-        <div className="px-6 py-4 bg-gray-50 border-t border-gray-100">
+        <div className="shrink-0 px-6 py-4 bg-gray-50 border-t border-gray-100">
           <button
             onClick={onClose}
             className="w-full rounded-2xl bg-blue-600 text-white py-2.5 text-sm font-medium hover:bg-blue-700 transition-colors"
