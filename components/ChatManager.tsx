@@ -1275,7 +1275,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
       )}
 
       {/* ======================== Main Chat Area ======================== */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Chat Header */}
         <div className="h-14 border-b border-gray-100 flex items-center justify-between px-4 bg-white/90 backdrop-blur-sm" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
           <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
