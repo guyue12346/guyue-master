@@ -137,7 +137,7 @@ const MarkdownContent: React.FC<{ content: string; isStreaming?: boolean }> = Re
     <div className="prose-chat">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath, [remarkBreaks], remarkGithubBlockquoteAlert]}
-        rehypePlugins={[rehypeKatex, rehypeRaw]}
+        rehypePlugins={[rehypeRaw, rehypeKatex]}
         components={{
           code(props: { inline?: boolean; className?: string; children?: React.ReactNode; [key: string]: any }) {
             const { inline, className, children, ...rest } = props;
