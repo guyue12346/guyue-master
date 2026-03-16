@@ -63,11 +63,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
         name: editName,
         icon: editIcon,
       };
-      // Insert new category before system categories (which are usually at the end)
-      const systemCats = categories.filter(c => c.isSystem || c.id === 'all');
-      const userCats = categories.filter(c => !c.isSystem && c.id !== 'all');
-      
-      onUpdateCategories([...userCats, newCat, ...systemCats]);
+      onUpdateCategories([...userCategories, newCat, ...systemCategories]);
     } else if (editingId) {
       onUpdateCategories(
         categories.map((c) =>
@@ -91,24 +87,22 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
     }
   };
 
+  // 分离用户分类与系统分类（系统分类不在列表中展示，也不参与排序）
+  const userCategories = categories.filter(c => !c.isSystem && c.id !== 'all');
+  const systemCategories = categories.filter(c => c.isSystem || c.id === 'all');
+
   const moveCategory = (e: React.MouseEvent, index: number, direction: 'up' | 'down') => {
     e.preventDefault();
     e.stopPropagation();
     
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= categories.length) return;
+    if (targetIndex < 0 || targetIndex >= userCategories.length) return;
     
-    const targetCat = categories[targetIndex];
-    const currentCat = categories[index];
-
-    // Don't allow moving system categories or swapping with them
-    if (targetCat.isSystem || targetCat.id === 'all' || currentCat.isSystem || currentCat.id === 'all') return;
-
-    const newCategories = [...categories];
-    newCategories[index] = newCategories[targetIndex];
-    newCategories[targetIndex] = currentCat; // Use stored reference
+    const newUserCats = [...userCategories];
+    [newUserCats[index], newUserCats[targetIndex]] = [newUserCats[targetIndex], newUserCats[index]];
     
-    onUpdateCategories(newCategories);
+    // 保留系统分类（不改变其存储位置）
+    onUpdateCategories([...newUserCats, ...systemCategories]);
   };
 
   const cancelEdit = () => {
@@ -139,40 +133,36 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
           <div className="w-5/12 border-r border-gray-100 overflow-y-auto bg-gray-50/50 p-3 space-y-2">
             
             <div className="space-y-1">
-              {categories.map((cat, index) => {
-                const isSystem = cat.isSystem || cat.id === 'all';
+              {userCategories.map((cat, index) => {
                 const isEditing = editingId === cat.id && !isAdding;
 
                 return (
                   <div
                     key={cat.id}
-                    onClick={() => !isSystem && startEdit(cat)}
-                    className={`relative flex items-center gap-2 px-3 py-2.5 rounded-lg transition-all group
+                    onClick={() => startEdit(cat)}
+                    className={`relative flex items-center gap-2 px-3 py-2.5 rounded-lg transition-all group cursor-pointer
                       ${isEditing ? 'bg-white shadow-sm ring-1 ring-blue-500/20 z-10' : 'hover:bg-white hover:shadow-sm'}
-                      ${isSystem ? 'opacity-70 cursor-default bg-gray-100/50' : 'cursor-pointer'}
                     `}
                   >
                     {/* Sort Controls */}
-                    {!isSystem ? (
-                      <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity mr-1 z-20">
-                          <button 
-                            type="button"
-                            onClick={(e) => moveCategory(e, index, 'up')}
-                            className="p-0.5 hover:bg-gray-200 rounded disabled:opacity-20 text-gray-500"
-                            disabled={index === 0}
-                          >
-                            <ArrowUp className="w-2.5 h-2.5" />
-                          </button>
-                          <button 
-                            type="button"
-                            onClick={(e) => moveCategory(e, index, 'down')}
-                            className="p-0.5 hover:bg-gray-200 rounded disabled:opacity-20 text-gray-500"
-                            disabled={index >= categories.length - 2} // Assuming 'All' is last
-                          >
-                            <ArrowDown className="w-2.5 h-2.5" />
-                          </button>
-                      </div>
-                    ) : <div className="w-4 mr-1"></div>}
+                    <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity mr-1 z-20">
+                      <button 
+                        type="button"
+                        onClick={(e) => moveCategory(e, index, 'up')}
+                        className="p-0.5 hover:bg-gray-200 rounded disabled:opacity-20 text-gray-500"
+                        disabled={index === 0}
+                      >
+                        <ArrowUp className="w-2.5 h-2.5" />
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={(e) => moveCategory(e, index, 'down')}
+                        className="p-0.5 hover:bg-gray-200 rounded disabled:opacity-20 text-gray-500"
+                        disabled={index === userCategories.length - 1}
+                      >
+                        <ArrowDown className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
 
                     {/* Icon */}
                     <div className={`p-1.5 rounded-md shrink-0 pointer-events-none ${isEditing ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-500'}`}>
@@ -183,17 +173,14 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                     <span className="flex-1 text-sm font-medium text-gray-700 truncate pointer-events-none">{cat.name}</span>
                     
                     {/* Delete Button */}
-                    {!isSystem && (
-                      <button 
-                        type="button"
-                        onClick={(e) => handleDelete(e, cat.id)}
-                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100 z-20"
-                        title="删除分类"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                    {isSystem && <span className="text-[10px] text-gray-400 border px-1 rounded bg-white">系统</span>}
+                    <button 
+                      type="button"
+                      onClick={(e) => handleDelete(e, cat.id)}
+                      className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100 z-20"
+                      title="删除分类"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 );
               })}

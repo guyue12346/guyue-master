@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   MessageSquarePlus, Send, Settings2, Trash2, StopCircle, Copy, Check,
   ChevronDown, Bot, User, Sparkles, AlertCircle, Loader2, Plus, X,
-  PanelLeftClose, PanelLeftOpen, RotateCcw, Download, Globe, Columns, Square, Zap, Wand2, Search, HelpCircle
+  PanelLeftClose, PanelLeftOpen, RotateCcw, Download, Globe, Columns, Square, Zap, Wand2, Search, HelpCircle,
+  Brain, Key
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -27,11 +28,23 @@ import {
   createNewConversation,
 } from '../services/chatService';
 import { Terminal as TerminalComponent } from './Terminal';
-import { PromptRecord } from '../types';
+import { PromptRecord, FileRecord } from '../types';
 import { HelpModal } from './HelpModal';
+import { buildIndex, loadRagIndex, saveRagIndex, searchIndex } from '../utils/ragService';
+
+const STORAGE_KEY_KB_MESSAGES = 'guyue_kb_agent_history';
+
+const createKbWelcomeMessage = (): ChatMessage => ({
+  id: 'kb-welcome',
+  role: 'assistant',
+  content: '🧠 你好！我是**知识库助手**，专注于回答你本地知识库中文件相关的问题。\n\n**使用方式**：\n1. 在文件管理中悬停文件，点击 🧠 图标将文件加入知识库\n2. 点击右上角 🧠 按钮旁边的设置图标，配置 Embedding API Key\n3. 直接向我提问，我会在知识库中搜索相关内容并回答\n\n有什么关于你的文件想了解的吗？',
+  timestamp: Date.now(),
+});
 
 interface ChatManagerProps {
   compact?: boolean;
+  knowledgeBaseFileIds?: Set<string>;
+  fileRecords?: FileRecord[];
 }
 
 // ==================== Code Block Component ====================
@@ -99,6 +112,20 @@ const AIAvatar: React.FC<{ size?: 'sm' | 'md' | 'lg' }> = ({ size = 'md' }) => {
       style={{ background: 'linear-gradient(135deg, #6d28d9 0%, #9333ea 40%, #db2777 100%)' }}
     >
       <Sparkles className={`${iconSizeMap[size]} text-white`} />
+    </div>
+  );
+};
+
+// ==================== KB Logo ====================
+const KBAvatar: React.FC<{ size?: 'sm' | 'md' | 'lg' }> = ({ size = 'md' }) => {
+  const sizeMap = { sm: 'w-6 h-6', md: 'w-8 h-8', lg: 'w-16 h-16' };
+  const iconSizeMap = { sm: 'w-3 h-3', md: 'w-4 h-4', lg: 'w-8 h-8' };
+  return (
+    <div
+      className={`${sizeMap[size]} rounded-xl flex-shrink-0 flex items-center justify-center shadow-sm`}
+      style={{ background: 'linear-gradient(135deg, #065f46 0%, #059669 50%, #10b981 100%)' }}
+    >
+      <Brain className={`${iconSizeMap[size]} text-white`} />
     </div>
   );
 };
@@ -235,7 +262,8 @@ const MarkdownContent: React.FC<{ content: string; isStreaming?: boolean }> = Re
 const MessageBubble: React.FC<{
   message: ChatMessage;
   isStreaming?: boolean;
-}> = React.memo(({ message, isStreaming }) => {
+  isKb?: boolean;
+}> = React.memo(({ message, isStreaming, isKb }) => {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
 
@@ -257,7 +285,7 @@ const MessageBubble: React.FC<{
           <User className="w-4 h-4 text-white" />
         </div>
       ) : (
-        <AIAvatar />
+        isKb ? <KBAvatar /> : <AIAvatar />
       )}
 
       {/* Content */}
@@ -305,7 +333,8 @@ const MessageBubble: React.FC<{
 }, (prevProps, nextProps) => {
   return prevProps.message.id === nextProps.message.id &&
          prevProps.message.content === nextProps.message.content &&
-         prevProps.isStreaming === nextProps.isStreaming;
+         prevProps.isStreaming === nextProps.isStreaming &&
+         prevProps.isKb === nextProps.isKb;
 });
 
 // ==================== Settings Panel ====================
@@ -677,9 +706,34 @@ const SystemPromptPanel: React.FC<{
   );
 };
 
+// ==================== KB Conversation Types ====================
+interface KbConversation {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+const STORAGE_KEY_KB_CONVERSATIONS = 'guyue_kb_conversations_v1';
+const loadKbConversations = (): KbConversation[] => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_KB_CONVERSATIONS);
+    if (saved) return JSON.parse(saved);
+    return [];
+  } catch { return []; }
+};
+const createNewKbConversation = (): KbConversation => ({
+  id: crypto.randomUUID(),
+  title: '新知识库对话',
+  messages: [createKbWelcomeMessage()],
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+});
+
 // ==================== Main ChatManager Component ====================
 
-export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => {
+export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowledgeBaseFileIds, fileRecords }) => {
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [config, setConfig] = useState<ChatConfig>(DEFAULT_CHAT_CONFIG);
@@ -696,6 +750,18 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
   const [showSidebar, setShowSidebar] = useState(() => !compact);
   const [layoutMode, setLayoutMode] = useState<'single' | 'split'>('single'); // single or split view
   const [showTerminal, setShowTerminal] = useState(false); // show terminal pane
+
+  // ── Knowledge Base mode ──
+  const [isKbMode, setIsKbMode] = useState(false);
+  const [showKbSettings, setShowKbSettings] = useState(false);
+  const [kbEmbeddingKey, setKbEmbeddingKey] = useState(() => localStorage.getItem('guyue_rag_embedding_key') || '');
+  const [kbEmbeddingBaseUrl, setKbEmbeddingBaseUrl] = useState(() => localStorage.getItem('guyue_rag_embedding_base_url') || '');
+  const [isKbProcessing, setIsKbProcessing] = useState(false);
+  const [kbConversations, setKbConversations] = useState<KbConversation[]>(() => loadKbConversations());
+  const [activeKbConversationId, setActiveKbConversationId] = useState<string | null>(() => {
+    const convs = loadKbConversations();
+    return convs.length > 0 ? convs[0].id : null;
+  });
     useEffect(() => {
       if (compact) {
         setShowSidebar(false);
@@ -744,13 +810,19 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
     }
   }, [conversations]);
 
+  // Persist KB conversations
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_KB_CONVERSATIONS, JSON.stringify(kbConversations));
+  }, [kbConversations]);
+
   // Auto scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [streamingContent, conversations]);
+  }, [streamingContent, conversations, kbConversations]);
 
   // Get active conversation
   const activeConversation = conversations.find(c => c.id === activeConversationId);
+  const activeKbConversation = kbConversations.find(c => c.id === activeKbConversationId);
 
   // Handle new conversation
   const handleNewConversation = () => {
@@ -759,6 +831,41 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
     setActiveConversationId(newConv.id);
     setInputValue('');
     setError(null);
+  };
+
+  // Handle new KB conversation
+  const handleNewKbConversation = () => {
+    const newConv = createNewKbConversation();
+    setKbConversations(prev => [newConv, ...prev]);
+    setActiveKbConversationId(newConv.id);
+    setInputValue('');
+  };
+
+  // Handle delete KB conversation
+  const handleDeleteKbConversation = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (confirm('确定要删除这个知识库对话吗？')) {
+      setKbConversations(prev => {
+        const remaining = prev.filter(c => c.id !== id);
+        if (activeKbConversationId === id) {
+          setActiveKbConversationId(remaining.length > 0 ? remaining[0].id : null);
+        }
+        return remaining;
+      });
+    }
+  };
+
+  // Toggle mode: auto-create first KB conversation if needed
+  const handleToggleKbMode = (value: boolean) => {
+    setIsKbMode(value);
+    setShowKbSettings(false);
+    if (value && kbConversations.length === 0) {
+      const firstConv = createNewKbConversation();
+      setKbConversations([firstConv]);
+      setActiveKbConversationId(firstConv.id);
+    } else if (value && !activeKbConversationId && kbConversations.length > 0) {
+      setActiveKbConversationId(kbConversations[0].id);
+    }
   };
 
   // Handle set conversation-level system prompt
@@ -878,6 +985,98 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
     setIsStreaming(false);
   };
 
+  // ── KB mode handlers ──
+  const handleSaveKbSettings = () => {
+    localStorage.setItem('guyue_rag_embedding_key', kbEmbeddingKey.trim());
+    localStorage.setItem('guyue_rag_embedding_base_url', kbEmbeddingBaseUrl.trim());
+    setShowKbSettings(false);
+  };
+
+  const handleKbSend = useCallback(async () => {
+    const trimmedInput = inputValue.trim();
+    if (!trimmedInput || isKbProcessing) return;
+    const embeddingApiKey = localStorage.getItem('guyue_rag_embedding_key') || '';
+    if (!embeddingApiKey) { setShowKbSettings(true); return; }
+    if (!chatService) return;
+
+    // Ensure there's an active KB conversation
+    let kbConv = activeKbConversation;
+    if (!kbConv) {
+      kbConv = createNewKbConversation();
+      setKbConversations(prev => [kbConv!, ...prev]);
+      setActiveKbConversationId(kbConv.id);
+    }
+
+    const userMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: trimmedInput, timestamp: Date.now() };
+    const assistantId = crypto.randomUUID();
+    const placeholderMsg: ChatMessage = { id: assistantId, role: 'assistant' as const, content: '正在检索知识库...', timestamp: Date.now() };
+    const prevMessages = kbConv.messages;
+    setKbConversations(prev => prev.map(c => c.id === kbConv!.id
+      ? { ...c, messages: [...c.messages, userMessage, placeholderMsg], updatedAt: Date.now() }
+      : c
+    ));
+    setInputValue('');
+    setIsKbProcessing(true);
+    try {
+      const embeddingBaseUrl = localStorage.getItem('guyue_rag_embedding_base_url')?.trim() || undefined;
+      const kbFiles = (fileRecords || []).filter(f => (knowledgeBaseFileIds || new Set()).has(f.id));
+      let index = await loadRagIndex();
+      index = await buildIndex(kbFiles, index, embeddingApiKey, undefined, embeddingBaseUrl);
+      await saveRagIndex(index);
+      const results = await searchIndex(trimmedInput, index, embeddingApiKey, 5, embeddingBaseUrl);
+
+      let contextBlock = '';
+      if (results.length > 0) {
+        const snippets = results.map((r, i) =>
+          `### 片段 ${i + 1}（来源：${r.fileName}，相关度：${Math.round(r.score * 100)}%）\n${r.text}`
+        ).join('\n\n');
+        contextBlock = `\n\n## 知识库检索结果\n以下是与用户问题最相关的内容片段：\n\n${snippets}`;
+      } else {
+        contextBlock = '\n\n## 知识库检索结果\n未检索到与用户问题相关的内容。';
+      }
+      const kbSize = (knowledgeBaseFileIds || new Set()).size;
+      const fileListBlock = kbFiles.length > 0
+        ? '\n\n## 知识库文件列表\n' + kbFiles.map((f, i) => `${i + 1}. ${f.name}`).join('\n')
+        : '';
+      const kbSystemPrompt = `你是「知识库助手」，专注于基于用户本地文件回答问题。\n\n## 规则\n1. 优先根据下方「知识库检索结果」中的内容回答，可以结合你自身知识进行补充和解释。\n2. 如果检索结果中没有相关内容，诚实告知用户知识库中未找到，但你仍可以用自身知识尝试回答，需标注哪些是来自知识库、哪些是你的通用知识。\n3. 回答末尾标注引用来源，格式：📄 来源：文件名。\n4. 当前知识库共有 ${kbSize} 个文件（${kbFiles.length} 个有效），你**始终知道所有文件的名字**，见「知识库文件列表」。${fileListBlock}${contextBlock}`;
+
+      setKbConversations(prev => prev.map(c => c.id === kbConv!.id
+        ? { ...c, messages: c.messages.map(m => m.id === assistantId ? { ...m, content: '正在生成回答...' } : m) }
+        : c
+      ));
+
+      const historyMsgs = prevMessages.filter(m => m.role !== 'system' && m.id !== 'kb-welcome').slice(-6);
+      const chatMessages: ChatMessage[] = [
+        { id: 'system', role: 'system', content: kbSystemPrompt, timestamp: 0 },
+        ...historyMsgs.map(m => ({ id: m.id, role: m.role as 'user' | 'assistant', content: m.content, timestamp: m.timestamp })),
+        { id: userMessage.id, role: 'user', content: userMessage.content, timestamp: userMessage.timestamp },
+      ];
+      const reply = await chatService.completeText(chatMessages);
+
+      const isFirstUserMsg = prevMessages.filter(m => m.role === 'user').length === 0;
+      const newTitle = isFirstUserMsg
+        ? trimmedInput.substring(0, 30) + (trimmedInput.length > 30 ? '...' : '')
+        : undefined;
+
+      setKbConversations(prev => prev.map(c => c.id === kbConv!.id
+        ? {
+            ...c,
+            title: newTitle || c.title,
+            messages: c.messages.map(m => m.id === assistantId ? { ...m, content: reply || '未获得回复。' } : m),
+            updatedAt: Date.now(),
+          }
+        : c
+      ));
+    } catch (err) {
+      setKbConversations(prev => prev.map(c => c.id === kbConv!.id
+        ? { ...c, messages: c.messages.map(m => m.id === assistantId ? { ...m, content: `❌ 发生错误: ${err instanceof Error ? err.message : String(err)}` } : m) }
+        : c
+      ));
+    } finally {
+      setIsKbProcessing(false);
+    }
+  }, [inputValue, isKbProcessing, chatService, activeKbConversation, knowledgeBaseFileIds, fileRecords]);
+
   // Handle config update
   const handleUpdateConfig = (newConfig: ChatConfig) => {
     setConfig(newConfig);
@@ -888,7 +1087,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      handleSend();
+      if (isKbMode) { handleKbSend(); } else { handleSend(); }
     }
   };
 
@@ -934,74 +1133,144 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
     <div className="flex h-full bg-gray-50/80 relative">
       {/* ======================== Sidebar ======================== */}
       {showSidebar && (
-        <div className="w-72 bg-white border-r border-gray-100 flex flex-col shadow-sm">
-          {/* Sidebar Header */}
-          <div className="h-14 border-b border-gray-100 flex items-center justify-between px-4" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
-            <div className="flex items-center gap-2.5" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-              <AIAvatar size="sm" />
-              <span className="font-semibold text-gray-800 text-sm">AI 助手</span>
-            </div>
-            <button
-              onClick={handleNewConversation}
-              className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500 hover:text-purple-600 transition-colors"
-              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-              title="新建对话"
-            >
-              <Plus className="w-4.5 h-4.5" />
-            </button>
-          </div>
-
-          {/* Conversation List */}
-          <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
-            {conversations.length === 0 ? (
-              <div className="text-center text-gray-400 text-sm py-12">
-                <MessageSquarePlus className="w-8 h-8 mx-auto mb-2 opacity-40" />
-                暂无对话记录
+        <div className={`w-72 bg-white border-r flex flex-col shadow-sm ${isKbMode ? 'border-green-100' : 'border-gray-100'}`}>
+          {isKbMode ? (
+            <>
+              {/* KB Sidebar Header */}
+              <div className="h-14 border-b border-green-100 flex items-center justify-between px-4" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+                <div className="flex items-center gap-2.5" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+                  <KBAvatar size="sm" />
+                  <span className="font-semibold text-gray-800 text-sm">知识库对话</span>
+                </div>
+                <button
+                  onClick={handleNewKbConversation}
+                  className="p-1.5 hover:bg-green-50 rounded-lg text-gray-500 hover:text-green-600 transition-colors"
+                  style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+                  title="新建知识库对话"
+                >
+                  <Plus className="w-4.5 h-4.5" />
+                </button>
               </div>
-            ) : (
-              conversations.map((conv) => {
-                const isActive = activeConversationId === conv.id;
-                const msgCount = conv.messages.length;
-                const dateStr = conv.updatedAt
-                  ? new Date(conv.updatedAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
-                  : '';
-                return (
-                  <button
-                    key={conv.id}
-                    onClick={() => setActiveConversationId(conv.id)}
-                    className={`
-                      w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left group transition-all
-                      ${isActive
-                        ? 'bg-purple-50 text-purple-700 shadow-sm'
-                        : 'hover:bg-gray-50 text-gray-700'
-                      }
-                    `}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{conv.title}</p>
-                    </div>
-                    <button
-                      onClick={(e) => handleDeleteConversation(conv.id, e)}
-                      className="p-1 mt-0.5 opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-500 rounded-lg transition-all flex-shrink-0"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  </button>
-                );
-              })
-            )}
-          </div>
 
-          {/* Sidebar Footer */}
-          <div className="p-3 border-t border-gray-100">
-            <button
-              onClick={() => setShowSettings(true)}
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition-colors text-sm"
-            >
-              <Settings2 className="w-4 h-4" />
-              <span>设置</span>
-            </button>
-          </div>
+              {/* KB Conversation List */}
+              <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+                {kbConversations.length === 0 ? (
+                  <div className="text-center text-gray-400 text-sm py-12">
+                    <Brain className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                    暂无知识库对话
+                  </div>
+                ) : (
+                  kbConversations.map((conv) => {
+                    const isActive = activeKbConversationId === conv.id;
+                    return (
+                      <button
+                        key={conv.id}
+                        onClick={() => setActiveKbConversationId(conv.id)}
+                        className={`
+                          w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left group transition-all
+                          ${isActive
+                            ? 'bg-green-50 text-green-700 shadow-sm'
+                            : 'hover:bg-gray-50 text-gray-700'
+                          }
+                        `}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{conv.title}</p>
+                        </div>
+                        <button
+                          onClick={(e) => handleDeleteKbConversation(conv.id, e)}
+                          className="p-1 mt-0.5 opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-500 rounded-lg transition-all flex-shrink-0"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* KB Sidebar Footer */}
+              <div className="p-3 border-t border-green-100">
+                <button
+                  onClick={() => setShowKbSettings(v => !v)}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-gray-500 hover:text-green-700 hover:bg-green-50 rounded-xl transition-colors text-sm"
+                >
+                  <Settings2 className="w-4 h-4" />
+                  <span>知识库设置</span>
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Chat Sidebar Header */}
+              <div className="h-14 border-b border-gray-100 flex items-center justify-between px-4" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+                <div className="flex items-center gap-2.5" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+                  <AIAvatar size="sm" />
+                  <span className="font-semibold text-gray-800 text-sm">AI 助手</span>
+                </div>
+                <button
+                  onClick={handleNewConversation}
+                  className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500 hover:text-purple-600 transition-colors"
+                  style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+                  title="新建对话"
+                >
+                  <Plus className="w-4.5 h-4.5" />
+                </button>
+              </div>
+
+              {/* Conversation List */}
+              <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+                {conversations.length === 0 ? (
+                  <div className="text-center text-gray-400 text-sm py-12">
+                    <MessageSquarePlus className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                    暂无对话记录
+                  </div>
+                ) : (
+                  conversations.map((conv) => {
+                    const isActive = activeConversationId === conv.id;
+                    const msgCount = conv.messages.length;
+                    const dateStr = conv.updatedAt
+                      ? new Date(conv.updatedAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+                      : '';
+                    return (
+                      <button
+                        key={conv.id}
+                        onClick={() => setActiveConversationId(conv.id)}
+                        className={`
+                          w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left group transition-all
+                          ${isActive
+                            ? 'bg-purple-50 text-purple-700 shadow-sm'
+                            : 'hover:bg-gray-50 text-gray-700'
+                          }
+                        `}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{conv.title}</p>
+                        </div>
+                        <button
+                          onClick={(e) => handleDeleteConversation(conv.id, e)}
+                          className="p-1 mt-0.5 opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-500 rounded-lg transition-all flex-shrink-0"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Sidebar Footer */}
+              <div className="p-3 border-t border-gray-100">
+                <button
+                  onClick={() => setShowSettings(true)}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition-colors text-sm"
+                >
+                  <Settings2 className="w-4 h-4" />
+                  <span>设置</span>
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -1018,35 +1287,36 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
               {showSidebar ? <PanelLeftClose className="w-4.5 h-4.5" /> : <PanelLeftOpen className="w-4.5 h-4.5" />}
             </button>
             <div className="h-5 w-px bg-gray-200 mx-1" />
-            <AIAvatar size="sm" />
+            {isKbMode ? <KBAvatar size="sm" /> : <AIAvatar size="sm" />}
             <span className="font-semibold text-gray-800 text-sm">
-              {activeConversation?.title || 'AI 助手'}
+              {isKbMode ? (activeKbConversation?.title || '知识库助手') : (activeConversation?.title || 'AI 助手')}
             </span>
           </div>
 
           <div className="flex items-center gap-1.5" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-            {/* Web Search Toggle */}
-            {!compact && (config.provider === 'gemini' || config.provider === 'zenmux') && (
-              <button
-                onClick={() => {
-                  const newConfig = { ...config, enableWebSearch: !config.enableWebSearch };
-                  setConfig(newConfig);
-                  chatService?.updateConfig(newConfig);
-                  saveChatConfig(newConfig);
-                }}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all ${
-                  config.enableWebSearch
-                    ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                }`}
-                title={config.enableWebSearch ? '联网搜索已启用' : '点击启用联网搜索'}
-              >
-                <Globe className="w-3.5 h-3.5" />
-                <span>{config.enableWebSearch ? '联网' : '离线'}</span>
-              </button>
-            )}
-            {!compact && (
+            {/* Chat mode buttons */}
+            {!isKbMode && !compact && (
               <>
+                {/* Web Search Toggle */}
+                {(config.provider === 'gemini' || config.provider === 'zenmux') && (
+                  <button
+                    onClick={() => {
+                      const newConfig = { ...config, enableWebSearch: !config.enableWebSearch };
+                      setConfig(newConfig);
+                      chatService?.updateConfig(newConfig);
+                      saveChatConfig(newConfig);
+                    }}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all ${
+                      config.enableWebSearch
+                        ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                    }`}
+                    title={config.enableWebSearch ? '联网搜索已启用' : '点击启用联网搜索'}
+                  >
+                    <Globe className="w-3.5 h-3.5" />
+                    <span>{config.enableWebSearch ? '联网' : '离线'}</span>
+                  </button>
+                )}
                 <div className="px-2.5 py-1 bg-purple-50 text-purple-600 rounded-full text-[11px] font-medium border border-purple-100 max-w-[160px] truncate">
                   {config.model.split('/').pop() || config.model}
                 </div>
@@ -1096,6 +1366,94 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
                 </button>
               </>
             )}
+            {/* KB mode settings button */}
+            {isKbMode && !compact && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowKbSettings(v => !v)}
+                  className={`p-1.5 rounded-lg transition-colors ${
+                    showKbSettings ? 'text-green-600 bg-green-50' : 'text-gray-400 hover:text-green-600 hover:bg-green-50'
+                  }`}
+                  title="知识库设置"
+                >
+                  <Settings2 className="w-4 h-4" />
+                </button>
+                {/* KB Settings Popover */}
+                {showKbSettings && (
+                  <div className="absolute right-0 top-10 w-72 bg-white border border-gray-200 rounded-2xl shadow-xl z-50 overflow-hidden">
+                    <div className="px-3 py-2.5 border-b border-gray-100 flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Brain className="w-3.5 h-3.5 text-green-600" />
+                        <p className="text-xs font-semibold text-gray-800">知识库设置</p>
+                      </div>
+                      <button onClick={() => setShowKbSettings(false)} className="w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-600">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <div className="p-3 space-y-3">
+                      <div>
+                        <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1">
+                          <Key className="w-3 h-3" />Gemini Embedding API Key
+                        </label>
+                        <input
+                          type="password"
+                          value={kbEmbeddingKey}
+                          onChange={e => setKbEmbeddingKey(e.target.value)}
+                          placeholder="AIzaSy..."
+                          className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-900 font-mono"
+                        />
+                        <p className="text-[11px] text-gray-400 mt-0.5">用于文本向量化，不发送给 LLM</p>
+                      </div>
+                      <div>
+                        <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1">
+                          <Globe className="w-3 h-3" />Embedding API Base URL
+                        </label>
+                        <input
+                          type="text"
+                          value={kbEmbeddingBaseUrl}
+                          onChange={e => setKbEmbeddingBaseUrl(e.target.value)}
+                          placeholder="留空使用官方地址"
+                          className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-900 font-mono"
+                        />
+                        <p className="text-[11px] text-gray-400 mt-0.5">可填代理地址，解决地区限制问题</p>
+                      </div>
+                      <div className="text-[11px] text-gray-500 bg-gray-50 rounded-lg p-2">
+                        <p className="font-medium text-gray-600 mb-1">知识库文件：{knowledgeBaseFileIds?.size || 0} 个</p>
+                        <p>在文件管理中悬停文件，点击 🧠 图标将文件加入知识库</p>
+                      </div>
+                      <button
+                        onClick={handleSaveKbSettings}
+                        className="w-full px-3 py-1.5 text-xs bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors"
+                      >
+                        保存
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {/* Mode Toggle Pill */}
+            {!compact && (
+              <div className="flex items-center ml-1.5 bg-gray-100 rounded-lg p-0.5">
+                <button
+                  onClick={() => handleToggleKbMode(false)}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                    !isKbMode ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  AI 对话
+                </button>
+                <button
+                  onClick={() => handleToggleKbMode(true)}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-1 ${
+                    isKbMode ? 'bg-white text-green-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <Brain className="w-3 h-3" />
+                  知识库
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1103,10 +1461,29 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
           <div className={`flex-1 flex overflow-hidden`}>
             {/* Left Chat Pane */}
-            <div className={layoutMode === 'split' ? 'w-1/2 border-r border-gray-100 flex flex-col' : 'w-full flex flex-col'}>
+            <div className={layoutMode === 'split' ? 'w-1/2 border-r border-gray-100 flex flex-col overflow-hidden' : 'flex-1 flex flex-col overflow-hidden'}>
               {/* Messages Area */}
               <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-                {!activeConversation || activeConversation.messages.length === 0 ? (
+                {isKbMode ? (
+                  <>
+                    {(activeKbConversation?.messages || []).map((msg) => (
+                      <MessageBubble key={msg.id} message={msg} isKb />
+                    ))}
+                    {isKbProcessing && (
+                      <div className="flex gap-3">
+                        <KBAvatar />
+                        <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white border border-gray-100 shadow-sm">
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-green-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                            <span className="w-2 h-2 rounded-full bg-green-500 animate-bounce" style={{ animationDelay: '160ms' }} />
+                            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce" style={{ animationDelay: '320ms' }} />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <div ref={messagesEndRef} />
+                  </>
+                ) : !activeConversation || activeConversation.messages.length === 0 ? (
                   renderEmptyState()
                 ) : (
                   <>
@@ -1158,8 +1535,32 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
               )}
 
               {/* Input Area */}
-              <div className="p-4 bg-white border-t border-gray-100">
-                <div className="flex items-end gap-2 bg-gray-50 border border-gray-200 hover:border-purple-300 focus-within:border-purple-400 focus-within:ring-2 focus-within:ring-purple-100 rounded-2xl px-4 py-3 transition-all shadow-sm">
+              <div className={`p-4 border-t border-gray-100 ${isKbMode ? 'bg-green-50/30' : 'bg-white'}`}>
+                {isKbMode && (
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="text-xs rounded-full px-2.5 py-0.5 bg-green-50 text-green-600 border border-green-100 flex items-center gap-1">
+                      <Brain className="w-3 h-3" />知识库对话
+                      {(knowledgeBaseFileIds?.size || 0) > 0 && <span className="ml-1 text-green-500">({knowledgeBaseFileIds!.size} 个文件)</span>}
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (activeKbConversationId) {
+                          setKbConversations(prev => prev.map(c =>
+                            c.id === activeKbConversationId ? { ...c, messages: [createKbWelcomeMessage()] } : c
+                          ));
+                        }
+                      }}
+                      className="text-[10px] text-gray-400 hover:text-red-400 transition-colors"
+                      title="清空知识库对话"
+                    >清空</button>
+                    <button onClick={() => handleToggleKbMode(false)} className="text-[10px] text-gray-400 hover:text-gray-600 transition-colors">✕ 退出</button>
+                  </div>
+                )}
+                <div className={`flex items-end gap-2 border rounded-2xl px-4 py-3 transition-all shadow-sm ${
+                  isKbMode
+                    ? 'bg-white border-green-200 hover:border-green-300 focus-within:border-green-400 focus-within:ring-2 focus-within:ring-green-100'
+                    : 'bg-gray-50 border-gray-200 hover:border-purple-300 focus-within:border-purple-400 focus-within:ring-2 focus-within:ring-purple-100'
+                }`}>
                   <textarea
                     ref={textareaRef}
                     value={inputValue}
@@ -1177,11 +1578,11 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
                       });
                     }}
                     onKeyDown={handleKeyPress}
-                    placeholder="输入消息，按 Enter 发送..."
+                    placeholder={isKbMode ? '向知识库提问...' : '输入消息，按 Enter 发送...'}
                     rows={1}
                     className="flex-1 bg-transparent border-none outline-none resize-none text-sm text-gray-800 placeholder-gray-400 overflow-y-auto"
                     style={{ height: '36px', maxHeight: '120px', minHeight: '36px' }}
-                    disabled={isStreaming}
+                    disabled={isStreaming || isKbProcessing}
                   />
                   {isStreaming ? (
                     <button
@@ -1193,21 +1594,21 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false }) => 
                     </button>
                   ) : (
                     <button
-                      onClick={handleSend}
-                      disabled={!inputValue.trim()}
+                      onClick={isKbMode ? handleKbSend : handleSend}
+                      disabled={!inputValue.trim() || isKbProcessing}
                       className={`flex-shrink-0 p-2 rounded-xl transition-all shadow-sm ${
-                        inputValue.trim()
+                        inputValue.trim() && !isKbProcessing
                           ? 'text-white hover:opacity-90 active:scale-95'
                           : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                       }`}
-                      style={inputValue.trim() ? { background: 'linear-gradient(135deg, #7c3aed 0%, #db2777 100%)' } : {}}
+                      style={inputValue.trim() && !isKbProcessing ? { background: isKbMode ? 'linear-gradient(135deg, #16a34a 0%, #059669 100%)' : 'linear-gradient(135deg, #7c3aed 0%, #db2777 100%)' } : {}}
                       title="发送"
                     >
                       <Send className="w-4.5 h-4.5" />
                     </button>
                   )}
                 </div>
-                <p className="text-[10px] text-gray-300 text-center mt-1.5">Enter 发送 · Shift+Enter 换行</p>
+                <p className="text-[10px] text-gray-300 text-center mt-1.5">Cmd+Enter 发送 · Enter 换行</p>
               </div>
             </div>
 

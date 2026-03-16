@@ -59,7 +59,6 @@ const DEFAULT_SITES: OJSite[] = [
   },
 ];
 
-// 生成 LeetCode 初始数据（基于爬取的统计：简单20、中等82、困难9）
 export const OJHeatmapContainer: React.FC<OJHeatmapContainerProps> = ({
   data,
   onUpdateData,

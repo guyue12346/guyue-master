@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { LeetCodeList } from './LeetCodeList';
 import { LeetCodeListModal } from './LeetCodeListModal';
-import { ArrowLeft, ArrowRight, RotateCw, MessageSquare, Columns, Square, TerminalSquare } from 'lucide-react';
+import { ArrowLeft, ArrowRight, RotateCw, MessageSquare, Columns, Square, TerminalSquare, StickyNote } from 'lucide-react';
 import { LeetCodeList as ILeetCodeList, parseLeetCodeMarkdown } from '../utils/leetcodeParser';
 import { LEETCODE_DATA } from './LeetCodeData';
 import { LUOGU_9391_DATA } from './Luogu9391Data';
@@ -10,6 +10,7 @@ import { Terminal as TerminalComponent } from './Terminal';
 
 interface LeetCodeManagerProps {
   onOpenChat?: () => void;
+  onCreateNote?: () => void;
 }
 
 const STORAGE_KEY_LISTS = 'leetcode_lists';
@@ -17,7 +18,7 @@ const STORAGE_KEY_PROGRESS = 'leetcode_progress';
 const STORAGE_KEY_ACTIVE_LIST = 'leetcode_active_list';
 const STORAGE_KEY_EXPANDED_CATEGORIES = 'leetcode_expanded_categories';
 
-export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onOpenChat }) => {
+export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onOpenChat, onCreateNote }) => {
   // addressBarUrl tracks the URL shown in the toolbar
   const [addressBarUrl, setAddressBarUrl] = useState('https://leetcode.cn/problemset/all/');
   // initialUrl is used for the webview src to prevent React from reloading the webview on state changes
@@ -83,14 +84,12 @@ export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onOpenChat }) 
     if (initialLists.length > 0) {
       const defaultIndex = initialLists.findIndex(l => l.id === 'default');
       if (defaultIndex !== -1) {
-        // Force update the default list with new data, but keep user's priority
         initialLists[defaultIndex] = {
           ...initialLists[defaultIndex],
           categories: defaultList.categories,
           rawMarkdown: defaultList.rawMarkdown,
           title: defaultList.title,
           description: defaultList.description,
-          // priority: Keep existing priority
         };
       } else {
         initialLists.push(defaultList);
@@ -98,14 +97,12 @@ export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onOpenChat }) 
 
       const luoguIndex = initialLists.findIndex(l => l.id === 'luogu-9391');
       if (luoguIndex !== -1) {
-        // Force update the luogu list with new data, but keep user's priority
         initialLists[luoguIndex] = {
           ...initialLists[luoguIndex],
           categories: luoguList.categories,
           rawMarkdown: luoguList.rawMarkdown,
           title: luoguList.title,
           description: luoguList.description,
-          // priority: Keep existing priority
         };
       } else {
         initialLists.push(luoguList);
@@ -113,14 +110,12 @@ export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onOpenChat }) 
 
       const hot100Index = initialLists.findIndex(l => l.id === 'leetcode-hot-100');
       if (hot100Index !== -1) {
-        // Force update the hot100 list with new data, but keep user's priority
         initialLists[hot100Index] = {
           ...initialLists[hot100Index],
           categories: hot100List.categories,
           rawMarkdown: hot100List.rawMarkdown,
           title: hot100List.title,
           description: hot100List.description,
-          // priority: Keep existing priority
         };
       } else {
         initialLists.push(hot100List);
@@ -325,10 +320,37 @@ export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onOpenChat }) 
           </div>
 
           <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            <button
+              onClick={() => setLayoutMode(prev => prev === 'single' ? 'split' : 'single')}
+              className="p-1.5 rounded-md hover:bg-gray-200 text-gray-600 hover:text-blue-600 transition-colors"
+              title={layoutMode === 'single' ? '开启分屏' : '关闭分屏'}
+            >
+              {layoutMode === 'single' ? <Columns className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+            </button>
+            <button
+              onClick={() => setIsTerminalOpen(prev => {
+                const next = !prev;
+                if (next) setTerminalInstanceKey(key => key + 1);
+                return next;
+              })}
+              className={`p-1.5 rounded-md transition-colors ${isTerminalOpen ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'text-gray-600 hover:bg-gray-200 hover:text-blue-600'}`}
+              title={isTerminalOpen ? '关闭终端' : '打开终端'}
+            >
+              <TerminalSquare className="w-4 h-4" />
+            </button>
+            {onCreateNote && (
+              <button
+                onClick={onCreateNote}
+                className="p-1.5 rounded-md hover:bg-yellow-50 text-yellow-500 hover:text-yellow-600 transition-colors"
+                title="快速新增便签"
+              >
+                <StickyNote className="w-4 h-4" />
+              </button>
+            )}
             {onOpenChat && (
               <button
                 onClick={onOpenChat}
-                className="p-1.5 rounded-md hover:bg-indigo-50 text-indigo-600 transition-colors border border-indigo-100"
+                className="p-1.5 rounded-md hover:bg-indigo-50 text-indigo-500 hover:text-indigo-600 transition-colors border border-indigo-100"
                 title="AI 小窗"
               >
                 <MessageSquare className="w-4 h-4" />
@@ -387,36 +409,7 @@ export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onOpenChat }) 
         initialData={editingList}
       />
 
-      {/* Floating Controls */}
-      <div className="absolute bottom-4 left-4 z-50 flex gap-2">
-        <button 
-          onClick={() => setLayoutMode(prev => prev === 'single' ? 'split' : 'single')}
-          className="p-2 bg-white shadow-md rounded-lg text-gray-600 hover:text-blue-600 transition-colors"
-          title={layoutMode === 'single' ? '开启分屏' : '关闭分屏'}
-        >
-          {layoutMode === 'single' ? <Columns className="w-5 h-5" /> : <Square className="w-5 h-5" />}
-        </button>
-        <button 
-          onClick={() => setIsTerminalOpen(prev => {
-            const next = !prev;
-            if (next) setTerminalInstanceKey(key => key + 1);
-            return next;
-          })}
-          className={`p-2 shadow-md rounded-lg transition-colors ${isTerminalOpen ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-white text-gray-600 hover:text-blue-600'}`}
-          title={isTerminalOpen ? '关闭终端' : '打开终端'}
-        >
-          <TerminalSquare className="w-5 h-5" />
-        </button>
-        {onOpenChat && (
-          <button
-            onClick={onOpenChat}
-            className="p-2 bg-white shadow-md rounded-lg text-indigo-600 hover:text-indigo-700 border border-indigo-100 transition-colors"
-            title="AI 小窗"
-          >
-            <MessageSquare className="w-5 h-5" />
-          </button>
-        )}
-      </div>
+
     </div>
   );
 };

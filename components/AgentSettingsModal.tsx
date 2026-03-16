@@ -1,6 +1,11 @@
-import React from 'react';
-import { X, CheckCircle2, AlertCircle, Trash2, Sparkles } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, CheckCircle2, AlertCircle, Trash2, Sparkles, ChevronDown, ChevronRight } from 'lucide-react';
 import { AGENT_AVAILABLE_MODELS, ChatConfig } from '../services/chatService';
+
+interface ModuleInfo {
+  id: string;
+  name: string;
+}
 
 interface AgentSettingsModalProps {
   isOpen: boolean;
@@ -8,6 +13,9 @@ interface AgentSettingsModalProps {
   config: ChatConfig;
   onChangeConfig: (config: ChatConfig) => void;
   onClearHistory: () => void;
+  modules: ModuleInfo[];
+  modulePrompts: Record<string, string>;
+  onChangeModulePrompts: (prompts: Record<string, string>) => void;
 }
 
 const NATIVE_TOOL_PROVIDERS = new Set(['openai', 'anthropic', 'gemini', 'zenmux']);
@@ -18,7 +26,13 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   config,
   onChangeConfig,
   onClearHistory,
+  modules,
+  modulePrompts,
+  onChangeModulePrompts,
 }) => {
+  const [showModulePrompts, setShowModulePrompts] = useState(false);
+  const [activeModuleTab, setActiveModuleTab] = useState<string | null>(null);
+
   if (!isOpen) return null;
 
   const currentModels = AGENT_AVAILABLE_MODELS[config.provider] || [];
@@ -30,7 +44,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-xl rounded-3xl bg-white shadow-2xl border border-gray-200 overflow-hidden"
+        className="w-full max-w-xl rounded-3xl bg-white shadow-2xl border border-gray-200 overflow-hidden max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
@@ -46,7 +60,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
           </button>
         </div>
 
-        <div className="px-6 py-5 space-y-5">
+        <div className="px-6 py-5 space-y-5 overflow-y-auto min-h-0">
           <div className="grid grid-cols-2 gap-4">
             <label className="block">
               <span className="block text-sm font-medium text-gray-700 mb-2">提供商</span>
@@ -120,6 +134,55 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
               这里的内容会追加到 Agent 内置提示词末尾，适合写你的固定约束或偏好。
             </p>
           </label>
+
+          {/* Per-module prompts */}
+          <div className="rounded-xl border border-gray-200 overflow-hidden">
+            <button
+              onClick={() => setShowModulePrompts(!showModulePrompts)}
+              className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+            >
+              <span className="text-sm font-medium text-gray-700">模块专属提示词</span>
+              {showModulePrompts ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+            </button>
+            {showModulePrompts && (
+              <div className="border-t border-gray-200">
+                <div className="flex flex-wrap gap-1.5 px-4 py-3 bg-gray-50/50 border-b border-gray-100">
+                  {modules.map(m => {
+                    const hasContent = !!modulePrompts[m.id]?.trim();
+                    return (
+                      <button
+                        key={m.id}
+                        onClick={() => setActiveModuleTab(activeModuleTab === m.id ? null : m.id)}
+                        className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
+                          activeModuleTab === m.id
+                            ? 'bg-blue-600 text-white shadow-sm'
+                            : hasContent
+                            ? 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100'
+                            : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        {m.name}{hasContent ? ' ●' : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+                {activeModuleTab && (
+                  <div className="px-4 py-3">
+                    <textarea
+                      value={modulePrompts[activeModuleTab] || ''}
+                      onChange={(e) => onChangeModulePrompts({ ...modulePrompts, [activeModuleTab]: e.target.value })}
+                      placeholder={`为「${modules.find(m => m.id === activeModuleTab)?.name}」模块设置专属指令...\n\n例如：创建待办时默认优先级为高`}
+                      rows={4}
+                      className="w-full resize-y rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                    />
+                    <p className="mt-1.5 text-xs text-gray-500">
+                      当 Agent 路由到此模块时，此提示词会注入系统提示。留空不生效。
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3">
             <div className="flex items-start gap-3">

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { FileRecord, Category } from '../types';
-import { Folder, ChevronRight, ChevronDown, FileText, Image, FileCode, Archive, File, Edit2, Trash2, AlertCircle, FolderPlus, Upload, FilePlus, Plus, Settings2, BookOpen, HelpCircle } from 'lucide-react';
+import { Folder, ChevronRight, ChevronDown, FileText, Image, FileCode, Archive, File, Edit2, Trash2, AlertCircle, FolderPlus, Upload, FilePlus, Plus, Settings2, BookOpen, HelpCircle, Brain } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 
 interface ArchiveSidebarProps {
@@ -18,6 +18,8 @@ interface ArchiveSidebarProps {
   onImportFromVault?: () => void;
   onHelp?: () => void;
   activeFileId: string | null;
+  knowledgeBaseFileIds: Set<string>;
+  onToggleKnowledgeBase: (fileId: string) => void;
 }
 
 export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({ 
@@ -34,7 +36,9 @@ export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({
   onDeleteCategory,
   onImportFromVault,
   onHelp,
-  activeFileId
+  activeFileId,
+  knowledgeBaseFileIds,
+  onToggleKnowledgeBase,
 }) => {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => {
     try {
@@ -189,7 +193,6 @@ export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({
                 )}
                 {getCategoryIcon(category.icon)}
                 <span className="flex-1 text-sm text-gray-700 truncate font-medium">{folderName}</span>
-                
                 {/* Folder Actions */}
                 <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
@@ -230,8 +233,28 @@ export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({
                         </div>
                       </div>
                       
+                      {/* 知识库状态：已加入时常驻显示绿色图标；未加入时悬停显示 */}
+                      {knowledgeBaseFileIds.has(file.id) ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onToggleKnowledgeBase(file.id); }}
+                          className="p-1 rounded transition-colors text-green-500 bg-green-50 hover:bg-red-50 hover:text-red-400 shrink-0"
+                          title="已加入知识库（点击移除）"
+                        >
+                          <Brain className="w-3 h-3" />
+                        </button>
+                      ) : null}
+
                       {/* Hover Actions */}
                       <div className={`flex gap-1 shrink-0 ${activeFileId === file.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                        {!knowledgeBaseFileIds.has(file.id) && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onToggleKnowledgeBase(file.id); }}
+                            className="p-1 rounded transition-colors text-gray-400 hover:text-green-500 hover:bg-green-50"
+                            title="加入知识库"
+                          >
+                            <Brain className="w-3 h-3" />
+                          </button>
+                        )}
                         <button 
                           onClick={(e) => { e.stopPropagation(); onEdit(file); }} 
                           className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-blue-600"

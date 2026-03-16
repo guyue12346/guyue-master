@@ -459,3 +459,310 @@ export const migrateToIdBasedPaths = async (
   console.log(`[Migration] ID路径迁移完成，${anyChanged ? '有数据变更已写入' : '无需变更'}`);
   return anyChanged ? updatedCourses : courses;
 };
+
+// ==================== 课程包导入导出 ====================
+
+/** 课程包格式版本 */
+const COURSE_PACK_VERSION = 1;
+
+/** 内嵌文件项 */
+interface PackFile {
+  /** 相对路径：section/moduleId/filename */
+  relativePath: string;
+  /** base64 编码的文件内容 */
+  contentBase64: string;
+}
+
+/** 课程包结构 */
+export interface CoursePack {
+  version: number;
+  exportedAt: string;
+  category: {
+    id: string;
+    name: string;
+    icon: string;
+    description: string;
+    color: string;
+    priority?: number;
+  };
+  course: any; // CourseData (使用 any 避免循环引用问题)
+  progress: Record<string, boolean>;
+  files: PackFile[];
+}
+
+/**
+ * 导出课程包：收集课程 JSON 数据 + 磁盘上的笔记/资源文件（base64 内嵌）
+ */
+export const exportCoursePack = async (
+  course: any,
+  category: { id: string; name: string; icon: string; description: string; color: string; priority?: number },
+  progress: Record<string, boolean>
+): Promise<CoursePack> => {
+  // 收集所有讲义/资源的 ID，过滤出与本课程相关的进度
+  const relevantIds = new Set<string>();
+  (course.modules || []).forEach((m: any) => (m.lectures || []).forEach((l: any) => relevantIds.add(l.id)));
+  (course.assignmentModules || []).forEach((m: any) => (m.items || []).forEach((i: any) => relevantIds.add(i.id)));
+  (course.personalModules || []).forEach((m: any) => (m.items || []).forEach((i: any) => relevantIds.add(i.id)));
+  (course.customSections || []).forEach((s: any) => (s.modules || []).forEach((m: any) => (m.items || []).forEach((i: any) => relevantIds.add(i.id))));
+
+  const courseProgress: Record<string, boolean> = {};
+  for (const id of relevantIds) {
+    if (progress[id]) courseProgress[id] = true;
+  }
+
+  // 收集磁盘文件
+  const files: PackFile[] = [];
+  const sections: Array<{ key: SectionType; modules: any[] }> = [
+    { key: 'resources', modules: course.modules || [] },
+    { key: 'assignments', modules: course.assignmentModules || [] },
+    { key: 'personal', modules: course.personalModules || [] },
+  ];
+
+  for (const { key, modules } of sections) {
+    for (const mod of modules) {
+      try {
+        const dirFiles = await getFilesInModule(category.id, course.id, key, mod.id, false);
+        for (const f of dirFiles) {
+          if (f.isDirectory) continue;
+          try {
+            const base64 = await window.electronAPI.readFileBase64(f.path);
+            files.push({
+              relativePath: `${SECTION_NAMES[key]}/${mod.id}/${f.name}`,
+              contentBase64: base64,
+            });
+          } catch { /* 文件读取失败跳过 */ }
+        }
+      } catch { /* 目录不存在跳过 */ }
+    }
+  }
+
+  // customSections 的文件存在 personal 目录下（使用 section id 作为命名空间）
+  for (const section of (course.customSections || [])) {
+    for (const mod of (section.modules || [])) {
+      try {
+        const dirFiles = await getFilesInModule(category.id, course.id, 'personal', mod.id, false);
+        for (const f of dirFiles) {
+          if (f.isDirectory) continue;
+          try {
+            const base64 = await window.electronAPI.readFileBase64(f.path);
+            files.push({
+              relativePath: `custom_${section.id}/${mod.id}/${f.name}`,
+              contentBase64: base64,
+            });
+          } catch { /* skip */ }
+        }
+      } catch { /* skip */ }
+    }
+  }
+
+  // 清理课程数据中的绝对路径，改为相对路径
+  const cleanCourse = JSON.parse(JSON.stringify(course));
+  const stripAbsPath = (p?: string) => {
+    if (!p || !p.startsWith('/')) return p;
+    // 只保留文件名
+    return p.split('/').pop() || p;
+  };
+  (cleanCourse.modules || []).forEach((m: any) =>
+    (m.lectures || []).forEach((l: any) => { l.materials = stripAbsPath(l.materials); })
+  );
+  (cleanCourse.assignmentModules || []).forEach((m: any) =>
+    (m.items || []).forEach((i: any) => { i.link = stripAbsPath(i.link); })
+  );
+  (cleanCourse.personalModules || []).forEach((m: any) =>
+    (m.items || []).forEach((i: any) => { i.link = stripAbsPath(i.link); })
+  );
+  (cleanCourse.customSections || []).forEach((s: any) =>
+    (s.modules || []).forEach((m: any) =>
+      (m.items || []).forEach((i: any) => { i.link = stripAbsPath(i.link); })
+    )
+  );
+  // 移除废弃字段
+  delete cleanCourse.assignments;
+  delete cleanCourse.personalResources;
+
+  return {
+    version: COURSE_PACK_VERSION,
+    exportedAt: new Date().toISOString(),
+    category,
+    course: cleanCourse,
+    progress: courseProgress,
+    files,
+  };
+};
+
+/**
+ * 导入课程包：还原课程数据 + 写入磁盘文件
+ * 返回新生成的 course 对象和 category 信息
+ */
+export const importCoursePack = async (
+  pack: CoursePack,
+  existingCategories: Array<{ id: string; name: string }>,
+): Promise<{
+  course: any;
+  category: CoursePack['category'];
+  progress: Record<string, boolean>;
+  isNewCategory: boolean;
+}> => {
+  // 生成新 ID，避免与已有数据冲突
+  const newCourseId = `course_${Date.now()}`;
+  const course = JSON.parse(JSON.stringify(pack.course));
+  const oldCourseId = course.id;
+  course.id = newCourseId;
+
+  // 检查分类是否已存在
+  const existingCat = existingCategories.find(c => c.name === pack.category.name);
+  const categoryId = existingCat?.id || pack.category.id;
+  const isNewCategory = !existingCat;
+  course.categoryId = categoryId;
+
+  // ID 映射（旧 ID → 新 ID），避免进度/引用冲突
+  const idMap = new Map<string, string>();
+  const genId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+  const remapModules = (modules: any[], prefix: string) => {
+    return modules.map((m: any) => {
+      const newModId = genId(prefix);
+      idMap.set(m.id, newModId);
+      return { ...m, id: newModId };
+    });
+  };
+
+  // 重映射所有 module/lecture/item 的 ID
+  course.modules = (course.modules || []).map((m: any) => {
+    const newModId = genId('mod');
+    idMap.set(m.id, newModId);
+    return {
+      ...m,
+      id: newModId,
+      lectures: (m.lectures || []).map((l: any) => {
+        const newId = genId('lec');
+        idMap.set(l.id, newId);
+        return { ...l, id: newId };
+      }),
+    };
+  });
+
+  course.assignmentModules = (course.assignmentModules || []).map((m: any) => {
+    const newModId = genId('amod');
+    idMap.set(m.id, newModId);
+    return {
+      ...m,
+      id: newModId,
+      items: (m.items || []).map((i: any) => {
+        const newId = genId('ai');
+        idMap.set(i.id, newId);
+        return { ...i, id: newId };
+      }),
+    };
+  });
+
+  course.personalModules = (course.personalModules || []).map((m: any) => {
+    const newModId = genId('pmod');
+    idMap.set(m.id, newModId);
+    return {
+      ...m,
+      id: newModId,
+      items: (m.items || []).map((i: any) => {
+        const newId = genId('pi');
+        idMap.set(i.id, newId);
+        return { ...i, id: newId };
+      }),
+    };
+  });
+
+  course.customSections = (course.customSections || []).map((s: any) => {
+    const newSectionId = genId('csec');
+    idMap.set(s.id, newSectionId);
+    return {
+      ...s,
+      id: newSectionId,
+      modules: (s.modules || []).map((m: any) => {
+        const newModId = genId('cm');
+        idMap.set(m.id, newModId);
+        return {
+          ...m,
+          id: newModId,
+          items: (m.items || []).map((i: any) => {
+            const newId = genId('ci');
+            idMap.set(i.id, newId);
+            return { ...i, id: newId };
+          }),
+        };
+      }),
+    };
+  });
+
+  // 重映射进度
+  const newProgress: Record<string, boolean> = {};
+  for (const [oldId, val] of Object.entries(pack.progress || {})) {
+    const newId = idMap.get(oldId);
+    if (newId && val) newProgress[newId] = true;
+  }
+
+  // 写入磁盘文件
+  for (const file of pack.files) {
+    const parts = file.relativePath.split('/');
+    if (parts.length < 3) continue;
+
+    const [sectionOrCustom, oldModId, ...fileNameParts] = parts;
+    const fileName = fileNameParts.join('/');
+    const newModId = idMap.get(oldModId) || oldModId;
+
+    let destDir: string;
+    if (sectionOrCustom.startsWith('custom_')) {
+      // 自定义分区文件 → personal 目录下
+      destDir = await getModulePath(categoryId, newCourseId, 'personal', newModId);
+    } else {
+      // 标准分区
+      const sectionKey = Object.entries(SECTION_NAMES).find(([_, v]) => v === sectionOrCustom)?.[0] as SectionType | undefined;
+      if (!sectionKey) continue;
+      destDir = await getModulePath(categoryId, newCourseId, sectionKey, newModId);
+    }
+
+    await ensureDirectory(destDir);
+    const destPath = await window.electronAPI.pathJoin(destDir, fileName);
+
+    // 将 base64 内容写入文件
+    try {
+      // base64 → UTF-8 文本，对于非文本文件可能需要特殊处理
+      const content = atob(file.contentBase64);
+      await window.electronAPI.writeFile(destPath, content);
+
+      // 更新 lecture.materials / item.link 为新的绝对路径
+      updatePathInCourse(course, oldModId, newModId, fileName, destPath);
+    } catch (e) {
+      console.warn(`[Import] 写入文件失败: ${file.relativePath}`, e);
+    }
+  }
+
+  // 确保废弃字段初始化
+  if (!course.assignments) course.assignments = [];
+
+  return { course, category: { ...pack.category, id: categoryId }, progress: newProgress, isNewCategory };
+};
+
+/** 更新课程数据中的文件路径引用 */
+function updatePathInCourse(course: any, oldModId: string, newModId: string, fileName: string, destPath: string) {
+  const update = (items: any[], field: string) => {
+    for (const item of items) {
+      if (item[field] === fileName || (item[field] && item[field].endsWith('/' + fileName))) {
+        item[field] = destPath;
+      }
+    }
+  };
+
+  for (const m of (course.modules || [])) {
+    if (m.id === newModId) update(m.lectures || [], 'materials');
+  }
+  for (const m of (course.assignmentModules || [])) {
+    if (m.id === newModId) update(m.items || [], 'link');
+  }
+  for (const m of (course.personalModules || [])) {
+    if (m.id === newModId) update(m.items || [], 'link');
+  }
+  for (const s of (course.customSections || [])) {
+    for (const m of (s.modules || [])) {
+      if (m.id === newModId) update(m.items || [], 'link');
+    }
+  }
+}

@@ -236,6 +236,8 @@ export class ChatService {
     executeToolCall: (toolCall: ChatToolCall) => Promise<any>,
     options?: ChatRunOptions,
   ): Promise<ChatToolRunResult> {
+    this.abortController = new AbortController();
+
     if (!this.supportsNativeTools() || tools.length === 0) {
       return {
         text: await this.completeText(messages, options),
@@ -427,7 +429,7 @@ export class ChatService {
       },
     }));
 
-    const MAX_ITERATIONS = 6;
+    const MAX_ITERATIONS = 10;
     let currentMessages = this.toOpenAIMessages(messages);
     const allToolCalls: ChatToolCall[] = [];
 
@@ -568,7 +570,7 @@ export class ChatService {
       input_schema: tool.inputSchema,
     }));
 
-    const MAX_ITERATIONS = 6;
+    const MAX_ITERATIONS = 10;
     let currentMessages = [...anthropicMessages];
     const allToolCalls: ChatToolCall[] = [];
 
@@ -724,7 +726,7 @@ export class ChatService {
       parameters: tool.inputSchema,
     }));
 
-    const MAX_ITERATIONS = 6;
+    const MAX_ITERATIONS = 10;
     const allToolCalls: ChatToolCall[] = [];
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {

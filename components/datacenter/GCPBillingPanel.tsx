@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   RefreshCw, Loader2, AlertCircle, Clock, X, ChevronDown, ChevronUp,
   Plus, Trash2, Edit2, DollarSign, Activity, HelpCircle,
-  Key, Copy, Check, Eye, EyeOff,
+  Key, Copy, Check, Eye, EyeOff, Database, ChevronRight,
 } from 'lucide-react';
 
 /* ─── 类型 ─── */
@@ -20,6 +20,8 @@ interface GCPProjectConfig {
   projectId: string;
   billingAccountId: string;
   apiKeys: ApiKey[];
+  bqTablePath?: string;   // e.g. "project-id.dataset.gcp_billing_export_v1_XXXX"
+  bqLocation?: string;    // BigQuery dataset location: "US" (default) | "EU" | custom
 }
 
 interface ApiUsageStat {
@@ -27,17 +29,27 @@ interface ApiUsageStat {
   requestCount: number;
 }
 
+interface BqRow {
+  service_name: string;
+  total_cost: string;  // BigQuery returns numbers as strings
+  currency: string;
+}
+
 interface BudgetStat {
   displayName: string;
-  currentSpend: number;
   budgetAmount: number | null;
   currency: string;
+  projects: string[];
+  thresholdRules: { thresholdPercent: number }[];
 }
 
 interface ProjectState {
   data: any | null;
   error: string | null;
   isLoading: boolean;
+  bqData: BqRow[] | null;
+  bqError: string | null;
+  isBqLoading: boolean;
 }
 
 /* ─── 存储（兼容旧版单项目格式） ─── */
@@ -50,8 +62,8 @@ function loadProjects(): GCPProjectConfig[] {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as GCPProjectConfig[];
-      // 兼容旧数据，补充 apiKeys 字段
-      return parsed.map(p => ({ apiKeys: [], ...p }));
+      // 兼容旧数据，补充缺失字段
+      return parsed.map(p => ({ apiKeys: [], bqTablePath: '', bqLocation: 'US', ...p }));
     }
 
     // 从旧单项目格式迁移
@@ -66,6 +78,8 @@ function loadProjects(): GCPProjectConfig[] {
           projectId: old.projectId || '',
           billingAccountId: old.billingAccountId || '',
           apiKeys: [],
+          bqTablePath: '',
+          bqLocation: 'US',
         }];
       }
     }
@@ -123,34 +137,66 @@ function extractProjectId(data: any): string | undefined {
   return data?.projectId ? String(data.projectId) : undefined;
 }
 
-function parseBudgets(budgetsData: any, projectNumber?: string, projectId?: string): BudgetStat[] {
+// 从 Cloud Monitoring billing 指标解析各项目实际花费
+// 返回 Map<projectId, { amount, currency }>
+function parseBillingCostByProject(billingCostData: any): Map<string, { amount: number; currency: string }> {
+  const map = new Map<string, { amount: number; currency: string }>();
+  if (!billingCostData?.timeSeries) return map;
+
+  for (const ts of billingCostData.timeSeries) {
+    const projId: string | undefined =
+      ts?.resource?.labels?.project_id ||
+      ts?.metric?.labels?.project_id;
+    if (!projId) continue;
+
+    const currency: string =
+      ts?.metric?.labels?.currency ||
+      ts?.resource?.labels?.currency ||
+      'USD';
+
+    let total = 0;
+    for (const point of ts?.points ?? []) {
+      const val = point?.value;
+      if (val?.doubleValue !== undefined) {
+        total += Number(val.doubleValue);
+      } else if (val?.distributionValue) {
+        // DISTRIBUTION 类型：count * mean = 总量
+        const dv = val.distributionValue;
+        total += Number(dv.count ?? 0) * Number(dv.mean ?? 0);
+      } else if (val?.int64Value !== undefined) {
+        total += Number(val.int64Value);
+      }
+    }
+
+    const existing = map.get(projId);
+    map.set(projId, { amount: (existing?.amount ?? 0) + total, currency });
+  }
+  return map;
+}
+
+function parseBudgets(
+  budgetsData: any,
+  projectNumber?: string,
+  projectId?: string,
+): BudgetStat[] {
   const list: any[] = budgetsData?.budgets ?? [];
-  // 至少需要一种标识来匹配
-  if (!projectNumber && !projectId) return [];
+  if (list.length === 0) return [];
 
-  // 构建所有可能的匹配值
-  const matchSet = new Set<string>();
-  if (projectNumber) matchSet.add(`projects/${projectNumber}`);
-  if (projectId) matchSet.add(`projects/${projectId}`);
-
-  const filtered = list.filter(b => {
-    const projects: string[] = b?.budgetFilter?.projects ?? [];
-    // 仅展示明确绑定到此项目的预算；账号级（无项目过滤）预算不展示在单个项目下
-    return projects.length > 0 && projects.some(p => matchSet.has(p));
-  });
-  return filtered.map(b => {
+  return list.map(b => {
     const specifiedAmount = b?.amount?.specifiedAmount;
     const budgetAmount = specifiedAmount ? parseMoney(specifiedAmount) : null;
-    const currentSpend = parseMoney(b?.currentSpend);
-    const currency =
-      b?.currentSpend?.currencyCode ||
-      specifiedAmount?.currencyCode ||
-      'USD';
+
+    // budgetFilter.projects 格式: ["projects/xxx", ...]，提取末尾的 project id/number
+    const rawProjects: string[] = b?.budgetFilter?.projects ?? [];
+    const projectLabels = rawProjects.map(p => p.replace('projects/', ''));
+    const currency = specifiedAmount?.currencyCode || 'USD';
+
     return {
       displayName: b?.displayName ?? '未命名预算',
-      currentSpend,
       budgetAmount,
       currency,
+      projects: projectLabels,
+      thresholdRules: (b?.thresholdRules ?? []).map((r: any) => ({ thresholdPercent: r.thresholdPercent ?? 0 })),
     };
   });
 }
@@ -318,6 +364,126 @@ const ApiKeySection: React.FC<{
   );
 };
 
+/* ─── BigQuery 账单区块 ─── */
+
+const BigQueryBillingSection: React.FC<{
+  state: ProjectState;
+  project: GCPProjectConfig;
+  onFetch: () => void;
+}> = ({ state, project, onFetch }) => {
+  if (!project.bqTablePath) {
+    return (
+      <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-3 flex items-start gap-2">
+        <Database className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
+        <div>
+          <p className="text-xs text-gray-500 dark:text-gray-400">未配置 BigQuery 精确账单</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">编辑此项目，展开「BigQuery 精确账单」配置 BigQuery 表路径，即可获取精确的实际花费数据。</p>
+        </div>
+      </div>
+    );
+  }
+
+  const bqRows: BqRow[] = state.bqData ?? [];
+  const totalByCurrency: Record<string, number> = {};
+  bqRows.forEach(r => {
+    const cur = r.currency || 'USD';
+    totalByCurrency[cur] = (totalByCurrency[cur] ?? 0) + parseFloat(r.total_cost || '0');
+  });
+
+  return (
+    <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl overflow-hidden">
+      {/* 头部 */}
+      <div className="px-3 py-2 flex items-center justify-between border-b border-gray-100 dark:border-gray-700/50">
+        <div className="flex items-center gap-2">
+          <Database className="w-3.5 h-3.5 text-emerald-500" />
+          <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">BigQuery 精确账单</span>
+          {state.bqData && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 rounded-full">本月</span>
+          )}
+        </div>
+        <button
+          onClick={onFetch}
+          disabled={state.isBqLoading}
+          className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded-lg transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className={`w-3 h-3 ${state.isBqLoading ? 'animate-spin' : ''}`} />
+          {state.isBqLoading ? '查询中...' : state.bqData ? '刷新' : '立即查询'}
+        </button>
+      </div>
+
+      {/* 内容 */}
+      {state.isBqLoading && (
+        <div className="flex items-center justify-center py-6 gap-2">
+          <Loader2 className="w-4 h-4 text-emerald-500 animate-spin" />
+          <span className="text-xs text-gray-500">正在查询 BigQuery（最长 40 秒）...</span>
+        </div>
+      )}
+      {!state.isBqLoading && state.bqError && (
+        <div className="p-3 flex items-start gap-2">
+          <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-xs font-medium text-red-600 dark:text-red-400">查询失败</p>
+            <p className="text-[11px] text-red-500 dark:text-red-400 mt-0.5 break-all">{state.bqError}</p>
+            <p className="text-[10px] text-gray-400 mt-1.5">
+              常见原因：① 服务账号缺少 <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">BigQuery Data Viewer</code> 或 <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">BigQuery Job User</code> 权限
+              ② 表路径填写有误 ③ 数据集区域与配置不匹配
+            </p>
+          </div>
+        </div>
+      )}
+      {!state.isBqLoading && !state.bqError && state.bqData === null && (
+        <div className="px-3 py-4 text-center">
+          <p className="text-xs text-gray-400">点击「立即查询」从 BigQuery 获取本月精确账单数据</p>
+          <p className="text-[10px] text-gray-400 mt-1">数据通常有 6–24 小时延迟，首次查询可能需要 10–30 秒</p>
+        </div>
+      )}
+      {!state.isBqLoading && !state.bqError && bqRows.length > 0 && (
+        <>
+          {bqRows.map((row, i) => {
+            const cost = parseFloat(row.total_cost || '0');
+            const maxCost = Math.max(...bqRows.map(r => parseFloat(r.total_cost || '0')), 0.001);
+            return (
+              <div key={i} className="px-3 py-2.5 flex items-center gap-3 border-t border-gray-100 dark:border-gray-700/50">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate">{row.service_name || '未知服务'}</p>
+                  <div className="mt-1 h-1 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-emerald-400 to-teal-400 rounded-full transition-all duration-500"
+                      style={{ width: `${cost / maxCost * 100}%` }}
+                    />
+                  </div>
+                </div>
+                <span className={`text-xs font-semibold shrink-0 w-20 text-right ${cost > 0 ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400'}`}>
+                  {row.currency} {cost.toFixed(4)}
+                </span>
+              </div>
+            );
+          })}
+          {/* 合计 */}
+          {Object.entries(totalByCurrency).map(([currency, total]) => (
+            <div key={currency} className="px-3 py-2 flex justify-between border-t border-gray-200 dark:border-gray-600 bg-gray-100/50 dark:bg-gray-700/50">
+              <span className="text-xs text-gray-500 dark:text-gray-400">本月合计</span>
+              <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{currency} {total.toFixed(4)}</span>
+            </div>
+          ))}
+          {state.bqData && (
+            <div className="px-3 py-1.5 flex items-center gap-1 text-[10px] text-gray-400">
+              <Clock className="w-3 h-3" />
+              {state.bqData && state.data?.lastUpdated ? timeAgo(state.data.lastUpdated) : '已更新'} · 数据有 6–24 小时延迟
+            </div>
+          )}
+        </>
+      )}
+      {!state.isBqLoading && !state.bqError && state.bqData !== null && bqRows.length === 0 && (
+        <div className="px-3 py-4 text-center border-t border-gray-100 dark:border-gray-700/50">
+          <p className="text-xs text-gray-400">本月暂无账单数据</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">如果刚开启 BigQuery 导出，历史数据不会追溯，等待 6–24 小时后才会有新数据</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
 /* ─── GCP Logo ─── */
 
 const GCPLogo = ({ size = 'md' }: { size?: 'sm' | 'md' }) => (
@@ -340,7 +506,10 @@ const ProjectForm: React.FC<{
     serviceAccountJson: initial.serviceAccountJson ?? '',
     projectId: initial.projectId ?? '',
     billingAccountId: initial.billingAccountId ?? '',
+    bqTablePath: initial.bqTablePath ?? '',
+    bqLocation: initial.bqLocation ?? 'US',
   });
+  const [showBqSection, setShowBqSection] = useState(!!(initial.bqTablePath));
 
   const tryAutoFill = () => {
     try {
@@ -405,7 +574,7 @@ const ProjectForm: React.FC<{
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
-            Billing Account ID <span className="text-gray-400 font-normal">（可选）</span>
+            Billing Account ID <span className="text-gray-400 font-normal">（可选，用于显示预算）</span>
           </label>
           <input
             value={form.billingAccountId}
@@ -413,7 +582,61 @@ const ProjectForm: React.FC<{
             placeholder="XXXXXX-XXXXXX-XXXXXX"
             className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
           />
+          <p className="text-[10px] text-gray-400 mt-1">格式：XXXXXX-XXXXXX-XXXXXX，可在 GCP Console → Billing 账号概览中找到，勿填写项目编号</p>
         </div>
+      </div>
+
+      {/* BigQuery 账单导出（可选） */}
+      <div className="border border-dashed border-gray-200 dark:border-gray-600 rounded-xl overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setShowBqSection(v => !v)}
+          className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100 dark:hover:bg-gray-700/30 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <Database className="w-3.5 h-3.5 text-emerald-500" />
+            <span className="text-xs font-medium text-gray-600 dark:text-gray-300">BigQuery 精准账单</span>
+            {form.bqTablePath && <span className="text-[10px] px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 rounded-full">已配置</span>}
+            <span className="text-[10px] text-gray-400">（可选，精准费用查询）</span>
+          </div>
+          <ChevronRight className={`w-3.5 h-3.5 text-gray-400 transition-transform ${showBqSection ? 'rotate-90' : ''}`} />
+        </button>
+        {showBqSection && (
+          <div className="px-3 pb-3 pt-1 space-y-2.5 border-t border-dashed border-gray-200 dark:border-gray-600">
+            <p className="text-[10px] text-gray-400 leading-relaxed">
+              需先在 GCP Console → 结算 → 结算导出 → BigQuery 中开启导出。数据通常延迟 6-24 小时，历史数据无法追溯。
+            </p>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">BigQuery 表完整路径</label>
+              <input
+                value={form.bqTablePath}
+                onChange={e => setForm(f => ({ ...f, bqTablePath: e.target.value.trim() }))}
+                placeholder="project-id.dataset_name.gcp_billing_export_v1_XXXXXX"
+                className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-emerald-400"
+              />
+              <p className="text-[10px] text-gray-400 mt-0.5">格式：项目ID.数据集名称.表名称（用英文句点分隔）</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">数据集区域</label>
+                <select
+                  value={form.bqLocation}
+                  onChange={e => setForm(f => ({ ...f, bqLocation: e.target.value }))}
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-emerald-400"
+                >
+                  <option value="US">US（默认）</option>
+                  <option value="EU">EU</option>
+                  <option value="asia-east1">asia-east1</option>
+                  <option value="asia-southeast1">asia-southeast1</option>
+                  <option value="us-central1">us-central1</option>
+                </select>
+              </div>
+            </div>
+            <p className="text-[10px] text-gray-400 bg-amber-50 dark:bg-amber-900/10 rounded-lg p-2">
+              ⚠️ 服务账号还需要额外权限：<code className="bg-amber-100 dark:bg-amber-900/30 px-1 rounded">BigQuery Data Viewer</code> 和 <code className="bg-amber-100 dark:bg-amber-900/30 px-1 rounded">BigQuery Job User</code>
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="flex gap-2 pt-1">
@@ -439,9 +662,11 @@ const ProjectForm: React.FC<{
 
 const ProjectDetail: React.FC<{
   state: ProjectState;
+  project: GCPProjectConfig;
   apiKeys: ApiKey[];
   onKeysChange: (keys: ApiKey[]) => void;
-}> = ({ state, apiKeys, onKeysChange }) => {
+  onFetchBq: () => void;
+}> = ({ state, project, apiKeys, onKeysChange, onFetchBq }) => {
   if (state.isLoading) {
     return (
       <div className="flex items-center justify-center py-6 gap-3">
@@ -560,33 +785,24 @@ const ProjectDetail: React.FC<{
               <div key={i} className="px-3 py-2.5 flex items-center gap-3">
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate">{budget.displayName}</p>
-                  {pct !== null ? (
-                    <div className="mt-1 flex items-center gap-2">
-                      <div className="flex-1 h-1 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${overBudget ? 'bg-red-400' : pct > 80 ? 'bg-amber-400' : 'bg-emerald-400'}`}
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                      <span className={`text-[10px] font-medium shrink-0 ${overBudget ? 'text-red-500' : 'text-gray-400'}`}>
-                        {pct.toFixed(0)}%
-                      </span>
-                    </div>
-                  ) : !hasSpend ? (
-                    <p className="text-[10px] text-gray-400 mt-0.5">花费数据约 12-24 小时后更新</p>
-                  ) : null}
+                  {budget.projects.length > 0 && (
+                    <p className="text-[10px] text-gray-400 truncate mt-0.5">
+                      {budget.projects.join(', ')}
+                    </p>
+                  )}
+                  <p className="text-[10px] text-gray-400 mt-0.5">
+                    警报阈值：{budget.thresholdRules.map(r => `${Math.round(r.thresholdPercent * 100)}%`).join(' / ') || '—'}
+                  </p>
                 </div>
                 <div className="text-right shrink-0">
-                  {hasSpend ? (
-                    <p className={`text-xs font-bold ${overBudget ? 'text-red-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                      {budget.currency} {budget.currentSpend.toFixed(2)}
+                  {budget.budgetAmount != null ? (
+                    <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                      {budget.currency} {budget.budgetAmount.toFixed(2)}
                     </p>
                   ) : (
-                    <p className="text-xs font-medium text-gray-400">等待数据</p>
+                    <p className="text-xs font-medium text-gray-400">—</p>
                   )}
-                  {budget.budgetAmount != null && (
-                    <p className="text-[10px] text-gray-400">/ {budget.currency} {budget.budgetAmount.toFixed(2)}</p>
-                  )}
+                  <p className="text-[10px] text-gray-400">预算上限</p>
                 </div>
               </div>
             );
@@ -618,14 +834,16 @@ const ProjectDetail: React.FC<{
         <div className="flex items-start gap-2 p-3 bg-blue-50 dark:bg-blue-900/10 rounded-xl">
           <DollarSign className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-blue-700 dark:text-blue-400">未找到此项目的专属预算</p>
+            <p className="text-xs font-medium text-blue-700 dark:text-blue-400">此账号下暂无预算</p>
             <p className="text-[10px] text-gray-400 mt-1 leading-relaxed">
-              需在 GCP Console → 结算 → 预算和提醒 中，为此项目创建预算。<br />
-              创建时「项目」必须选择当前项目（而非全部项目），花费数据才会在此显示。
+              在 GCP Console → 结算 → 预算和提醒 中创建预算后，数据将显示在此处。
             </p>
           </div>
         </div>
       ) : null}
+
+      {/* BigQuery 精确账单 */}
+      <BigQueryBillingSection state={state} project={project} onFetch={onFetchBq} />
 
       {/* API Keys */}
       <ApiKeySection keys={apiKeys} onChange={onKeysChange} />
@@ -653,7 +871,7 @@ export const GCPBillingPanel: React.FC = () => {
   const setProjectState = (id: string, patch: Partial<ProjectState>) =>
     setStates(prev => ({
       ...prev,
-      [id]: { data: null, error: null, isLoading: false, ...prev[id], ...patch },
+      [id]: { data: null, error: null, isLoading: false, bqData: null, bqError: null, isBqLoading: false, ...prev[id], ...patch },
     }));
 
   const fetchProject = useCallback(async (cfg: GCPProjectConfig) => {
@@ -678,6 +896,27 @@ export const GCPBillingPanel: React.FC = () => {
   const fetchAll = useCallback((list: GCPProjectConfig[]) => {
     list.forEach(p => fetchProject(p));
   }, [fetchProject]);
+
+  const fetchBqData = useCallback(async (cfg: GCPProjectConfig) => {
+    if (!window.electronAPI?.queryBigQueryBilling) return;
+    if (!cfg.bqTablePath) return;
+    setProjectState(cfg.id, { isBqLoading: true, bqError: null });
+    try {
+      const result = await window.electronAPI.queryBigQueryBilling({
+        serviceAccountJson: cfg.serviceAccountJson,
+        projectId: cfg.projectId,
+        bqTablePath: cfg.bqTablePath,
+        bqLocation: cfg.bqLocation || 'US',
+      });
+      if (result?.error) {
+        setProjectState(cfg.id, { isBqLoading: false, bqError: result.error });
+      } else {
+        setProjectState(cfg.id, { isBqLoading: false, bqData: result.results ?? [] });
+      }
+    } catch (e) {
+      setProjectState(cfg.id, { isBqLoading: false, bqError: (e as Error).message });
+    }
+  }, []);
 
   useEffect(() => {
     const loaded = loadProjects();
@@ -946,12 +1185,12 @@ export const GCPBillingPanel: React.FC = () => {
                 const api = s?.data ? parseApiUsage(s.data.monitoring) : [];
                 const reqs = api.reduce((acc, a) => acc + a.requestCount, 0);
                 const buds = s?.data ? parseBudgets(s.data.budgets, extractProjectNumber(s.data), extractProjectId(s.data)) : [];
-                const spend = buds.reduce((acc, b) => acc + b.currentSpend, 0);
+                const totalBudget = buds.reduce((acc, b) => acc + (b.budgetAmount ?? 0), 0);
                 const currency = buds[0]?.currency ?? '';
-                return { reqs, spend, currency, name: p.name || p.projectId, hasData: !!s?.data };
+                return { reqs, totalBudget, currency, name: p.name || p.projectId, hasData: !!s?.data };
               });
               const totalReqs = allStats.reduce((a, s) => a + s.reqs, 0);
-              const totalSpend = allStats.reduce((a, s) => a + s.spend, 0);
+              const totalBudget = allStats.reduce((a, s) => a + s.totalBudget, 0);
               const currency = allStats.find(s => s.currency)?.currency ?? '';
               const activeCount = projects.filter(p => states[p.id]?.data).length;
               return (
@@ -971,17 +1210,17 @@ export const GCPBillingPanel: React.FC = () => {
                       </div>
                     </div>
                     <div>
-                      {totalSpend > 0 ? (
-                        <p className="text-2xl font-bold leading-tight">{currency} {totalSpend.toFixed(2)}</p>
+                      {totalBudget > 0 ? (
+                        <p className="text-2xl font-bold leading-tight">{currency} {totalBudget.toFixed(2)}</p>
                       ) : (
-                        <p className="text-lg font-bold leading-tight text-blue-200">等待数据</p>
+                        <p className="text-lg font-bold leading-tight text-blue-200">—</p>
                       )}
-                      <p className="text-xs text-blue-200 mt-0.5">本月总花费</p>
+                      <p className="text-xs text-blue-200 mt-0.5">预算上限合计</p>
                       <div className="mt-2 space-y-1">
                         {allStats.filter(s => s.hasData && s.currency).map(s => (
                           <div key={s.name} className="flex justify-between text-[10px] text-blue-100">
                             <span className="truncate max-w-[80px]">{s.name}</span>
-                            <span className="font-medium">{s.spend > 0 ? `${s.currency} ${s.spend.toFixed(2)}` : '—'}</span>
+                            <span className="font-medium">{s.totalBudget > 0 ? `${s.currency} ${s.totalBudget.toFixed(2)}` : '—'}</span>
                           </div>
                         ))}
                       </div>
@@ -1083,8 +1322,10 @@ export const GCPBillingPanel: React.FC = () => {
                     <div className="px-4 pb-4 border-t border-gray-50 dark:border-gray-700/50">
                       <ProjectDetail
                         state={state}
+                        project={project}
                         apiKeys={project.apiKeys ?? []}
                         onKeysChange={keys => handleKeysChange(project.id, keys)}
+                        onFetchBq={() => fetchBqData(project)}
                       />
                     </div>
                   )}

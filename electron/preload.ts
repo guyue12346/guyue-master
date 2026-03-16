@@ -67,10 +67,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // GCP Billing API
   fetchGCPBillingData: (params: { serviceAccountJson: string; projectId: string; billingAccountId?: string }) =>
     ipcRenderer.invoke('fetch-gcp-billing-data', params),
+  queryBigQueryBilling: (params: { serviceAccountJson: string; projectId: string; bqTablePath: string; bqLocation?: string }) =>
+    ipcRenderer.invoke('query-bigquery-billing', params),
 
   // Email API
   sendEmail: (params: { config: any; subject: string; content: string }) => ipcRenderer.invoke('send-email', params),
   testEmailConfig: (config: any) => ipcRenderer.invoke('test-email-config', config),
+
+  // 代理设置
+  setProxy: (port: number | null) => ipcRenderer.invoke('set-proxy', port),
 });
 
 // 类型定义（可选，用于 TypeScript）
@@ -138,4 +143,7 @@ export interface ElectronAPI {
   testEmailConfig: (config: any) => Promise<{ success: boolean; error?: string }>;
   // GCP Billing API
   fetchGCPBillingData: (params: { serviceAccountJson: string; projectId: string; billingAccountId?: string }) => Promise<any>;
+  queryBigQueryBilling: (params: { serviceAccountJson: string; projectId: string; bqTablePath: string; bqLocation?: string }) => Promise<any>;
+  // 代理设置
+  setProxy: (port: number | null) => Promise<{ success: boolean; error?: string }>;
 }

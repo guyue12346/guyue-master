@@ -33,6 +33,7 @@
     "monaco-editor": "^0.55.1",
     "node-pty": "^1.0.0",
     "nodemailer": "^7.0.12",
+    "pdfjs-dist": "^5.5.207",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
@@ -47,13 +48,17 @@
     "xterm-addon-fit": "^0.8.0"
   },
   "devDependencies": {
+    "@tailwindcss/typography": "^0.5.19",
     "@types/node": "^22.14.0",
     "@types/nodemailer": "^7.0.5",
     "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.4.27",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^39.2.3",
     "electron-builder": "^26.0.12",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^3.4.19",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
     "wait-on": "^9.0.3"
@@ -106,7 +111,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "artifactName": "${productName}-${version}-${arch}-Setup.${ext}"
@@ -122,7 +129,9 @@
       "target": [
         {
           "target": "AppImage",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "category": "Utility",

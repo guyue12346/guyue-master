@@ -1,6 +1,6 @@
 
 import React, { useMemo } from 'react';
-import { LayoutGrid, StickyNote, Settings, Terminal, Webhook, ListTodo, FolderOpen, FileText, CheckSquare, Sparkles, Lightbulb, BookOpen, Book } from 'lucide-react';
+import { LayoutGrid, StickyNote, Settings, Terminal, Webhook, ListTodo, FolderOpen, FileText, CheckSquare, Sparkles, Lightbulb, BookOpen, Book, Bot } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { AppMode, ModuleConfig } from '../types';
 
@@ -9,6 +9,7 @@ interface NavRailProps {
   onModeChange: (mode: AppMode) => void;
   onOpenSettings: () => void;
   onOpenAgent: () => void;
+  isAgentOpen?: boolean;
   moduleConfig: ModuleConfig[];
 }
 
@@ -25,6 +26,7 @@ const ICON_MAP: Record<string, any> = {
   'Lightbulb': Lightbulb,
   'BookOpen': BookOpen,
   'Book': Book,
+  'Bot': Bot,
 };
 
 export const NavRail: React.FC<NavRailProps> = ({ 
@@ -32,6 +34,7 @@ export const NavRail: React.FC<NavRailProps> = ({
   onModeChange,
   onOpenSettings,
   onOpenAgent,
+  isAgentOpen = false,
   moduleConfig
 }) => {
   
@@ -78,37 +81,36 @@ export const NavRail: React.FC<NavRailProps> = ({
 
   return (
     <div className="w-20 h-full flex-shrink-0 bg-[#1E1E1E] flex flex-col items-center py-6 z-30 shadow-xl" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
-      {/* Top Logo / Spacer - Updated to 'Gu Yue' Design - Clickable to open Agent */}
+      {/* Top Logo */}
       <div 
-        className="mb-8 relative group cursor-pointer" 
+        className="mb-8 relative" 
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-        onClick={onOpenAgent}
-        title="打开古月助手"
       >
-        <div className="w-12 h-12 rounded-xl bg-gradient-to-b from-slate-700 to-slate-900 flex items-center justify-center shadow-lg shadow-black/20 overflow-hidden border border-white/10 group-hover:border-blue-500/50 group-hover:shadow-blue-500/20 transition-all duration-300">
+        <div className="w-12 h-12 rounded-xl bg-gradient-to-b from-slate-700 to-slate-900 flex items-center justify-center shadow-lg shadow-black/20 overflow-hidden border border-white/10 transition-all duration-300">
            {/* Characters */}
-           <div className="flex flex-col items-center justify-center leading-none z-10 text-gray-200 group-hover:text-white transition-colors">
+           <div className="flex flex-col items-center justify-center leading-none z-10 text-gray-200">
              <span className="font-serif text-sm font-bold -mb-0.5 tracking-widest text-shadow-sm">古</span>
              <span className="font-serif text-sm font-bold -mt-0.5 tracking-widest text-shadow-sm">月</span>
            </div>
         </div>
-        {/* Glow effect on hover */}
-        <div className="absolute inset-0 rounded-xl bg-blue-500/0 group-hover:bg-blue-500/10 transition-colors duration-300" />
       </div>
 
       {/* Main Nav Items */}
       <div className="flex-1 flex flex-col gap-4 w-full items-center overflow-y-auto no-scrollbar min-h-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         {sortedModules.map(module => {
           const Icon = getIcon(module.icon);
-          // Map internal names to display labels if needed, or use module.name
-          // For consistency with previous hardcoded labels:
-          let label = module.name;
-          if (module.id === 'todo') label = 'TodoMaster';
-          if (module.id === 'ssh') label = 'SSHManager';
-          if (module.id === 'api') label = 'APIManager';
-          if (module.id === 'files') label = 'FileManager';
-          if (module.id === 'notes') label = 'NoteMaster';
-          if (module.id === 'prompts') label = 'Skills';
+          const label = module.name;
+
+          if (module.id === 'agent') {
+            return (
+              <NavItem
+                key="agent"
+                mode="agent"
+                icon={Icon}
+                label={label}
+              />
+            );
+          }
 
           return (
             <NavItem 

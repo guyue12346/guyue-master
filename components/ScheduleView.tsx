@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { TodoItem } from '../types';
-import { ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon, LayoutGrid, Columns3, AlignJustify, Settings2 } from 'lucide-react';
+import { TodoItem, RecurringEvent } from '../types';
+import { ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon, LayoutGrid, Columns3, AlignJustify, Settings2, Repeat2 } from 'lucide-react';
 
 /* ─────────────────── Types ─────────────────── */
 
@@ -10,10 +10,13 @@ interface ScheduleViewProps {
   todos: TodoItem[];
   onEditTodo: (todo: TodoItem) => void;
   onToggleTodo: (id: string) => void;
+  recurringEvents?: RecurringEvent[];
+  onEditRecurring?: (re: RecurringEvent) => void;
 }
 
 interface CalendarEvent {
-  todo: TodoItem;
+  todo?: TodoItem;
+  recurring?: RecurringEvent;
   start: Date;
   end: Date;
   isAllDay: boolean;
@@ -86,12 +89,77 @@ function todoToEvent(todo: TodoItem): CalendarEvent | null {
     const start = new Date(todo.dueDate);
     return { todo, start, end: new Date(todo.dueDate + 1800000), isAllDay: false };
   }
+  if (todo.timeType === 'allday' && todo.dueDate) {
+    const start = new Date(todo.dueDate);
+    start.setHours(0, 0, 0, 0);
+    return { todo, start, end: start, isAllDay: true };
+  }
   if (todo.dueDate && !todo.timeType) {
     const start = new Date(todo.dueDate);
     start.setHours(0, 0, 0, 0);
     return { todo, start, end: start, isAllDay: true };
   }
   return null;
+}
+
+/** Check if a recurring event occurs on a given date */
+function doesRecurOccurOn(event: RecurringEvent, date: Date): boolean {
+  const start = new Date(event.startDate);
+  start.setHours(0, 0, 0, 0);
+  const day = new Date(date);
+  day.setHours(0, 0, 0, 0);
+  if (day < start) return false;
+  if (event.endDate) {
+    const end = new Date(event.endDate);
+    end.setHours(23, 59, 59, 999);
+    if (day > end) return false;
+  }
+  const diffDays = Math.round((day.getTime() - start.getTime()) / 86400000);
+  switch (event.recurrence) {
+    case 'daily': return diffDays % event.interval === 0;
+    case 'weekly': {
+      const diffWeeks = Math.floor(diffDays / 7);
+      if (diffWeeks % event.interval !== 0) return false;
+      if (event.weekDays && event.weekDays.length > 0) return event.weekDays.includes(day.getDay());
+      return day.getDay() === start.getDay();
+    }
+    case 'monthly': {
+      const mDiff = (day.getFullYear() - start.getFullYear()) * 12 + (day.getMonth() - start.getMonth());
+      if (mDiff < 0 || mDiff % event.interval !== 0) return false;
+      return day.getDate() === start.getDate();
+    }
+    case 'yearly': {
+      const yDiff = day.getFullYear() - start.getFullYear();
+      if (yDiff < 0 || yDiff % event.interval !== 0) return false;
+      return day.getMonth() === start.getMonth() && day.getDate() === start.getDate();
+    }
+    default: return false;
+  }
+}
+
+/** Generate CalendarEvents from recurring events for given days */
+function recurringToEvents(recurringEvents: RecurringEvent[], days: Date[]): CalendarEvent[] {
+  const results: CalendarEvent[] = [];
+  for (const re of recurringEvents) {
+    if (!re.isActive) continue;
+    for (const day of days) {
+      if (!doesRecurOccurOn(re, day)) continue;
+      if (re.allDay) {
+        const d = new Date(day);
+        d.setHours(0, 0, 0, 0);
+        results.push({ recurring: re, start: d, end: d, isAllDay: true });
+      } else {
+        const startMin = re.startTime ?? 9 * 60;
+        const dur = re.duration ?? 60;
+        const start = new Date(day);
+        start.setHours(0, 0, 0, 0);
+        start.setMinutes(startMin);
+        const end = new Date(start.getTime() + dur * 60000);
+        results.push({ recurring: re, start, end, isAllDay: false });
+      }
+    }
+  }
+  return results;
 }
 
 function eventsForDate(events: CalendarEvent[], date: Date): CalendarEvent[] {
@@ -132,6 +200,13 @@ function getEventColors(todo: TodoItem): { bar: string; block: string } {
     return EVENT_COLOR_MAP[todo.color];
   }
   return PRIORITY_COLORS[todo.priority] || PRIORITY_COLORS.medium;
+}
+
+function getCalendarEventColors(ev: CalendarEvent): { bar: string; block: string } {
+  if (ev.todo) return getEventColors(ev.todo);
+  const color = ev.recurring?.color;
+  if (color && EVENT_COLOR_MAP[color]) return EVENT_COLOR_MAP[color];
+  return { bar: 'bg-violet-100 text-violet-700', block: 'bg-violet-50 border-l-violet-500 text-violet-800' };
 }
 
 /** Convert minutes to pixel position accounting for 0–6 compression */
@@ -198,12 +273,16 @@ function buildMonthGrid(year: number, month: number): { date: Date; isCurrentMon
 /* ─────────── Event Block (week/day time-grid) ─────────── */
 const EventBlock: React.FC<{
   le: LayoutedEvent;
-  onClick: (todo: TodoItem) => void;
+  onClickTodo: (todo: TodoItem) => void;
+  onClickRecurring?: (re: RecurringEvent) => void;
   compressNight: boolean;
-}> = ({ le, onClick, compressNight }) => {
+}> = ({ le, onClickTodo, onClickRecurring, compressNight }) => {
   const { event, column, totalColumns } = le;
-  const colors = getEventColors(event.todo);
-  const customColor = event.todo.color;
+  const colors = getCalendarEventColors(event);
+  const customColor = event.todo?.color || event.recurring?.color;
+  const isCompleted = event.todo?.isCompleted || false;
+  const title = event.todo?.content || event.recurring?.title || '';
+  const isRecurring = !!event.recurring;
 
   const startMinutes = event.start.getHours() * 60 + event.start.getMinutes();
   const endMinutes = event.end.getHours() * 60 + event.end.getMinutes();
@@ -214,27 +293,34 @@ const EventBlock: React.FC<{
   const width = `calc(${(1 / totalColumns) * 100}% - 4px)`;
   const left = `calc(${(column / totalColumns) * 100}% + 2px)`;
 
-  // If custom color, use inline styles for border-left and bg
   const blockStyle: React.CSSProperties = { top, height, width, left, zIndex: 10 + column };
   let blockClass = `absolute rounded-md px-1.5 py-0.5 overflow-hidden cursor-pointer transition-opacity hover:opacity-80 text-left border-l-[3px]`;
+  if (isRecurring) blockClass += ' border-dashed';
 
-  if (customColor && !event.todo.isCompleted) {
+  if (customColor && !isCompleted) {
     blockStyle.borderLeftColor = customColor;
-    blockStyle.backgroundColor = customColor + '15'; // 8% opacity
+    blockStyle.backgroundColor = customColor + '15';
     blockStyle.color = customColor;
-    blockClass += ` ${EVENT_COLOR_MAP[customColor]?.text || ''}`;
   } else {
     blockClass += ` ${colors.block}`;
   }
 
+  const handleClick = () => {
+    if (event.todo) onClickTodo(event.todo);
+    else if (event.recurring) onClickRecurring?.(event.recurring);
+  };
+
   return (
     <button
-      onClick={() => onClick(event.todo)}
+      onClick={handleClick}
       className={blockClass}
       style={blockStyle}
-      title={`${event.todo.content}\n${formatHM(event.start)} – ${formatHM(event.end)}`}
+      title={`${title}\n${formatHM(event.start)} – ${formatHM(event.end)}${isRecurring ? '\n\uD83D\uDD04 重复事件' : ''}`}
     >
-      <div className="text-[11px] font-medium truncate leading-tight">{event.todo.content}</div>
+      <div className="text-[11px] font-medium truncate leading-tight flex items-center gap-1">
+        {isRecurring && <Repeat2 className="w-2.5 h-2.5 shrink-0 opacity-60" />}
+        {title}
+      </div>
       {height > 30 && (
         <div className="text-[10px] opacity-70 truncate">{formatHM(event.start)} – {formatHM(event.end)}</div>
       )}
@@ -247,8 +333,9 @@ const MonthView: React.FC<{
   currentDate: Date;
   events: CalendarEvent[];
   onClickEvent: (todo: TodoItem) => void;
+  onClickRecurring?: (re: RecurringEvent) => void;
   onClickDay: (date: Date) => void;
-}> = ({ currentDate, events, onClickEvent, onClickDay }) => {
+}> = ({ currentDate, events, onClickEvent, onClickRecurring, onClickDay }) => {
   const today = new Date();
   const grid = useMemo(() => buildMonthGrid(currentDate.getFullYear(), currentDate.getMonth()), [currentDate]);
 
@@ -290,12 +377,13 @@ const MonthView: React.FC<{
                   {hasEvents && !isToday && (
                     <div className="flex gap-[2px]">
                       {dayEvents.slice(0, 3).map((ev, idx) => {
-                        const c = ev.todo.color;
+                        const c = ev.todo?.color || ev.recurring?.color;
+                        const priority = ev.todo?.priority;
                         return (
                           <div
                             key={idx}
                             className="w-1.5 h-1.5 rounded-full"
-                            style={{ backgroundColor: c || (ev.todo.priority === 'high' ? '#f43f5e' : ev.todo.priority === 'low' ? '#3b82f6' : '#f59e0b') }}
+                            style={{ backgroundColor: c || (priority === 'high' ? '#f43f5e' : priority === 'low' ? '#3b82f6' : '#f59e0b') }}
                           />
                         );
                       })}
@@ -304,18 +392,23 @@ const MonthView: React.FC<{
                 </div>
                 <div className="space-y-0.5 mt-0.5">
                   {dayEvents.slice(0, MAX_VISIBLE).map(ev => {
-                    const colors = getEventColors(ev.todo);
-                    const customColor = ev.todo.color && !ev.todo.isCompleted;
+                    const colors = getCalendarEventColors(ev);
+                    const customColor = (ev.todo?.color || ev.recurring?.color) && !ev.todo?.isCompleted;
+                    const eventColor = ev.todo?.color || ev.recurring?.color;
+                    const title = ev.todo?.content || ev.recurring?.title || '';
+                    const evKey = ev.todo?.id || `${ev.recurring?.id}_${ev.start.toDateString()}`;
+                    const isRecurring = !!ev.recurring;
                     return (
                       <button
-                        key={ev.todo.id}
-                        onClick={(e) => { e.stopPropagation(); onClickEvent(ev.todo); }}
-                        className={`w-full text-left text-[10px] px-1 py-[1px] rounded truncate leading-tight font-medium ${customColor ? '' : colors.bar}`}
-                        style={customColor ? { backgroundColor: ev.todo.color + '20', color: ev.todo.color! } : undefined}
-                        title={ev.todo.content}
+                        key={evKey}
+                        onClick={(e) => { e.stopPropagation(); ev.todo ? onClickEvent(ev.todo) : onClickRecurring?.(ev.recurring!); }}
+                        className={`w-full text-left text-[10px] px-1 py-[1px] rounded truncate leading-tight font-medium ${customColor ? '' : colors.bar} ${isRecurring ? 'border-l-2 border-l-current' : ''}`}
+                        style={customColor ? { backgroundColor: eventColor + '20', color: eventColor! } : undefined}
+                        title={title}
                       >
+                        {isRecurring && <Repeat2 className="inline w-2.5 h-2.5 mr-0.5 opacity-60" />}
                         {!ev.isAllDay && <span className="opacity-60">{formatHM(ev.start)} </span>}
-                        {ev.todo.content}
+                        {title}
                       </button>
                     );
                   })}
@@ -337,10 +430,11 @@ const TimeGrid: React.FC<{
   days: Date[];
   events: CalendarEvent[];
   onClickEvent: (todo: TodoItem) => void;
+  onClickRecurring?: (re: RecurringEvent) => void;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   compressNight: boolean;
   showTimeLine: boolean;
-}> = ({ days, events, onClickEvent, scrollRef, compressNight, showTimeLine }) => {
+}> = ({ days, events, onClickEvent, onClickRecurring, scrollRef, compressNight, showTimeLine }) => {
   const today = new Date();
   const [now, setNow] = useState(new Date());
 
@@ -378,7 +472,7 @@ const TimeGrid: React.FC<{
   const gridHeight = totalGridHeight(compressNight);
 
   return (
-    <div className="flex flex-col">
+    <div className="h-full flex flex-col">
       {/* Day headers */}
       <div className="flex border-b border-gray-100 sticky top-0 bg-white z-20">
         <div className="w-12 shrink-0" />
@@ -417,17 +511,22 @@ const TimeGrid: React.FC<{
             {allDayEvents.map((dayEvts, di) => (
               <div key={di} className="px-0.5 space-y-0.5 border-l border-gray-100 first:border-l-0">
                 {dayEvts.map(ev => {
-                  const colors = getEventColors(ev.todo);
-                  const customColor = ev.todo.color && !ev.todo.isCompleted;
+                  const colors = getCalendarEventColors(ev);
+                  const customColor = (ev.todo?.color || ev.recurring?.color) && !ev.todo?.isCompleted;
+                  const eventColor = ev.todo?.color || ev.recurring?.color;
+                  const title = ev.todo?.content || ev.recurring?.title || '';
+                  const evKey = ev.todo?.id || `${ev.recurring?.id}_${ev.start.toDateString()}`;
+                  const isRecurring = !!ev.recurring;
                   return (
                     <button
-                      key={ev.todo.id}
-                      onClick={() => onClickEvent(ev.todo)}
-                      className={`w-full text-left text-[10px] px-1 py-[1px] rounded truncate font-medium ${customColor ? '' : colors.bar}`}
-                      style={customColor ? { backgroundColor: ev.todo.color + '20', color: ev.todo.color! } : undefined}
-                      title={ev.todo.content}
+                      key={evKey}
+                      onClick={() => ev.todo ? onClickEvent(ev.todo) : onClickRecurring?.(ev.recurring!)}
+                      className={`w-full text-left text-[10px] px-1 py-[1px] rounded truncate font-medium ${customColor ? '' : colors.bar} ${isRecurring ? 'border-l-2 border-l-current' : ''}`}
+                      style={customColor ? { backgroundColor: eventColor + '20', color: eventColor! } : undefined}
+                      title={title}
                     >
-                      {ev.todo.content}
+                      {isRecurring && <Repeat2 className="inline w-2.5 h-2.5 mr-0.5 opacity-60" />}
+                      {title}
                     </button>
                   );
                 })}
@@ -438,7 +537,7 @@ const TimeGrid: React.FC<{
       )}
 
       {/* Scrollable time grid */}
-      <div ref={scrollRef} className="overflow-y-auto flex-1" style={{ maxHeight: '480px' }}>
+      <div ref={scrollRef} className="overflow-y-auto flex-1 min-h-0">
         <div className="flex relative" style={{ height: gridHeight }}>
           {/* Hour labels */}
           <div className="w-12 shrink-0 relative">
@@ -501,9 +600,12 @@ const TimeGrid: React.FC<{
             {/* Event blocks per column */}
             {dayLayouts.map((layouted, colIdx) => (
               <div key={colIdx} className="relative border-l border-gray-100 first:border-l-0">
-                {layouted.map(le => (
-                  <EventBlock key={le.event.todo.id} le={le} onClick={onClickEvent} compressNight={compressNight} />
-                ))}
+                {layouted.map(le => {
+                  const evKey = le.event.todo?.id || `${le.event.recurring?.id}_${le.event.start.toDateString()}`;
+                  return (
+                    <EventBlock key={evKey} le={le} onClickTodo={onClickEvent} onClickRecurring={onClickRecurring} compressNight={compressNight} />
+                  );
+                })}
               </div>
             ))}
           </div>
@@ -517,7 +619,7 @@ const TimeGrid: React.FC<{
    Main Component
    ═════════════════════════════════════════════════════════════ */
 
-export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, onToggleTodo }) => {
+export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, onToggleTodo, recurringEvents = [], onEditRecurring }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('week');
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const timeGridRef = useRef<HTMLDivElement>(null);
@@ -559,9 +661,30 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
   }, [showSettings]);
 
   // Convert todos → calendar events
-  const events = useMemo(() => {
+  const todoEvents = useMemo(() => {
     return todos.map(t => todoToEvent(t)).filter((e): e is CalendarEvent => e !== null);
   }, [todos]);
+
+  // Visible days for current view (used to compute recurring occurrences)
+  const visibleDays = useMemo(() => {
+    if (viewMode === 'month') {
+      const grid = buildMonthGrid(currentDate.getFullYear(), currentDate.getMonth());
+      return grid.flat().map(c => c.date);
+    }
+    if (viewMode === 'week') {
+      const ws = getWeekStart(currentDate);
+      return Array.from({ length: 7 }, (_, i) => { const d = new Date(ws); d.setDate(d.getDate() + i); return d; });
+    }
+    return [new Date(currentDate)];
+  }, [viewMode, currentDate]);
+
+  // Recurring event occurrences for the visible range
+  const recurringOccurrences = useMemo(() => {
+    return recurringToEvents(recurringEvents, visibleDays);
+  }, [recurringEvents, visibleDays]);
+
+  // Combined events
+  const events = useMemo(() => [...todoEvents, ...recurringOccurrences], [todoEvents, recurringOccurrences]);
 
   // Smart auto-scroll to the nearest event time
   useEffect(() => {
@@ -642,12 +765,12 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
     { key: 'month', label: '月', icon: LayoutGrid },
   ];
 
-  if (events.length === 0) {
+  if (events.length === 0 && recurringEvents.filter(r => r.isActive).length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-gray-400">
         <CalendarIcon className="w-12 h-12 mb-3 text-gray-300" />
         <p className="text-sm">暂无日程事件</p>
-        <p className="text-xs mt-1">给待办事项设置时间即可在此显示</p>
+        <p className="text-xs mt-1">给待办事项设置时间或创建重复事件即可在此显示</p>
       </div>
     );
   }
@@ -658,7 +781,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 bg-white/80 shrink-0">
         <div className="flex items-center gap-2">
           <h3 className="text-lg font-bold text-gray-800">日程表</h3>
-          <span className="text-xs text-gray-400">({events.length} 个事件)</span>
+          <span className="text-xs text-gray-400">({todoEvents.length} 待办事件{recurringEvents.filter(r=>r.isActive).length > 0 ? `, ${recurringEvents.filter(r=>r.isActive).length} 重复` : ''})</span>
         </div>
 
         <div className="flex items-center gap-2">
@@ -741,14 +864,14 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
       <div className="flex-1 min-h-0 overflow-hidden">
         {viewMode === 'month' && (
           <div className="h-full overflow-auto">
-            <MonthView currentDate={currentDate} events={events} onClickEvent={onEditTodo} onClickDay={handleClickDay} />
+            <MonthView currentDate={currentDate} events={events} onClickEvent={onEditTodo} onClickRecurring={onEditRecurring} onClickDay={handleClickDay} />
           </div>
         )}
         {viewMode === 'week' && (
-          <TimeGrid days={weekDays} events={events} onClickEvent={onEditTodo} scrollRef={timeGridRef} compressNight={compressNight} showTimeLine={showTimeLine} />
+          <TimeGrid days={weekDays} events={events} onClickEvent={onEditTodo} onClickRecurring={onEditRecurring} scrollRef={timeGridRef} compressNight={compressNight} showTimeLine={showTimeLine} />
         )}
         {viewMode === 'day' && (
-          <TimeGrid days={dayArray} events={events} onClickEvent={onEditTodo} scrollRef={timeGridRef} compressNight={compressNight} showTimeLine={showTimeLine} />
+          <TimeGrid days={dayArray} events={events} onClickEvent={onEditTodo} onClickRecurring={onEditRecurring} scrollRef={timeGridRef} compressNight={compressNight} showTimeLine={showTimeLine} />
         )}
       </div>
     </div>

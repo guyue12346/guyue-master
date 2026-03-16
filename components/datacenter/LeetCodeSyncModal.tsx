@@ -200,123 +200,123 @@ async function fetchLeetCodeData(
   }
 
   const acSubmissions = allSubmissions.filter(s => s.isAC);
-  onProgress(`共 ${allSubmissions.length} 次提交，${acSubmissions.length} 次 AC，正在获取详细信息...`);
+  onProgress(`共 ${allSubmissions.length} 次提交，${acSubmissions.length} 次 AC，正在获取题目详情...`);
 
-  const problems: Array<{ id: string; title: string; difficulty: string; timestamp: number; isAC: boolean }> = [];
-  const failedSubmissions: Array<{ id: string; timestamp: string; title: string; isAC: boolean }> = [];
-
-  // 限制获取详情的数量（API限流，最多获取60条）
-  const MAX_DETAIL_FETCH = 60;
-  const submissionsToFetch = allSubmissions.slice(0, MAX_DETAIL_FETCH);
-  const skippedCount = allSubmissions.length - submissionsToFetch.length;
-  
-  if (skippedCount > 0) {
-    onProgress(`由于API限制，仅获取最近 ${MAX_DETAIL_FETCH} 条提交的详情（跳过 ${skippedCount} 条旧记录）...`);
-    await new Promise(resolve => setTimeout(resolve, 1000));
+  // 按 title 分组：同一题多次提交只需获取一次详情
+  const submissionsByTitle = new Map<string, Array<{ id: string; timestamp: string; title: string; isAC: boolean }>>();
+  for (const sub of allSubmissions) {
+    const group = submissionsByTitle.get(sub.title) || [];
+    group.push(sub);
+    submissionsByTitle.set(sub.title, group);
   }
 
-  // 带重试的获取详情函数
-  const fetchDetailWithRetry = async (sub: { id: string; timestamp: string; title: string; isAC: boolean }, maxRetries = 3) => {
-    const detailQuery = `
-      query submissionDetail($id: ID!) {
-        submissionDetail(submissionId: $id) {
-          id
-          timestamp
-          question {
-            questionFrontendId
-            title
-            difficulty
+  const uniqueTitles = Array.from(submissionsByTitle.keys());
+  const totalUnique = uniqueTitles.length;
+  onProgress(`${allSubmissions.length} 次提交涉及 ${totalUnique} 道不同题目，正在逐题获取详情...`);
+
+  // 对每道唯一的题，用一条提交的 submissionDetail 获取 frontendId + difficulty
+  const titleInfoMap = new Map<string, { frontendId: string; difficulty: string; realTitle: string }>();
+
+  const detailQuery = `
+    query submissionDetail($id: ID!) {
+      submissionDetail(submissionId: $id) {
+        id
+        timestamp
+        question {
+          questionFrontendId
+          title
+          difficulty
+        }
+      }
+    }
+  `;
+
+  let successCount = 0;
+
+  // 分批处理：每批最多 60 道题，批次之间等待较长时间避免限流
+  const BATCH_SIZE = 60;
+  const totalBatches = Math.ceil(totalUnique / BATCH_SIZE);
+
+  for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+    const batchStart = batchIdx * BATCH_SIZE;
+    const batchEnd = Math.min(batchStart + BATCH_SIZE, totalUnique);
+    const batchTitles = uniqueTitles.slice(batchStart, batchEnd);
+
+    if (totalBatches > 1) {
+      onProgress(`正在获取题目详情 - 第 ${batchIdx + 1}/${totalBatches} 批 (${batchStart + 1}-${batchEnd}/${totalUnique})...`);
+    }
+
+    for (let i = 0; i < batchTitles.length; i++) {
+      const globalIdx = batchStart + i;
+      const title = batchTitles[i];
+      const subs = submissionsByTitle.get(title)!;
+      const sampleSub = subs[0];
+
+      if (i % 10 === 0 || i === batchTitles.length - 1) {
+        onProgress(`正在获取题目详情 (${globalIdx + 1}/${totalUnique}，成功 ${successCount})...`);
+      }
+
+      let detail: any = null;
+      for (let retry = 0; retry < 2; retry++) {
+        try {
+          if (retry > 0) {
+            await new Promise(resolve => setTimeout(resolve, 1500));
           }
+          const data = await api({ query: detailQuery, variables: { id: sampleSub.id }, session });
+          const d = data?.data?.submissionDetail;
+          if (d?.question) { detail = d; break; }
+        } catch (e) {
+          console.error(`获取题目 "${title}" 详情失败 (retry ${retry + 1}):`, e);
         }
       }
-    `;
 
-    for (let retry = 0; retry < maxRetries; retry++) {
-      try {
-        if (retry > 0) {
-          // 重试前等待更长时间（指数退避）
-          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retry)));
-        }
-        const detailData = await api({ query: detailQuery, variables: { id: sub.id }, session });
-        const detail = detailData?.data?.submissionDetail;
-        if (detail && detail.question) {
-          return { ...detail, isAC: sub.isAC };
-        }
-        // 如果返回空数据，可能是限流，短暂等待
-        if (retry < maxRetries - 1) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-      } catch (e) {
-        console.error(`获取提交 ${sub.id} 详情失败 (重试 ${retry + 1}/${maxRetries}):`, e);
-      }
-    }
-    return null;
-  };
-
-  // 逐个获取每个提交的详细信息（串行，避免被限流）
-  if (submissionsToFetch.length > 0) {
-    let successCount = 0;
-    let consecutiveFailures = 0; // 连续失败计数
-
-    for (let i = 0; i < submissionsToFetch.length; i++) {
-      const sub = submissionsToFetch[i];
-
-      // 每10条显示一次进度
-      if (i % 10 === 0 || i === submissionsToFetch.length - 1) {
-        onProgress(`正在获取详情 (${i + 1}/${submissionsToFetch.length}, 成功 ${successCount})...`);
-      }
-
-      // 如果连续失败太多次，增加等待时间
-      if (consecutiveFailures >= 5) {
-        onProgress(`检测到限流，等待 5 秒后继续...`);
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        consecutiveFailures = 0;
-      }
-
-      const detail = await fetchDetailWithRetry(sub);
-
-      if (detail && detail.question) {
+      if (detail?.question) {
         successCount++;
-        consecutiveFailures = 0;
-        problems.push({
-          id: detail.question.questionFrontendId,
-          title: detail.question.title,
+        titleInfoMap.set(title, {
+          frontendId: detail.question.questionFrontendId,
           difficulty: detail.question.difficulty,
-          timestamp: parseInt(detail.timestamp) * 1000,
-          isAC: sub.isAC,
+          realTitle: detail.question.title,
         });
-      } else {
-        console.log(`[LeetCode] 提交 ${sub.id} (${sub.title}) 获取详情失败`);
-        consecutiveFailures++;
-        // 记录获取失败的提交
-        failedSubmissions.push(sub);
       }
 
-      // 每次请求后等待，避免限流
-      if (i < submissionsToFetch.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 200));
+      // 请求间隔（300ms），避免触发限流
+      if (i < batchTitles.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
     }
   }
 
-  // 对获取失败的提交，直接使用已有信息作为兜底
-  if (failedSubmissions.length > 0) {
-    onProgress(`${failedSubmissions.length} 条记录获取详情失败，使用基本信息...`);
+  onProgress(`题目详情获取完成 (${successCount}/${totalUnique})，正在组装提交记录...`);
 
-    for (const sub of failedSubmissions) {
-      // 兜底：使用已有信息，难度标记为未知
+  // 使用 titleInfoMap 为所有提交填充正确的 frontendId 和 difficulty
+  const problems: Array<{ id: string; title: string; difficulty: string; timestamp: number; isAC: boolean }> = [];
+
+  for (const sub of allSubmissions) {
+    const subTimestamp = parseInt(sub.timestamp) * 1000;
+    const info = titleInfoMap.get(sub.title);
+
+    if (info) {
+      problems.push({
+        id: info.frontendId,
+        title: info.realTitle,
+        difficulty: info.difficulty,
+        timestamp: subTimestamp,
+        isAC: sub.isAC,
+      });
+    } else {
       problems.push({
         id: `unknown_${sub.id}`,
         title: sub.title,
-        difficulty: 'MEDIUM', // 默认中等
-        timestamp: parseInt(sub.timestamp) * 1000,
+        difficulty: 'MEDIUM',
+        timestamp: subTimestamp,
         isAC: sub.isAC,
       });
     }
   }
 
   const acCount = problems.filter(p => p.isAC).length;
-  onProgress(`获取完成！共 ${problems.length} 次新提交，${acCount} 次 AC`);
+  const matchedCount = problems.filter(p => !p.id.startsWith('unknown_')).length;
+  onProgress(`获取完成！共 ${problems.length} 次提交，${acCount} 次 AC，${matchedCount} 条匹配到题目详情`);
 
   return { easy, medium, hard, calendar, problems, latestTimestamp };
 }

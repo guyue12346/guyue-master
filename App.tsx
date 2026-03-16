@@ -4,7 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { TodoSidebar, TodoSubMode } from './components/TodoSidebar';
 import { SplashScreen } from './components/SplashScreen';
 import { FloatingChatWindow } from './components/FloatingChatWindow';
-import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig } from './types';
+import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig, RecurringEvent, RecurringCategory, DEFAULT_RECURRING_CATEGORIES, STORAGE_KEY_RECURRING_CATS } from './types';
 import { Plus, Search, Command, Loader2, ChevronRight, Upload, Edit3, Save, List, HelpCircle } from 'lucide-react';
 import type { VaultFileEntry } from './components/VaultImportModal';
 
@@ -28,6 +28,7 @@ const PluginContainer = React.lazy(() => import('./components/PluginContainer').
 const HeatmapContainer = React.lazy(() => import('./components/HeatmapContainer').then(m => ({ default: m.HeatmapContainer })));
 const DataCenterManager = React.lazy(() => import('./components/datacenter/DataCenterManager').then(m => ({ default: m.DataCenterManager })));
 const ExcalidrawEditor = React.lazy(() => import('./components/datacenter/ExcalidrawEditor').then(m => ({ default: m.ExcalidrawEditor })));
+const RecurringEventManager = React.lazy(() => import('./components/RecurringEventManager').then(m => ({ default: m.RecurringEventManager })));
 
 // Lazy load modals
 const NoteModal = React.lazy(() => import('./components/NoteModal').then(m => ({ default: m.NoteModal })));
@@ -62,7 +63,10 @@ const STORAGE_KEY_HEATMAP = 'linkmaster_heatmap_v1';
 const STORAGE_KEY_OJ_HEATMAP = 'linkmaster_oj_heatmap_v1';
 const STORAGE_KEY_RESOURCE = 'linkmaster_resource_v1';
 const STORAGE_KEY_EMAIL_CONFIG = 'linkmaster_email_config';
+const STORAGE_KEY_AGENT_SHORTCUT = 'linkmaster_agent_shortcut';
 const STORAGE_KEY_LAST_EMAIL_CHECK = 'linkmaster_last_email_check';
+const STORAGE_KEY_RECURRING = 'linkmaster_recurring_v1';
+const STORAGE_KEY_KB_FILES = 'linkmaster_kb_files_v1';
 
 const DEFAULT_SPLASH_QUOTES = [
   '有善始者实繁，能克终者盖寡',
@@ -155,6 +159,14 @@ const App: React.FC = () => {
     migrateStorageData();
   }, []);
 
+  // 启动时恢复代理设置
+  useEffect(() => {
+    const savedPort = localStorage.getItem('linkmaster_proxy_port');
+    if (savedPort && window.electronAPI?.setProxy) {
+      window.electronAPI.setProxy(parseInt(savedPort, 10));
+    }
+  }, []);
+
   // Splash screen state
   const [showSplash, setShowSplash] = useState(() => {
     const splashEnabled = localStorage.getItem('linkmaster_splash_enabled');
@@ -196,6 +208,7 @@ const App: React.FC = () => {
           (m.id as string) !== 'bookmarks' &&
           (m.id as string) !== 'ssh' &&
           (m.id as string) !== 'api' &&
+          (m.id as string) !== 'recurring' &&
           m.name !== '文件归档'
         );
         return [...merged, ...legacyExtras];
@@ -315,7 +328,7 @@ const App: React.FC = () => {
   const [initialCategoryEditId, setInitialCategoryEditId] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
-  const [isAgentOpen, setIsAgentOpen] = useState(false);
+
   const [vaultImportFiles, setVaultImportFiles] = useState<VaultFileEntry[] | null>(null);
   
   const [editingNote, setEditingNote] = useState<Note | null>(null);
@@ -368,6 +381,53 @@ const App: React.FC = () => {
   const [resourceData, setResourceData] = useState<ResourceCenterData>({ categories: [], items: [] });
   const [isResourceDataLoaded, setIsResourceDataLoaded] = useState(false);
 
+  // Recurring Events State
+  const [recurringEvents, setRecurringEvents] = useState<RecurringEvent[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_RECURRING);
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+
+  const [recurringCategories, setRecurringCategories] = useState<RecurringCategory[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_RECURRING_CATS);
+      return saved ? JSON.parse(saved) : DEFAULT_RECURRING_CATEGORIES;
+    } catch { return DEFAULT_RECURRING_CATEGORIES; }
+  });
+
+  const handleUpdateRecurringCategories = (cats: RecurringCategory[]) => {
+    setRecurringCategories(cats);
+    try { localStorage.setItem(STORAGE_KEY_RECURRING_CATS, JSON.stringify(cats)); } catch {}
+  };
+
+  const handleAddCategory = useCallback((moduleKey: string, name: string) => {
+    setCategoriesMap(prev => {
+      const current = prev[moduleKey] || DEFAULT_CATEGORIES;
+      if (current.some(c => c.name === name)) return prev;
+      const newCat: Category = { id: crypto.randomUUID(), name, icon: 'Folder', isSystem: false };
+      return { ...prev, [moduleKey]: [...current, newCat] };
+    });
+  }, []);
+
+  // Knowledge Base File IDs
+  const [knowledgeBaseFileIds, setKnowledgeBaseFileIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_KB_FILES);
+      if (saved) return new Set<string>(JSON.parse(saved));
+    } catch {}
+    return new Set<string>();
+  });
+
+  const handleToggleKnowledgeBase = (fileId: string) => {
+    setKnowledgeBaseFileIds(prev => {
+      const next = new Set(prev);
+      if (next.has(fileId)) next.delete(fileId); else next.add(fileId);
+      localStorage.setItem(STORAGE_KEY_KB_FILES, JSON.stringify([...next]));
+      return next;
+    });
+  };
+
   // File Editing State
   const [isEditingFile, setIsEditingFile] = useState(false);
   const [editingFileContent, setEditingFileContent] = useState('');
@@ -377,8 +437,42 @@ const App: React.FC = () => {
   const tabComboUsed = React.useRef(false); // whether Tab was used with a combo key
   const fileSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Agent shortcut: double-tap key detection
+  const agentShortcutKey = React.useRef<string>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_AGENT_SHORTCUT);
+    return saved || 'Meta';
+  });
+  const lastAgentKeyTime = React.useRef<number>(0);
+  const agentKeyWasUsedAsCombo = React.useRef<boolean>(false);
+
+  // Load agent shortcut config and watch for changes
+  useEffect(() => {
+    const load = () => {
+      const saved = localStorage.getItem(STORAGE_KEY_AGENT_SHORTCUT);
+      agentShortcutKey.current = saved || 'Meta';
+    };
+    load();
+    const onStorage = (e: StorageEvent) => { if (e.key === STORAGE_KEY_AGENT_SHORTCUT) load(); };
+    // Also pick up same-tab writes from SettingsModal
+    const onCustom = () => load();
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('agent-shortcut-changed', onCustom);
+    return () => { window.removeEventListener('storage', onStorage); window.removeEventListener('agent-shortcut-changed', onCustom); };
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Track if the agent shortcut key is being used as a combo modifier
+      if (e.key === agentShortcutKey.current) {
+        agentKeyWasUsedAsCombo.current = false;
+      } else if (
+        (agentShortcutKey.current === 'Meta' && e.metaKey) ||
+        (agentShortcutKey.current === 'Control' && e.ctrlKey) ||
+        (agentShortcutKey.current === 'Alt' && e.altKey)
+      ) {
+        agentKeyWasUsedAsCombo.current = true;
+      }
+
       if (e.key === 'Tab') {
         isTabPressed.current = true;
         tabComboUsed.current = false;
@@ -418,12 +512,24 @@ const App: React.FC = () => {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
+      // Agent shortcut: double-tap detection
+      if (e.key === agentShortcutKey.current && !agentKeyWasUsedAsCombo.current) {
+        const now = Date.now();
+        if (now - lastAgentKeyTime.current < 350) {
+          // Double-tap detected
+          lastAgentKeyTime.current = 0;
+          setAppMode(prev => prev === 'agent' ? 'todo' : 'agent');
+        } else {
+          lastAgentKeyTime.current = now;
+        }
+      }
+
       if (e.key === 'Tab') {
         if (!tabComboUsed.current) {
           // Pure Tab press (no combo) → cycle to next enabled module from current
           setAppMode(prev => {
             const enabled = moduleConfig
-              .filter(m => m.enabled)
+              .filter(m => m.enabled && m.id !== 'agent')
               .sort((a, b) => a.priority - b.priority);
             const cur = enabled.findIndex(m => m.id === prev);
             const next = enabled[(cur + 1) % enabled.length];
@@ -1449,6 +1555,48 @@ const App: React.FC = () => {
     }
   };
 
+  // ─── Recurring Event handlers ───
+  const handleCreateRecurring = useCallback((data: Partial<RecurringEvent>) => {
+    const newEvent: RecurringEvent = {
+      id: crypto.randomUUID(),
+      title: data.title || '新重复事件',
+      description: data.description,
+      category: data.category || '未分类',
+      color: data.color,
+      allDay: data.allDay ?? false,
+      startDate: data.startDate ?? Date.now(),
+      endDate: data.endDate,
+      startTime: data.startTime,
+      duration: data.duration,
+      recurrence: data.recurrence ?? 'weekly',
+      interval: data.interval ?? 1,
+      weekDays: data.weekDays,
+      isActive: true,
+      createdAt: Date.now(),
+    };
+    setRecurringEvents(prev => {
+      const next = [newEvent, ...prev];
+      try { localStorage.setItem(STORAGE_KEY_RECURRING, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  const handleUpdateRecurring = useCallback((id: string, data: Partial<RecurringEvent>) => {
+    setRecurringEvents(prev => {
+      const next = prev.map(e => e.id === id ? { ...e, ...data } : e);
+      try { localStorage.setItem(STORAGE_KEY_RECURRING, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  const handleDeleteRecurring = useCallback((id: string) => {
+    setRecurringEvents(prev => {
+      const next = prev.filter(e => e.id !== id);
+      try { localStorage.setItem(STORAGE_KEY_RECURRING, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
   const handleToggleTodo = (id: string) => {
     setTodos(prev => prev.map(t => t.id === id ? { ...t, isCompleted: !t.isCompleted, completedAt: !t.isCompleted ? Date.now() : undefined } : t));
   };
@@ -1859,7 +2007,8 @@ const App: React.FC = () => {
               currentMode={appMode} 
               onModeChange={setAppMode} 
               onOpenSettings={() => setIsSettingsOpen(true)}
-              onOpenAgent={() => setIsAgentOpen(true)}
+              onOpenAgent={() => setAppMode('agent')}
+              isAgentOpen={appMode === 'agent'}
               moduleConfig={moduleConfig}
             />
           )}
@@ -1911,6 +2060,8 @@ const App: React.FC = () => {
               onDeleteCategory={handleDeleteCategory}
               onImportFromVault={handleImportFromVault}
               onHelp={() => setIsHelpOpen(true)}
+              knowledgeBaseFileIds={knowledgeBaseFileIds}
+              onToggleKnowledgeBase={handleToggleKnowledgeBase}
             />
           </Suspense>
         )
@@ -1918,8 +2069,9 @@ const App: React.FC = () => {
         <TodoSidebar
           subMode={todoSubMode}
           onSubModeChange={setTodoSubMode}
+          recurringCount={recurringEvents.filter(e => e.isActive).length}
         />
-      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'excalidraw' && appMode !== 'datacenter' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
+      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
         <Sidebar 
           appMode={appMode}  
           categories={activeCategories} 
@@ -1936,7 +2088,137 @@ const App: React.FC = () => {
         />
       ) : null}
 
-      <div className="flex-1 flex flex-col min-w-0 bg-white relative">
+      {appMode === 'agent' && (
+        <Suspense fallback={<div className="flex-1 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-gray-400" /></div>}>
+          <AgentPanel
+            todos={todos}
+            notes={notes}
+            onCreateTodo={(todoData) => {
+              const newTodo: TodoItem = {
+                id: todoData.id || crypto.randomUUID(),
+                content: todoData.content || '新事项',
+                description: todoData.description,
+                isCompleted: false,
+                priority: todoData.priority || 'medium',
+                category: todoData.category || '未分类',
+                dueDate: todoData.dueDate,
+                createdAt: Date.now(),
+              };
+              setTodos(prev => [newTodo, ...prev]);
+            }}
+            onUpdateTodo={(id, updates) => {
+              setTodos(prev => prev.map(t => t.id === id ? { ...t, ...updates } as TodoItem : t));
+            }}
+            onDeleteTodo={(id) => {
+              setTodos(prev => prev.filter(t => t.id !== id));
+            }}
+            onCreateNote={(noteData) => {
+              const newNote: Note = {
+                id: crypto.randomUUID(),
+                content: noteData.content || '新便签',
+                color: noteData.color || 'bg-yellow-100',
+                createdAt: Date.now(),
+              };
+              setNotes(prev => [newNote, ...prev]);
+            }}
+            onUpdateNote={(id, updates) => {
+              setNotes(prev => prev.map(n => n.id === id ? { ...n, ...updates } as Note : n));
+            }}
+            onDeleteNote={(id) => {
+              setNotes(prev => prev.filter(n => n.id !== id));
+            }}
+            onCreatePrompt={(promptData) => {
+              const newPrompt: PromptRecord = {
+                id: crypto.randomUUID(),
+                title: promptData.title || '未命名技能',
+                content: promptData.content || '',
+                description: promptData.description,
+                tags: promptData.tags || [],
+                category: promptData.category || '未分类',
+                note: '',
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+              };
+              setPrompts(prev => [newPrompt, ...prev]);
+            }}
+            onCreateMarkdownNote={(noteData) => {
+              const newNote: MarkdownNote = {
+                id: Date.now().toString(),
+                title: noteData.title || '新笔记',
+                category: noteData.category || '',
+                content: noteData.content || '# 新笔记\n\n开始编写...',
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+              };
+              setMarkdownNotes(prev => [...prev, newNote]);
+            }}
+            onCreateOJSubmission={(submission) => {
+              setOJHeatmapData(prev => ({
+                ...prev,
+                submissions: [...prev.submissions, submission],
+              }));
+            }}
+            ojHeatmapData={ojHeatmapData}
+            onCreateResource={(itemData) => {
+              const newItem = {
+                id: crypto.randomUUID(),
+                categoryId: itemData.categoryId || 'cloud',
+                name: itemData.name || '',
+                expireDate: itemData.expireDate,
+                capacity: itemData.capacity,
+                cost: itemData.cost,
+                url: itemData.url,
+                note: itemData.note,
+                account: itemData.account,
+                autoRenewal: itemData.autoRenewal,
+                createdAt: Date.now(),
+              };
+              setResourceData(prev => ({
+                categories: prev.categories.length > 0 ? prev.categories : [
+                  { id: 'cloud', name: '云盘资源', icon: 'Cloud', color: '#3b82f6' },
+                  { id: 'ai', name: 'AI资源', icon: 'Bot', color: '#8b5cf6' },
+                  { id: 'server', name: '服务器', icon: 'Server', color: '#22c55e' },
+                  { id: 'domain', name: '域名', icon: 'Globe', color: '#f59e0b' },
+                  { id: 'subscription', name: '订阅服务', icon: 'CreditCard', color: '#ec4899' },
+                ],
+                items: [...prev.items, newItem],
+              }));
+            }}
+            onUpdateResource={(id, updates) => {
+              setResourceData(prev => ({
+                ...prev,
+                items: prev.items.map(i => i.id === id ? { ...i, ...updates } : i),
+              }));
+            }}
+            onDeleteResource={(id) => {
+              setResourceData(prev => ({
+                ...prev,
+                items: prev.items.filter(i => i.id !== id),
+              }));
+            }}
+            resourceData={resourceData}
+            fileRecords={fileRecords}
+            fileCategories={(categoriesMap['files'] || []).filter(c => c.id !== 'all').map(c => c.name)}
+            recurringEvents={recurringEvents}
+            recurringCategories={recurringCategories}
+            onCreateRecurring={handleCreateRecurring}
+            onUpdateRecurring={handleUpdateRecurring}
+            onDeleteRecurring={handleDeleteRecurring}
+            onUpdateRecurringCategories={handleUpdateRecurringCategories}
+            todoCategories={(categoriesMap['todo'] || DEFAULT_CATEGORIES).filter(c => c.id !== 'all').map(c => c.name)}
+            promptCategories={(categoriesMap['prompts'] || DEFAULT_CATEGORIES).filter(c => c.id !== 'all').map(c => c.name)}
+            markdownCategories={[
+              ...(categoriesMap['markdown'] || DEFAULT_CATEGORIES).filter(c => c.id !== 'all').map(c => c.name),
+              ...markdownNotes.map(n => n.category).filter((c): c is string => !!c && c !== '未分类'),
+            ].filter((v, i, a) => a.indexOf(v) === i)}
+            onAddCategory={handleAddCategory}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            knowledgeBaseFileIds={knowledgeBaseFileIds}
+          />
+        </Suspense>
+      )}
+
+      <div className="flex-1 flex flex-col min-w-0 bg-white relative" style={appMode === 'agent' ? { display: 'none' } : undefined}>
         {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
         <div className="h-16 border-b border-gray-200 flex items-center justify-between px-6 bg-white shrink-0">
            <div className="flex items-center gap-4 flex-1 max-w-xl">
@@ -2068,11 +2350,28 @@ const App: React.FC = () => {
             )}
             {appMode === 'todo' && todoSubMode === 'schedule' && (
               <div className="h-full overflow-auto">
-                <ScheduleView todos={filteredTodos} onEditTodo={handleEditTodo} onToggleTodo={handleToggleTodo} />
+                <ScheduleView
+                  todos={filteredTodos}
+                  onEditTodo={handleEditTodo}
+                  onToggleTodo={handleToggleTodo}
+                  recurringEvents={recurringEvents}
+                  onEditRecurring={(re) => { /* open modal via manager */ }}
+                />
               </div>
             )}
             {appMode === 'todo' && todoSubMode === 'tasks' && (
               <TodoList todos={filteredTodos} onDelete={handleDeleteTodo} onEdit={handleEditTodo} onToggle={handleToggleTodo} onToggleSubtask={handleToggleSubtask} categories={activeCategories} selectedCategory={selectedCategory} onSelectCategory={setSelectedCategory} onOpenManager={() => setIsCategoryManagerOpen(true)} />
+            )}
+
+            {appMode === 'todo' && todoSubMode === 'recurring' && (
+              <RecurringEventManager
+                events={recurringEvents}
+                categories={recurringCategories}
+                onCreate={handleCreateRecurring}
+                onUpdate={handleUpdateRecurring}
+                onDelete={handleDeleteRecurring}
+                onUpdateCategories={handleUpdateRecurringCategories}
+              />
             )}
             
             {appMode === 'files' && (
@@ -2187,7 +2486,13 @@ const App: React.FC = () => {
 
             {(hasLeetCodeMounted || appMode === 'leetcode') && (
               <div className={appMode === 'leetcode' ? 'h-full' : 'hidden'}>
-                <LeetCodeManager onOpenChat={() => handleOpenFloatingChat('leetcode')} />
+                <LeetCodeManager
+                  onOpenChat={() => handleOpenFloatingChat('leetcode')}
+                  onCreateNote={() => {
+                    setEditingNote(null);
+                    setIsNoteModalOpen(true);
+                  }}
+                />
               </div>
             )}
 
@@ -2199,7 +2504,10 @@ const App: React.FC = () => {
 
             {(hasChatMounted || appMode === 'chat') && (
               <div className={appMode === 'chat' ? 'h-full' : 'hidden'}>
-                <ChatManager />
+                <ChatManager
+                  knowledgeBaseFileIds={knowledgeBaseFileIds}
+                  fileRecords={fileRecords}
+                />
               </div>
             )}
 
@@ -2418,121 +2726,7 @@ const App: React.FC = () => {
         isPlugin={moduleConfig.find(m => m.id === appMode)?.isPlugin}
       />
 
-      {/* Agent Panel */}
-      <Suspense fallback={null}>
-        <AgentPanel
-          isOpen={isAgentOpen}
-          onClose={() => setIsAgentOpen(false)}
-          todos={todos}
-          notes={notes}
-          onCreateTodo={(todoData) => {
-            const newTodo: TodoItem = {
-              id: crypto.randomUUID(),
-              content: todoData.content || '新事项',
-              description: todoData.description,
-              isCompleted: false,
-              priority: todoData.priority || 'medium',
-              category: todoData.category || '未分类',
-              dueDate: todoData.dueDate,
-              createdAt: Date.now(),
-            };
-            setTodos(prev => [newTodo, ...prev]);
-          }}
-          onUpdateTodo={(id, updates) => {
-            setTodos(prev => prev.map(t => t.id === id ? { ...t, ...updates } as TodoItem : t));
-          }}
-          onDeleteTodo={(id) => {
-            setTodos(prev => prev.filter(t => t.id !== id));
-          }}
-          onCreateNote={(noteData) => {
-            const newNote: Note = {
-              id: crypto.randomUUID(),
-              content: noteData.content || '新便签',
-              color: noteData.color || 'bg-yellow-100',
-              createdAt: Date.now(),
-            };
-            setNotes(prev => [newNote, ...prev]);
-          }}
-          onUpdateNote={(id, updates) => {
-            setNotes(prev => prev.map(n => n.id === id ? { ...n, ...updates } as Note : n));
-          }}
-          onDeleteNote={(id) => {
-            setNotes(prev => prev.filter(n => n.id !== id));
-          }}
-          onCreatePrompt={(promptData) => {
-            const newPrompt: PromptRecord = {
-              id: crypto.randomUUID(),
-              title: promptData.title || '未命名技能',
-              content: promptData.content || '',
-              description: promptData.description,
-              tags: promptData.tags || [],
-              category: promptData.category || '未分类',
-              note: '',
-              createdAt: Date.now(),
-              updatedAt: Date.now(),
-            };
-            setPrompts(prev => [newPrompt, ...prev]);
-          }}
-          onCreateMarkdownNote={(noteData) => {
-            const newNote: MarkdownNote = {
-              id: Date.now().toString(),
-              title: noteData.title || '新笔记',
-              category: noteData.category || '',
-              content: noteData.content || '# 新笔记\n\n开始编写...',
-              createdAt: Date.now(),
-              updatedAt: Date.now(),
-            };
-            setMarkdownNotes(prev => [...prev, newNote]);
-          }}
-          onCreateOJSubmission={(submission) => {
-            setOJHeatmapData(prev => ({
-              ...prev,
-              submissions: [...prev.submissions, submission],
-            }));
-          }}
-          ojHeatmapData={ojHeatmapData}
-          onCreateResource={(itemData) => {
-            const newItem = {
-              id: crypto.randomUUID(),
-              categoryId: itemData.categoryId || 'cloud',
-              name: itemData.name || '',
-              expireDate: itemData.expireDate,
-              capacity: itemData.capacity,
-              cost: itemData.cost,
-              url: itemData.url,
-              note: itemData.note,
-              account: itemData.account,
-              autoRenewal: itemData.autoRenewal,
-              createdAt: Date.now(),
-            };
-            setResourceData(prev => ({
-              categories: prev.categories.length > 0 ? prev.categories : [
-                { id: 'cloud', name: '云盘资源', icon: 'Cloud', color: '#3b82f6' },
-                { id: 'ai', name: 'AI资源', icon: 'Bot', color: '#8b5cf6' },
-                { id: 'server', name: '服务器', icon: 'Server', color: '#22c55e' },
-                { id: 'domain', name: '域名', icon: 'Globe', color: '#f59e0b' },
-                { id: 'subscription', name: '订阅服务', icon: 'CreditCard', color: '#ec4899' },
-              ],
-              items: [...prev.items, newItem],
-            }));
-          }}
-          onUpdateResource={(id, updates) => {
-            setResourceData(prev => ({
-              ...prev,
-              items: prev.items.map(i => i.id === id ? { ...i, ...updates } : i),
-            }));
-          }}
-          onDeleteResource={(id) => {
-            setResourceData(prev => ({
-              ...prev,
-              items: prev.items.filter(i => i.id !== id),
-            }));
-          }}
-          resourceData={resourceData}
-          fileRecords={fileRecords}
-          fileCategories={(categoriesMap['files'] || []).filter(c => c.id !== 'all').map(c => c.name)}
-        />
-      </Suspense>
+
         </div>
       )}
     </>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { GraduationCap, Search, ExternalLink, Maximize2, Minimize2, PlayCircle, FileText, Columns, Square, MousePointerClick, MessageSquare, TerminalSquare, ChevronLeft, FolderOpen, Plus, Edit2, Trash2 } from 'lucide-react';
+import { GraduationCap, Search, ExternalLink, Maximize2, Minimize2, PlayCircle, FileText, Columns, Square, MousePointerClick, MessageSquare, TerminalSquare, ChevronLeft, FolderOpen, Plus, Edit2, Trash2, Download, Upload } from 'lucide-react';
 import { LearningList } from './LearningList';
 import { CS336_DATA, DOCKER_DATA, GIT_DATA, CourseData, Lecture, COURSE_CATEGORIES, CourseCategory, migrateCourseData } from './LearningData';
 import { MarkdownEditor } from './MarkdownEditor';
@@ -9,7 +9,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { MarkdownNote } from '../types';
 import { LearningCategoryModal } from './LearningCategoryModal';
 import { LearningCourseModal } from './LearningCourseModal';
-import { deleteCategoryFolder, deleteCourseFolder, migrateToIdBasedPaths } from '../utils/learningStorage';
+import { deleteCategoryFolder, deleteCourseFolder, migrateToIdBasedPaths, exportCoursePack, importCoursePack, CoursePack } from '../utils/learningStorage';
 import { getCategoryIcon, colorMap } from './LearningConstants';
 
 // All courses
@@ -80,6 +80,18 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Agent 通过 localStorage 创建课程后，监听自定义事件同步 React 状态
+  useEffect(() => {
+    const handler = () => {
+      const savedCats = localStorage.getItem('learning_categories_v1');
+      if (savedCats) setCategories(JSON.parse(savedCats));
+      const savedCourses = localStorage.getItem(STORAGE_KEY_COURSES);
+      if (savedCourses) setCourses(JSON.parse(savedCourses).map((c: CourseData) => migrateCourseData(c)));
+    };
+    window.addEventListener('learning-data-updated', handler);
+    return () => window.removeEventListener('learning-data-updated', handler);
+  }, []);
+
   // Modal States
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<CourseCategory | undefined>(undefined);
@@ -149,6 +161,55 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
         setConfirmState(null);
       },
     });
+  };
+
+  const handleExportCourse = async (courseId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const course = courses.find(c => c.id === courseId);
+    if (!course) return;
+    const cat = categories.find(c => c.id === course.categoryId);
+    if (!cat) return;
+    try {
+      const pack = await exportCoursePack(course, cat, progress);
+      const json = JSON.stringify(pack, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${course.title}.guyue-course.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('[Export] 导出失败', err);
+    }
+  };
+
+  const handleImportCourse = async () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const pack: CoursePack = JSON.parse(text);
+        if (!pack.version || !pack.course || !pack.category) {
+          alert('无效的课程包文件');
+          return;
+        }
+        const result = await importCoursePack(pack, categories);
+        if (result.isNewCategory) {
+          setCategories(prev => [...prev, result.category as CourseCategory]);
+        }
+        setCourses(prev => [...prev, result.course as CourseData]);
+        setProgress(prev => ({ ...prev, ...result.progress }));
+      } catch (err) {
+        console.error('[Import] 导入失败', err);
+        alert('导入失败，请检查文件格式');
+      }
+    };
+    input.click();
   };
 
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
@@ -513,6 +574,13 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
                 />
               </div>
               <button
+                onClick={handleImportCourse}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap"
+              >
+                <Upload className="w-4 h-4" />
+                导入课程
+              </button>
+              <button
                 onClick={() => {
                   setEditingCourse(undefined);
                   setIsCourseModalOpen(true);
@@ -573,6 +641,13 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
                   </div>
 
                   <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={(e) => handleExportCourse(course.id, e)}
+                      className="p-2 bg-white/80 backdrop-blur rounded-lg hover:bg-green-50 text-gray-500 hover:text-green-600 border border-gray-200 shadow-sm"
+                      title="导出课程包"
+                    >
+                      <Download className="w-4 h-4" />
+                    </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();

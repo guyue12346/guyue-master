@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { TodoItem, SubTask } from '../types';
-import { X, Calendar, Flag, Tag, CheckSquare, Plus, Trash2, AlignLeft, Clock, MapPin, ArrowRight, Palette } from 'lucide-react';
+import { X, Calendar, Flag, Tag, CheckSquare, Plus, Trash2, AlignLeft, Clock, MapPin, ArrowRight, Palette, Sun } from 'lucide-react';
 
 interface TodoModalProps {
   isOpen: boolean;
@@ -28,7 +28,8 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
   const [newSubtask, setNewSubtask] = useState('');
 
   // Time mode states
-  const [timeMode, setTimeMode] = useState<'none' | 'point' | 'range'>('none');
+  const [timeMode, setTimeMode] = useState<'none' | 'allday' | 'point' | 'range'>('none');
+  const [allDayDateValue, setAllDayDateValue] = useState('');
   const [timePointValue, setTimePointValue] = useState('');
   const [timeStartValue, setTimeStartValue] = useState('');
   const [timeEndValue, setTimeEndValue] = useState('');
@@ -48,19 +49,31 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
         setTimeStartValue(toLocalDatetime(initialData.timeStart));
         setTimeEndValue(initialData.timeEnd ? toLocalDatetime(initialData.timeEnd) : '');
         setTimePointValue('');
+        setAllDayDateValue('');
+      } else if (initialData.timeType === 'allday' && initialData.dueDate) {
+        setTimeMode('allday');
+        const d = new Date(initialData.dueDate);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        setAllDayDateValue(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+        setTimePointValue('');
+        setTimeStartValue('');
+        setTimeEndValue('');
       } else if (initialData.timeType === 'point' && initialData.dueDate) {
         setTimeMode('point');
         setTimePointValue(toLocalDatetime(initialData.dueDate));
+        setAllDayDateValue('');
         setTimeStartValue('');
         setTimeEndValue('');
       } else if (initialData.dueDate) {
         // Legacy date-only item → show as point
         setTimeMode('point');
         setTimePointValue(toLocalDatetime(initialData.dueDate));
+        setAllDayDateValue('');
         setTimeStartValue('');
         setTimeEndValue('');
       } else {
         setTimeMode('none');
+        setAllDayDateValue('');
         setTimePointValue('');
         setTimeStartValue('');
         setTimeEndValue('');
@@ -76,6 +89,7 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
     setCategory('');
     setPriority('medium');
     setTimeMode('none');
+    setAllDayDateValue('');
     setTimePointValue('');
     setTimeStartValue('');
     setTimeEndValue('');
@@ -85,7 +99,7 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
   };
 
   /** When switching time mode, carry values over for convenience */
-  const handleTimeModeChange = (mode: 'none' | 'point' | 'range') => {
+  const handleTimeModeChange = (mode: 'none' | 'allday' | 'point' | 'range') => {
     if (mode === 'point' && timeMode === 'range' && timeStartValue) {
       setTimePointValue(timeStartValue);
     } else if (mode === 'range' && timeMode === 'point' && timePointValue) {
@@ -95,6 +109,10 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
         start.setHours(start.getHours() + 1);
         setTimeEndValue(toLocalDatetime(start.getTime()));
       }
+    } else if (mode === 'allday' && (timePointValue || timeStartValue)) {
+      // Carry over date portion
+      const src = timePointValue || timeStartValue;
+      setAllDayDateValue(src.split('T')[0]);
     }
     setTimeMode(mode);
   };
@@ -134,7 +152,10 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
     e.preventDefault();
 
     let timeFields: Partial<TodoItem> = {};
-    if (timeMode === 'point' && timePointValue) {
+    if (timeMode === 'allday' && allDayDateValue) {
+      const d = new Date(allDayDateValue + 'T00:00:00');
+      timeFields = { timeType: 'allday', dueDate: d.getTime(), timeStart: undefined, timeEnd: undefined };
+    } else if (timeMode === 'point' && timePointValue) {
       timeFields = { timeType: 'point', dueDate: new Date(timePointValue).getTime(), timeStart: undefined, timeEnd: undefined };
     } else if (timeMode === 'range' && timeStartValue) {
       timeFields = { timeType: 'range', dueDate: undefined, timeStart: new Date(timeStartValue).getTime(), timeEnd: timeEndValue ? new Date(timeEndValue).getTime() : undefined };
@@ -260,12 +281,12 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
 
               {/* Segmented control */}
               <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-3">
-                {([['none', '无时间', X], ['point', '时间点', MapPin], ['range', '时间段', ArrowRight]] as const).map(([key, label, Icon]) => (
+                {([['none', '无时间', X], ['allday', '全天', Sun], ['point', '时间点', MapPin], ['range', '时间段', ArrowRight]] as const).map(([key, label, Icon]) => (
                   <button
                     key={key}
                     type="button"
                     onClick={() => handleTimeModeChange(key as any)}
-                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200
+                    className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-xs font-medium rounded-lg transition-all duration-200
                       ${timeMode === key ? 'bg-white shadow-sm text-gray-800 ring-1 ring-gray-200' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
                   >
                     <Icon className="w-3.5 h-3.5" />
@@ -273,6 +294,24 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
                   </button>
                 ))}
               </div>
+
+              {/* All-day Date Input */}
+              {timeMode === 'allday' && (
+                <div>
+                  <div className="relative flex items-center">
+                    <div className="absolute left-3 pointer-events-none">
+                      <Sun className="h-4 w-4 text-amber-400" />
+                    </div>
+                    <input
+                      type="date"
+                      value={allDayDateValue}
+                      onChange={(e) => setAllDayDateValue(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2.5 bg-amber-50/50 border border-amber-200 rounded-xl focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none transition-all text-sm"
+                    />
+                  </div>
+                  <p className="text-[10px] text-gray-400 mt-1 ml-1">该事件将占据一整天</p>
+                </div>
+              )}
 
               {/* Time Point Input */}
               {timeMode === 'point' && (

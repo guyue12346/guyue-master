@@ -2,6 +2,9 @@
 import React from 'react';
 import { Note } from '../types';
 import { Trash2, Edit2, StickyNote } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 
 interface NoteListProps {
   notes: Note[];
@@ -46,8 +49,18 @@ export const NoteList: React.FC<NoteListProps> = ({ notes, onDelete, onEdit }) =
           </div>
 
           {/* Content */}
-          <div className="whitespace-pre-wrap text-sm text-gray-800 leading-relaxed font-medium min-h-[60px]">
-            {note.content}
+          <div className="text-sm text-gray-800 leading-relaxed font-medium min-h-[60px] prose prose-sm max-w-none
+            prose-headings:font-semibold prose-headings:text-gray-800 prose-headings:my-1
+            prose-p:my-0.5 prose-p:leading-relaxed
+            prose-ul:my-1 prose-ol:my-1 prose-li:my-0
+            prose-code:bg-black/10 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono
+            prose-pre:bg-black/10 prose-pre:rounded-lg prose-pre:text-xs
+            prose-blockquote:border-l-2 prose-blockquote:border-current prose-blockquote:opacity-70 prose-blockquote:pl-3 prose-blockquote:my-1
+            prose-strong:text-gray-900 prose-a:text-blue-600 prose-a:no-underline hover:prose-a:underline
+          ">
+            <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+              {note.content}
+            </ReactMarkdown>
           </div>
 
           {/* Footer */}

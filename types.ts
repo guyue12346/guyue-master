@@ -47,7 +47,7 @@ export interface TodoItem {
   priority: 'high' | 'medium' | 'low';
   category: string;
   dueDate?: number; // timestamp (legacy date-only or timeType='point' full datetime)
-  timeType?: 'point' | 'range'; // 'point' = specific datetime, 'range' = start–end
+  timeType?: 'point' | 'range' | 'allday'; // 'point' = specific datetime, 'range' = start–end, 'allday' = all-day event
   timeStart?: number; // range start timestamp
   timeEnd?: number;   // range end timestamp
   color?: string; // event display color for calendar view
@@ -131,7 +131,7 @@ export interface PluginMetadata {
   entryPath?: string; // Runtime only: absolute path to entry file
 }
 
-export type AppMode = 'notes' | 'ssh' | 'api' | 'todo' | 'files' | 'prompts' | 'markdown' | 'terminal' | 'browser' | 'leetcode' | 'learning' | 'image-hosting' | string;
+export type AppMode = 'notes' | 'ssh' | 'api' | 'todo' | 'files' | 'prompts' | 'markdown' | 'terminal' | 'browser' | 'leetcode' | 'learning' | 'image-hosting' | 'recurring' | string;
 
 export interface ModuleConfig {
   id: string;
@@ -145,20 +145,54 @@ export interface ModuleConfig {
 }
 
 export const DEFAULT_MODULE_CONFIG: ModuleConfig[] = [
-  { id: 'notes', name: '笔记备忘', enabled: true, priority: 0, icon: 'StickyNote', shortcut: 'Tab+1' },
-  { id: 'api', name: 'API管理', enabled: true, priority: 1, icon: 'Webhook', shortcut: 'Tab+2' },
-  { id: 'todo', name: '待办事项', enabled: true, priority: 2, icon: 'ListTodo', shortcut: 'Tab+3' },
-  { id: 'files', name: '文件管理', enabled: true, priority: 3, icon: 'FolderOpen', shortcut: 'Tab+4' },
-  { id: 'prompts', name: 'Skills', enabled: true, priority: 4, icon: 'Sparkles', shortcut: 'Tab+5' },
-  { id: 'terminal', name: '本地终端', enabled: true, priority: 5, icon: 'Command', shortcut: 'Tab+0' },
-  { id: 'browser', name: '内置浏览器', enabled: true, priority: 6, icon: 'Globe', shortcut: 'Tab+B' },
-  { id: 'leetcode', name: 'Code', enabled: true, priority: 7, icon: 'Code2', shortcut: 'Tab+L' },
-  { id: 'learning', name: '学习空间', enabled: true, priority: 8, icon: 'GraduationCap', shortcut: 'Tab+K' },
-  { id: 'image-hosting', name: '图床管理', enabled: true, priority: 9, icon: 'Image', shortcut: 'Tab+I' },
-  { id: 'chat', name: 'AI Chat', enabled: true, priority: 10, icon: 'MessageSquare', shortcut: 'Tab+C' },
-  { id: 'excalidraw', name: '绘图板', enabled: true, priority: 11, icon: 'Pencil', shortcut: 'Tab+E' },
-  { id: 'datacenter', name: '数据中心', enabled: true, priority: 12, icon: 'BarChart3', shortcut: 'Tab+D' }
+  { id: 'agent',        name: 'AI助手',    enabled: true, priority: 0,  icon: 'Bot' },
+  { id: 'todo',         name: '任务与日程', enabled: true, priority: 1,  icon: 'ListTodo',      shortcut: 'Tab+1' },
+  { id: 'datacenter',   name: '数据中心',  enabled: true, priority: 2,  icon: 'BarChart3',     shortcut: 'Tab+D' },
+  { id: 'learning',     name: '学习空间',  enabled: true, priority: 3,  icon: 'GraduationCap', shortcut: 'Tab+K' },
+  { id: 'leetcode',     name: 'LeetCode',  enabled: true, priority: 4,  icon: 'Code2',         shortcut: 'Tab+L' },
+  { id: 'files',        name: '文件管理',  enabled: true, priority: 5,  icon: 'FolderOpen',    shortcut: 'Tab+4' },
+  { id: 'chat',         name: 'AI对话',    enabled: true, priority: 6,  icon: 'MessageSquare', shortcut: 'Tab+C' },
+  { id: 'terminal',     name: '本地终端',  enabled: true, priority: 7,  icon: 'Command',       shortcut: 'Tab+0' },
+  { id: 'excalidraw',   name: '绘图板',    enabled: true, priority: 8,  icon: 'Pencil',        shortcut: 'Tab+E' },
+  { id: 'prompts',      name: 'Skills',    enabled: true, priority: 9,  icon: 'Sparkles',      shortcut: 'Tab+5' },
+  { id: 'notes',        name: '便签',      enabled: true, priority: 10, icon: 'StickyNote',    shortcut: 'Tab+2' },
+  { id: 'api',          name: 'API管理',   enabled: true, priority: 11, icon: 'Webhook',       shortcut: 'Tab+3' },
+  { id: 'browser',      name: '内置浏览器', enabled: true, priority: 12, icon: 'Globe',        shortcut: 'Tab+B' },
+  { id: 'image-hosting', name: '图床管理', enabled: true, priority: 13, icon: 'Image',         shortcut: 'Tab+I' },
 ];
+
+export interface RecurringCategory {
+  id: string;
+  name: string;
+  color: string; // hex color, e.g. '#3b82f6'
+}
+
+export const DEFAULT_RECURRING_CATEGORIES: RecurringCategory[] = [
+  { id: 'rc-course',   name: '课程',  color: '#3b82f6' },
+  { id: 'rc-work',     name: '工作',  color: '#8b5cf6' },
+  { id: 'rc-exercise', name: '健身',  color: '#22c55e' },
+  { id: 'rc-life',     name: '生活',  color: '#f97316' },
+];
+
+export const STORAGE_KEY_RECURRING_CATS = 'linkmaster_recurring_cats_v1';
+
+export interface RecurringEvent {
+  id: string;
+  title: string;
+  description?: string;
+  category: string;
+  color?: string;
+  allDay: boolean;
+  startDate: number;       // timestamp of first occurrence (time part ignored if allDay)
+  endDate?: number;        // optional end of recurrence range (inclusive)
+  startTime?: number;      // minutes from midnight, only when !allDay
+  duration?: number;       // duration in minutes, only when !allDay
+  recurrence: 'daily' | 'weekly' | 'monthly' | 'yearly';
+  interval: number;        // every N units
+  weekDays?: number[];     // for weekly: 0=Sun … 6=Sat
+  isActive: boolean;
+  createdAt: number;
+}
 
 export interface Category {
   id: string;
@@ -251,9 +285,12 @@ export interface ElectronAPI {
   fetchZenmuxDashboardData: () => Promise<any>;
   // GCP Billing API
   fetchGCPBillingData: (params: { serviceAccountJson: string; projectId: string; billingAccountId?: string }) => Promise<any>;
+  queryBigQueryBilling: (params: { serviceAccountJson: string; projectId: string; bqTablePath: string; bqLocation?: string }) => Promise<any>;
   // Email API
   sendEmail: (params: { config: import('./types').EmailConfig; subject: string; content: string }) => Promise<{ success: boolean; error?: string }>;
   testEmailConfig: (config: import('./types').EmailConfig) => Promise<{ success: boolean; error?: string }>;
+  // 代理设置
+  setProxy?: (port: number | null) => Promise<{ success: boolean; error?: string }>;
 }
 
 declare global {

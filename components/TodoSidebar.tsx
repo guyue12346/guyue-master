@@ -1,23 +1,26 @@
 
 import React from 'react';
-import { FileText, Calendar, ListChecks } from 'lucide-react';
+import { FileText, Calendar, ListChecks, Repeat2 } from 'lucide-react';
 
-export type TodoSubMode = 'plan' | 'schedule' | 'tasks';
+export type TodoSubMode = 'plan' | 'schedule' | 'tasks' | 'recurring';
 
 interface TodoSidebarProps {
   subMode: TodoSubMode;
   onSubModeChange: (mode: TodoSubMode) => void;
+  recurringCount?: number;
 }
 
 const SUB_MODES: { key: TodoSubMode; label: string; icon: React.FC<any>; desc: string }[] = [
   { key: 'plan', label: '总体规划', icon: FileText, desc: '目标与蓝图' },
   { key: 'schedule', label: '日程表', icon: Calendar, desc: '日 / 周 / 月视图' },
   { key: 'tasks', label: '具体事项', icon: ListChecks, desc: '待办任务列表' },
+  { key: 'recurring', label: '重复事件', icon: Repeat2, desc: '循环日程管理' },
 ];
 
 export const TodoSidebar: React.FC<TodoSidebarProps> = ({
   subMode,
   onSubModeChange,
+  recurringCount = 0,
 }) => {
   return (
     <div className="w-60 h-full flex-shrink-0 bg-macOS-sidebar backdrop-blur-xl border-r border-macOS-border flex flex-col pt-6 pb-4 px-3 z-20">
@@ -48,6 +51,11 @@ export const TodoSidebar: React.FC<TodoSidebarProps> = ({
                   <div className="truncate">{label}</div>
                   <div className={`text-[10px] mt-0.5 ${isActive ? 'text-gray-500' : 'text-gray-400'}`}>{desc}</div>
                 </div>
+                {key === 'recurring' && recurringCount > 0 && (
+                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                    isActive ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-500'
+                  }`}>{recurringCount}</span>
+                )}
               </button>
             );
           })}

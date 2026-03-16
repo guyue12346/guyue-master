@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { X, FileDown, FolderOpen, ToggleLeft, ToggleRight, ChevronDown, Globe, Package, Plus, Trash2, GripVertical, Mail, Server, Key, Send, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import { X, FileDown, FolderOpen, ToggleLeft, ToggleRight, ChevronDown, Globe, Package, Plus, Trash2, GripVertical, Mail, Server, Key, Send, Loader2, CheckCircle, AlertCircle, Command } from 'lucide-react';
 import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, ModuleConfig, AVAILABLE_ICONS, PluginMetadata, EmailConfig } from '../types';
 import * as LucideIcons from 'lucide-react';
 
@@ -85,6 +85,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [localEmailConfig, setLocalEmailConfig] = useState<EmailConfig>(DEFAULT_EMAIL_CONFIG);
   const [testStatus, setTestStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [testError, setTestError] = useState<string>('');
+  const [agentShortcutKey, setAgentShortcutKey] = useState<string>('Meta');
+  const [proxyPort, setProxyPort] = useState<string>('');
   const iconSelectorRef = useRef<HTMLDivElement>(null);
 
   // Sort modules by priority for display
@@ -119,6 +121,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
     const savedSplashEnabled = localStorage.getItem('linkmaster_splash_enabled');
     setSplashEnabled(savedSplashEnabled !== 'false');
+
+    const savedAgentShortcut = localStorage.getItem('linkmaster_agent_shortcut');
+    setAgentShortcutKey(savedAgentShortcut || 'Meta');
+
+    const savedProxyPort = localStorage.getItem('linkmaster_proxy_port');
+    setProxyPort(savedProxyPort || '');
 
     try {
       const savedEmailConfig = localStorage.getItem(STORAGE_KEY_EMAIL_CONFIG);
@@ -600,6 +608,94 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   disabled={!splashEnabled}
                 />
                 <p className="text-xs text-gray-400">支持多行输入，每行一句。应用启动时会从列表中随机展示一句（重启生效）。</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Section: Proxy Settings */}
+          <div className="space-y-4">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
+              网络代理（AI 请求）
+            </h3>
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 space-y-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-gray-700">本地 HTTP 代理端口</label>
+                <p className="text-xs text-gray-400">填入本地代理软件的 HTTP 端口（如 Clash 的 7897），所有 AI 对话和知识库请求将通过该端口发出。留空则直连。</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-500 whitespace-nowrap">127.0.0.1 :</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={proxyPort}
+                  onChange={e => setProxyPort(e.target.value)}
+                  placeholder="7897"
+                  className="w-28 px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-mono"
+                />
+                <button
+                  onClick={async () => {
+                    const port = proxyPort.trim() ? parseInt(proxyPort.trim(), 10) : null;
+                    localStorage.setItem('linkmaster_proxy_port', proxyPort.trim());
+                    if (window.electronAPI?.setProxy) {
+                      await window.electronAPI.setProxy(port);
+                    }
+                  }}
+                  className="px-4 py-2 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors"
+                >
+                  应用
+                </button>
+                {proxyPort.trim() && (
+                  <button
+                    onClick={async () => {
+                      setProxyPort('');
+                      localStorage.removeItem('linkmaster_proxy_port');
+                      if (window.electronAPI?.setProxy) {
+                        await window.electronAPI.setProxy(null);
+                      }
+                    }}
+                    className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg hover:border-gray-300 transition-colors"
+                  >
+                    清除
+                  </button>
+                )}
+              </div>
+              {proxyPort.trim() && (
+                <p className="text-xs text-green-600 font-medium">✓ 已配置代理：127.0.0.1:{proxyPort}</p>
+              )}
+            </div>
+          </div>
+
+          {/* Section: Agent Shortcut */}
+          <div className="space-y-4">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
+              AI 助手快捷键
+            </h3>
+            
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+              <div className="flex items-center justify-between">
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-medium text-gray-700">唤起快捷键</label>
+                  <p className="text-xs text-gray-400">连按两下开启 / 关闭 AI 助手</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={agentShortcutKey}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setAgentShortcutKey(val);
+                      localStorage.setItem('linkmaster_agent_shortcut', val);
+                      window.dispatchEvent(new Event('agent-shortcut-changed'));
+                    }}
+                    className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20"
+                  >
+                    <option value="Meta">⌘ Command</option>
+                    <option value="Control">⌃ Control</option>
+                    <option value="Alt">⌥ Option</option>
+                    <option value="Shift">⇧ Shift</option>
+                  </select>
+                  <span className="text-xs text-gray-400">× 2</span>
+                </div>
               </div>
             </div>
           </div>

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, dialog, session } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
@@ -20,6 +20,15 @@ let zenmuxUsageWindow: BrowserWindow | null = null;
 
 const isMac = process.platform === 'darwin';
 const isWin = process.platform === 'win32';
+
+// ── GPU 渲染稳定性修复 ──────────────────────────────────────────────────────
+// macOS 上 Chromium 自动选图形后端时偶发 GPU 进程崩溃，导致彩虹干涉纹。
+// 显式指定 Metal 后端并关闭 vsync 抖动可消除绝大多数此类异常。
+if (isMac) {
+  app.commandLine.appendSwitch('use-angle', 'metal');      // 显式使用 Metal 后端
+  app.commandLine.appendSwitch('disable-gpu-vsync');        // 消除 vsync 时序导致的帧错位
+  app.commandLine.appendSwitch('ignore-gpu-blocklist');     // 防止 Chromium 因驱动版本将 GPU 列入黑名单后退化为软渲染
+}
 
 function createWindow() {
   const windowOptions: Electron.BrowserWindowConstructorOptions = {
@@ -769,28 +778,124 @@ ipcMain.handle('fetch-gcp-billing-data', async (_, params: { serviceAccountJson:
       billingAccountId = result.billingInfo.billingAccountName.replace('billingAccounts/', '');
     }
 
-    // 获取预算数据（含实际花费）—— 必须用 v1beta1 才有 currentSpend 字段
+    // 获取预算数据 + 实际花费（通过 Cloud Monitoring billing 指标）
     if (billingAccountId) {
-      const budgetsUrl = `https://billingbudgets.googleapis.com/v1beta1/billingAccounts/${billingAccountId}/budgets?pageSize=20`;
+      // Budget API v1（stable）
+      const budgetsUrl = `https://billingbudgets.googleapis.com/v1/billingAccounts/${billingAccountId}/budgets?pageSize=50`;
+      const billingAccountUrl = `https://cloudbilling.googleapis.com/v1/billingAccounts/${billingAccountId}`;
+
+      const [budgetsResp, baResp] = await Promise.all([
+        fetch(budgetsUrl, { headers }).catch(() => null),
+        fetch(billingAccountUrl, { headers }).catch(() => null),
+      ]);
+
       try {
-        const budgetsResp = await fetch(budgetsUrl, { headers });
-        const budgetsJson = await budgetsResp.json() as any;
+        const budgetsJson = await budgetsResp?.json() as any;
         if (budgetsJson?.error) {
           result.budgetsError = budgetsJson.error;
         } else {
-          // v1beta1 list 接口直接返回 currentSpend，无需再逐个 GET
           result.budgets = budgetsJson;
         }
       } catch {}
 
-      const billingAccountUrl = `https://cloudbilling.googleapis.com/v1/billingAccounts/${billingAccountId}`;
       try {
-        const baResp = await fetch(billingAccountUrl, { headers });
-        result.billingAccount = await baResp.json();
+        result.billingAccount = await baResp?.json();
       } catch {}
     }
 
     return result;
+  } catch (error) {
+    return { error: (error as Error).message };
+  }
+});
+
+/* ─── BigQuery 账单查询 ─── */
+ipcMain.handle('query-bigquery-billing', async (_, params: {
+  serviceAccountJson: string;
+  projectId: string;
+  bqTablePath: string;
+  bqLocation?: string;
+}) => {
+  try {
+    const sa = JSON.parse(params.serviceAccountJson);
+    const { client_email, private_key } = sa;
+    if (!client_email || !private_key) throw new Error('无效的 Service Account JSON');
+
+    const scopes = [
+      'https://www.googleapis.com/auth/bigquery.readonly',
+      'https://www.googleapis.com/auth/cloud-platform',
+    ];
+    const accessToken = await getGCPAccessToken(client_email, private_key, scopes);
+
+    // 执行查询的 GCP 项目（从表路径提取，或用配置的 projectId）
+    const pathParts = params.bqTablePath.split('.');
+    const jobProject = pathParts.length >= 2 ? pathParts[0] : params.projectId;
+
+    // 本月花费 + 按月历史（近 3 个月）
+    const currentMonthQuery = `
+SELECT
+  service.description AS service_name,
+  SUM(cost) AS total_cost,
+  currency
+FROM \`${params.bqTablePath}\`
+WHERE
+  DATE(usage_start_time) >= DATE_TRUNC(CURRENT_DATE(), MONTH)
+GROUP BY service.description, currency
+ORDER BY total_cost DESC
+LIMIT 30`;
+
+    const headers = { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' };
+
+    // 同步查询（超时 30s）
+    const syncResp = await fetch(
+      `https://bigquery.googleapis.com/bigquery/v2/projects/${jobProject}/queries`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          query: currentMonthQuery,
+          useLegacySql: false,
+          timeoutMs: 30000,
+          ...(params.bqLocation ? { location: params.bqLocation } : {}),
+        }),
+      }
+    );
+    const syncJson = await syncResp.json() as any;
+    if (syncJson?.error) {
+      return { error: `BigQuery 查询失败（${syncJson.error.code}）：${syncJson.error.message}` };
+    }
+
+    // 解析行数据
+    const parseRows = (json: any) => {
+      const schema: any[] = json.schema?.fields ?? [];
+      return (json.rows ?? []).map((row: any) => {
+        const obj: Record<string, any> = {};
+        (row.f ?? []).forEach((f: any, i: number) => { obj[schema[i]?.name] = f.v; });
+        return obj;
+      });
+    };
+
+    if (syncJson.jobComplete) {
+      return { results: parseRows(syncJson), totalRows: syncJson.totalRows, lastUpdated: Date.now() };
+    }
+
+    // 未在 30s 内完成：轮询
+    const jobId = syncJson.jobReference?.jobId;
+    if (!jobId) return { error: '查询超时，无法继续轮询' };
+
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const pollResp = await fetch(
+        `https://bigquery.googleapis.com/bigquery/v2/projects/${jobProject}/queries/${jobId}`,
+        { headers }
+      );
+      const pollJson = await pollResp.json() as any;
+      if (pollJson?.error) return { error: `BigQuery 轮询失败：${pollJson.error.message}` };
+      if (pollJson.jobComplete) {
+        return { results: parseRows(pollJson), totalRows: pollJson.totalRows, lastUpdated: Date.now() };
+      }
+    }
+    return { error: '查询超时（40 秒），账单表可能较大或网络较慢，请稍后重试' };
   } catch (error) {
     return { error: (error as Error).message };
   }
@@ -1031,53 +1136,23 @@ interface EmailConfig {
   recipient: string;
 }
 
-// 常用 SMTP 服务器 IP 映射（绕过 DNS 污染/代理劫持）
-const SMTP_IP_MAP: Record<string, string[]> = {
-  'smtp.qq.com': ['43.129.255.54', '43.137.210.144', '109.244.198.105'],
-  'smtp.163.com': ['220.181.12.15', '123.126.97.79'],
-  'smtp.126.com': ['220.181.12.15', '123.126.97.79'],
-  'smtp.gmail.com': ['142.250.157.108', '142.250.157.109'],
-  'smtp.outlook.com': ['52.98.154.2', '52.98.138.66'],
-};
+// ─── Transporter 缓存（连接池复用，避免每次重建）───
+let cachedTransporter: nodemailer.Transporter | null = null;
+let cachedTransporterKey = '';
 
-// 测试 IP 是否可连接
-async function testConnection(host: string, port: number, timeout = 5000): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = new net.Socket();
-    socket.setTimeout(timeout);
-    socket.on('connect', () => { socket.destroy(); resolve(true); });
-    socket.on('error', () => { socket.destroy(); resolve(false); });
-    socket.on('timeout', () => { socket.destroy(); resolve(false); });
-    socket.connect(port, host);
-  });
+function getTransporterCacheKey(config: EmailConfig): string {
+  return `${config.smtp.host}:${config.smtp.port}:${config.smtp.user}:${config.smtp.secure}`;
 }
 
-// 获取可用的 SMTP 服务器地址
-async function getSmtpHost(hostname: string, port: number): Promise<string> {
-  const cleanHostname = hostname.trim().toLowerCase();
-
-  // 如果有预设 IP，尝试连接
-  const ips = SMTP_IP_MAP[cleanHostname];
-  if (ips && ips.length > 0) {
-    for (const ip of ips) {
-      if (await testConnection(ip, port)) {
-        return ip;
-      }
-    }
-    // 即使测试失败，也使用第一个 IP（避免 DNS 查询）
-    return ips[0];
-  }
-  return hostname;
-}
-
-// 创建邮件传输器
-async function createTransporter(config: EmailConfig) {
-  const host = await getSmtpHost(config.smtp.host, config.smtp.port);
+function buildTransporter(config: EmailConfig): nodemailer.Transporter {
+  const port = config.smtp.port;
+  // 智能判断 secure：465 端口强制 SSL，587/25 用 STARTTLS
+  const secure = port === 465 ? true : port === 587 || port === 25 ? false : config.smtp.secure;
 
   return nodemailer.createTransport({
-    host: host,
-    port: config.smtp.port,
-    secure: config.smtp.secure,
+    host: config.smtp.host,
+    port,
+    secure,
     auth: {
       user: config.smtp.user,
       pass: config.smtp.pass,
@@ -1085,25 +1160,105 @@ async function createTransporter(config: EmailConfig) {
     tls: {
       rejectUnauthorized: false,
       servername: config.smtp.host,
+      minVersion: 'TLSv1.2',
     },
-  } as nodemailer.TransportOptions);
+    // 连接池 & 超时
+    pool: true,
+    maxConnections: 3,
+    maxMessages: 50,
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 30000,
+    // 非 465 端口尝试 STARTTLS 升级
+    ...(!secure && { requireTLS: false, opportunisticTLS: true }),
+  } as any);
+}
+
+function getOrCreateTransporter(config: EmailConfig): nodemailer.Transporter {
+  const key = getTransporterCacheKey(config);
+  if (cachedTransporter && cachedTransporterKey === key) {
+    return cachedTransporter;
+  }
+  // 配置变了，关闭旧连接池
+  if (cachedTransporter) {
+    try { cachedTransporter.close(); } catch { /* ignore */ }
+  }
+  cachedTransporter = buildTransporter(config);
+  cachedTransporterKey = key;
+  return cachedTransporter;
+}
+
+// ─── 带重试的发送 ───
+async function sendMailWithRetry(
+  config: EmailConfig,
+  mailOptions: nodemailer.SendMailOptions,
+  maxRetries = 2
+): Promise<void> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const transporter = getOrCreateTransporter(config);
+
+      // 首次或重试时先 verify 连接是否存活
+      if (attempt > 0) {
+        try {
+          await transporter.verify();
+        } catch {
+          // 连接已断开，重建 transporter
+          cachedTransporter = null;
+          cachedTransporterKey = '';
+          const fresh = getOrCreateTransporter(config);
+          await fresh.sendMail(mailOptions);
+          return;
+        }
+      }
+
+      await transporter.sendMail(mailOptions);
+      return; // 成功，直接返回
+    } catch (error) {
+      lastError = error as Error;
+      const msg = lastError.message || '';
+      console.error(`[Email] Attempt ${attempt + 1}/${maxRetries + 1} failed:`, msg);
+
+      // 认证错误不重试
+      if (msg.includes('Invalid login') || msg.includes('authentication') || msg.includes('AUTH')) {
+        throw lastError;
+      }
+
+      // 连接类错误：销毁缓存，下次循环会重建
+      if (
+        msg.includes('socket') || msg.includes('ECONNR') || msg.includes('ETIMEDOUT') ||
+        msg.includes('TLS') || msg.includes('disconnected') || msg.includes('EHOSTUNREACH')
+      ) {
+        try { cachedTransporter?.close(); } catch { /* ignore */ }
+        cachedTransporter = null;
+        cachedTransporterKey = '';
+      }
+
+      // 最后一次重试前等一下
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+      }
+    }
+  }
+
+  throw lastError || new Error('邮件发送失败（未知错误）');
 }
 
 // IPC: 发送邮件
 ipcMain.handle('send-email', async (_, { config, subject, content }: { config: EmailConfig; subject: string; content: string }) => {
   try {
-    const transporter = await createTransporter(config);
-
-    await transporter.sendMail({
-      from: config.smtp.user,
+    await sendMailWithRetry(config, {
+      from: `"${(config as any).senderName || '古月的Agent助理'}" <${config.smtp.user}>`,
       to: config.recipient,
-      subject: subject,
+      subject,
       html: content,
     });
 
     return { success: true };
   } catch (error) {
-    console.error('Failed to send email:', error);
+    console.error('[Email] Failed to send:', error);
     return { success: false, error: (error as Error).message };
   }
 });
@@ -1111,11 +1266,15 @@ ipcMain.handle('send-email', async (_, { config, subject, content }: { config: E
 // IPC: 测试邮件配置
 ipcMain.handle('test-email-config', async (_, config: EmailConfig) => {
   try {
-    const transporter = await createTransporter(config);
+    // 测试时强制重建 transporter，确保用最新配置
+    cachedTransporter = null;
+    cachedTransporterKey = '';
+
+    const transporter = getOrCreateTransporter(config);
     await transporter.verify();
 
     await transporter.sendMail({
-      from: config.smtp.user,
+      from: `"${(config as any).senderName || '古月的Agent助理'}" <${config.smtp.user}>`,
       to: config.recipient,
       subject: '[Guyue Master] 邮件配置测试',
       html: `
@@ -1131,7 +1290,24 @@ ipcMain.handle('test-email-config', async (_, config: EmailConfig) => {
 
     return { success: true };
   } catch (error) {
-    console.error('Email config test failed:', error);
+    console.error('[Email] Config test failed:', error);
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+// 代理设置：供渲染进程配置 HTTP 代理
+ipcMain.handle('set-proxy', async (_, port: number | null) => {
+  try {
+    if (port && port > 0) {
+      await session.defaultSession.setProxy({ proxyRules: `http://127.0.0.1:${port}` });
+      console.log(`[Proxy] 已配置 HTTP 代理: 127.0.0.1:${port}`);
+    } else {
+      await session.defaultSession.setProxy({ proxyRules: 'direct://' });
+      console.log('[Proxy] 已清除代理设置');
+    }
+    return { success: true };
+  } catch (error) {
+    console.error('[Proxy] 设置失败:', error);
     return { success: false, error: (error as Error).message };
   }
 });
