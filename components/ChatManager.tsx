@@ -1314,7 +1314,6 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                     title={config.enableWebSearch ? '联网搜索已启用' : '点击启用联网搜索'}
                   >
                     <Globe className="w-3.5 h-3.5" />
-                    <span>{config.enableWebSearch ? '联网' : '离线'}</span>
                   </button>
                 )}
                 <div className="px-2.5 py-1 bg-purple-50 text-purple-600 rounded-full text-[11px] font-medium border border-purple-100 max-w-[160px] truncate">
@@ -1330,10 +1329,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                   }`}
                   title={activeConversation?.systemPrompt !== undefined ? '已设置对话预设词（点击编辑）' : '为此对话设置预设词'}
                 >
-                  <Wand2 className="w-4 h-4" />
-                  {activeConversation?.systemPrompt !== undefined && activeConversation.systemPrompt !== '' && (
-                    <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-purple-500 border border-white" />
-                  )}
+                  <Wand2 className="w-3.5 h-3.5" />
                 </button>
                 <button
                   onClick={() => setIsHelpOpen(true)}

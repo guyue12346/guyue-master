@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { X, FileDown, FolderOpen, ToggleLeft, ToggleRight, ChevronDown, Globe, Package, Plus, Trash2, GripVertical, Mail, Server, Key, Send, Loader2, CheckCircle, AlertCircle, Command } from 'lucide-react';
+import { X, FileDown, FolderOpen, ToggleLeft, ToggleRight, ChevronDown, Globe, Package, Plus, Trash2, GripVertical, Mail, Server, Key, Send, Loader2, CheckCircle, AlertCircle, Command, User, Camera } from 'lucide-react';
 import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, ModuleConfig, AVAILABLE_ICONS, PluginMetadata, EmailConfig } from '../types';
 import * as LucideIcons from 'lucide-react';
 
@@ -87,6 +87,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [testError, setTestError] = useState<string>('');
   const [agentShortcutKey, setAgentShortcutKey] = useState<string>('Meta');
   const [proxyPort, setProxyPort] = useState<string>('');
+  const [userAvatar, setUserAvatar] = useState<string>('');
+  const [userName, setUserName] = useState<string>('Guyue');
+  const avatarInputRef = useRef<HTMLInputElement>(null);
   const iconSelectorRef = useRef<HTMLDivElement>(null);
 
   // Sort modules by priority for display
@@ -136,6 +139,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
     setTestStatus('idle');
     setTestError('');
+
+    // Load avatar & name
+    setUserAvatar(localStorage.getItem('guyue_user_avatar') || '');
+    setUserName(localStorage.getItem('guyue_user_name') || 'Guyue');
 
     // Load plugins
     if (window.electronAPI) {
@@ -297,6 +304,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setTestStatus('idle');
     setTestError('');
   };
+
+  const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) return;
+    if (file.size > 2 * 1024 * 1024) { alert('头像图片不能超过 2MB'); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      setUserAvatar(dataUrl);
+      localStorage.setItem('guyue_user_avatar', dataUrl);
+      window.dispatchEvent(new Event('guyue_avatar_change'));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveAvatar = () => {
+    setUserAvatar('');
+    localStorage.removeItem('guyue_user_avatar');
+    window.dispatchEvent(new Event('guyue_avatar_change'));
+  };
+
+  const handleSaveUserName = (name: string) => {
+    setUserName(name);
+    localStorage.setItem('guyue_user_name', name);
+  };
   
   const handleExportMarkdown = () => {
     // 1. Header
@@ -389,6 +422,70 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Scrollable Content */}
         <div className="p-6 space-y-8 max-h-[80vh] overflow-y-auto">
+
+          {/* Section: User Profile */}
+          <div className="space-y-4">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
+              个人资料
+            </h3>
+            <div className="flex items-center gap-6">
+              {/* Avatar */}
+              <div className="relative group">
+                <div className="w-20 h-20 rounded-full overflow-hidden bg-gradient-to-br from-blue-100 to-indigo-100 flex items-center justify-center border-2 border-white shadow-md">
+                  {userAvatar ? (
+                    <img src={userAvatar} alt="头像" className="w-full h-full object-cover" />
+                  ) : (
+                    <User className="w-9 h-9 text-indigo-400" />
+                  )}
+                </div>
+                <button
+                  onClick={() => avatarInputRef.current?.click()}
+                  className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity cursor-pointer"
+                  title="更换头像"
+                >
+                  <Camera className="w-5 h-5 text-white" />
+                </button>
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleAvatarUpload}
+                />
+              </div>
+              <div className="flex-1 space-y-3">
+                <div>
+                  <label className="text-xs font-medium text-gray-500 mb-1 block">昵称</label>
+                  <input
+                    type="text"
+                    value={userName}
+                    onChange={(e) => handleSaveUserName(e.target.value)}
+                    placeholder="输入你的名字"
+                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => avatarInputRef.current?.click()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    上传头像
+                  </button>
+                  {userAvatar && (
+                    <button
+                      onClick={handleRemoveAvatar}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-500 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      移除头像
+                    </button>
+                  )}
+                  <span className="text-xs text-gray-400">支持 JPG、PNG，最大 2MB</span>
+                </div>
+              </div>
+            </div>
+          </div>
           
           {/* Section: Module Management */}
           <div className="space-y-4">

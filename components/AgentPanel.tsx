@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, Send, Loader2, Sparkles, CheckCircle2, AlertCircle, ListTodo, Settings, Settings2, StickyNote, FolderOpen, Command, Globe, Code2, GraduationCap, Image, MessageSquare, Pencil, BarChart3, HelpCircle, ChevronDown, ChevronUp, ChevronRight, Bug, Trash2, Paperclip, FileText, Trophy, HardDrive, Lock, Unlock, LayoutGrid, Eye, PenLine, Mail, StopCircle, Undo2, Server, Key, CheckCircle, ToggleLeft, ToggleRight, Plus, Edit3, BookUser, FileType2 } from 'lucide-react';
+import { X, Send, Loader2, Sparkles, CheckCircle2, AlertCircle, ListTodo, Settings, Settings2, StickyNote, FolderOpen, Command, Globe, Code2, GraduationCap, Image, MessageSquare, Pencil, BarChart3, HelpCircle, ChevronDown, ChevronUp, ChevronRight, Bug, Trash2, Paperclip, FileText, Trophy, HardDrive, Lock, Unlock, LayoutGrid, Eye, PenLine, Mail, StopCircle, Undo2, Server, Key, CheckCircle, ToggleLeft, ToggleRight, Plus, Edit3, BookUser, FileType2, User } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { TodoItem, Note, PromptRecord, MarkdownNote, OJSubmission, OJHeatmapData, ResourceItem, ResourceCenterData, EmailConfig, SubTask, FileRecord, Category, RecurringEvent, RecurringCategory, LatexFileCategory, LatexManagedFile, LatexTemplate } from '../types';
 import {
@@ -31,16 +31,16 @@ interface AgentModule {
 // 可用的功能模块列表
 const AGENT_MODULES: AgentModule[] = [
   { id: 'todo',       name: '待办事项', icon: ListTodo,    enabled: true,  description: '创建、查询待办事项' },
-  { id: 'notes',      name: '笔记备忘', icon: StickyNote,  enabled: true,  description: '创建便签笔记' },
+  { id: 'datacenter', name: '数据中心', icon: BarChart3,  enabled: true,  description: '数据管理：OJ做题、资源、数据查询' },
+  { id: 'learning',   name: '学习',     icon: GraduationCap, enabled: true,  description: '创建课程、查询学习分类' },
+  { id: 'leetcode',   name: '刷题',     icon: Code2,         enabled: true,  description: '创建题单、查询已有题单' },
   { id: 'files',      name: '文件管理', icon: FolderOpen,  enabled: true,  description: '查询、读取文件管理中的文件（需授权分类）' },
   { id: 'prompts',    name: 'Skills',    icon: Sparkles,   enabled: true,  description: '创建 Prompt 技能卡' },
-  { id: 'markdown',   name: 'Markdown',  icon: Pencil,     enabled: true,  description: '创建 Markdown 笔记' },
-  { id: 'leetcode',   name: '刷题',     icon: Code2,         enabled: true,  description: '创建题单、查询已有题单' },
-  { id: 'learning',   name: '学习',     icon: GraduationCap, enabled: true,  description: '创建课程、查询学习分类' },
+  { id: 'notes',      name: '笔记备忘', icon: StickyNote,  enabled: true,  description: '创建便签笔记' },
   { id: 'image',      name: '图床',     icon: Image,      enabled: true,  description: '查询图片链接、上传图片到图床' },
-  { id: 'datacenter', name: '数据中心', icon: BarChart3,  enabled: true,  description: '数据管理：OJ做题、资源、数据查询' },
-  { id: 'email',      name: '邮件',     icon: Mail,       enabled: true,  description: '发送邮件' },
+  { id: 'markdown',   name: 'Markdown',  icon: Pencil,     enabled: true,  description: '创建 Markdown 笔记' },
   { id: 'latex',      name: 'LaTeX',    icon: FileType2,  enabled: true,  description: '查询、读取、编辑 LaTeX 文件和模板（需授权分类）' },
+  { id: 'email',      name: '邮件',     icon: Mail,       enabled: true,  description: '发送邮件' },
 ];
 
 const ENABLED_AGENT_MODULES = AGENT_MODULES.filter(module => module.enabled);
@@ -1026,6 +1026,8 @@ interface ToolExecutionContext {
   latexFileReadPermissions: string[];  // 已授权可读的文件分类 ID 列表
   latexFileWritePermissions: string[]; // 已授权可写的文件分类 ID 列表
   latexTemplatePermissions: string[];  // 已授权的模板分类名称列表
+  onAutoAuthLatexFileCategory: (catId: string) => void;  // 自动授权新建的文件分类
+  onAutoAuthLatexTemplateCategory: (catName: string) => void; // 自动授权新建的模板分类
 }
 
 const TOOL_REGISTRY: ToolRegistration[] = [
@@ -2834,7 +2836,9 @@ const TOOL_REGISTRY: ToolRegistration[] = [
       const newCat = { id: crypto.randomUUID(), name };
       const updated = [...existing, newCat];
       await electronAPI.latexSaveFileCategories(updated);
-      return { success: true, message: `文件分类「${name}」已创建。`, category: newCat };
+      // Auto-authorize the new category
+      _ctx.onAutoAuthLatexFileCategory(newCat.id);
+      return { success: true, message: `文件分类「${name}」已创建并已自动授权。`, category: newCat };
     },
   },
   {
@@ -2996,7 +3000,9 @@ const TOOL_REGISTRY: ToolRegistration[] = [
         updatedAt: Date.now(),
       };
       await electronAPI.latexSaveTemplate(placeholder);
-      return { success: true, message: `模板分类「${name}」已创建。`, categoryId: name };
+      // Auto-authorize the new template category
+      _ctx.onAutoAuthLatexTemplateCategory(name);
+      return { success: true, message: `模板分类「${name}」已创建并已自动授权。`, categoryId: name };
     },
   },
   {
@@ -3087,9 +3093,6 @@ const TOOL_REGISTRY: ToolRegistration[] = [
       const electronAPI = (window as any).electronAPI;
       if (!electronAPI?.latexSaveTemplate) return { success: false, error: 'LaTeX API 不可用。' };
       const cat = typeof args.category === 'string' ? args.category.trim() : 'custom';
-      if (!ctx.latexTemplatePermissions.includes(cat) && !ctx.latexTemplatePermissions.includes('__all__')) {
-        return { success: false, error: `模板分类「${cat}」未授权。请在权限面板中开启。` };
-      }
       const name = typeof args.name === 'string' ? args.name.trim() : '';
       if (!name) return { success: false, error: '模板名称不能为空。' };
       const content = typeof args.content === 'string' ? args.content : '';
@@ -3104,6 +3107,10 @@ const TOOL_REGISTRY: ToolRegistration[] = [
       };
       const ok = await electronAPI.latexSaveTemplate(tpl);
       if (!ok) return { success: false, error: '模板保存失败。' };
+      // If category is new, auto-authorize it
+      if (!ctx.latexTemplatePermissions.includes(cat)) {
+        ctx.onAutoAuthLatexTemplateCategory(cat);
+      }
       return { success: true, message: `模板「${name}」已创建。`, id: tpl.id, category: cat };
     },
   },
@@ -3323,7 +3330,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [showContactList, setShowContactList] = useState(false);
   const [isModuleCollapsed, setIsModuleCollapsed] = useState(false);
-  const [isDebugCollapsed, setIsDebugCollapsed] = useState(false);
+  const [isDebugCollapsed, setIsDebugCollapsed] = useState(true);
   const [expandedDebugIds, setExpandedDebugIds] = useState<Set<string>>(new Set());
   const [debugItems, setDebugItems] = useState<AgentDebugItem[]>([]);
 
@@ -4098,7 +4105,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
       // 原生模式：注册所有已启用工具，让 tool_choice=auto 自路由
       const nativeTools = supportsNativeTools ? getAllNativeTools(selectedModule) : [];
-      const toolExecContext: ToolExecutionContext = { todos: [...todos], notes, dataPermissions, filePermissions, fileRecords, lastUserAttachments: currentAttachments, onCreateTodo, onUpdateTodo, onDeleteTodo, onCreateNote, onUpdateNote, onDeleteNote, onCreatePrompt, onCreateMarkdownNote, onCreateOJSubmission, ojHeatmapData, onCreateResource, onUpdateResource, onDeleteResource, resourceData, recurringEvents, recurringCategories, onCreateRecurring, onUpdateRecurring, onDeleteRecurring, onUpdateRecurringCategories, todoCategories, promptCategories, markdownCategories, onAddCategory, knowledgeBaseFileIds, latexFileReadPermissions, latexFileWritePermissions, latexTemplatePermissions };
+      const toolExecContext: ToolExecutionContext = { todos: [...todos], notes, dataPermissions, filePermissions, fileRecords, lastUserAttachments: currentAttachments, onCreateTodo, onUpdateTodo, onDeleteTodo, onCreateNote, onUpdateNote, onDeleteNote, onCreatePrompt, onCreateMarkdownNote, onCreateOJSubmission, ojHeatmapData, onCreateResource, onUpdateResource, onDeleteResource, resourceData, recurringEvents, recurringCategories, onCreateRecurring, onUpdateRecurring, onDeleteRecurring, onUpdateRecurringCategories, todoCategories, promptCategories, markdownCategories, onAddCategory, knowledgeBaseFileIds, latexFileReadPermissions, latexFileWritePermissions, latexTemplatePermissions, onAutoAuthLatexFileCategory: (catId: string) => { setLatexFileReadPermissions(p => p.includes(catId) ? p : [...p, catId]); setLatexFileWritePermissions(p => p.includes(catId) ? p : [...p, catId]); }, onAutoAuthLatexTemplateCategory: (catName: string) => { setLatexTemplatePermissions(p => p.includes(catName) ? p : [...p, catName]); } };
 
       pushDebugItem({
         stage: 'send:routing-result',
@@ -5122,7 +5129,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                       {/* 文件分类 */}
                       <div className="px-4 pt-3.5 pb-2 border-b border-gray-100">
                         <div className="flex items-center justify-between mb-1">
-                          <p className="text-xs font-semibold text-gray-800">LaTeX 文件分类</p>
+                          <p className="text-xs font-semibold text-gray-800">LaTeX 文件权限</p>
                         </div>
                         <div className="flex items-center gap-3 text-[10px] text-gray-400">
                           <span className="flex items-center gap-1"><Eye className="w-3 h-3" />读取</span>
@@ -5209,7 +5216,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                       </div>
                       {/* 模板分类 */}
                       <div className="px-4 pt-3 pb-2 border-t border-b border-gray-100 flex items-center justify-between">
-                        <p className="text-xs font-semibold text-gray-800">LaTeX 模板分类</p>
+                        <p className="text-xs font-semibold text-gray-800">LaTeX 模板权限</p>
                         <button
                           onClick={() => {
                             setLatexTemplatePermissions(prev => prev.length === latexTemplateCategories.length ? [] : [...latexTemplateCategories]);
@@ -5305,6 +5312,16 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
 /* ─── 消息气泡组件 ─── */
 
+const useUserAvatar = () => {
+  const [avatar, setAvatar] = useState(() => localStorage.getItem('guyue_user_avatar') || '');
+  useEffect(() => {
+    const update = () => setAvatar(localStorage.getItem('guyue_user_avatar') || '');
+    window.addEventListener('guyue_avatar_change', update);
+    return () => window.removeEventListener('guyue_avatar_change', update);
+  }, []);
+  return avatar;
+};
+
 const MessageBubble: React.FC<{
   message: AgentMessage;
   onDelete?: (messageId: string) => void;
@@ -5316,13 +5333,14 @@ const MessageBubble: React.FC<{
   const targetModule = getModuleById(message.targetModule);
   const canDelete = message.id !== 'welcome';
   const pc = message.pendingConfirmation;
+  const userAvatar = useUserAvatar();
   
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div className={`max-w-[85%] rounded-3xl px-4 py-3.5 shadow-sm ${
+    <div className={`flex items-end gap-2.5 ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div className={`max-w-[80%] px-4 py-3.5 ${
         isUser 
-          ? 'bg-blue-600 text-white' 
-          : 'bg-gray-100 text-gray-800'
+          ? 'bg-gradient-to-br from-violet-500 via-purple-600 to-indigo-600 text-white rounded-2xl rounded-tr-sm shadow-[0_4px_24px_rgba(139,92,246,0.45)]' 
+          : 'bg-gray-100 text-gray-800 rounded-3xl shadow-sm'
       }`}>
         <div className="flex items-center gap-2 flex-wrap mb-2">
           {message.action && (() => {
@@ -5391,9 +5409,19 @@ const MessageBubble: React.FC<{
         )}
 
         <div className="text-sm whitespace-pre-wrap leading-relaxed">
-          {message.content.split('**').map((part, i) => 
-            i % 2 === 1 ? <strong key={i}>{part}</strong> : part
-          )}
+          {message.content.split(/(`[^`]+`|\*\*[^*]+\*\*)/).map((part, i) => {
+            if (part.startsWith('**') && part.endsWith('**')) {
+              return <strong key={i}>{part.slice(2, -2)}</strong>;
+            }
+            if (part.startsWith('`') && part.endsWith('`')) {
+              return (
+                <code key={i} className={`inline-block px-1.5 py-0.5 rounded text-[0.8em] font-mono ${
+                  isUser ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-700'
+                }`}>{part.slice(1, -1)}</code>
+              );
+            }
+            return part;
+          })}
         </div>
 
         {/* 二次确认卡片 */}
@@ -5477,6 +5505,15 @@ const MessageBubble: React.FC<{
           </div>
         </div>
       </div>
+      {isUser && (
+        <div className="shrink-0 w-8 h-8 rounded-full overflow-hidden bg-gradient-to-br from-violet-400 to-indigo-500 flex items-center justify-center shadow-[0_2px_8px_rgba(139,92,246,0.5)]">
+          {userAvatar ? (
+            <img src={userAvatar} alt="avatar" className="w-full h-full object-cover" />
+          ) : (
+            <User className="w-4 h-4 text-white" />
+          )}
+        </div>
+      )}
     </div>
   );
 };

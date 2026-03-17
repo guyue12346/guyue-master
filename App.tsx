@@ -2295,10 +2295,10 @@ const App: React.FC = () => {
                     default: break;
                   }
                 }}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/30"
+                className="w-9 h-9 flex items-center justify-center bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/30"
+                title={getAddButtonLabel()}
               >
-                <Plus className="w-4 h-4" />
-                <span className="font-medium">{getAddButtonLabel()}</span>
+                <Plus className="w-4.5 h-4.5" />
               </button>
               )}
               {/* Help button */}

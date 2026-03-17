@@ -739,8 +739,10 @@ const renderFileContent = (file: FileRecord, content: string, settings?: Reading
                 // Handle "代码块" as a generic code block language
                 const isGenericCodeBlock = className?.includes('language-代码块');
                 const match = /language-(\w+)/.exec(className || '');
+                // react-markdown v8+ removed the `inline` prop; detect inline code by absence of language class and no newlines
+                const isInline = inline || (!className && !String(children).includes('\n'));
                 
-                if (!inline && isSuibi) {
+                if (!isInline && isSuibi) {
                   return (
                     <div className="my-6 p-6 bg-stone-50 border border-stone-200 rounded-lg shadow-sm">
                       <div className="font-serif text-lg font-medium text-stone-800 mb-4 border-b border-stone-200 pb-2">
@@ -753,7 +755,7 @@ const renderFileContent = (file: FileRecord, content: string, settings?: Reading
                   );
                 }
 
-                if (!inline && (match || isGenericCodeBlock)) {
+                if (!isInline && (match || isGenericCodeBlock)) {
                   // Normalize language: C++ -> cpp, etc.
                   let lang = isGenericCodeBlock ? 'text' : match?.[1]?.toLowerCase();
                   if (lang === 'c++') lang = 'cpp';
@@ -793,7 +795,7 @@ const renderFileContent = (file: FileRecord, content: string, settings?: Reading
                   );
                 }
 
-                if (inline) {
+                if (isInline) {
                   return <code className="bg-gray-100 text-rose-600 border border-gray-200 px-1.5 py-0.5 rounded-md text-[0.82em] font-mono not-prose" {...props}>{children}</code>;
                 }
 

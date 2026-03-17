@@ -500,7 +500,7 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
                     onCancel={() => setCatRenaming(null)}
                   />
                 ) : (
-                  <span className="text-xs font-semibold text-gray-600 flex-1 truncate">
+                  <span className="text-[13px] font-semibold text-gray-600 flex-1 truncate">
                     {getCategoryLabel(cat)}
                   </span>
                 )}
@@ -558,7 +558,7 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
                     />
                   ) : (
                     <>
-                      <p className="text-sm text-gray-700 truncate font-medium leading-tight">{t.name}</p>
+                      <p className="text-xs text-gray-700 truncate font-medium leading-tight">{t.name}</p>
                       {t.description && (
                         <p className="text-[11px] text-gray-400 truncate leading-tight mt-0.5">{t.description}</p>
                       )}
@@ -1053,7 +1053,7 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
                       onCancel={() => setCatRenaming(null)}
                     />
                   ) : (
-                    <span className={`text-xs font-semibold truncate flex-1 ${isUncategorized ? 'text-gray-400 italic' : 'text-gray-600'}`}>
+                    <span className={`text-[13px] font-semibold truncate flex-1 ${isUncategorized ? 'text-gray-400 italic' : 'text-gray-600'}`}>
                       {getCatName(catId)}
                     </span>
                   )}
