@@ -159,6 +159,7 @@ export const DEFAULT_MODULE_CONFIG: ModuleConfig[] = [
   { id: 'api',          name: 'API管理',   enabled: true, priority: 11, icon: 'Webhook',       shortcut: 'Tab+3' },
   { id: 'browser',      name: '内置浏览器', enabled: true, priority: 12, icon: 'Globe',        shortcut: 'Tab+B' },
   { id: 'image-hosting', name: '图床管理', enabled: true, priority: 13, icon: 'Image',         shortcut: 'Tab+I' },
+  { id: 'latex',        name: 'LaTeX编辑器', enabled: true, priority: 14, icon: 'FileType2',    shortcut: 'Tab+X' },
 ];
 
 export interface RecurringCategory {
@@ -291,6 +292,28 @@ export interface ElectronAPI {
   testEmailConfig: (config: import('./types').EmailConfig) => Promise<{ success: boolean; error?: string }>;
   // 代理设置
   setProxy?: (port: number | null) => Promise<{ success: boolean; error?: string }>;
+  // LaTeX
+  latexCheckEnv: () => Promise<LatexEnvironment>;
+  latexCompile: (params: { content: string; engine: string; jobId: string }) => Promise<LatexCompileResult>;
+  latexReadPdf: (pdfPath: string) => Promise<string>;  // 返回 base64
+  latexGetTemplates: () => Promise<LatexTemplate[]>;
+  latexSaveTemplate: (template: LatexTemplate) => Promise<boolean>;
+  latexDeleteTemplate: (id: string) => Promise<boolean>;
+  latexRenameCategory: (params: { oldName: string; newName: string }) => Promise<boolean>;
+  latexDeleteCategory: (params: { categoryName: string; moveToCategory: string }) => Promise<boolean>;
+  latexOpenFile: () => Promise<{ path: string; content: string } | null>;
+  latexSaveFile: (params: { filePath: string; content: string }) => Promise<boolean>;
+  latexSaveFileAs: (content: string) => Promise<string | null>;  // 返回保存路径
+  latexGetSettings: () => Promise<LatexSettings>;
+  latexSaveSettings: (settings: LatexSettings) => Promise<boolean>;
+  latexBrowseExecutable: () => Promise<string | null>;
+  // 托管文件（userData/latex/files/）
+  latexListFiles: () => Promise<LatexManagedFile[]>;
+  latexNewManagedFile: (name: string) => Promise<{ path: string; content: string } | null>;
+  latexOpenManagedFile: (filePath: string) => Promise<{ path: string; content: string } | null>;
+  latexSaveManagedFile: (params: { filePath: string; content: string }) => Promise<boolean>;
+  latexRenameManagedFile: (params: { filePath: string; newName: string }) => Promise<string | null>;
+  latexDeleteManagedFile: (filePath: string) => Promise<boolean>;
 }
 
 declare global {
@@ -423,4 +446,70 @@ export interface EmailConfig {
     pass: string;      // 授权码（非邮箱密码）
   };
   recipient: string;   // 收件邮箱
+}
+
+/** LaTeX 托管文件条目（userData/latex/files/ 目录内） */
+export interface LatexManagedFile {
+  name: string;       // 文件名，如 "thesis.tex"
+  path: string;       // 绝对路径
+  size: number;       // 字节数
+  modifiedAt: number; // 最后修改时间戳
+}
+
+// ── LaTeX 编辑器 ──────────────────────────────────────────────────────────────
+
+/** LaTeX 模板 */
+export interface LatexTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  content: string;     // .tex 源码
+  category: string;    // 如 'article' | 'beamer' | 'custom'
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** LaTeX 编译结果 */
+export interface LatexCompileResult {
+  success: boolean;
+  pdfPath?: string;    // 编译成功时输出的 PDF 绝对路径
+  errors: LatexLogEntry[];
+  warnings: LatexLogEntry[];
+  rawLog: string;      // 原始日志
+  duration: number;    // 编译耗时 ms
+}
+
+/** 日志条目（错误/警告） */
+export interface LatexLogEntry {
+  type: 'error' | 'warning' | 'info';
+  message: string;
+  file?: string;
+  line?: number;
+}
+
+/** LaTeX 环境检测结果 */
+export interface LatexEnvironment {
+  xelatex: string | null;    // 可执行文件路径，null 表示未找到
+  pdflatex: string | null;
+  lualatex: string | null;
+  tlmgr: string | null;
+  mpm: string | null;        // MiKTeX 包管理器
+  ctexInstalled: boolean;
+  platform: 'darwin' | 'win32' | 'linux';
+}
+
+/** 当前打开的 LaTeX 文档状态 */
+export interface LatexDocState {
+  filePath: string | null;    // null 表示未保存的新文档
+  content: string;
+  isDirty: boolean;           // 有未保存的修改
+  lastCompilePdfPath: string | null;
+}
+
+/** 用户可手动配置的 LaTeX 设置 */
+export interface LatexSettings {
+  /** 各编译器的自定义可执行文件路径（留空则自动检测）*/
+  xelatexPath: string;
+  pdflatexPath: string;
+  lualatexPath: string;
 }

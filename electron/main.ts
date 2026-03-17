@@ -8,6 +8,7 @@ import os from 'os';
 import net from 'net';
 import nodemailer from 'nodemailer';
 import dns from 'dns';
+import { spawn, exec } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1309,5 +1310,837 @@ ipcMain.handle('set-proxy', async (_, port: number | null) => {
   } catch (error) {
     console.error('[Proxy] 设置失败:', error);
     return { success: false, error: (error as Error).message };
+  }
+});
+
+// ── LaTeX IPC Handlers ────────────────────────────────────────────────────────
+
+/**
+ * 在 macOS/Linux 上通过 login shell 执行 which，确保 PATH 包含
+ * /Library/TeX/texbin（MacTeX）、/usr/local/bin 等用户配置路径。
+ * Electron 进程直接启动时拿到的是精简版 PATH，不含这些目录。
+ *
+ * @param cmd     命令名（如 "xelatex"）
+ * @param custom  用户手动指定的可执行文件绝对路径（非空时直接验证并返回）
+ */
+function which(cmd: string, custom?: string): Promise<string | null> {
+  // 如果用户指定了自定义路径，直接验证其是否可执行
+  if (custom && custom.trim()) {
+    return new Promise((resolve) => {
+      try {
+        require('fs').accessSync(custom.trim(), require('fs').constants.X_OK);
+        resolve(custom.trim());
+      } catch {
+        resolve(null); // 文件不存在或没有执行权限
+      }
+    });
+  }
+
+  return new Promise((resolve) => {
+    const isWin32 = process.platform === 'win32';
+    if (isWin32) {
+      exec(`where "${cmd}"`, (err, stdout) => {
+        if (err || !stdout.trim()) resolve(null);
+        else resolve(stdout.trim().split('\n')[0].trim());
+      });
+    } else {
+      // -l: login shell（加载 /etc/profile, ~/.bash_profile, /etc/paths 等）
+      // -c: 执行命令
+      exec(`bash -lc 'which "${cmd}"'`, (err, stdout) => {
+        if (err || !stdout.trim()) {
+          // fallback: 直接检查 MacTeX / TeX Live 常见安装路径
+          const knownPaths = [
+            `/Library/TeX/texbin/${cmd}`,
+            `/usr/local/texlive/2024/bin/universal-darwin/${cmd}`,
+            `/usr/local/texlive/2023/bin/universal-darwin/${cmd}`,
+            `/usr/local/texlive/2022/bin/universal-darwin/${cmd}`,
+            `/usr/texbin/${cmd}`,
+          ];
+          const found = knownPaths.find((p) => {
+            try { require('fs').accessSync(p, require('fs').constants.X_OK); return true; } catch { return false; }
+          });
+          resolve(found ?? null);
+        } else {
+          resolve(stdout.trim().split('\n')[0].trim());
+        }
+      });
+    }
+  });
+}
+
+/** 检测 LaTeX 运行环境 */
+ipcMain.handle('latex-check-env', async () => {
+  const settings = await readLatexSettings();
+
+  const [xelatex, pdflatex, lualatex, tlmgr, mpm] = await Promise.all([
+    which('xelatex', settings.xelatexPath),
+    which('pdflatex', settings.pdflatexPath),
+    which('lualatex', settings.lualatexPath),
+    which('tlmgr'),
+    which('mpm'),
+  ]);
+
+  // 检测 ctex 宏包是否已安装（kpsewhich 是 TeX 发行版内置的文件查找工具）
+  let ctexInstalled = false;
+  if (xelatex || pdflatex || lualatex) {
+    ctexInstalled = await new Promise<boolean>((resolve) => {
+      // 同样用 login shell，确保 kpsewhich 可被找到
+      const cmd = process.platform === 'win32'
+        ? 'kpsewhich ctex.sty'
+        : `bash -lc 'kpsewhich ctex.sty'`;
+      exec(cmd, (err, stdout) => {
+        resolve(!err && stdout.trim().length > 0);
+      });
+    });
+  }
+
+  return {
+    xelatex,
+    pdflatex,
+    lualatex,
+    tlmgr,
+    mpm,
+    ctexInstalled,
+    platform: process.platform as 'darwin' | 'win32' | 'linux',
+  };
+});
+
+/** 解析 LaTeX 编译日志，提取错误和警告 */
+function parseLatexLog(log: string): { errors: any[]; warnings: any[] } {
+  const errors: any[] = [];
+  const warnings: any[] = [];
+
+  const lines = log.split('\n');
+  // 跟踪当前文件（TeX 日志中用括号表示文件入栈/出栈）
+  const fileStack: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // 错误：! 开头
+    if (line.startsWith('!')) {
+      const message = line.slice(1).trim();
+      // 接下来尝试找行号（l.NNN 格式）
+      let lineNum: number | undefined;
+      for (let j = i + 1; j < Math.min(i + 8, lines.length); j++) {
+        const lineMatch = lines[j].match(/^l\.(\d+)/);
+        if (lineMatch) {
+          lineNum = parseInt(lineMatch[1], 10);
+          break;
+        }
+      }
+      errors.push({
+        type: 'error',
+        message,
+        file: fileStack[fileStack.length - 1],
+        line: lineNum,
+      });
+    }
+
+    // 警告：LaTeX Warning: / Package XXX Warning:
+    const warnMatch = line.match(/^(?:LaTeX|Package \w+) Warning: (.+)/);
+    if (warnMatch) {
+      // 行号通常在同行末尾 "on input line NNN."
+      const lineNumMatch = warnMatch[1].match(/on input line (\d+)\./);
+      warnings.push({
+        type: 'warning',
+        message: warnMatch[1],
+        file: fileStack[fileStack.length - 1],
+        line: lineNumMatch ? parseInt(lineNumMatch[1], 10) : undefined,
+      });
+    }
+
+    // 追踪文件入栈（新文件）
+    const newFileMatch = line.match(/\(([^()]+\.(?:tex|sty|cls|bib))/);
+    if (newFileMatch) {
+      fileStack.push(path.basename(newFileMatch[1]));
+    }
+    // 文件出栈
+    if (line.includes(')')) {
+      fileStack.pop();
+    }
+  }
+
+  return { errors, warnings };
+}
+
+/** LaTeX 编译 */
+ipcMain.handle('latex-compile', async (_, params: {
+  content: string;
+  engine: string;
+  jobId: string;
+}) => {
+  const { content, engine, jobId } = params;
+  const startTime = Date.now();
+
+  // 在系统临时目录中创建每次编译独立的子目录
+  const tmpDir = path.join(os.tmpdir(), `guyue-latex-${jobId}`);
+
+  try {
+    await fs.mkdir(tmpDir, { recursive: true });
+
+    const texFile = path.join(tmpDir, 'main.tex');
+    await fs.writeFile(texFile, content, 'utf-8');
+
+    // 读取用户自定义编译器路径设置
+    const latexSettings = await readLatexSettings();
+    const customPath = engine === 'xelatex'
+      ? latexSettings.xelatexPath
+      : engine === 'pdflatex'
+      ? latexSettings.pdflatexPath
+      : engine === 'lualatex'
+      ? latexSettings.lualatexPath
+      : '';
+
+    const enginePath = await which(engine, customPath);
+    if (!enginePath) {
+      return {
+        success: false,
+        errors: [{
+          type: 'error',
+          message: `找不到编译器 "${engine}"。请在 LaTeX 设置中手动指定编译器路径，或安装 TeX 发行版（macOS: MacTeX，Windows: MiKTeX）。`,
+        }],
+        warnings: [],
+        rawLog: '',
+        duration: Date.now() - startTime,
+      };
+    }
+
+    const pdfPath = path.join(tmpDir, 'main.pdf');
+
+    // 编译参数：-interaction=nonstopmode 不交互，-halt-on-error 遇错停止
+    const args = [
+      `-interaction=nonstopmode`,
+      `-halt-on-error`,
+      `-output-directory=${tmpDir}`,
+      texFile,
+    ];
+
+    const rawLog = await new Promise<string>((resolve) => {
+      let output = '';
+
+      // 补充 MacTeX / TeX Live 常见路径到 PATH，防止 Electron 启动时 PATH 不完整
+      const extraPaths = process.platform !== 'win32'
+        ? [
+            '/Library/TeX/texbin',
+            '/usr/local/texlive/2024/bin/universal-darwin',
+            '/usr/local/texlive/2023/bin/universal-darwin',
+            '/usr/local/texlive/2022/bin/universal-darwin',
+            '/usr/texbin',
+            '/usr/local/bin',
+          ]
+        : [];
+      const envPATH = [...extraPaths, process.env.PATH ?? ''].join(':');
+
+      const proc = spawn(enginePath, args, {
+        cwd: tmpDir,
+        env: { ...process.env, PATH: envPATH },
+      });
+
+      proc.stdout.on('data', (data: Buffer) => { output += data.toString(); });
+      proc.stderr.on('data', (data: Buffer) => { output += data.toString(); });
+
+      // 超时 60 秒自动杀进程
+      const timeout = setTimeout(() => {
+        proc.kill();
+        output += '\n[Guyue] 编译超时（60s），已终止进程。\n';
+        resolve(output);
+      }, 60000);
+
+      proc.on('close', () => {
+        clearTimeout(timeout);
+        resolve(output);
+      });
+    });
+
+    const pdfExists = await fs.access(pdfPath).then(() => true).catch(() => false);
+    const { errors, warnings } = parseLatexLog(rawLog);
+
+    return {
+      success: pdfExists,
+      pdfPath: pdfExists ? pdfPath : undefined,
+      errors,
+      warnings,
+      rawLog,
+      duration: Date.now() - startTime,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      errors: [{ type: 'error', message: (err as Error).message }],
+      warnings: [],
+      rawLog: '',
+      duration: Date.now() - startTime,
+    };
+  }
+});
+
+/** 读取编译后的 PDF 为 base64（供 pdfjs 渲染） */
+ipcMain.handle('latex-read-pdf', async (_, pdfPath: string) => {
+  try {
+    const buf = await fs.readFile(pdfPath);
+    return buf.toString('base64');
+  } catch {
+    return null;
+  }
+});
+
+// LaTeX 模板存储路径
+function getLatexTemplatesPath(): string {
+  return path.join(app.getPath('userData'), 'latex', 'templates.json');
+}
+
+/** 读取所有模板 */
+ipcMain.handle('latex-get-templates', async () => {
+  try {
+    const p = getLatexTemplatesPath();
+    const exists = await fs.access(p).then(() => true).catch(() => false);
+    if (!exists) {
+      // 首次使用时写入内置模板
+      await fs.mkdir(path.dirname(p), { recursive: true });
+      await fs.writeFile(p, JSON.stringify(BUILTIN_LATEX_TEMPLATES, null, 2), 'utf-8');
+      return BUILTIN_LATEX_TEMPLATES;
+    }
+    const raw = await fs.readFile(p, 'utf-8');
+    return JSON.parse(raw);
+  } catch {
+    return BUILTIN_LATEX_TEMPLATES;
+  }
+});
+
+/** 保存（新增或更新）模板 */
+ipcMain.handle('latex-save-template', async (_, template: any) => {
+  try {
+    const p = getLatexTemplatesPath();
+    await fs.mkdir(path.dirname(p), { recursive: true });
+
+    let templates: any[] = [];
+    const exists = await fs.access(p).then(() => true).catch(() => false);
+    if (exists) {
+      const raw = await fs.readFile(p, 'utf-8');
+      templates = JSON.parse(raw);
+    } else {
+      templates = [...BUILTIN_LATEX_TEMPLATES];
+    }
+
+    const idx = templates.findIndex((t: any) => t.id === template.id);
+    if (idx >= 0) {
+      templates[idx] = template;
+    } else {
+      templates.push(template);
+    }
+
+    await fs.writeFile(p, JSON.stringify(templates, null, 2), 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+/** 删除模板 */
+ipcMain.handle('latex-delete-template', async (_, id: string) => {
+  try {
+    const p = getLatexTemplatesPath();
+    const exists = await fs.access(p).then(() => true).catch(() => false);
+    if (!exists) return false;
+    const raw = await fs.readFile(p, 'utf-8');
+    const templates = JSON.parse(raw).filter((t: any) => t.id !== id);
+    await fs.writeFile(p, JSON.stringify(templates, null, 2), 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+/** 打开 .tex 文件 */
+ipcMain.handle('latex-open-file', async () => {
+  if (!mainWindow) return null;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '打开 LaTeX 文件',
+    filters: [{ name: 'LaTeX Files', extensions: ['tex'] }, { name: 'All Files', extensions: ['*'] }],
+    properties: ['openFile'],
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  const filePath = result.filePaths[0];
+  const content = await fs.readFile(filePath, 'utf-8');
+  return { path: filePath, content };
+});
+
+/** 保存文件到指定路径 */
+ipcMain.handle('latex-save-file', async (_, params: { filePath: string; content: string }) => {
+  try {
+    await fs.writeFile(params.filePath, params.content, 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+/** 另存为 */
+ ipcMain.handle('latex-save-file-as', async (_, content: string) => {
+  if (!mainWindow) return null;
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: '保存 LaTeX 文件',
+    defaultPath: 'document.tex',
+    filters: [{ name: 'LaTeX Files', extensions: ['tex'] }],
+  });
+  if (result.canceled || !result.filePath) return null;
+  await fs.writeFile(result.filePath, content, 'utf-8');
+  return result.filePath;
+});
+
+// ── LaTeX 用户设置（编译器自定义路径）────────────────────────────────────────
+
+const LATEX_SETTINGS_FILE = path.join(app.getPath('userData'), 'latex', 'settings.json');
+
+const DEFAULT_LATEX_SETTINGS = {
+  xelatexPath: '',
+  pdflatexPath: '',
+  lualatexPath: '',
+};
+
+async function readLatexSettings(): Promise<typeof DEFAULT_LATEX_SETTINGS> {
+  try {
+    const raw = await fs.readFile(LATEX_SETTINGS_FILE, 'utf-8');
+    return { ...DEFAULT_LATEX_SETTINGS, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULT_LATEX_SETTINGS };
+  }
+}
+
+ipcMain.handle('latex-get-settings', async () => {
+  return readLatexSettings();
+});
+
+ipcMain.handle('latex-save-settings', async (_, settings: typeof DEFAULT_LATEX_SETTINGS) => {
+  try {
+    await fs.mkdir(path.dirname(LATEX_SETTINGS_FILE), { recursive: true });
+    await fs.writeFile(LATEX_SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+/** 弹出文件选择对话框让用户手动定位编译器可执行文件 */
+ipcMain.handle('latex-browse-executable', async () => {
+  if (!mainWindow) return null;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '选择 LaTeX 编译器可执行文件',
+    properties: ['openFile'],
+    filters: process.platform === 'win32'
+      ? [{ name: 'Executable', extensions: ['exe'] }]
+      : [{ name: 'All Files', extensions: ['*'] }],
+    defaultPath: process.platform === 'win32'
+      ? 'C:\\Program Files\\MiKTeX\\miktex\\bin\\x64'
+      : '/Library/TeX/texbin',
+  });
+  if (result.canceled || !result.filePaths[0]) return null;
+  return result.filePaths[0];
+});
+
+// ── 内置 LaTeX 模板 ───────────────────────────────────────────────────────────
+const BUILTIN_LATEX_TEMPLATES = [
+  {
+    id: 'builtin-article-cn',
+    name: '中文文章',
+    description: '适合普通中文排版，使用 ctex 宏包，XeLaTeX 编译',
+    category: 'article',
+    createdAt: 0,
+    updatedAt: 0,
+    content: `\\documentclass[12pt, a4paper]{article}
+\\usepackage{ctex}
+\\usepackage{geometry}
+\\usepackage{hyperref}
+\\usepackage{amsmath, amssymb}
+
+\\geometry{left=2.5cm, right=2.5cm, top=2.5cm, bottom=2.5cm}
+
+\\title{文章标题}
+\\author{作者}
+\\date{\\today}
+
+\\begin{document}
+
+\\maketitle
+
+\\begin{abstract}
+这里是摘要内容。
+\\end{abstract}
+
+\\tableofcontents
+\\newpage
+
+\\section{引言}
+这里是引言部分。
+
+\\section{正文}
+这里是正文内容。支持数学公式，例如：
+\\begin{equation}
+  E = mc^2
+\\end{equation}
+
+\\section{结论}
+这里是结论。
+
+\\end{document}
+`,
+  },
+  {
+    id: 'builtin-article-en',
+    name: 'English Article',
+    description: 'Standard English article template, pdfLaTeX',
+    category: 'article',
+    createdAt: 0,
+    updatedAt: 0,
+    content: `\\documentclass[12pt, a4paper]{article}
+\\usepackage[utf8]{inputenc}
+\\usepackage[T1]{fontenc}
+\\usepackage{geometry}
+\\usepackage{hyperref}
+\\usepackage{amsmath, amssymb}
+
+\\geometry{margin=2.5cm}
+
+\\title{Article Title}
+\\author{Author Name}
+\\date{\\today}
+
+\\begin{document}
+
+\\maketitle
+
+\\begin{abstract}
+Abstract goes here.
+\\end{abstract}
+
+\\tableofcontents
+\\newpage
+
+\\section{Introduction}
+Introduction text here.
+
+\\section{Main Content}
+Content here. Inline math: $E = mc^2$. Display math:
+\\begin{equation}
+  \\int_0^\\infty e^{-x^2}\\,dx = \\frac{\\sqrt{\\pi}}{2}
+\\end{equation}
+
+\\section{Conclusion}
+Conclusion here.
+
+\\end{document}
+`,
+  },
+  {
+    id: 'builtin-beamer-cn',
+    name: '中文演示文稿 (Beamer)',
+    description: 'Beamer 幻灯片，中文支持，XeLaTeX 编译',
+    category: 'beamer',
+    createdAt: 0,
+    updatedAt: 0,
+    content: `\\documentclass[aspectratio=169]{beamer}
+\\usepackage{ctex}
+\\usepackage{amsmath}
+
+\\usetheme{Madrid}
+\\usecolortheme{default}
+
+\\title{演示文稿标题}
+\\subtitle{副标题}
+\\author{作者}
+\\institute{单位}
+\\date{\\today}
+
+\\begin{document}
+
+\\begin{frame}
+  \\titlepage
+\\end{frame}
+
+\\begin{frame}{目录}
+  \\tableofcontents
+\\end{frame}
+
+\\section{第一节}
+\\begin{frame}{第一节标题}
+  \\begin{itemize}
+    \\item 第一点
+    \\item 第二点
+    \\item 第三点
+  \\end{itemize}
+\\end{frame}
+
+\\section{第二节}
+\\begin{frame}{公式示例}
+  Einstein's famous equation:
+  \\begin{equation}
+    E = mc^2
+  \\end{equation}
+\\end{frame}
+
+\\end{document}
+`,
+  },
+  {
+    id: 'builtin-cv-cn',
+    name: '简历（中文）',
+    description: '简洁的中文简历模板',
+    category: 'cv',
+    createdAt: 0,
+    updatedAt: 0,
+    content: `\\documentclass[11pt, a4paper]{article}
+\\usepackage{ctex}
+\\usepackage{geometry}
+\\usepackage{hyperref}
+\\usepackage{enumitem}
+\\usepackage{titlesec}
+
+\\geometry{left=2cm, right=2cm, top=1.8cm, bottom=1.8cm}
+\\setlength{\\parindent}{0pt}
+
+\\titleformat{\\section}{\\large\\bfseries}{}{0em}{}[\\titlerule]
+
+\\begin{document}
+
+{\\LARGE\\bfseries 姓名}\\hfill
+\\href{mailto:email@example.com}{email@example.com} \\quad
+手机: 138-xxxx-xxxx
+
+\\vspace{0.5em}
+
+\\section{教育经历}
+\\textbf{XX大学}\\hfill 2020 -- 2024 \\\\
+计算机科学与技术，学士
+
+\\section{工作经历}
+\\textbf{公司名称} \\quad 软件工程师 \\hfill 2024.07 -- 至今
+\\begin{itemize}[noitemsep, topsep=2pt]
+  \\item 工作内容描述一
+  \\item 工作内容描述二
+\\end{itemize}
+
+\\section{项目经历}
+\\textbf{项目名称} \\hfill 2023
+\\begin{itemize}[noitemsep, topsep=2pt]
+  \\item 项目描述
+\\end{itemize}
+
+\\section{技能}
+编程语言：Python, TypeScript, Java \\\\
+工具：Git, Docker, Linux
+
+\\end{document}
+`,
+  },
+  {
+    id: 'builtin-math-cn',
+    name: '数学笔记',
+    description: '适合数学公式密集的笔记，中文支持',
+    category: 'article',
+    createdAt: 0,
+    updatedAt: 0,
+    content: `\\documentclass[12pt, a4paper]{article}
+\\usepackage{ctex}
+\\usepackage{amsmath, amssymb, amsthm}
+\\usepackage{geometry}
+
+\\geometry{margin=2.5cm}
+
+% 定理环境
+\\newtheorem{theorem}{定理}[section]
+\\newtheorem{lemma}[theorem]{引理}
+\\newtheorem{definition}{定义}[section]
+\\newtheorem{example}{例}[section]
+
+\\title{数学笔记}
+\\author{}
+\\date{}
+
+\\begin{document}
+\\maketitle
+
+\\section{基本概念}
+
+\\begin{definition}
+  设 $f: X \\to Y$ 是一个映射，若对任意 $y \\in Y$，
+  存在唯一 $x \\in X$ 使得 $f(x) = y$，则称 $f$ 为双射。
+\\end{definition}
+
+\\begin{theorem}
+  \\label{thm:example}
+  设 $f$ 连续，则 $f$ 可积。
+\\end{theorem}
+
+\\begin{proof}
+  证明略。
+\\end{proof}
+
+\\begin{example}
+  计算 $\\int_0^1 x^2 \\, dx$：
+  \\[
+    \\int_0^1 x^2 \\, dx = \\left[\\frac{x^3}{3}\\right]_0^1 = \\frac{1}{3}
+  \\]
+    \\end{example}
+
+\\end{document}
+`,
+  },
+];
+
+// ── LaTeX 分类管理 ─────────────────────────────────────────────────────────────
+
+/** 读取模板列表（内部辅助） */
+async function readTemplates(): Promise<any[]> {
+  const p = getLatexTemplatesPath();
+  const exists = await fs.access(p).then(() => true).catch(() => false);
+  if (!exists) {
+    await fs.mkdir(path.dirname(p), { recursive: true });
+    await fs.writeFile(p, JSON.stringify(BUILTIN_LATEX_TEMPLATES, null, 2), 'utf-8');
+    return [...BUILTIN_LATEX_TEMPLATES];
+  }
+  try {
+    return JSON.parse(await fs.readFile(p, 'utf-8'));
+  } catch {
+    return [...BUILTIN_LATEX_TEMPLATES];
+  }
+}
+
+async function writeTemplates(templates: any[]): Promise<void> {
+  const p = getLatexTemplatesPath();
+  await fs.mkdir(path.dirname(p), { recursive: true });
+  await fs.writeFile(p, JSON.stringify(templates, null, 2), 'utf-8');
+}
+
+/** 重命名分类（将所有该分类模板的 category 字段改为新名） */
+ipcMain.handle('latex-rename-category', async (_, params: { oldName: string; newName: string }) => {
+  try {
+    const { oldName, newName } = params;
+    if (!newName.trim() || oldName === newName) return false;
+    const templates = await readTemplates();
+    const updated = templates.map((t: any) =>
+      t.category === oldName ? { ...t, category: newName.trim(), updatedAt: Date.now() } : t
+    );
+    await writeTemplates(updated);
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+/** 删除分类（将该分类模板批量移到 moveToCategory） */
+ipcMain.handle('latex-delete-category', async (_, params: { categoryName: string; moveToCategory: string }) => {
+  try {
+    const { categoryName, moveToCategory } = params;
+    const templates = await readTemplates();
+    const updated = templates.map((t: any) =>
+      t.category === categoryName
+        ? { ...t, category: moveToCategory || 'custom', updatedAt: Date.now() }
+        : t
+    );
+    await writeTemplates(updated);
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+// ── LaTeX 托管文件（userData/latex/files/）─────────────────────────────────────
+
+function getLatexFilesDir(): string {
+  return path.join(app.getPath('userData'), 'latex', 'files');
+}
+
+/** 列出托管目录中的所有 .tex 文件 */
+ipcMain.handle('latex-list-files', async () => {
+  try {
+    const dir = getLatexFilesDir();
+    await fs.mkdir(dir, { recursive: true });
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    const files = await Promise.all(
+      entries
+        .filter(e => e.isFile() && e.name.endsWith('.tex'))
+        .map(async e => {
+          const filePath = path.join(dir, e.name);
+          const stat = await fs.stat(filePath);
+          return {
+            name: e.name,
+            path: filePath,
+            size: stat.size,
+            modifiedAt: stat.mtimeMs,
+          };
+        })
+    );
+    return files.sort((a, b) => b.modifiedAt - a.modifiedAt);
+  } catch {
+    return [];
+  }
+});
+
+/** 在托管目录新建一个 .tex 文件 */
+ipcMain.handle('latex-new-managed-file', async (_, name: string) => {
+  try {
+    const dir = getLatexFilesDir();
+    await fs.mkdir(dir, { recursive: true });
+    // 确保文件名以 .tex 结尾
+    const safeName = name.trim().endsWith('.tex') ? name.trim() : `${name.trim()}.tex`;
+    // 避免同名冲突
+    let finalName = safeName;
+    let counter = 1;
+    while (await fs.access(path.join(dir, finalName)).then(() => true).catch(() => false)) {
+      const base = safeName.replace(/\.tex$/, '');
+      finalName = `${base} (${counter++}).tex`;
+    }
+    const filePath = path.join(dir, finalName);
+    const defaultContent = `\\documentclass[12pt, a4paper]{ctexart}\n\n\\title{${finalName.replace(/\.tex$/, '')}}\n\\author{}\n\\date{\\today}\n\n\\begin{document}\n\\maketitle\n\n\\section{正文}\n\n\\end{document}\n`;
+    await fs.writeFile(filePath, defaultContent, 'utf-8');
+    return { path: filePath, content: defaultContent };
+  } catch {
+    return null;
+  }
+});
+
+/** 读取托管文件内容 */
+ipcMain.handle('latex-open-managed-file', async (_, filePath: string) => {
+  try {
+    const content = await fs.readFile(filePath, 'utf-8');
+    return { path: filePath, content };
+  } catch {
+    return null;
+  }
+});
+
+/** 保存托管文件 */
+ipcMain.handle('latex-save-managed-file', async (_, params: { filePath: string; content: string }) => {
+  try {
+    await fs.writeFile(params.filePath, params.content, 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+/** 重命名托管文件，返回新路径 */
+ipcMain.handle('latex-rename-managed-file', async (_, params: { filePath: string; newName: string }) => {
+  try {
+    const { filePath, newName } = params;
+    const dir = path.dirname(filePath);
+    const safeName = newName.trim().endsWith('.tex') ? newName.trim() : `${newName.trim()}.tex`;
+    const newPath = path.join(dir, safeName);
+    if (newPath === filePath) return filePath;
+    await fs.rename(filePath, newPath);
+    return newPath;
+  } catch {
+    return null;
+  }
+});
+
+/** 删除托管文件 */
+ipcMain.handle('latex-delete-managed-file', async (_, filePath: string) => {
+  try {
+    await fs.unlink(filePath);
+    return true;
+  } catch {
+    return false;
   }
 });

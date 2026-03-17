@@ -76,6 +76,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // 代理设置
   setProxy: (port: number | null) => ipcRenderer.invoke('set-proxy', port),
+
+  // LaTeX
+  latexCheckEnv: () => ipcRenderer.invoke('latex-check-env'),
+  latexCompile: (params: { content: string; engine: string; jobId: string }) =>
+    ipcRenderer.invoke('latex-compile', params),
+  latexReadPdf: (pdfPath: string) => ipcRenderer.invoke('latex-read-pdf', pdfPath),
+  latexGetTemplates: () => ipcRenderer.invoke('latex-get-templates'),
+  latexSaveTemplate: (template: any) => ipcRenderer.invoke('latex-save-template', template),
+  latexDeleteTemplate: (id: string) => ipcRenderer.invoke('latex-delete-template', id),
+  latexRenameCategory: (params: { oldName: string; newName: string }) =>
+    ipcRenderer.invoke('latex-rename-category', params),
+  latexDeleteCategory: (params: { categoryName: string; moveToCategory: string }) =>
+    ipcRenderer.invoke('latex-delete-category', params),
+  latexOpenFile: () => ipcRenderer.invoke('latex-open-file'),
+  latexSaveFile: (params: { filePath: string; content: string }) =>
+    ipcRenderer.invoke('latex-save-file', params),
+  latexSaveFileAs: (content: string) => ipcRenderer.invoke('latex-save-file-as', content),
+  latexGetSettings: () => ipcRenderer.invoke('latex-get-settings'),
+  latexSaveSettings: (settings: any) => ipcRenderer.invoke('latex-save-settings', settings),
+  latexBrowseExecutable: () => ipcRenderer.invoke('latex-browse-executable'),
+  // 托管文件
+  latexListFiles: () => ipcRenderer.invoke('latex-list-files'),
+  latexNewManagedFile: (name: string) => ipcRenderer.invoke('latex-new-managed-file', name),
+  latexOpenManagedFile: (filePath: string) => ipcRenderer.invoke('latex-open-managed-file', filePath),
+  latexSaveManagedFile: (params: { filePath: string; content: string }) =>
+    ipcRenderer.invoke('latex-save-managed-file', params),
+  latexRenameManagedFile: (params: { filePath: string; newName: string }) =>
+    ipcRenderer.invoke('latex-rename-managed-file', params),
+  latexDeleteManagedFile: (filePath: string) => ipcRenderer.invoke('latex-delete-managed-file', filePath),
 });
 
 // 类型定义（可选，用于 TypeScript）

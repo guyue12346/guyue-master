@@ -29,6 +29,8 @@ const HeatmapContainer = React.lazy(() => import('./components/HeatmapContainer'
 const DataCenterManager = React.lazy(() => import('./components/datacenter/DataCenterManager').then(m => ({ default: m.DataCenterManager })));
 const ExcalidrawEditor = React.lazy(() => import('./components/datacenter/ExcalidrawEditor').then(m => ({ default: m.ExcalidrawEditor })));
 const RecurringEventManager = React.lazy(() => import('./components/RecurringEventManager').then(m => ({ default: m.RecurringEventManager })));
+const LatexEditor = React.lazy(() => import('./components/LatexEditor').then(m => ({ default: m.LatexEditor })));
+const LatexSidebar = React.lazy(() => import('./components/LatexSidebar').then(m => ({ default: m.LatexSidebar })));
 
 // Lazy load modals
 const NoteModal = React.lazy(() => import('./components/NoteModal').then(m => ({ default: m.NoteModal })));
@@ -431,6 +433,12 @@ const App: React.FC = () => {
   // File Editing State
   const [isEditingFile, setIsEditingFile] = useState(false);
   const [editingFileContent, setEditingFileContent] = useState('');
+
+  // LaTeX: ref bridges so LatexSidebar can inject content/files into LatexEditor
+  const latexLoadTemplateRef = useRef<((content: string) => void) | null>(null);
+  const latexOpenFileRef = useRef<((file: { path: string; content: string }) => void) | null>(null);
+  // LaTeX sidebar visibility (independent of global isSidebarVisible)
+  const [isLatexSidebarVisible, setIsLatexSidebarVisible] = useState(true);
 
   // Shortcut handling
   const isTabPressed = React.useRef(false);
@@ -2071,7 +2079,20 @@ const App: React.FC = () => {
           onSubModeChange={setTodoSubMode}
           recurringCount={recurringEvents.filter(e => e.isActive).length}
         />
-      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
+      ) : appMode === 'latex' && !isRendererFullscreen && !isTerminalFullscreen && isLatexSidebarVisible ? (
+        <Suspense fallback={<div className="w-60 bg-[#F5F5F5] border-r border-gray-200 shrink-0" />}>
+          <LatexSidebar
+            currentContent={''}
+            onLoadTemplate={(tplContent) => {
+              if (latexLoadTemplateRef.current) latexLoadTemplateRef.current(tplContent);
+            }}
+            onOpenManagedFile={(file) => {
+              if (latexOpenFileRef.current) latexOpenFileRef.current(file);
+            }}
+            onCollapse={() => setIsLatexSidebarVisible(false)}
+          />
+        </Suspense>
+      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'latex' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
         <Sidebar 
           appMode={appMode}  
           categories={activeCategories} 
@@ -2219,7 +2240,7 @@ const App: React.FC = () => {
       )}
 
       <div className="flex-1 flex flex-col min-w-0 bg-white relative" style={appMode === 'agent' ? { display: 'none' } : undefined}>
-        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
+        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'latex' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
         <div className="h-16 border-b border-gray-200 flex items-center justify-between px-6 bg-white shrink-0">
            <div className="flex items-center gap-4 flex-1 max-w-xl">
               <div className="relative flex-1">
@@ -2288,7 +2309,7 @@ const App: React.FC = () => {
         </div>
         )}
 
-        <div className={`flex-1 ${appMode === 'chat' ? 'overflow-hidden' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'chat' || appMode === 'excalidraw' || appMode === 'datacenter' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'p-4' : 'p-6'}`}>
+        <div className={`flex-1 ${appMode === 'chat' ? 'overflow-hidden' : appMode === 'latex' ? 'overflow-hidden' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'chat' || appMode === 'excalidraw' || appMode === 'datacenter' || appMode === 'latex' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'p-4' : 'p-6'}`}>
           <Suspense fallback={
             <div className="flex items-center justify-center h-full text-gray-400 gap-2">
               <Loader2 className="w-6 h-6 animate-spin" />
@@ -2543,6 +2564,27 @@ const App: React.FC = () => {
                   onSaveAPI={handleSaveAPI}
                   onDeleteAPI={handleDeleteAPI}
                 />
+              </div>
+            )}
+
+            {appMode === 'latex' && (
+              <div className="relative flex h-full w-full overflow-hidden">
+                {/* Floating expand strip — shown when latex sidebar is collapsed */}
+                {!isLatexSidebarVisible && (
+                  <button
+                    onClick={() => setIsLatexSidebarVisible(true)}
+                    className="absolute left-0 top-0 h-full w-5 z-10 flex items-center justify-center bg-gray-100 hover:bg-gray-200 border-r border-gray-200 transition-colors group"
+                    title="展开侧边栏"
+                  >
+                    <span className="w-0.5 h-8 bg-gray-300 group-hover:bg-gray-500 rounded-full transition-colors" />
+                  </button>
+                )}
+                <div className={`flex-1 min-w-0 h-full transition-all ${!isLatexSidebarVisible ? 'pl-5' : ''}`}>
+                  <LatexEditor
+                    onLoadTemplateRef={latexLoadTemplateRef}
+                    onOpenFileRef={latexOpenFileRef}
+                  />
+                </div>
               </div>
             )}
 
