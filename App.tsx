@@ -435,7 +435,8 @@ const App: React.FC = () => {
   const [editingFileContent, setEditingFileContent] = useState('');
 
   // LaTeX: ref bridges so LatexSidebar can inject content/files into LatexEditor
-  const latexLoadTemplateRef = useRef<((content: string) => void) | null>(null);
+  const latexEditTemplateRef = useRef<((template: any) => void) | null>(null);
+  const latexLoadTemplateAsFileRef = useRef<((content: string) => void) | null>(null);
   const latexOpenFileRef = useRef<((file: { path: string; content: string }) => void) | null>(null);
   // LaTeX sidebar visibility (independent of global isSidebarVisible)
   const [isLatexSidebarVisible, setIsLatexSidebarVisible] = useState(true);
@@ -2083,8 +2084,11 @@ const App: React.FC = () => {
         <Suspense fallback={<div className="w-60 bg-[#F5F5F5] border-r border-gray-200 shrink-0" />}>
           <LatexSidebar
             currentContent={''}
-            onLoadTemplate={(tplContent) => {
-              if (latexLoadTemplateRef.current) latexLoadTemplateRef.current(tplContent);
+            onEditTemplate={(template) => {
+              if (latexEditTemplateRef.current) latexEditTemplateRef.current(template);
+            }}
+            onLoadTemplateAsFile={(tplContent) => {
+              if (latexLoadTemplateAsFileRef.current) latexLoadTemplateAsFileRef.current(tplContent);
             }}
             onOpenManagedFile={(file) => {
               if (latexOpenFileRef.current) latexOpenFileRef.current(file);
@@ -2581,7 +2585,8 @@ const App: React.FC = () => {
                 )}
                 <div className={`flex-1 min-w-0 h-full transition-all ${!isLatexSidebarVisible ? 'pl-5' : ''}`}>
                   <LatexEditor
-                    onLoadTemplateRef={latexLoadTemplateRef}
+                    onEditTemplateRef={latexEditTemplateRef}
+                    onLoadTemplateAsFileRef={latexLoadTemplateAsFileRef}
                     onOpenFileRef={latexOpenFileRef}
                   />
                 </div>

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, Send, Loader2, Sparkles, CheckCircle2, AlertCircle, ListTodo, Settings, Settings2, StickyNote, FolderOpen, Command, Globe, Code2, GraduationCap, Image, MessageSquare, Pencil, BarChart3, HelpCircle, ChevronDown, ChevronUp, ChevronRight, Bug, Trash2, Paperclip, FileText, Trophy, HardDrive, Lock, Unlock, LayoutGrid, Eye, PenLine, Mail, StopCircle, Undo2, Server, Key, CheckCircle, ToggleLeft, ToggleRight, Plus, Edit3, BookUser } from 'lucide-react';
+import { X, Send, Loader2, Sparkles, CheckCircle2, AlertCircle, ListTodo, Settings, Settings2, StickyNote, FolderOpen, Command, Globe, Code2, GraduationCap, Image, MessageSquare, Pencil, BarChart3, HelpCircle, ChevronDown, ChevronUp, ChevronRight, Bug, Trash2, Paperclip, FileText, Trophy, HardDrive, Lock, Unlock, LayoutGrid, Eye, PenLine, Mail, StopCircle, Undo2, Server, Key, CheckCircle, ToggleLeft, ToggleRight, Plus, Edit3, BookUser, FileType2 } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
-import type { TodoItem, Note, PromptRecord, MarkdownNote, OJSubmission, OJHeatmapData, ResourceItem, ResourceCenterData, EmailConfig, SubTask, FileRecord, Category, RecurringEvent, RecurringCategory } from '../types';
+import type { TodoItem, Note, PromptRecord, MarkdownNote, OJSubmission, OJHeatmapData, ResourceItem, ResourceCenterData, EmailConfig, SubTask, FileRecord, Category, RecurringEvent, RecurringCategory, LatexFileCategory, LatexManagedFile, LatexTemplate } from '../types';
 import {
   ChatConfig,
   ChatService,
@@ -40,6 +40,7 @@ const AGENT_MODULES: AgentModule[] = [
   { id: 'image',      name: '图床',     icon: Image,      enabled: true,  description: '查询图片链接、上传图片到图床' },
   { id: 'datacenter', name: '数据中心', icon: BarChart3,  enabled: true,  description: '数据管理：OJ做题、资源、数据查询' },
   { id: 'email',      name: '邮件',     icon: Mail,       enabled: true,  description: '发送邮件' },
+  { id: 'latex',      name: 'LaTeX',    icon: FileType2,  enabled: true,  description: '查询、读取、编辑 LaTeX 文件和模板（需授权分类）' },
 ];
 
 const ENABLED_AGENT_MODULES = AGENT_MODULES.filter(module => module.enabled);
@@ -406,6 +407,35 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
 - 邮箱未配置或未启用 → 告知用户去「邮件设置」完成 SMTP 配置
 - 通讯录为空 → 提示用户在邮件设置面板的通讯录区域添加联系人
 - 确认卡片弹出后，等待用户操作，不要重复调用 send_email`,
+
+  latex: `## LaTeX 模块
+
+### 核心能力
+查询、读取和编辑 LaTeX 托管文件和模板（需分类授权）。
+
+### 可用工具
+- **query_latex_file_categories** — 查询 LaTeX 文件分类列表（含唯一 ID）。操作文件前**必须**先调用。
+- **create_latex_file_category** — 创建新的文件分类（提供名称，自动生成 ID）。
+- **query_latex_files** — 查询 LaTeX 文件列表，可按分类 ID 筛选。需要对应分类的读取权限。返回结果中 writable 字段表示该文件是否有编辑权限。
+- **read_latex_file** — 读取某个 LaTeX 文件的内容（需读取权限）。返回结果中 writable 字段表示是否有编辑权限。
+- **edit_latex_file** — 修改 LaTeX 文件内容（需编辑权限，与读取权限独立）。
+- **query_latex_template_categories** — 查询模板分类列表（含唯一 ID）。
+- **create_latex_template_category** — 创建新的模板分类。
+- **query_latex_templates** — 查询模板列表，可按分类筛选。
+- **read_latex_template** — 读取模板的完整内容（通过模板 ID）。
+- **create_latex_template** — 创建新模板（提供名称、分类、完整 .tex 源码）。
+- **edit_latex_template** — 修改已有模板的名称、描述、分类或内容。
+
+### 权限说明
+- 文件权限分为**读取**和**编辑**两种，用户可以独立授权。
+- 可能某个分类只授权了读取但未授权编辑，此时无法修改文件。请根据 writable 字段判断，若无编辑权限请提示用户在权限面板中开启。
+
+### 工作流程规范
+1. 需要 LaTeX 分类权限授权后才能操作。未授权会返回错误，请提示用户在权限面板中开启。
+2. **分类必须用 ID**：查询分类获取 id 列表后，在查询/创建文件时用 categoryId 参数指定。不要用分类名称代替 ID。
+3. 如果用户指定的分类不存在，先 create_latex_file_category 或 create_latex_template_category 创建。
+4. 操作流程：先 query_latex_file_categories → query_latex_files → read_latex_file / edit_latex_file。
+5. 编辑文件时需提供完整的文件内容，不能只传部分内容。`,
 };
 
 const loadModulePrompts = (): Record<string, string> => {
@@ -992,6 +1022,10 @@ interface ToolExecutionContext {
   onAddCategory: (moduleKey: string, name: string) => void;
   // Knowledge Base
   knowledgeBaseFileIds: Set<string>;
+  // LaTeX
+  latexFileReadPermissions: string[];  // 已授权可读的文件分类 ID 列表
+  latexFileWritePermissions: string[]; // 已授权可写的文件分类 ID 列表
+  latexTemplatePermissions: string[];  // 已授权的模板分类名称列表
 }
 
 const TOOL_REGISTRY: ToolRegistration[] = [
@@ -2758,6 +2792,366 @@ const TOOL_REGISTRY: ToolRegistration[] = [
       }
     },
   },
+  // ─── LaTeX 模块工具 ───────────────────────────────────────────────────────────
+  {
+    name: 'query_latex_file_categories',
+    module: 'latex',
+    tool: {
+      name: 'query_latex_file_categories',
+      description: '查询 LaTeX 文件分类列表（含唯一 ID）。操作文件前必须先调用此工具获取分类 ID。',
+      inputSchema: { type: 'object', properties: {}, required: [] },
+    },
+    execute: async (_args, _ctx) => {
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.latexGetFileCategories) return { success: false, error: 'LaTeX API 不可用。' };
+      const categories = await electronAPI.latexGetFileCategories();
+      return { success: true, categories, hint: '使用 categoryId 参数操作文件。如需新分类，调用 create_latex_file_category。' };
+    },
+  },
+  {
+    name: 'create_latex_file_category',
+    module: 'latex',
+    tool: {
+      name: 'create_latex_file_category',
+      description: '创建新的 LaTeX 文件分类。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: '分类名称' },
+        },
+        required: ['name'],
+      },
+    },
+    execute: async (args, _ctx) => {
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.latexGetFileCategories) return { success: false, error: 'LaTeX API 不可用。' };
+      const name = typeof args.name === 'string' ? args.name.trim() : '';
+      if (!name) return { success: false, error: '分类名称不能为空。' };
+      const existing: any[] = await electronAPI.latexGetFileCategories();
+      if (existing.some((c: any) => c.name === name)) {
+        return { success: false, error: `分类「${name}」已存在。`, existingCategory: existing.find((c: any) => c.name === name) };
+      }
+      const newCat = { id: crypto.randomUUID(), name };
+      const updated = [...existing, newCat];
+      await electronAPI.latexSaveFileCategories(updated);
+      return { success: true, message: `文件分类「${name}」已创建。`, category: newCat };
+    },
+  },
+  {
+    name: 'query_latex_files',
+    module: 'latex',
+    tool: {
+      name: 'query_latex_files',
+      description: '查询 LaTeX 托管文件列表。可按分类 ID 筛选、按文件名搜索。需要对应分类的权限。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          categoryId: { type: 'string', description: '按分类 ID 筛选（可选）' },
+          keyword: { type: 'string', description: '按文件名搜索（可选）' },
+        },
+        required: [],
+      },
+    },
+    execute: async (args, ctx) => {
+      if (ctx.latexFileReadPermissions.length === 0) return { success: false, error: '未授权任何 LaTeX 文件分类的读取权限。请点击右侧 LaTeX 权限按钮，勾选要授权的分类。' };
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.latexListFiles) return { success: false, error: 'LaTeX API 不可用。' };
+      let files: any[] = await electronAPI.latexListFiles();
+      // Filter by read permission
+      files = files.filter(f => {
+        const cat = f.category || '__uncategorized__';
+        return ctx.latexFileReadPermissions.includes(cat) || ctx.latexFileReadPermissions.includes('__all__');
+      });
+      if (typeof args.categoryId === 'string' && args.categoryId.trim()) {
+        const catId = args.categoryId.trim();
+        if (!ctx.latexFileReadPermissions.includes(catId) && !ctx.latexFileReadPermissions.includes('__all__')) {
+          return { success: false, error: `分类「${catId}」未授权读取。当前已授权读取：${ctx.latexFileReadPermissions.join('、')}` };
+        }
+        files = files.filter(f => (f.category || '__uncategorized__') === catId);
+      }
+      if (typeof args.keyword === 'string' && args.keyword.trim()) {
+        const kw = args.keyword.trim().toLowerCase();
+        files = files.filter(f => f.name.toLowerCase().includes(kw));
+      }
+      const result = files.map((f: any) => {
+        const fCat = f.category || '__uncategorized__';
+        const writable = ctx.latexFileWritePermissions.includes(fCat) || ctx.latexFileWritePermissions.includes('__all__');
+        return { name: f.name, path: f.path, size: f.size, modifiedAt: f.modifiedAt, category: f.category || null, writable };
+      });
+      return { success: true, total: result.length, files: result, readableCategories: ctx.latexFileReadPermissions, writableCategories: ctx.latexFileWritePermissions };
+    },
+  },
+  {
+    name: 'read_latex_file',
+    module: 'latex',
+    tool: {
+      name: 'read_latex_file',
+      description: '读取一个 LaTeX 托管文件的内容。通过文件路径定位。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          filePath: { type: 'string', description: '文件的完整路径（从 query_latex_files 结果中获取）' },
+        },
+        required: ['filePath'],
+      },
+    },
+    execute: async (args, ctx) => {
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.latexOpenManagedFile) return { success: false, error: 'LaTeX API 不可用。' };
+      // Check read permission by looking up the file's category
+      const files: any[] = await electronAPI.latexListFiles();
+      const file = files.find((f: any) => f.path === args.filePath);
+      if (!file) return { success: false, error: `未找到文件「${args.filePath}」。` };
+      const cat = file.category || '__uncategorized__';
+      if (!ctx.latexFileReadPermissions.includes(cat) && !ctx.latexFileReadPermissions.includes('__all__')) {
+        return { success: false, error: `文件所在分类未授权读取。` };
+      }
+      const result = await electronAPI.latexOpenManagedFile(args.filePath);
+      if (!result) return { success: false, error: '文件读取失败。' };
+      const writable = ctx.latexFileWritePermissions.includes(cat) || ctx.latexFileWritePermissions.includes('__all__');
+      return { success: true, name: file.name, path: result.path, content: result.content, length: result.content.length, writable };
+    },
+  },
+  {
+    name: 'edit_latex_file',
+    module: 'latex',
+    tool: {
+      name: 'edit_latex_file',
+      description: '修改一个 LaTeX 托管文件的内容。需要提供完整的新文件内容。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          filePath: { type: 'string', description: '文件路径（从 query_latex_files 获取）' },
+          content: { type: 'string', description: '新的完整文件内容' },
+        },
+        required: ['filePath', 'content'],
+      },
+    },
+    execute: async (args, ctx) => {
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.latexSaveManagedFile) return { success: false, error: 'LaTeX API 不可用。' };
+      const files: any[] = await electronAPI.latexListFiles();
+      const file = files.find((f: any) => f.path === args.filePath);
+      if (!file) return { success: false, error: `未找到文件「${args.filePath}」。` };
+      const cat = file.category || '__uncategorized__';
+      if (!ctx.latexFileWritePermissions.includes(cat) && !ctx.latexFileWritePermissions.includes('__all__')) {
+        return { success: false, error: '文件所在分类未授权写入。请在权限面板中开启该分类的编辑权限。' };
+      }
+      const ok = await electronAPI.latexSaveManagedFile({ filePath: args.filePath, content: args.content });
+      if (!ok) return { success: false, error: '文件保存失败。' };
+      return { success: true, message: `文件「${file.name}」已更新。`, length: args.content.length };
+    },
+  },
+  {
+    name: 'query_latex_template_categories',
+    module: 'latex',
+    tool: {
+      name: 'query_latex_template_categories',
+      description: '查询 LaTeX 模板分类列表（含唯一 ID）。创建/查询模板时需先调用此工具。',
+      inputSchema: { type: 'object', properties: {}, required: [] },
+    },
+    execute: async (_args, _ctx) => {
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.latexGetTemplates) return { success: false, error: 'LaTeX API 不可用。' };
+      const templates: any[] = await electronAPI.latexGetTemplates();
+      // Derive unique categories from templates
+      const catSet = new Map<string, string>();
+      templates.forEach((t: any) => {
+        const cat = t.category || 'custom';
+        if (!catSet.has(cat)) catSet.set(cat, cat); // category name is used as both id and name for templates
+      });
+      const categories = Array.from(catSet.entries()).map(([id, name]) => ({ id, name }));
+      return { success: true, categories, hint: '模板分类的 ID 即是分类名称字符串。' };
+    },
+  },
+  {
+    name: 'create_latex_template_category',
+    module: 'latex',
+    tool: {
+      name: 'create_latex_template_category',
+      description: '创建新的 LaTeX 模板分类。会创建一个占位模板使分类出现。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: '分类名称' },
+        },
+        required: ['name'],
+      },
+    },
+    execute: async (args, _ctx) => {
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.latexSaveTemplate) return { success: false, error: 'LaTeX API 不可用。' };
+      const name = typeof args.name === 'string' ? args.name.trim() : '';
+      if (!name) return { success: false, error: '分类名称不能为空。' };
+      const templates: any[] = await electronAPI.latexGetTemplates();
+      if (templates.some((t: any) => t.category === name)) {
+        return { success: false, error: `模板分类「${name}」已存在。` };
+      }
+      const placeholder = {
+        id: `cat-${Date.now()}`,
+        name: '新模板',
+        content: '% 新模板\n\\documentclass{article}\n\\begin{document}\n\n\\end{document}',
+        category: name,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      await electronAPI.latexSaveTemplate(placeholder);
+      return { success: true, message: `模板分类「${name}」已创建。`, categoryId: name };
+    },
+  },
+  {
+    name: 'query_latex_templates',
+    module: 'latex',
+    tool: {
+      name: 'query_latex_templates',
+      description: '查询 LaTeX 模板列表。可按分类筛选。需要对应分类的权限。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          category: { type: 'string', description: '按分类名称筛选（可选，即 query_latex_template_categories 返回的 id）' },
+          keyword: { type: 'string', description: '按模板名称搜索（可选）' },
+        },
+        required: [],
+      },
+    },
+    execute: async (args, ctx) => {
+      if (ctx.latexTemplatePermissions.length === 0) return { success: false, error: '未授权任何 LaTeX 模板分类。请点击右侧 LaTeX 权限按钮，勾选要授权的分类。' };
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.latexGetTemplates) return { success: false, error: 'LaTeX API 不可用。' };
+      let templates: any[] = await electronAPI.latexGetTemplates();
+      // Filter by permission
+      templates = templates.filter(t => {
+        const cat = t.category || 'custom';
+        return ctx.latexTemplatePermissions.includes(cat) || ctx.latexTemplatePermissions.includes('__all__');
+      });
+      if (typeof args.category === 'string' && args.category.trim()) {
+        const cat = args.category.trim();
+        if (!ctx.latexTemplatePermissions.includes(cat) && !ctx.latexTemplatePermissions.includes('__all__')) {
+          return { success: false, error: `模板分类「${cat}」未授权。` };
+        }
+        templates = templates.filter(t => t.category === cat);
+      }
+      if (typeof args.keyword === 'string' && args.keyword.trim()) {
+        const kw = args.keyword.trim().toLowerCase();
+        templates = templates.filter(t => t.name.toLowerCase().includes(kw) || (t.description || '').toLowerCase().includes(kw));
+      }
+      const result = templates.map(t => ({ id: t.id, name: t.name, description: t.description || null, category: t.category, hasContent: !!t.content }));
+      return { success: true, total: result.length, templates: result };
+    },
+  },
+  {
+    name: 'read_latex_template',
+    module: 'latex',
+    tool: {
+      name: 'read_latex_template',
+      description: '读取一个 LaTeX 模板的完整内容。通过模板 ID 定位（从 query_latex_templates 结果中获取）。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          templateId: { type: 'string', description: '模板 ID（从 query_latex_templates 结果中获取）' },
+        },
+        required: ['templateId'],
+      },
+    },
+    execute: async (args, ctx) => {
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.latexGetTemplates) return { success: false, error: 'LaTeX API 不可用。' };
+      const templates: any[] = await electronAPI.latexGetTemplates();
+      const tpl = templates.find((t: any) => t.id === args.templateId);
+      if (!tpl) return { success: false, error: `未找到模板「${args.templateId}」。` };
+      const cat = tpl.category || 'custom';
+      if (!ctx.latexTemplatePermissions.includes(cat) && !ctx.latexTemplatePermissions.includes('__all__')) {
+        return { success: false, error: `模板所在分类「${cat}」未授权。` };
+      }
+      return { success: true, id: tpl.id, name: tpl.name, description: tpl.description || null, category: tpl.category, content: tpl.content, length: (tpl.content || '').length };
+    },
+  },
+  {
+    name: 'create_latex_template',
+    module: 'latex',
+    tool: {
+      name: 'create_latex_template',
+      description: '创建一个新的 LaTeX 模板。需提供名称、分类和完整的 .tex 源码内容。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: '模板名称' },
+          description: { type: 'string', description: '模板描述（可选）' },
+          category: { type: 'string', description: '分类名称（从 query_latex_template_categories 获取，或新分类名）' },
+          content: { type: 'string', description: '完整的 .tex 源码内容' },
+        },
+        required: ['name', 'category', 'content'],
+      },
+    },
+    execute: async (args, ctx) => {
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.latexSaveTemplate) return { success: false, error: 'LaTeX API 不可用。' };
+      const cat = typeof args.category === 'string' ? args.category.trim() : 'custom';
+      if (!ctx.latexTemplatePermissions.includes(cat) && !ctx.latexTemplatePermissions.includes('__all__')) {
+        return { success: false, error: `模板分类「${cat}」未授权。请在权限面板中开启。` };
+      }
+      const name = typeof args.name === 'string' ? args.name.trim() : '';
+      if (!name) return { success: false, error: '模板名称不能为空。' };
+      const content = typeof args.content === 'string' ? args.content : '';
+      const tpl = {
+        id: `agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name,
+        description: typeof args.description === 'string' ? args.description.trim() || undefined : undefined,
+        content,
+        category: cat,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const ok = await electronAPI.latexSaveTemplate(tpl);
+      if (!ok) return { success: false, error: '模板保存失败。' };
+      return { success: true, message: `模板「${name}」已创建。`, id: tpl.id, category: cat };
+    },
+  },
+  {
+    name: 'edit_latex_template',
+    module: 'latex',
+    tool: {
+      name: 'edit_latex_template',
+      description: '修改一个已有的 LaTeX 模板。可更新名称、描述、分类或内容。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          templateId: { type: 'string', description: '模板 ID（从 query_latex_templates 获取）' },
+          name: { type: 'string', description: '新的模板名称（可选）' },
+          description: { type: 'string', description: '新的描述（可选）' },
+          category: { type: 'string', description: '新的分类（可选）' },
+          content: { type: 'string', description: '新的完整 .tex 源码内容（可选）' },
+        },
+        required: ['templateId'],
+      },
+    },
+    execute: async (args, ctx) => {
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.latexSaveTemplate || !electronAPI?.latexGetTemplates) return { success: false, error: 'LaTeX API 不可用。' };
+      const templates: any[] = await electronAPI.latexGetTemplates();
+      const tpl = templates.find((t: any) => t.id === args.templateId);
+      if (!tpl) return { success: false, error: `未找到模板「${args.templateId}」。` };
+      const oldCat = tpl.category || 'custom';
+      if (!ctx.latexTemplatePermissions.includes(oldCat) && !ctx.latexTemplatePermissions.includes('__all__')) {
+        return { success: false, error: `模板所在分类「${oldCat}」未授权。` };
+      }
+      const newCat = typeof args.category === 'string' && args.category.trim() ? args.category.trim() : oldCat;
+      if (newCat !== oldCat && !ctx.latexTemplatePermissions.includes(newCat) && !ctx.latexTemplatePermissions.includes('__all__')) {
+        return { success: false, error: `目标分类「${newCat}」未授权。` };
+      }
+      const updated = {
+        ...tpl,
+        name: typeof args.name === 'string' && args.name.trim() ? args.name.trim() : tpl.name,
+        description: typeof args.description === 'string' ? (args.description.trim() || undefined) : tpl.description,
+        category: newCat,
+        content: typeof args.content === 'string' ? args.content : tpl.content,
+        updatedAt: Date.now(),
+      };
+      const ok = await electronAPI.latexSaveTemplate(updated);
+      if (!ok) return { success: false, error: '模板保存失败。' };
+      return { success: true, message: `模板「${updated.name}」已更新。`, id: tpl.id };
+    },
+  },
 ];
 
 /** 获取所有已启用模块的工具（如指定 selectedModule 则只返回该模块的） */
@@ -2798,6 +3192,11 @@ const generateToolCallSummary = (toolCalls: ChatToolCall[]): string => {
     query_files: '查询文件', read_file: '读取文件',
     query_images: '查询图片', upload_image: '上传图片',
     query_subtasks: '查询子任务', query_recurring_events: '查询重复事件',
+    query_latex_file_categories: '查询 LaTeX 文件分类', create_latex_file_category: '创建 LaTeX 文件分类',
+    query_latex_files: '查询 LaTeX 文件', read_latex_file: '读取 LaTeX 文件', edit_latex_file: '编辑 LaTeX 文件',
+    query_latex_template_categories: '查询模板分类', create_latex_template_category: '创建模板分类',
+    query_latex_templates: '查询 LaTeX 模板', read_latex_template: '读取 LaTeX 模板',
+    create_latex_template: '创建 LaTeX 模板', edit_latex_template: '编辑 LaTeX 模板',
   };
 
   const lines: string[] = [];
@@ -2900,6 +3299,18 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const [dataPermissions, setDataPermissions] = useState<DataPermissions>(() => loadAgentPermissions().data);
   const [filePermissions, setFilePermissions] = useState<string[]>(() => loadAgentPermissions().files);
   const [showFilePermissions, setShowFilePermissions] = useState(false);
+  const [latexFileReadPermissions, setLatexFileReadPermissions] = useState<string[]>(() => {
+    try { const s = localStorage.getItem('guyue_agent_latex_permissions'); if (s) { const p = JSON.parse(s); return Array.isArray(p.fileRead) ? p.fileRead : Array.isArray(p.files) ? p.files : []; } } catch {} return [];
+  });
+  const [latexFileWritePermissions, setLatexFileWritePermissions] = useState<string[]>(() => {
+    try { const s = localStorage.getItem('guyue_agent_latex_permissions'); if (s) { const p = JSON.parse(s); return Array.isArray(p.fileWrite) ? p.fileWrite : []; } } catch {} return [];
+  });
+  const [latexTemplatePermissions, setLatexTemplatePermissions] = useState<string[]>(() => {
+    try { const s = localStorage.getItem('guyue_agent_latex_permissions'); if (s) { const p = JSON.parse(s); return Array.isArray(p.templates) ? p.templates : []; } } catch {} return [];
+  });
+  const [showLatexPermissions, setShowLatexPermissions] = useState(false);
+  const [latexFileCategories, setLatexFileCategories] = useState<{id: string; name: string}[]>([]);
+  const [latexTemplateCategories, setLatexTemplateCategories] = useState<string[]>([]);
   const [showPermissions, setShowPermissions] = useState(false);
   const [showModuleSelector, setShowModuleSelector] = useState(false);
   const [showEmailSettings, setShowEmailSettings] = useState(false);
@@ -3109,6 +3520,31 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   useEffect(() => {
     saveAgentPermissions(dataPermissions, filePermissions);
   }, [dataPermissions, filePermissions]);
+
+  // Save latex permissions
+  useEffect(() => {
+    localStorage.setItem('guyue_agent_latex_permissions', JSON.stringify({ fileRead: latexFileReadPermissions, fileWrite: latexFileWritePermissions, templates: latexTemplatePermissions }));
+  }, [latexFileReadPermissions, latexFileWritePermissions, latexTemplatePermissions]);
+
+  // Load latex categories on mount
+  useEffect(() => {
+    const loadLatexCats = async () => {
+      try {
+        const electronAPI = (window as any).electronAPI;
+        if (electronAPI?.latexGetFileCategories) {
+          const cats = await electronAPI.latexGetFileCategories();
+          setLatexFileCategories(Array.isArray(cats) ? cats : []);
+        }
+        if (electronAPI?.latexGetTemplates) {
+          const templates = await electronAPI.latexGetTemplates();
+          const catSet = new Set<string>();
+          templates.forEach((t: any) => catSet.add(t.category || 'custom'));
+          setLatexTemplateCategories(Array.from(catSet));
+        }
+      } catch { /* ignore */ }
+    };
+    loadLatexCats();
+  }, []);
 
   const detectTargetModule = useCallback(async (input: string): Promise<string | null> => {
     // 原生模式下不需要路由——tools 自路由，这里只用于 fallback 模式
@@ -3662,7 +4098,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
       // 原生模式：注册所有已启用工具，让 tool_choice=auto 自路由
       const nativeTools = supportsNativeTools ? getAllNativeTools(selectedModule) : [];
-      const toolExecContext: ToolExecutionContext = { todos: [...todos], notes, dataPermissions, filePermissions, fileRecords, lastUserAttachments: currentAttachments, onCreateTodo, onUpdateTodo, onDeleteTodo, onCreateNote, onUpdateNote, onDeleteNote, onCreatePrompt, onCreateMarkdownNote, onCreateOJSubmission, ojHeatmapData, onCreateResource, onUpdateResource, onDeleteResource, resourceData, recurringEvents, recurringCategories, onCreateRecurring, onUpdateRecurring, onDeleteRecurring, onUpdateRecurringCategories, todoCategories, promptCategories, markdownCategories, onAddCategory, knowledgeBaseFileIds };
+      const toolExecContext: ToolExecutionContext = { todos: [...todos], notes, dataPermissions, filePermissions, fileRecords, lastUserAttachments: currentAttachments, onCreateTodo, onUpdateTodo, onDeleteTodo, onCreateNote, onUpdateNote, onDeleteNote, onCreatePrompt, onCreateMarkdownNote, onCreateOJSubmission, ojHeatmapData, onCreateResource, onUpdateResource, onDeleteResource, resourceData, recurringEvents, recurringCategories, onCreateRecurring, onUpdateRecurring, onDeleteRecurring, onUpdateRecurringCategories, todoCategories, promptCategories, markdownCategories, onAddCategory, knowledgeBaseFileIds, latexFileReadPermissions, latexFileWritePermissions, latexTemplatePermissions };
 
       pushDebugItem({
         stage: 'send:routing-result',
@@ -4354,7 +4790,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               {/* 邮件设置 */}
               <div className="relative">
                 <button
-                  onClick={() => { setShowEmailSettings(v => !v); setShowPermissions(false); setShowFilePermissions(false); setShowModuleSelector(false); }}
+                  onClick={() => { setShowEmailSettings(v => !v); setShowPermissions(false); setShowFilePermissions(false); setShowModuleSelector(false); setShowLatexPermissions(false); }}
                   className={`w-8 h-8 flex items-center justify-center rounded-xl transition-colors ${
                     showEmailSettings ? 'text-blue-600 bg-blue-50' : emailConfig.enabled ? 'text-blue-500 hover:bg-blue-50' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
                   }`}
@@ -4528,7 +4964,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                   const count = Object.values(dataPermissions).reduce((n, p) => n + (p.read ? 1 : 0) + (p.write ? 1 : 0), 0);
                   return (
                     <button
-                      onClick={() => { setShowPermissions(v => !v); setShowModuleSelector(false); setShowFilePermissions(false); }}
+                      onClick={() => { setShowPermissions(v => !v); setShowModuleSelector(false); setShowFilePermissions(false); setShowLatexPermissions(false); }}
                       className={`relative w-8 h-8 flex items-center justify-center rounded-xl transition-colors ${
                         count > 0
                           ? 'text-amber-500 bg-amber-50 hover:bg-amber-100'
@@ -4603,7 +5039,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               {/* 文件分类权限 */}
               <div className="relative">
                 <button
-                  onClick={() => { setShowFilePermissions(v => !v); setShowPermissions(false); setShowModuleSelector(false); }}
+                  onClick={() => { setShowFilePermissions(v => !v); setShowPermissions(false); setShowModuleSelector(false); setShowLatexPermissions(false); }}
                   className={`relative w-8 h-8 flex items-center justify-center rounded-xl transition-colors ${
                     filePermissions.length > 0
                       ? 'text-green-600 bg-green-50 hover:bg-green-100'
@@ -4655,6 +5091,151 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                                 {filePermissions.includes(cat) && <CheckCircle2 className="w-3 h-3" />}
                               </div>
                               <FolderOpen className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                              <span className="text-xs text-gray-700">{cat}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* LaTeX 分类权限 */}
+              <div className="relative">
+                <button
+                  onClick={() => { setShowLatexPermissions(v => !v); setShowPermissions(false); setShowFilePermissions(false); setShowModuleSelector(false); }}
+                  className={`relative w-8 h-8 flex items-center justify-center rounded-xl transition-colors ${showLatexPermissions ? 'bg-indigo-50 text-indigo-600' : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
+                  title="LaTeX 分类权限"
+                >
+                  <FileType2 className="w-4 h-4" />
+                  {(latexFileReadPermissions.length > 0 || latexFileWritePermissions.length > 0 || latexTemplatePermissions.length > 0) && (
+                    <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-indigo-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center leading-none">
+                      {latexFileReadPermissions.length + latexFileWritePermissions.length + latexTemplatePermissions.length}
+                    </span>
+                  )}
+                </button>
+                {showLatexPermissions && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowLatexPermissions(false)} />
+                    <div className="absolute right-full top-0 mr-2 z-50 w-72 bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+                      {/* 文件分类 */}
+                      <div className="px-4 pt-3.5 pb-2 border-b border-gray-100">
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-xs font-semibold text-gray-800">LaTeX 文件分类</p>
+                        </div>
+                        <div className="flex items-center gap-3 text-[10px] text-gray-400">
+                          <span className="flex items-center gap-1"><Eye className="w-3 h-3" />读取</span>
+                          <span className="flex items-center gap-1"><Pencil className="w-3 h-3" />编辑</span>
+                        </div>
+                      </div>
+                      <div className="py-1.5 max-h-44 overflow-y-auto">
+                        {/* 未分类 */}
+                        {(() => {
+                          const catId = '__uncategorized__';
+                          const hasRead = latexFileReadPermissions.includes(catId);
+                          const hasWrite = latexFileWritePermissions.includes(catId);
+                          return (
+                            <div className="flex items-center gap-2 px-4 py-1.5 hover:bg-gray-50 transition-colors">
+                              <button
+                                onClick={() => setLatexFileReadPermissions(prev => {
+                                  if (hasRead) {
+                                    // Remove read also removes write
+                                    setLatexFileWritePermissions(wp => wp.filter(c => c !== catId));
+                                    return prev.filter(c => c !== catId);
+                                  }
+                                  return [...prev, catId];
+                                })}
+                                className={`w-5 h-5 rounded-md flex items-center justify-center transition-colors ${hasRead ? 'bg-indigo-500 text-white' : 'bg-gray-100 text-gray-300 hover:bg-gray-200'}`}
+                                title="读取权限"
+                              >
+                                <Eye className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (hasWrite) {
+                                    setLatexFileWritePermissions(prev => prev.filter(c => c !== catId));
+                                  } else {
+                                    // Grant write also grants read
+                                    if (!hasRead) setLatexFileReadPermissions(prev => [...prev, catId]);
+                                    setLatexFileWritePermissions(prev => [...prev, catId]);
+                                  }
+                                }}
+                                className={`w-5 h-5 rounded-md flex items-center justify-center transition-colors ${hasWrite ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-300 hover:bg-gray-200'}`}
+                                title="编辑权限"
+                              >
+                                <Pencil className="w-2.5 h-2.5" />
+                              </button>
+                              <span className="text-xs text-gray-500 italic flex-1 truncate">未分类</span>
+                            </div>
+                          );
+                        })()}
+                        {latexFileCategories.map((cat) => {
+                          const hasRead = latexFileReadPermissions.includes(cat.id);
+                          const hasWrite = latexFileWritePermissions.includes(cat.id);
+                          return (
+                            <div key={cat.id} className="flex items-center gap-2 px-4 py-1.5 hover:bg-gray-50 transition-colors">
+                              <button
+                                onClick={() => setLatexFileReadPermissions(prev => {
+                                  if (hasRead) {
+                                    setLatexFileWritePermissions(wp => wp.filter(c => c !== cat.id));
+                                    return prev.filter(c => c !== cat.id);
+                                  }
+                                  return [...prev, cat.id];
+                                })}
+                                className={`w-5 h-5 rounded-md flex items-center justify-center transition-colors ${hasRead ? 'bg-indigo-500 text-white' : 'bg-gray-100 text-gray-300 hover:bg-gray-200'}`}
+                                title="读取权限"
+                              >
+                                <Eye className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (hasWrite) {
+                                    setLatexFileWritePermissions(prev => prev.filter(c => c !== cat.id));
+                                  } else {
+                                    if (!hasRead) setLatexFileReadPermissions(prev => [...prev, cat.id]);
+                                    setLatexFileWritePermissions(prev => [...prev, cat.id]);
+                                  }
+                                }}
+                                className={`w-5 h-5 rounded-md flex items-center justify-center transition-colors ${hasWrite ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-300 hover:bg-gray-200'}`}
+                                title="编辑权限"
+                              >
+                                <Pencil className="w-2.5 h-2.5" />
+                              </button>
+                              <span className="text-xs text-gray-700 flex-1 truncate">{cat.name}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {/* 模板分类 */}
+                      <div className="px-4 pt-3 pb-2 border-t border-b border-gray-100 flex items-center justify-between">
+                        <p className="text-xs font-semibold text-gray-800">LaTeX 模板分类</p>
+                        <button
+                          onClick={() => {
+                            setLatexTemplatePermissions(prev => prev.length === latexTemplateCategories.length ? [] : [...latexTemplateCategories]);
+                          }}
+                          className="text-[11px] text-indigo-500 hover:text-indigo-700 transition-colors"
+                        >
+                          {latexTemplatePermissions.length === latexTemplateCategories.length ? '全部关闭' : '全部开启'}
+                        </button>
+                      </div>
+                      <div className="py-1.5 max-h-36 overflow-y-auto">
+                        {latexTemplateCategories.length === 0 ? (
+                          <p className="px-4 py-3 text-[11px] text-gray-400 text-center">暂无模板分类</p>
+                        ) : (
+                          latexTemplateCategories.map((cat) => (
+                            <button
+                              key={cat}
+                              onClick={() => setLatexTemplatePermissions(prev =>
+                                prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
+                              )}
+                              className="w-full flex items-center gap-2.5 px-4 py-2 hover:bg-gray-50 transition-colors"
+                            >
+                              <div className={`w-5 h-5 rounded-md flex items-center justify-center transition-colors ${
+                                latexTemplatePermissions.includes(cat) ? 'bg-indigo-500 text-white' : 'bg-gray-100 text-gray-300'
+                              }`}>
+                                {latexTemplatePermissions.includes(cat) && <CheckCircle2 className="w-3 h-3" />}
+                              </div>
                               <span className="text-xs text-gray-700">{cat}</span>
                             </button>
                           ))

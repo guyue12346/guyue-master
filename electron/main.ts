@@ -1697,6 +1697,7 @@ const DEFAULT_LATEX_SETTINGS = {
   xelatexPath: '',
   pdflatexPath: '',
   lualatexPath: '',
+  tlmgrPath: '',
 };
 
 async function readLatexSettings(): Promise<typeof DEFAULT_LATEX_SETTINGS> {
@@ -1737,6 +1738,59 @@ ipcMain.handle('latex-browse-executable', async () => {
   });
   if (result.canceled || !result.filePaths[0]) return null;
   return result.filePaths[0];
+});
+
+/** 安装 LaTeX 宏包 */
+ipcMain.handle('latex-install-package', async (_, packageName: string) => {
+  // 验证包名只含合法字符（字母、数字、连字符、下划线）
+  if (!/^[a-zA-Z0-9_-]+$/.test(packageName)) {
+    return { success: false, output: `无效的包名: "${packageName}"` };
+  }
+
+  const settings = await readLatexSettings();
+  const tlmgrPath = await which('tlmgr', settings.tlmgrPath);
+  if (!tlmgrPath) {
+    return {
+      success: false,
+      output: '找不到 tlmgr（TeX Live 包管理器）。请在设置中手动指定 tlmgr 路径，或确认已安装 TeX Live。',
+    };
+  }
+
+  return new Promise<{ success: boolean; output: string }>((resolve) => {
+    let output = '';
+
+    // 补充常见 TeX 路径到 PATH
+    const extraPaths = process.platform !== 'win32'
+      ? [
+          '/Library/TeX/texbin',
+          '/usr/local/texlive/2024/bin/universal-darwin',
+          '/usr/local/texlive/2023/bin/universal-darwin',
+          '/usr/local/bin',
+        ]
+      : [];
+    const envPATH = [...extraPaths, process.env.PATH ?? ''].join(':');
+
+    const proc = spawn(tlmgrPath, ['install', packageName], {
+      env: { ...process.env, PATH: envPATH },
+    });
+
+    proc.stdout.on('data', (data: Buffer) => { output += data.toString(); });
+    proc.stderr.on('data', (data: Buffer) => { output += data.toString(); });
+
+    const timeout = setTimeout(() => {
+      proc.kill();
+      output += '\n[Guyue] 安装超时（120s），已终止进程。\n';
+      resolve({ success: false, output });
+    }, 120000);
+
+    proc.on('close', (code) => {
+      clearTimeout(timeout);
+      resolve({
+        success: code === 0,
+        output: output || (code === 0 ? '安装成功' : `安装失败 (exit code: ${code})`),
+      });
+    });
+  });
 });
 
 // ── 内置 LaTeX 模板 ───────────────────────────────────────────────────────────
@@ -2056,6 +2110,9 @@ ipcMain.handle('latex-list-files', async () => {
   try {
     const dir = getLatexFilesDir();
     await fs.mkdir(dir, { recursive: true });
+    // Load category map
+    let catMap: Record<string, string> = {};
+    try { catMap = JSON.parse(await fs.readFile(getLatexFileCategoryMapPath(), 'utf-8')); } catch { /* empty */ }
     const entries = await fs.readdir(dir, { withFileTypes: true });
     const files = await Promise.all(
       entries
@@ -2068,6 +2125,7 @@ ipcMain.handle('latex-list-files', async () => {
             path: filePath,
             size: stat.size,
             modifiedAt: stat.mtimeMs,
+            category: catMap[filePath] || undefined,
           };
         })
     );
@@ -2139,6 +2197,61 @@ ipcMain.handle('latex-rename-managed-file', async (_, params: { filePath: string
 ipcMain.handle('latex-delete-managed-file', async (_, filePath: string) => {
   try {
     await fs.unlink(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+// ─── LaTeX 文件分类 ───────────────────────────────────────────────────────────
+
+function getLatexFileCategoriesPath(): string {
+  return path.join(app.getPath('userData'), 'latex', 'file-categories.json');
+}
+
+function getLatexFileCategoryMapPath(): string {
+  return path.join(app.getPath('userData'), 'latex', 'file-category-map.json');
+}
+
+ipcMain.handle('latex-get-file-categories', async () => {
+  try {
+    const p = getLatexFileCategoriesPath();
+    const raw = await fs.readFile(p, 'utf-8');
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+});
+
+ipcMain.handle('latex-save-file-categories', async (_, categories: any[]) => {
+  try {
+    const p = getLatexFileCategoriesPath();
+    await fs.mkdir(path.dirname(p), { recursive: true });
+    await fs.writeFile(p, JSON.stringify(categories, null, 2), 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle('latex-get-file-category-map', async () => {
+  try {
+    const p = getLatexFileCategoryMapPath();
+    const raw = await fs.readFile(p, 'utf-8');
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+});
+
+ipcMain.handle('latex-set-file-category', async (_, params: { filePath: string; categoryId: string }) => {
+  try {
+    const p = getLatexFileCategoryMapPath();
+    let map: Record<string, string> = {};
+    try { map = JSON.parse(await fs.readFile(p, 'utf-8')); } catch { /* empty */ }
+    map[params.filePath] = params.categoryId;
+    await fs.mkdir(path.dirname(p), { recursive: true });
+    await fs.writeFile(p, JSON.stringify(map, null, 2), 'utf-8');
     return true;
   } catch {
     return false;

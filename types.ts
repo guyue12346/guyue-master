@@ -307,6 +307,7 @@ export interface ElectronAPI {
   latexGetSettings: () => Promise<LatexSettings>;
   latexSaveSettings: (settings: LatexSettings) => Promise<boolean>;
   latexBrowseExecutable: () => Promise<string | null>;
+  latexInstallPackage: (packageName: string) => Promise<{ success: boolean; output: string }>;
   // 托管文件（userData/latex/files/）
   latexListFiles: () => Promise<LatexManagedFile[]>;
   latexNewManagedFile: (name: string) => Promise<{ path: string; content: string } | null>;
@@ -314,6 +315,11 @@ export interface ElectronAPI {
   latexSaveManagedFile: (params: { filePath: string; content: string }) => Promise<boolean>;
   latexRenameManagedFile: (params: { filePath: string; newName: string }) => Promise<string | null>;
   latexDeleteManagedFile: (filePath: string) => Promise<boolean>;
+  // LaTeX 文件分类
+  latexGetFileCategories: () => Promise<LatexFileCategory[]>;
+  latexSaveFileCategories: (categories: LatexFileCategory[]) => Promise<boolean>;
+  latexGetFileCategoryMap: () => Promise<Record<string, string>>;
+  latexSetFileCategory: (params: { filePath: string; categoryId: string }) => Promise<boolean>;
 }
 
 declare global {
@@ -448,12 +454,19 @@ export interface EmailConfig {
   recipient: string;   // 收件邮箱
 }
 
+/** LaTeX 文件分类 */
+export interface LatexFileCategory {
+  id: string;
+  name: string;
+}
+
 /** LaTeX 托管文件条目（userData/latex/files/ 目录内） */
 export interface LatexManagedFile {
   name: string;       // 文件名，如 "thesis.tex"
   path: string;       // 绝对路径
   size: number;       // 字节数
   modifiedAt: number; // 最后修改时间戳
+  category?: string;  // 分类 ID
 }
 
 // ── LaTeX 编辑器 ──────────────────────────────────────────────────────────────
@@ -512,4 +525,6 @@ export interface LatexSettings {
   xelatexPath: string;
   pdflatexPath: string;
   lualatexPath: string;
+  /** 包管理器自定义路径（留空则自动检测）*/
+  tlmgrPath: string;
 }

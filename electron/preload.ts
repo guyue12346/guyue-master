@@ -96,6 +96,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   latexGetSettings: () => ipcRenderer.invoke('latex-get-settings'),
   latexSaveSettings: (settings: any) => ipcRenderer.invoke('latex-save-settings', settings),
   latexBrowseExecutable: () => ipcRenderer.invoke('latex-browse-executable'),
+  latexInstallPackage: (packageName: string) => ipcRenderer.invoke('latex-install-package', packageName),
   // 托管文件
   latexListFiles: () => ipcRenderer.invoke('latex-list-files'),
   latexNewManagedFile: (name: string) => ipcRenderer.invoke('latex-new-managed-file', name),
@@ -105,6 +106,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   latexRenameManagedFile: (params: { filePath: string; newName: string }) =>
     ipcRenderer.invoke('latex-rename-managed-file', params),
   latexDeleteManagedFile: (filePath: string) => ipcRenderer.invoke('latex-delete-managed-file', filePath),
+  // LaTeX 文件分类
+  latexGetFileCategories: () => ipcRenderer.invoke('latex-get-file-categories'),
+  latexSaveFileCategories: (categories: any[]) => ipcRenderer.invoke('latex-save-file-categories', categories),
+  latexGetFileCategoryMap: () => ipcRenderer.invoke('latex-get-file-category-map'),
+  latexSetFileCategory: (params: { filePath: string; categoryId: string }) =>
+    ipcRenderer.invoke('latex-set-file-category', params),
 });
 
 // 类型定义（可选，用于 TypeScript）

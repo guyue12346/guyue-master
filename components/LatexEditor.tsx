@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Editor from '@monaco-editor/react';
 import {
-  Play, ChevronDown, ChevronUp, FilePlus, FolderOpen, Save, SaveAll,
+  Play, ChevronDown, ChevronUp, FolderOpen, Save,
   AlertCircle, AlertTriangle, Info, Loader2, FileType2, CheckCircle2,
-  ZoomIn, ZoomOut, Settings2, X, FolderSearch
+  ZoomIn, ZoomOut, Settings2, X, FolderSearch, Download, Package, Search,
+  Copy, Plus, Trash2, Image, Check, Omega
 } from 'lucide-react';
 import { LatexCompileResult, LatexEnvironment, LatexLogEntry, LatexSettings } from '../types';
+import { GoogleGenAI } from '@google/genai';
 import * as pdfjs from 'pdfjs-dist';
 
 // Set up PDF.js worker
@@ -17,10 +19,11 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 const ENGINES = ['xelatex', 'pdflatex', 'lualatex'] as const;
 type Engine = typeof ENGINES[number];
 
-const DEFAULT_TEX = `\\documentclass[12pt, a4paper]{ctexart}
+const DEFAULT_TEX = `\\documentclass[12pt, a4paper, fontset=macnew]{ctexart}
 
 \\usepackage{amsmath}
 \\usepackage{geometry}
+\\usepackage{hologo}
 \\geometry{margin=2.5cm}
 
 \\title{标题}
@@ -31,7 +34,7 @@ const DEFAULT_TEX = `\\documentclass[12pt, a4paper]{ctexart}
 \\maketitle
 
 \\section{简介}
-这是一份用 \\XeLaTeX{} 编译的中文示例文档。
+这是一份用 \\hologo{XeLaTeX} 编译的中文示例文档。
 
 \\section{数学公式}
 行内公式：$E = mc^2$
@@ -49,9 +52,10 @@ const DEFAULT_TEX = `\\documentclass[12pt, a4paper]{ctexart}
 interface PdfViewerProps {
   pdfBase64: string | null;
   loading: boolean;
+  onDownload?: () => void;
 }
 
-const PdfViewer: React.FC<PdfViewerProps> = ({ pdfBase64, loading }) => {
+const PdfViewer: React.FC<PdfViewerProps> = ({ pdfBase64, loading, onDownload }) => {
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1.2);
   const [numPages, setNumPages] = useState(0);
@@ -81,8 +85,11 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfBase64, loading }) => {
       wrapper.style.justifyContent = 'center';
 
       const canvas = document.createElement('canvas');
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.floor(viewport.width * dpr);
+      canvas.height = Math.floor(viewport.height * dpr);
+      canvas.style.width = `${viewport.width}px`;
+      canvas.style.height = `${viewport.height}px`;
       canvas.style.boxShadow = '0 2px 12px rgba(0,0,0,0.12)';
       canvas.style.borderRadius = '2px';
       canvas.style.background = '#fff';
@@ -90,6 +97,7 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfBase64, loading }) => {
       container.appendChild(wrapper);
 
       const ctx = canvas.getContext('2d')!;
+      ctx.scale(dpr, dpr);
       const task = page.render({ canvasContext: ctx, viewport });
       renderTaskRef.current = task;
       try {
@@ -206,9 +214,20 @@ const PdfViewer: React.FC<PdfViewerProps> = ({ pdfBase64, loading }) => {
             <ZoomIn className="w-3.5 h-3.5" />
           </button>
         </div>
-        {numPages > 0 && (
-          <span className="text-xs text-gray-400">{numPages} 页</span>
-        )}
+        <div className="flex items-center gap-1">
+          {numPages > 0 && (
+            <span className="text-xs text-gray-400 mr-1">{numPages} 页</span>
+          )}
+          {onDownload && pdfBase64 && (
+            <button
+              onClick={onDownload}
+              className="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+              title="下载 PDF"
+            >
+              <Download className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
       {/* Canvas container */}
       <div className="flex-1 overflow-auto py-4 px-2" ref={canvasContainerRef} />
@@ -370,13 +389,15 @@ const EnvBanner: React.FC<EnvBannerProps> = ({ env, engine }) => {
 
 interface LatexSettingsPanelProps {
   onClose: () => void;
+  env: LatexEnvironment | null;
 }
 
-const LatexSettingsPanel: React.FC<LatexSettingsPanelProps> = ({ onClose }) => {
+const LatexSettingsPanel: React.FC<LatexSettingsPanelProps> = ({ onClose, env }) => {
   const [settings, setSettings] = useState<LatexSettings>({
     xelatexPath: '',
     pdflatexPath: '',
     lualatexPath: '',
+    tlmgrPath: '',
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -416,11 +437,16 @@ const LatexSettingsPanel: React.FC<LatexSettingsPanelProps> = ({ onClose }) => {
       label: 'LuaLaTeX',
       placeholder: '留空则自动检测，例：/Library/TeX/texbin/lualatex',
     },
+    {
+      key: 'tlmgrPath',
+      label: 'tlmgr (包管理器)',
+      placeholder: '留空则自动检测，例：/Library/TeX/texbin/tlmgr',
+    },
   ];
 
   return (
-    <div className="absolute inset-0 z-50 flex items-start justify-center bg-black/30 pt-20">
-      <div className="bg-white border border-gray-200 rounded-xl shadow-2xl w-full max-w-lg mx-4">
+    <div className="absolute inset-0 z-50 flex items-start justify-center bg-black/30 pt-12">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <div className="flex items-center gap-2">
@@ -436,7 +462,7 @@ const LatexSettingsPanel: React.FC<LatexSettingsPanelProps> = ({ onClose }) => {
         </div>
 
         {/* Body */}
-        <div className="px-5 py-4 space-y-4">
+        <div className="px-5 py-4 space-y-4 overflow-auto flex-1">
           <p className="text-xs text-gray-500 leading-relaxed">
             留空时应用会自动检测系统 PATH 中的编译器。如果自动检测失败（常见于 Electron 应用无法读取完整 PATH），请手动填写编译器的绝对路径或点击「浏览」选择。
           </p>
@@ -471,6 +497,69 @@ const LatexSettingsPanel: React.FC<LatexSettingsPanelProps> = ({ onClose }) => {
             <span className="font-medium text-gray-500">Windows MiKTeX 默认路径：</span>
             {' '}C:\Program Files\MiKTeX\miktex\bin\x64\xelatex.exe
           </div>
+
+          {/* Environment Info */}
+          {env && (
+            <div className="pt-3 mt-3 border-t border-gray-100">
+              <div className="text-xs font-medium text-gray-600 mb-2">本地环境检测</div>
+              <div className="bg-gray-50 rounded-lg border border-gray-200 divide-y divide-gray-100">
+                {/* Engines */}
+                {[
+                  { label: 'XeLaTeX', path: env.xelatex, desc: '支持 Unicode / 系统字体，推荐中文排版' },
+                  { label: 'pdfLaTeX', path: env.pdflatex, desc: '经典引擎，英文文档首选' },
+                  { label: 'LuaLaTeX', path: env.lualatex, desc: '内置 Lua 脚本，支持 Unicode' },
+                ].map(({ label, path, desc }) => (
+                  <div key={label} className="flex items-center gap-2 px-3 py-2">
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${path ? 'bg-green-400' : 'bg-red-400'}`} />
+                    <span className="text-xs font-medium text-gray-600 min-w-[70px]">{label}</span>
+                    {path ? (
+                      <span className="text-[10px] font-mono text-gray-400 truncate" title={path}>{path}</span>
+                    ) : (
+                      <span className="text-[10px] text-red-400">未安装</span>
+                    )}
+                    <span className="ml-auto text-[10px] text-gray-300 shrink-0 hidden sm:inline">{desc}</span>
+                  </div>
+                ))}
+                {/* Package managers */}
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${env.tlmgr ? 'bg-green-400' : 'bg-gray-300'}`} />
+                  <span className="text-xs font-medium text-gray-600 min-w-[70px]">tlmgr</span>
+                  {env.tlmgr ? (
+                    <span className="text-[10px] font-mono text-gray-400 truncate" title={env.tlmgr}>{env.tlmgr}</span>
+                  ) : (
+                    <span className="text-[10px] text-gray-400">未找到</span>
+                  )}
+                  <span className="ml-auto text-[10px] text-gray-300 shrink-0 hidden sm:inline">TeX Live 包管理器</span>
+                </div>
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${env.mpm ? 'bg-green-400' : 'bg-gray-300'}`} />
+                  <span className="text-xs font-medium text-gray-600 min-w-[70px]">mpm</span>
+                  {env.mpm ? (
+                    <span className="text-[10px] font-mono text-gray-400 truncate" title={env.mpm}>{env.mpm}</span>
+                  ) : (
+                    <span className="text-[10px] text-gray-400">未找到</span>
+                  )}
+                  <span className="ml-auto text-[10px] text-gray-300 shrink-0 hidden sm:inline">MiKTeX 包管理器</span>
+                </div>
+                {/* ctex */}
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${env.ctexInstalled ? 'bg-green-400' : 'bg-yellow-400'}`} />
+                  <span className="text-xs font-medium text-gray-600 min-w-[70px]">ctex 宏包</span>
+                  <span className={`text-[10px] ${env.ctexInstalled ? 'text-green-600' : 'text-yellow-600'}`}>
+                    {env.ctexInstalled ? '已安装' : '未安装（中文排版需要）'}
+                  </span>
+                </div>
+                {/* Platform */}
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-blue-400" />
+                  <span className="text-xs font-medium text-gray-600 min-w-[70px]">系统</span>
+                  <span className="text-[10px] text-gray-400">
+                    {env.platform === 'darwin' ? 'macOS' : env.platform === 'win32' ? 'Windows' : 'Linux'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -499,17 +588,860 @@ const LatexSettingsPanel: React.FC<LatexSettingsPanelProps> = ({ onClose }) => {
   );
 };
 
+// ─── Package List Panel ───────────────────────────────────────────────────────
+
+interface PackageInfo {
+  name: string;
+  description: string;
+  category: string;
+}
+
+const COMMON_PACKAGES: PackageInfo[] = [
+  // 文档与中文
+  { name: 'ctexart / ctexrep / ctexbook', description: '中文文档类，自动配置中文排版', category: '文档与中文' },
+  { name: 'CJKutf8', description: 'pdfLaTeX 下的 CJK 中文支持', category: '文档与中文' },
+  // 数学
+  { name: 'amsmath', description: '数学公式增强（align, equation 等环境）', category: '数学' },
+  { name: 'amssymb', description: 'AMS 数学符号（\\mathbb, \\therefore 等）', category: '数学' },
+  { name: 'mathtools', description: 'amsmath 增强，提供更多数学工具', category: '数学' },
+  { name: 'amsthm', description: '定理、定义、证明等环境', category: '数学' },
+  { name: 'bm', description: '粗体数学符号 \\bm{x}', category: '数学' },
+  { name: 'unicode-math', description: 'XeLaTeX/LuaLaTeX 下使用 Unicode 数学字体', category: '数学' },
+  // 排版布局
+  { name: 'geometry', description: '页边距与纸张大小设置', category: '排版布局' },
+  { name: 'fancyhdr', description: '自定义页眉页脚', category: '排版布局' },
+  { name: 'titlesec', description: '自定义章节标题样式', category: '排版布局' },
+  { name: 'enumitem', description: '自定义列表（itemize/enumerate）间距', category: '排版布局' },
+  { name: 'multicol', description: '多栏排版', category: '排版布局' },
+  { name: 'setspace', description: '设置行距（\\onehalfspacing 等）', category: '排版布局' },
+  { name: 'parskip', description: '段间距替代首行缩进', category: '排版布局' },
+  // 图表浮动
+  { name: 'graphicx', description: '插入图片 \\includegraphics', category: '图表浮动' },
+  { name: 'float', description: '精确控制浮动体位置 [H]', category: '图表浮动' },
+  { name: 'caption', description: '自定义图表标题样式', category: '图表浮动' },
+  { name: 'subcaption', description: '子图排版 subfigure 环境', category: '图表浮动' },
+  { name: 'booktabs', description: '高质量三线表 \\toprule \\midrule \\bottomrule', category: '图表浮动' },
+  { name: 'longtable', description: '跨页长表格', category: '图表浮动' },
+  { name: 'tabularx', description: '自动列宽表格', category: '图表浮动' },
+  { name: 'multirow', description: '表格跨行合并', category: '图表浮动' },
+  // 绘图
+  { name: 'tikz (pgf)', description: '强大的矢量绘图工具', category: '绘图' },
+  { name: 'pgfplots', description: '基于 TikZ 的函数/数据绘图', category: '绘图' },
+  { name: 'circuitikz', description: '电路图绘制', category: '绘图' },
+  // 代码
+  { name: 'listings', description: '代码高亮排版', category: '代码' },
+  { name: 'minted', description: '基于 Pygments 的高级代码高亮（需 -shell-escape）', category: '代码' },
+  { name: 'algorithm2e', description: '伪代码/算法排版', category: '代码' },
+  { name: 'algorithmicx', description: '伪代码排版（另一种风格）', category: '代码' },
+  // 字体
+  { name: 'fontspec', description: 'XeLaTeX/LuaLaTeX 系统字体选择', category: '字体' },
+  { name: 'xeCJK', description: 'XeLaTeX 中日韩字体配置', category: '字体' },
+  { name: 'hologo', description: 'LaTeX 引擎标志（\\hologo{XeLaTeX} 等）', category: '字体' },
+  // 引用链接
+  { name: 'hyperref', description: '超链接、PDF 书签、交叉引用可点击', category: '引用链接' },
+  { name: 'cleveref', description: '智能交叉引用（自动加"图""表"等前缀）', category: '引用链接' },
+  { name: 'biblatex', description: '现代参考文献管理', category: '引用链接' },
+  { name: 'natbib', description: '经典参考文献引用样式', category: '引用链接' },
+  { name: 'url', description: 'URL 排版与断行', category: '引用链接' },
+  // 颜色与装饰
+  { name: 'xcolor', description: '颜色支持，定义自定义颜色', category: '颜色与装饰' },
+  { name: 'tcolorbox', description: '彩色文本框、定理框', category: '颜色与装饰' },
+  { name: 'mdframed', description: '带边框的文本块', category: '颜色与装饰' },
+  // 实用工具
+  { name: 'appendix', description: '附录管理', category: '实用工具' },
+  { name: 'tocbibind', description: '将目录/参考文献等加入目录', category: '实用工具' },
+  { name: 'siunitx', description: '国际单位制排版 \\SI{9.8}{m/s^2}', category: '实用工具' },
+  { name: 'ulem', description: '各类下划线与删除线', category: '实用工具' },
+  { name: 'import', description: '相对路径 \\input / \\include', category: '实用工具' },
+  { name: 'pdfpages', description: '将已有 PDF 页面插入文档', category: '实用工具' },
+];
+
+interface PackageListPanelProps {
+  onClose: () => void;
+}
+
+const PackageListPanel: React.FC<PackageListPanelProps> = ({ onClose }) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [installPkg, setInstallPkg] = useState('');
+  const [installing, setInstalling] = useState(false);
+  const [installResult, setInstallResult] = useState<{ success: boolean; output: string } | null>(null);
+
+  const handleInstall = async () => {
+    const name = installPkg.trim();
+    if (!name || !window.electronAPI?.latexInstallPackage) return;
+    setInstalling(true);
+    setInstallResult(null);
+    try {
+      const result = await window.electronAPI.latexInstallPackage(name);
+      setInstallResult(result);
+    } catch (e: any) {
+      setInstallResult({ success: false, output: e?.message || '未知错误' });
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const filtered = COMMON_PACKAGES.filter(pkg =>
+    pkg.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    pkg.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    pkg.category.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const grouped = filtered.reduce<Record<string, PackageInfo[]>>((acc, pkg) => {
+    (acc[pkg.category] ??= []).push(pkg);
+    return acc;
+  }, {});
+
+  return (
+    <div className="absolute inset-0 z-50 flex items-start justify-center bg-black/30 pt-12">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 shrink-0">
+          <div className="flex items-center gap-2">
+            <Package className="w-4 h-4 text-gray-500" />
+            <span className="text-sm font-semibold text-gray-700">常用宏包速查</span>
+            <span className="text-xs text-gray-400">({COMMON_PACKAGES.length} 个)</span>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Search */}
+        <div className="px-5 py-3 border-b border-gray-100 shrink-0">
+          <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+            <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              placeholder="搜索宏包名称或功能..."
+              className="flex-1 bg-transparent text-xs text-gray-700 placeholder-gray-400 focus:outline-none"
+              autoFocus
+            />
+          </div>
+        </div>
+
+        {/* List */}
+        <div className="flex-1 overflow-auto px-5 py-3">
+          {Object.entries(grouped).map(([category, pkgs]) => (
+            <div key={category} className="mb-4">
+              <div className="text-xs font-semibold text-gray-500 mb-2 sticky top-0 bg-white py-1">{category}</div>
+              <div className="space-y-1">
+                {pkgs.map(pkg => (
+                  <div
+                    key={pkg.name}
+                    className="flex items-baseline gap-3 py-1.5 px-2 rounded hover:bg-gray-50 transition-colors"
+                  >
+                    <code className="text-xs font-mono text-blue-600 shrink-0 min-w-[160px]">{pkg.name}</code>
+                    <span className="text-xs text-gray-500">{pkg.description}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          {filtered.length === 0 && (
+            <p className="text-xs text-gray-400 text-center py-8">未找到匹配的宏包</p>
+          )}
+        </div>
+
+        {/* Install package */}
+        <div className="px-5 py-3 border-t border-gray-200 shrink-0 space-y-2">
+          <div className="text-xs font-medium text-gray-600">安装宏包 (tlmgr)</div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={installPkg}
+              onChange={e => setInstallPkg(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleInstall(); }}
+              placeholder="输入包名，如 tikz、minted..."
+              className="flex-1 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-xs text-gray-700 placeholder-gray-400 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200 font-mono"
+              disabled={installing}
+            />
+            <button
+              onClick={handleInstall}
+              disabled={installing || !installPkg.trim()}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+            >
+              {installing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              {installing ? '安装中...' : '安装'}
+            </button>
+          </div>
+          {installResult && (
+            <div className={`text-[11px] font-mono rounded-lg px-3 py-2 max-h-24 overflow-auto whitespace-pre-wrap break-all ${
+              installResult.success
+                ? 'bg-green-50 text-green-700 border border-green-200'
+                : 'bg-red-50 text-red-600 border border-red-200'
+            }`}>
+              {installResult.output}
+            </div>
+          )}
+          <p className="text-[10px] text-gray-400 leading-relaxed">
+            需要 tlmgr（TeX Live 包管理器）。macOS 下可能需要管理员权限，如安装失败请在终端执行 <code className="bg-gray-100 px-1 rounded">sudo tlmgr install 包名</code>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Symbol Palette ───────────────────────────────────────────────────────────
+
+interface SymbolItem {
+  label: string;   // display name
+  code: string;    // LaTeX code
+  category: string;
+}
+
+const BUILTIN_SYMBOLS: SymbolItem[] = [
+  // 希腊字母
+  { label: 'α', code: '\\alpha', category: '希腊字母' },
+  { label: 'β', code: '\\beta', category: '希腊字母' },
+  { label: 'γ', code: '\\gamma', category: '希腊字母' },
+  { label: 'δ', code: '\\delta', category: '希腊字母' },
+  { label: 'ε', code: '\\epsilon', category: '希腊字母' },
+  { label: 'ζ', code: '\\zeta', category: '希腊字母' },
+  { label: 'η', code: '\\eta', category: '希腊字母' },
+  { label: 'θ', code: '\\theta', category: '希腊字母' },
+  { label: 'λ', code: '\\lambda', category: '希腊字母' },
+  { label: 'μ', code: '\\mu', category: '希腊字母' },
+  { label: 'π', code: '\\pi', category: '希腊字母' },
+  { label: 'σ', code: '\\sigma', category: '希腊字母' },
+  { label: 'φ', code: '\\phi', category: '希腊字母' },
+  { label: 'ω', code: '\\omega', category: '希腊字母' },
+  { label: 'Γ', code: '\\Gamma', category: '希腊字母' },
+  { label: 'Δ', code: '\\Delta', category: '希腊字母' },
+  { label: 'Θ', code: '\\Theta', category: '希腊字母' },
+  { label: 'Λ', code: '\\Lambda', category: '希腊字母' },
+  { label: 'Σ', code: '\\Sigma', category: '希腊字母' },
+  { label: 'Φ', code: '\\Phi', category: '希腊字母' },
+  { label: 'Ω', code: '\\Omega', category: '希腊字母' },
+  // 运算符
+  { label: '±', code: '\\pm', category: '运算符' },
+  { label: '∓', code: '\\mp', category: '运算符' },
+  { label: '×', code: '\\times', category: '运算符' },
+  { label: '÷', code: '\\div', category: '运算符' },
+  { label: '·', code: '\\cdot', category: '运算符' },
+  { label: '∘', code: '\\circ', category: '运算符' },
+  { label: '⊕', code: '\\oplus', category: '运算符' },
+  { label: '⊗', code: '\\otimes', category: '运算符' },
+  // 关系符
+  { label: '≤', code: '\\leq', category: '关系符' },
+  { label: '≥', code: '\\geq', category: '关系符' },
+  { label: '≠', code: '\\neq', category: '关系符' },
+  { label: '≈', code: '\\approx', category: '关系符' },
+  { label: '≡', code: '\\equiv', category: '关系符' },
+  { label: '∼', code: '\\sim', category: '关系符' },
+  { label: '≪', code: '\\ll', category: '关系符' },
+  { label: '≫', code: '\\gg', category: '关系符' },
+  { label: '⊂', code: '\\subset', category: '关系符' },
+  { label: '⊃', code: '\\supset', category: '关系符' },
+  { label: '∈', code: '\\in', category: '关系符' },
+  { label: '∉', code: '\\notin', category: '关系符' },
+  { label: '⊆', code: '\\subseteq', category: '关系符' },
+  { label: '⊇', code: '\\supseteq', category: '关系符' },
+  // 箭头
+  { label: '←', code: '\\leftarrow', category: '箭头' },
+  { label: '→', code: '\\rightarrow', category: '箭头' },
+  { label: '↔', code: '\\leftrightarrow', category: '箭头' },
+  { label: '⇐', code: '\\Leftarrow', category: '箭头' },
+  { label: '⇒', code: '\\Rightarrow', category: '箭头' },
+  { label: '⇔', code: '\\Leftrightarrow', category: '箭头' },
+  { label: '↦', code: '\\mapsto', category: '箭头' },
+  { label: '↑', code: '\\uparrow', category: '箭头' },
+  { label: '↓', code: '\\downarrow', category: '箭头' },
+  // 大型运算
+  { label: '∑', code: '\\sum', category: '大型运算' },
+  { label: '∏', code: '\\prod', category: '大型运算' },
+  { label: '∫', code: '\\int', category: '大型运算' },
+  { label: '∬', code: '\\iint', category: '大型运算' },
+  { label: '∮', code: '\\oint', category: '大型运算' },
+  { label: '⋃', code: '\\bigcup', category: '大型运算' },
+  { label: '⋂', code: '\\bigcap', category: '大型运算' },
+  { label: 'lim', code: '\\lim', category: '大型运算' },
+  { label: 'sup', code: '\\sup', category: '大型运算' },
+  { label: 'inf', code: '\\inf', category: '大型运算' },
+  // 其他
+  { label: '∞', code: '\\infty', category: '其他常用' },
+  { label: '∂', code: '\\partial', category: '其他常用' },
+  { label: '∇', code: '\\nabla', category: '其他常用' },
+  { label: '∅', code: '\\emptyset', category: '其他常用' },
+  { label: '∀', code: '\\forall', category: '其他常用' },
+  { label: '∃', code: '\\exists', category: '其他常用' },
+  { label: '¬', code: '\\neg', category: '其他常用' },
+  { label: '∧', code: '\\wedge', category: '其他常用' },
+  { label: '∨', code: '\\vee', category: '其他常用' },
+  { label: '…', code: '\\dots', category: '其他常用' },
+  { label: '⋯', code: '\\cdots', category: '其他常用' },
+  { label: '⋮', code: '\\vdots', category: '其他常用' },
+  { label: '√', code: '\\sqrt{}', category: '其他常用' },
+  { label: 'x/y', code: '\\frac{}{}', category: '其他常用' },
+  { label: 'x²', code: '^{}', category: '其他常用' },
+  { label: 'xₙ', code: '_{}', category: '其他常用' },
+  { label: '()', code: '\\left( \\right)', category: '其他常用' },
+  { label: '[]', code: '\\left[ \\right]', category: '其他常用' },
+  { label: '{}', code: '\\left\\{ \\right\\}', category: '其他常用' },
+  { label: '||', code: '\\left| \\right|', category: '其他常用' },
+  { label: '‖‖', code: '\\left\\| \\right\\|', category: '其他常用' },
+  // 数学环境
+  { label: 'matrix', code: '\\begin{matrix}  \\\\  \\end{matrix}', category: '环境片段' },
+  { label: 'pmatrix', code: '\\begin{pmatrix}  \\\\  \\end{pmatrix}', category: '环境片段' },
+  { label: 'bmatrix', code: '\\begin{bmatrix}  \\\\  \\end{bmatrix}', category: '环境片段' },
+  { label: 'cases', code: '\\begin{cases}  \\\\  \\end{cases}', category: '环境片段' },
+  { label: 'align', code: '\\begin{align}\n  & = \\\\\n  & = \n\\end{align}', category: '环境片段' },
+];
+
+const CUSTOM_SYMBOLS_KEY = 'latex-custom-symbols';
+
+interface SymbolPalettePanelProps {
+  onClose: () => void;
+}
+
+const SymbolPalettePanel: React.FC<SymbolPalettePanelProps> = ({ onClose }) => {
+  const [customSymbols, setCustomSymbols] = useState<SymbolItem[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newLabel, setNewLabel] = useState('');
+  const [newCode, setNewCode] = useState('');
+
+  // Load custom symbols
+  useEffect(() => {
+    window.electronAPI?.loadAppData?.(CUSTOM_SYMBOLS_KEY).then((data: any) => {
+      if (Array.isArray(data)) setCustomSymbols(data);
+    }).catch(() => {});
+  }, []);
+
+  const saveCustomSymbols = async (syms: SymbolItem[]) => {
+    setCustomSymbols(syms);
+    await window.electronAPI?.saveAppData?.(CUSTOM_SYMBOLS_KEY, syms).catch(() => {});
+  };
+
+  const handleCopy = (code: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedCode(code);
+    setTimeout(() => setCopiedCode(null), 1500);
+  };
+
+  const handleAdd = () => {
+    if (!newLabel.trim() || !newCode.trim()) return;
+    const item: SymbolItem = { label: newLabel.trim(), code: newCode.trim(), category: '自定义' };
+    saveCustomSymbols([...customSymbols, item]);
+    setNewLabel('');
+    setNewCode('');
+    setShowAddForm(false);
+  };
+
+  const handleDelete = (index: number) => {
+    saveCustomSymbols(customSymbols.filter((_, i) => i !== index));
+  };
+
+  const allSymbols = [...BUILTIN_SYMBOLS, ...customSymbols.map(s => ({ ...s, category: '自定义' }))];
+  const filtered = allSymbols.filter(s =>
+    s.label.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    s.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    s.category.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+  const grouped = filtered.reduce<Record<string, SymbolItem[]>>((acc, s) => {
+    (acc[s.category] ??= []).push(s);
+    return acc;
+  }, {});
+
+  return (
+    <div className="absolute inset-0 z-50 flex items-start justify-center bg-black/30 pt-12">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-2xl w-full max-w-3xl mx-4 max-h-[80vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 shrink-0">
+          <div className="flex items-center gap-2">
+            <Omega className="w-4 h-4 text-gray-500" />
+            <span className="text-sm font-semibold text-gray-700">符号面板</span>
+            <span className="text-xs text-gray-400">点击符号复制代码</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowAddForm(v => !v)}
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs text-blue-600 hover:bg-blue-50 transition-colors"
+            >
+              <Plus className="w-3 h-3" /> 自定义
+            </button>
+            <button onClick={onClose} className="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Add form */}
+        {showAddForm && (
+          <div className="px-5 py-3 border-b border-gray-100 shrink-0 flex items-end gap-2">
+            <div className="flex-1">
+              <label className="block text-[10px] text-gray-500 mb-1">显示名称</label>
+              <input
+                value={newLabel}
+                onChange={e => setNewLabel(e.target.value)}
+                placeholder="如：∇²"
+                className="w-full bg-gray-50 border border-gray-200 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-400"
+              />
+            </div>
+            <div className="flex-[2]">
+              <label className="block text-[10px] text-gray-500 mb-1">LaTeX 代码</label>
+              <input
+                value={newCode}
+                onChange={e => setNewCode(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleAdd(); }}
+                placeholder="如：\\nabla^2"
+                className="w-full bg-gray-50 border border-gray-200 rounded px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-blue-400"
+              />
+            </div>
+            <button
+              onClick={handleAdd}
+              disabled={!newLabel.trim() || !newCode.trim()}
+              className="px-3 py-1.5 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors shrink-0"
+            >
+              添加
+            </button>
+          </div>
+        )}
+
+        {/* Search */}
+        <div className="px-5 py-3 border-b border-gray-100 shrink-0">
+          <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+            <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              placeholder="搜索符号或代码..."
+              className="flex-1 bg-transparent text-xs text-gray-700 placeholder-gray-400 focus:outline-none"
+              autoFocus
+            />
+          </div>
+        </div>
+
+        {/* Symbols grid */}
+        <div className="flex-1 overflow-auto px-5 py-3">
+          {Object.entries(grouped).map(([category, syms]) => (
+            <div key={category} className="mb-4">
+              <div className="text-xs font-semibold text-gray-500 mb-2 sticky top-0 bg-white py-1">{category}</div>
+              <div className="flex flex-wrap gap-1.5">
+                {syms.map((sym, i) => {
+                  const isCustom = category === '自定义';
+                  const customIndex = isCustom ? customSymbols.findIndex(c => c.label === sym.label && c.code === sym.code) : -1;
+                  const isCopied = copiedCode === sym.code;
+                  return (
+                    <div key={`${sym.code}-${i}`} className="group relative">
+                      <button
+                        onClick={() => handleCopy(sym.code)}
+                        className={`flex flex-col items-center justify-center w-16 h-14 rounded-lg border transition-all ${
+                          isCopied
+                            ? 'border-green-400 bg-green-50'
+                            : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50'
+                        }`}
+                        title={sym.code}
+                      >
+                        <span className="text-base leading-none mb-0.5">{sym.label}</span>
+                        {isCopied ? (
+                          <span className="text-[9px] text-green-600 flex items-center gap-0.5"><Check className="w-2.5 h-2.5" />已复制</span>
+                        ) : (
+                          <span className="text-[9px] text-gray-400 font-mono truncate max-w-[56px]">{sym.code}</span>
+                        )}
+                      </button>
+                      {isCustom && customIndex >= 0 && (
+                        <button
+                          onClick={() => handleDelete(customIndex)}
+                          className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                          title="删除"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          {filtered.length === 0 && (
+            <p className="text-xs text-gray-400 text-center py-8">未找到匹配的符号</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Image to LaTeX Panel ─────────────────────────────────────────────────────
+
+const OCR_SETTINGS_KEY = 'latex-ocr-settings';
+
+type OcrProvider = 'zenmux' | 'gemini' | 'openai' | 'anthropic' | 'ollama' | 'custom' | 'deepseek' | 'zhipu' | 'moonshot' | 'minimax';
+
+interface OcrSettings {
+  provider: OcrProvider;
+  apiKey: string;
+  apiUrl: string;
+  model: string;
+}
+
+const OCR_PROVIDER_DEFAULTS: Record<OcrProvider, { url: string; model: string; label: string }> = {
+  zenmux:    { url: 'https://zenmux.ai/api/v1',              model: 'openai/gpt-4o',     label: 'Zenmux' },
+  gemini:    { url: '',                                       model: 'gemini-2.5-flash',  label: 'Gemini' },
+  openai:    { url: 'https://api.openai.com/v1',              model: 'gpt-4o',            label: 'OpenAI' },
+  anthropic: { url: 'https://api.anthropic.com/v1',           model: 'claude-sonnet-4-6', label: 'Anthropic' },
+  deepseek:  { url: 'https://api.deepseek.com/v1',            model: 'deepseek-chat',     label: 'DeepSeek' },
+  zhipu:     { url: 'https://open.bigmodel.cn/api/paas/v4',   model: 'glm-4-plus',        label: '智谱 AI' },
+  moonshot:  { url: 'https://api.moonshot.cn/v1',              model: 'kimi-k2.5',         label: 'Moonshot' },
+  minimax:   { url: 'https://api.minimax.chat/v1',             model: 'MiniMax-M2.5',      label: 'MiniMax' },
+  ollama:    { url: 'http://localhost:11434/v1',               model: 'llava',             label: 'Ollama' },
+  custom:    { url: '',                                        model: '',                  label: '自定义' },
+};
+
+const DEFAULT_OCR_SETTINGS: OcrSettings = {
+  provider: 'zenmux',
+  apiKey: '',
+  apiUrl: OCR_PROVIDER_DEFAULTS.zenmux.url,
+  model: OCR_PROVIDER_DEFAULTS.zenmux.model,
+};
+
+interface ImageToLatexPanelProps {
+  onClose: () => void;
+}
+
+const ImageToLatexPanel: React.FC<ImageToLatexPanelProps> = ({ onClose }) => {
+  const [ocrSettings, setOcrSettings] = useState<OcrSettings>(DEFAULT_OCR_SETTINGS);
+  const [imageBase64, setImageBase64] = useState<string | null>(null);
+  const [imageName, setImageName] = useState('');
+  const [resultLatex, setResultLatex] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Load settings
+  useEffect(() => {
+    window.electronAPI?.loadAppData?.(OCR_SETTINGS_KEY).then((data: any) => {
+      if (data && data.apiKey) setOcrSettings({ ...DEFAULT_OCR_SETTINGS, ...data, provider: data.provider || 'openai' });
+      else setShowSettings(true); // First time: show settings
+    }).catch(() => setShowSettings(true));
+  }, []);
+
+  const saveSettings = async (s: OcrSettings) => {
+    setOcrSettings(s);
+    await window.electronAPI?.saveAppData?.(OCR_SETTINGS_KEY, s).catch(() => {});
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file || !file.type.startsWith('image/')) return;
+    setImageName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const base64Part = result.split(',')[1];
+      if (base64Part) setImageBase64(base64Part);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+  };
+
+  const handleSelectImage = async () => {
+    // Use file input for image, more reliable cross-platform
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      // result is "data:image/png;base64,xxxxx"
+      const base64Part = result.split(',')[1];
+      if (base64Part) setImageBase64(base64Part);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = ''; // reset
+  };
+
+  const OCR_PROMPT = '请识别图片中的数学公式，只返回 LaTeX 代码，不要任何解释文字。如果有多个公式，每个公式单独一行。不要用 ``` 包裹。';
+
+  const recognizeViaGemini = async (base64: string, settings: OcrSettings): Promise<string> => {
+    const ai = new GoogleGenAI({ apiKey: settings.apiKey });
+    const response = await ai.models.generateContent({
+      model: settings.model,
+      contents: [{
+        role: 'user',
+        parts: [
+          { text: OCR_PROMPT },
+          { inlineData: { mimeType: 'image/png', data: base64 } },
+        ],
+      }],
+    });
+    return response.text?.trim() || '';
+  };
+
+  const recognizeViaOpenAICompat = async (base64: string, settings: OcrSettings): Promise<string> => {
+    const baseUrl = settings.apiUrl.replace(/\/+$/, '');
+    const endpoint = `${baseUrl}/chat/completions`;
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (settings.provider === 'anthropic') {
+      headers['x-api-key'] = settings.apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+    } else if (settings.apiKey) {
+      headers['Authorization'] = `Bearer ${settings.apiKey}`;
+    }
+
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: settings.model,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: OCR_PROMPT },
+            { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } },
+          ],
+        }],
+        max_tokens: 2048,
+      }),
+    });
+
+    if (!resp.ok) {
+      const errBody = await resp.text();
+      throw new Error(`API 请求失败 (${resp.status}): ${errBody.slice(0, 200)}`);
+    }
+
+    const data = await resp.json();
+    return data.choices?.[0]?.message?.content?.trim() ?? '';
+  };
+
+  const handleRecognize = async () => {
+    if (!imageBase64 || !ocrSettings.apiKey) return;
+    setLoading(true);
+    setError('');
+    setResultLatex('');
+
+    try {
+      let content: string;
+      if (ocrSettings.provider === 'gemini') {
+        content = await recognizeViaGemini(imageBase64, ocrSettings);
+      } else {
+        content = await recognizeViaOpenAICompat(imageBase64, ocrSettings);
+      }
+      if (!content) throw new Error('API 返回空结果');
+      setResultLatex(content);
+    } catch (e: any) {
+      setError(e?.message || '识别失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(resultLatex);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div className="absolute inset-0 z-50 flex items-start justify-center bg-black/30 pt-12">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-2xl w-full max-w-xl mx-4 max-h-[85vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 shrink-0">
+          <div className="flex items-center gap-2">
+            <Image className="w-4 h-4 text-gray-500" />
+            <span className="text-sm font-semibold text-gray-700">图片识别公式</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowSettings(v => !v)}
+              className="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+              title="API 设置"
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+            </button>
+            <button onClick={onClose} className="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* API Settings */}
+        {showSettings && (
+          <div className="px-5 py-3 border-b border-gray-100 shrink-0 space-y-2">
+            <div className="text-xs font-medium text-gray-600">API 设置</div>
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-1">服务商</label>
+              <select
+                value={ocrSettings.provider}
+                onChange={e => {
+                  const p = e.target.value as OcrProvider;
+                  const d = OCR_PROVIDER_DEFAULTS[p];
+                  saveSettings({ ...ocrSettings, provider: p, apiUrl: d.url, model: d.model });
+                }}
+                className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
+              >
+                {Object.entries(OCR_PROVIDER_DEFAULTS).map(([k, v]) => (
+                  <option key={k} value={k}>{v.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-1">API Key</label>
+              <input
+                type="password"
+                value={ocrSettings.apiKey}
+                onChange={e => saveSettings({ ...ocrSettings, apiKey: e.target.value })}
+                placeholder={ocrSettings.provider === 'gemini' ? 'AIza...' : 'sk-...'}
+                className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
+              />
+            </div>
+            {ocrSettings.provider !== 'gemini' && (
+              <div>
+                <label className="block text-[10px] text-gray-500 mb-1">API URL</label>
+                <input
+                  type="text"
+                  value={ocrSettings.apiUrl}
+                  onChange={e => saveSettings({ ...ocrSettings, apiUrl: e.target.value })}
+                  placeholder="https://api.openai.com/v1"
+                  className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
+                />
+              </div>
+            )}
+            <div>
+              <label className="block text-[10px] text-gray-500 mb-1">模型</label>
+              <input
+                type="text"
+                value={ocrSettings.model}
+                onChange={e => saveSettings({ ...ocrSettings, model: e.target.value })}
+                placeholder={OCR_PROVIDER_DEFAULTS[ocrSettings.provider].model}
+                className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
+              />
+            </div>
+            <p className="text-[10px] text-gray-400">
+              支持所有具备图片识别能力的大模型。切换服务商会自动填入默认端点和模型，也可手动修改。
+            </p>
+          </div>
+        )}
+
+        {/* Image upload area */}
+        <div className="px-5 py-4 shrink-0">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+          {imageBase64 ? (
+            <div className="relative">
+              <img
+                src={`data:image/png;base64,${imageBase64}`}
+                alt="uploaded"
+                className="max-h-48 mx-auto rounded-lg border border-gray-200 object-contain"
+              />
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-xs text-gray-400 truncate">{imageName}</span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleSelectImage}
+                    className="text-xs text-blue-600 hover:text-blue-700"
+                  >
+                    更换图片
+                  </button>
+                  <button
+                    onClick={handleRecognize}
+                    disabled={loading || !ocrSettings.apiKey}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  >
+                    {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                    {loading ? '识别中...' : '识别公式'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={handleSelectImage}
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              className={`w-full border-2 border-dashed rounded-xl py-8 flex flex-col items-center gap-2 transition-colors ${
+                dragOver
+                  ? 'border-blue-400 bg-blue-50/50'
+                  : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50/30'
+              }`}
+            >
+              <Image className={`w-8 h-8 ${dragOver ? 'text-blue-400' : 'text-gray-300'}`} />
+              <span className="text-xs text-gray-400">点击或拖拽图片到此处</span>
+              <span className="text-[10px] text-gray-300">支持 PNG / JPG / WEBP</span>
+            </button>
+          )}
+          {!ocrSettings.apiKey && (
+            <p className="text-[10px] text-amber-600 mt-2">请先点击右上角齿轮配置 API Key</p>
+          )}
+        </div>
+
+        {/* Result */}
+        {(resultLatex || error) && (
+          <div className="px-5 pb-4 shrink-0">
+            {error ? (
+              <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-600">{error}</div>
+            ) : (
+              <div className="bg-gray-50 border border-gray-200 rounded-lg">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100">
+                  <span className="text-xs font-medium text-gray-600">识别结果</span>
+                  <button
+                    onClick={handleCopy}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs text-blue-600 hover:bg-blue-50 transition-colors"
+                  >
+                    {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                    {copied ? '已复制' : '复制'}
+                  </button>
+                </div>
+                <pre className="px-3 py-2 text-xs font-mono text-gray-700 whitespace-pre-wrap break-all max-h-40 overflow-auto">
+                  {resultLatex}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ─── Main Editor ──────────────────────────────────────────────────────────────
 
 interface LatexEditorProps {
-  /** Called by LatexSidebar to inject template content */
-  onLoadTemplateRef?: React.MutableRefObject<((content: string) => void) | null>;
+  /** Called by LatexSidebar to edit a template (save will update the template) */
+  onEditTemplateRef?: React.MutableRefObject<((template: { id: string; name: string; content: string; category: string; createdAt: number; updatedAt: number; description?: string }) => void) | null>;
+  /** Called by LatexSidebar to create a new file from template content */
+  onLoadTemplateAsFileRef?: React.MutableRefObject<((content: string) => void) | null>;
   /** Called by LatexSidebar to open a managed file (content + path) */
   onOpenFileRef?: React.MutableRefObject<((file: { path: string; content: string }) => void) | null>;
 }
 
-export const LatexEditor: React.FC<LatexEditorProps> = ({ onLoadTemplateRef, onOpenFileRef }) => {
-  const [content, setContent] = useState(DEFAULT_TEX);
+export const LatexEditor: React.FC<LatexEditorProps> = ({ onEditTemplateRef, onLoadTemplateAsFileRef, onOpenFileRef }) => {
+  const [content, setContent] = useState('');
   const [engine, setEngine] = useState<Engine>('xelatex');
   const [compiling, setCompiling] = useState(false);
   const [compileResult, setCompileResult] = useState<LatexCompileResult | null>(null);
@@ -520,8 +1452,19 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onLoadTemplateRef, onO
   const [isDirty, setIsDirty] = useState(false);
   const [showEngineMenu, setShowEngineMenu] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showPackages, setShowPackages] = useState(false);
+  const [showSymbols, setShowSymbols] = useState(false);
+  const [showImageOcr, setShowImageOcr] = useState(false);
+  // Template editing state: when non-null, Save will update the template
+  const [editingTemplate, setEditingTemplate] = useState<{ id: string; name: string; category: string; createdAt: number; description?: string } | null>(null);
+  // New file dialog
+  const [showNewFileDialog, setShowNewFileDialog] = useState(false);
+  const [newFileName, setNewFileName] = useState('');
+  // Pending template content for "load as new file"
+  const [pendingTemplateContent, setPendingTemplateContent] = useState<string | null>(null);
   const engineMenuRef = useRef<HTMLDivElement>(null);
   const jobIdRef = useRef(0);
+  const newFileInputRef = useRef<HTMLInputElement>(null);
 
   // Check environment on mount
   const checkEnv = useCallback(() => {
@@ -600,18 +1543,38 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onLoadTemplateRef, onO
     }
   }, [content, engine, compiling]);
 
-  const handleNew = useCallback(() => {
-    if (
-      isDirty &&
-      !window.confirm('有未保存的修改，确定要新建文档吗？')
-    )
-      return;
-    setContent(DEFAULT_TEX);
-    setFilePath(null);
-    setIsDirty(false);
-    setCompileResult(null);
-    setPdfBase64(null);
+  const handleNewFile = useCallback(async (name: string, templateContent?: string) => {
+    if (!name.trim()) return;
+    if (isDirty && !window.confirm('有未保存的修改，确定要新建文档吗？')) return;
+    const base = templateContent || DEFAULT_TEX;
+    const result = await window.electronAPI?.latexNewManagedFile?.(name).catch(() => null);
+    if (result) {
+      // Save template content to the new file
+      await window.electronAPI?.latexSaveManagedFile?.({ filePath: result.path, content: base }).catch(() => {});
+      setContent(base);
+      setFilePath(result.path);
+      setEditingTemplate(null);
+      setIsDirty(false);
+      setCompileResult(null);
+      setPdfBase64(null);
+    }
   }, [isDirty]);
+
+  const handleShowNewFileDialog = useCallback((templateContent?: string) => {
+    if (isDirty && !window.confirm('有未保存的修改，确定要新建文档吗？')) return;
+    setPendingTemplateContent(templateContent ?? null);
+    setNewFileName('');
+    setShowNewFileDialog(true);
+    setTimeout(() => newFileInputRef.current?.focus(), 50);
+  }, [isDirty]);
+
+  const handleConfirmNewFile = useCallback(() => {
+    if (!newFileName.trim()) return;
+    handleNewFile(newFileName.trim(), pendingTemplateContent ?? undefined);
+    setShowNewFileDialog(false);
+    setPendingTemplateContent(null);
+    setNewFileName('');
+  }, [newFileName, pendingTemplateContent, handleNewFile]);
 
   const handleOpen = useCallback(async () => {
     if (!window.electronAPI?.latexOpenFile) return;
@@ -624,6 +1587,7 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onLoadTemplateRef, onO
     if (result) {
       setContent(result.content);
       setFilePath(result.path);
+      setEditingTemplate(null);
       setIsDirty(false);
       setCompileResult(null);
       setPdfBase64(null);
@@ -632,8 +1596,28 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onLoadTemplateRef, onO
 
   const handleSave = useCallback(async () => {
     if (!window.electronAPI) return;
-    if (filePath && window.electronAPI.latexSaveFile) {
-      await window.electronAPI.latexSaveFile({ filePath, content });
+    // Template editing mode: save content back to template
+    if (editingTemplate) {
+      await window.electronAPI.latexSaveTemplate?.({
+        id: editingTemplate.id,
+        name: editingTemplate.name,
+        description: editingTemplate.description,
+        content,
+        category: editingTemplate.category,
+        createdAt: editingTemplate.createdAt,
+        updatedAt: Date.now(),
+      }).catch(() => {});
+      setIsDirty(false);
+      return;
+    }
+    // File mode
+    if (filePath) {
+      // Check if it's a managed file (in the app's latex/files dir)
+      if (window.electronAPI.latexSaveManagedFile && filePath.includes('/latex/files/')) {
+        await window.electronAPI.latexSaveManagedFile({ filePath, content });
+      } else if (window.electronAPI.latexSaveFile) {
+        await window.electronAPI.latexSaveFile({ filePath, content });
+      }
       setIsDirty(false);
     } else if (window.electronAPI.latexSaveFileAs) {
       const savedPath = await window.electronAPI.latexSaveFileAs(content);
@@ -642,49 +1626,69 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onLoadTemplateRef, onO
         setIsDirty(false);
       }
     }
-  }, [filePath, content]);
+  }, [filePath, content, editingTemplate]);
 
-  const handleSaveAs = useCallback(async () => {
-    if (!window.electronAPI?.latexSaveFileAs) return;
-    const savedPath = await window.electronAPI.latexSaveFileAs(content);
-    if (savedPath) {
-      setFilePath(savedPath);
-      setIsDirty(false);
-    }
-  }, [content]);
+  const handleDownloadPdf = useCallback(() => {
+    if (!pdfBase64) return;
+    const binary = atob(pdfBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const baseName = filePath
+      ? (filePath.split('/').pop() ?? filePath.split('\\').pop() ?? 'document')
+          .replace(/\.tex$/i, '')
+      : editingTemplate?.name ?? 'document';
+    a.download = `${baseName}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [pdfBase64, filePath, editingTemplate]);
 
   const handleEditorChange = useCallback((value: string | undefined) => {
     setContent(value ?? '');
     setIsDirty(true);
   }, []);
 
-  // Load template — expose via ref so LatexSidebar (via App.tsx) can call it
-  const handleLoadTemplate = useCallback(
-    (templateContent: string) => {
-      if (
-        isDirty &&
-        !window.confirm('有未保存的修改，确定要加载模板吗？')
-      )
-        return;
-      setContent(templateContent);
+  // Edit template — load content into editor, save will update the template
+  const handleEditTemplate = useCallback(
+    (template: { id: string; name: string; content: string; category: string; createdAt: number; updatedAt: number; description?: string }) => {
+      if (isDirty && !window.confirm('有未保存的修改，确定要编辑模板吗？')) return;
+      setContent(template.content);
       setFilePath(null);
+      setEditingTemplate({
+        id: template.id,
+        name: template.name,
+        category: template.category,
+        createdAt: template.createdAt,
+        description: template.description,
+      });
       setIsDirty(false);
       setCompileResult(null);
       setPdfBase64(null);
     },
     [isDirty]
+  );
+
+  // Load template as new file — show filename dialog then create managed file
+  const handleLoadTemplateAsFile = useCallback(
+    (templateContent: string) => {
+      if (isDirty && !window.confirm('有未保存的修改，确定要新建文件吗？')) return;
+      handleShowNewFileDialog(templateContent);
+    },
+    [isDirty, handleShowNewFileDialog]
   );
 
   // Open managed file — expose via ref so LatexSidebar (via App.tsx) can call it
   const handleOpenManagedFile = useCallback(
     (file: { path: string; content: string }) => {
-      if (
-        isDirty &&
-        !window.confirm('有未保存的修改，确定要打开此文件吗？')
-      )
-        return;
+      if (isDirty && !window.confirm('有未保存的修改，确定要打开此文件吗？')) return;
       setContent(file.content);
       setFilePath(file.path);
+      setEditingTemplate(null);
       setIsDirty(false);
       setCompileResult(null);
       setPdfBase64(null);
@@ -692,17 +1696,25 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onLoadTemplateRef, onO
     [isDirty]
   );
 
-  // Register load-template handler in ref so parent (App.tsx) can forward calls from sidebar
+  // Register edit-template handler in ref
   useEffect(() => {
-    if (onLoadTemplateRef) {
-      onLoadTemplateRef.current = handleLoadTemplate;
+    if (onEditTemplateRef) {
+      onEditTemplateRef.current = handleEditTemplate;
     }
     return () => {
-      if (onLoadTemplateRef) {
-        onLoadTemplateRef.current = null;
-      }
+      if (onEditTemplateRef) onEditTemplateRef.current = null;
     };
-  }, [handleLoadTemplate, onLoadTemplateRef]);
+  }, [handleEditTemplate, onEditTemplateRef]);
+
+  // Register load-template-as-file handler in ref
+  useEffect(() => {
+    if (onLoadTemplateAsFileRef) {
+      onLoadTemplateAsFileRef.current = handleLoadTemplateAsFile;
+    }
+    return () => {
+      if (onLoadTemplateAsFileRef) onLoadTemplateAsFileRef.current = null;
+    };
+  }, [handleLoadTemplateAsFile, onLoadTemplateAsFileRef]);
 
   // Register open-file handler in ref
   useEffect(() => {
@@ -710,9 +1722,7 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onLoadTemplateRef, onO
       onOpenFileRef.current = handleOpenManagedFile;
     }
     return () => {
-      if (onOpenFileRef) {
-        onOpenFileRef.current = null;
-      }
+      if (onOpenFileRef) onOpenFileRef.current = null;
     };
   }, [handleOpenManagedFile, onOpenFileRef]);
 
@@ -733,11 +1743,16 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onLoadTemplateRef, onO
     return () => window.removeEventListener('keydown', handler);
   }, [handleSave, handleCompile]);
 
-  const fileName = filePath
-    ? filePath.split('/').pop() ??
-      filePath.split('\\').pop() ??
-      'document.tex'
-    : '未命名.tex';
+  const fileName = editingTemplate
+    ? `📝 模板: ${editingTemplate.name}`
+    : filePath
+      ? filePath.split('/').pop() ??
+        filePath.split('\\').pop() ??
+        'document.tex'
+      : '';
+
+  // Whether the editor has a document open (not in empty state)
+  const hasDocument = content.length > 0 || filePath !== null || editingTemplate !== null;
 
   return (
     <div className="flex flex-col h-full bg-white overflow-hidden">
@@ -752,32 +1767,19 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onLoadTemplateRef, onO
         >
           {/* File ops */}
           <button
-            onClick={handleNew}
-            className="p-1.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-            title="新建"
-          >
-            <FilePlus className="w-4 h-4" />
-          </button>
-          <button
             onClick={handleOpen}
             className="p-1.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-            title="打开 .tex 文件"
+            title="打开外部 .tex 文件"
           >
             <FolderOpen className="w-4 h-4" />
           </button>
           <button
             onClick={handleSave}
-            className="p-1.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-            title="保存 (Cmd+S)"
+            disabled={!hasDocument}
+            className={`p-1.5 rounded transition-colors ${isDirty ? 'text-blue-500 hover:text-blue-700 hover:bg-blue-50' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'} disabled:opacity-30 disabled:cursor-not-allowed`}
+            title={editingTemplate ? '保存模板 (Cmd+S)' : '保存 (Cmd+S)'}
           >
             <Save className="w-4 h-4" />
-          </button>
-          <button
-            onClick={handleSaveAs}
-            className="p-1.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-            title="另存为"
-          >
-            <SaveAll className="w-4 h-4" />
           </button>
 
           <div className="w-px h-5 bg-gray-200 mx-1" />
@@ -866,6 +1868,27 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onLoadTemplateRef, onO
               <span title="编译失败"><AlertCircle className="w-4 h-4 text-red-500" /></span>
             ))}
           <button
+            onClick={() => setShowSymbols(true)}
+            className="p-1.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+            title="符号面板"
+          >
+            <Omega className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => setShowImageOcr(true)}
+            className="p-1.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+            title="图片识别公式"
+          >
+            <Image className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => setShowPackages(true)}
+            className="p-1.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+            title="宏包速查"
+          >
+            <Package className="w-3.5 h-3.5" />
+          </button>
+          <button
             onClick={() => setShowSettings(true)}
             className="p-1.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
             title="编译器设置"
@@ -887,41 +1910,117 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onLoadTemplateRef, onO
               setShowSettings(false);
               checkEnv(); // re-check env after settings change
             }}
+            env={env}
           />
         )}
 
-        {/* Left: Monaco Editor */}
+        {/* Package list overlay */}
+        {showPackages && (
+          <PackageListPanel onClose={() => setShowPackages(false)} />
+        )}
+
+        {/* Symbol palette overlay */}
+        {showSymbols && (
+          <SymbolPalettePanel onClose={() => setShowSymbols(false)} />
+        )}
+
+        {/* Image to LaTeX OCR overlay */}
+        {showImageOcr && (
+          <ImageToLatexPanel onClose={() => setShowImageOcr(false)} />
+        )}
+
+        {/* Left: Monaco Editor or Empty State */}
         <div className="flex-1 flex flex-col border-r border-gray-200 min-w-0">
-          <Editor
-            height="100%"
-            defaultLanguage="latex"
-            language="latex"
-            value={content}
-            onChange={handleEditorChange}
-            theme="vs"
-            options={{
-              fontSize: 13,
-              lineHeight: 22,
-              minimap: { enabled: false },
-              scrollBeyondLastLine: false,
-              wordWrap: 'on',
-              folding: true,
-              renderLineHighlight: 'line',
-              tabSize: 2,
-              padding: { top: 12, bottom: 12 },
-              fontFamily:
-                "'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace",
-              smoothScrolling: true,
-              cursorBlinking: 'smooth',
-            }}
-          />
+          {hasDocument ? (
+            <Editor
+              height="100%"
+              defaultLanguage="latex"
+              language="latex"
+              value={content}
+              onChange={handleEditorChange}
+              theme="vs"
+              options={{
+                fontSize: 13,
+                lineHeight: 22,
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false,
+                wordWrap: 'on',
+                folding: true,
+                renderLineHighlight: 'line',
+                tabSize: 2,
+                padding: { top: 12, bottom: 12 },
+                fontFamily:
+                  "'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace",
+                smoothScrolling: true,
+                cursorBlinking: 'smooth',
+              }}
+            />
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center gap-4 text-gray-300">
+              <button
+                onClick={() => handleShowNewFileDialog()}
+                className="w-16 h-16 rounded-2xl border-2 border-dashed border-gray-300 hover:border-blue-400 hover:bg-blue-50/30 flex items-center justify-center transition-colors group"
+                title="新建 .tex 文件"
+              >
+                <Plus className="w-8 h-8 text-gray-300 group-hover:text-blue-400 transition-colors" />
+              </button>
+              <p className="text-sm text-gray-400">新建文件开始编辑</p>
+              <p className="text-xs text-gray-300">或从左侧模板/文件列表打开</p>
+            </div>
+          )}
         </div>
 
         {/* Right: PDF Viewer */}
         <div className="flex-1 flex flex-col min-w-0">
-          <PdfViewer pdfBase64={pdfBase64} loading={compiling} />
+          <PdfViewer pdfBase64={pdfBase64} loading={compiling} onDownload={handleDownloadPdf} />
         </div>
       </div>
+
+      {/* ── New File Dialog ── */}
+      {showNewFileDialog && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={e => { if (e.target === e.currentTarget) { setShowNewFileDialog(false); setPendingTemplateContent(null); } }}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl w-80 p-6 space-y-4">
+            <h3 className="text-base font-semibold text-gray-800">
+              {pendingTemplateContent ? '从模板新建文件' : '新建文件'}
+            </h3>
+            <div>
+              <label className="text-xs font-medium text-gray-500 mb-1 block">文件名称</label>
+              <input
+                ref={newFileInputRef}
+                autoFocus
+                type="text"
+                value={newFileName}
+                onChange={e => setNewFileName(e.target.value)}
+                placeholder="例如: my-paper"
+                onKeyDown={e => {
+                  if (e.key === 'Enter') { e.preventDefault(); handleConfirmNewFile(); }
+                  if (e.key === 'Escape') { setShowNewFileDialog(false); setPendingTemplateContent(null); }
+                }}
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400"
+              />
+              <p className="text-[10px] text-gray-400 mt-1">将自动添加 .tex 后缀</p>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => { setShowNewFileDialog(false); setPendingTemplateContent(null); }}
+                className="flex-1 py-2 text-sm border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-50 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmNewFile}
+                disabled={!newFileName.trim()}
+                className="flex-1 py-2 text-sm bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                创建
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Log Panel ── */}
       <LogPanel
