@@ -448,17 +448,21 @@ export interface ZenmuxUsage {
 }
 
 // 数据中心模块配置
+export type DataCenterModuleKey =
+  | 'ssh'
+  | 'apiManager'
+  | 'ojHeatmap'
+  | 'resourceCenter'
+  | 'passwordManager'
+  | 'zenmuxUsage'
+  | 'aiStudio'
+  | 'kimiApi';
+
 export interface DataCenterConfig {
-  modules: {
-    ssh: boolean;
-    apiManager: boolean;
-    ojHeatmap: boolean;
-    resourceCenter: boolean;
-    passwordManager: boolean;
-    zenmuxUsage: boolean;
-    aiStudio: boolean;
-  };
-  moduleOrder?: string[];
+  modules: Record<DataCenterModuleKey, boolean>;
+  moduleOrder?: DataCenterModuleKey[];
+  moduleColors?: Partial<Record<DataCenterModuleKey, string>>;
+  moduleIcons?: Partial<Record<DataCenterModuleKey, string>>;
 }
 
 // 邮件SMTP配置

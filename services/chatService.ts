@@ -154,6 +154,12 @@ export const AGENT_AVAILABLE_MODELS: Record<string, { id: string; name: string; 
     { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'anthropic', description: '速度与智能' },
     { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', provider: 'anthropic', description: '最快' },
   ],
+  moonshot: [
+    { id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'moonshot', description: '最新旗舰' },
+    { id: 'kimi-k2-turbo-preview', name: 'Kimi K2 Turbo', provider: 'moonshot', description: '高速版' },
+    { id: 'kimi-k2-thinking', name: 'Kimi K2 Thinking', provider: 'moonshot', description: '推理' },
+    { id: 'moonshot-v1-128k', name: 'Moonshot (128k)', provider: 'moonshot', description: '长文本' },
+  ],
 };
 
 export const DEFAULT_CHAT_CONFIG: ChatConfig = {
@@ -182,7 +188,7 @@ export class ChatService {
   }
 
   supportsNativeTools(): boolean {
-    return ['openai', 'anthropic', 'gemini', 'zenmux'].includes(this.config.provider);
+    return ['openai', 'anthropic', 'gemini', 'zenmux', 'moonshot'].includes(this.config.provider);
   }
 
   async completeText(messages: ChatMessage[], options?: ChatRunOptions): Promise<string> {
@@ -248,6 +254,7 @@ export class ChatService {
     switch (this.config.provider) {
       case 'zenmux':
       case 'openai':
+      case 'moonshot':
         return this.runOpenAIToolsConversation(messages, tools, executeToolCall, options);
       case 'anthropic':
         return this.runAnthropicToolsConversation(messages, tools, executeToolCall, options);

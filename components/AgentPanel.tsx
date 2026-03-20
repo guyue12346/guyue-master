@@ -44,7 +44,7 @@ const AGENT_MODULES: AgentModule[] = [
 ];
 
 const ENABLED_AGENT_MODULES = AGENT_MODULES.filter(module => module.enabled);
-const isNativeProvider = (provider: ChatConfig['provider']) => ['openai', 'anthropic', 'gemini', 'zenmux'].includes(provider);
+const isNativeProvider = (provider: ChatConfig['provider']) => ['openai', 'anthropic', 'gemini', 'zenmux', 'moonshot'].includes(provider);
 const getModuleById = (moduleId?: string | null) => AGENT_MODULES.find(module => module.id === moduleId) || null;
 
 /** 待确认操作（如发送邮件），需要用户手动批准 */
@@ -3179,11 +3179,11 @@ const TOOL_REGISTRY: ToolRegistration[] = [
 /* ─── Agent 网络搜索工具定义 ─── */
 const WEB_SEARCH_TOOL: ChatTool = {
   name: 'web_search',
-  description: '使用 DuckDuckGo 搜索互联网上的信息。当需要获取最新资讯、查询事实、了解某个话题时使用。',
+  description: '使用 Bing 搜索互联网上的实时信息。当需要获取最新资讯、天气、新闻、查询事实等时使用。返回结果包含 directAnswer（直答卡，如天气数据）和 results（搜索条目列表）。',
   inputSchema: {
     type: 'object',
     properties: {
-      query: { type: 'string', description: '搜索关键词或问题，建议使用英文可获得更好的结果' },
+      query: { type: 'string', description: '搜索关键词或问题，中英文均可' },
     },
     required: ['query'],
   },
@@ -4222,9 +4222,12 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               const query = typeof toolCall.arguments.query === 'string' ? toolCall.arguments.query.trim() : '';
               if (!query) throw new Error('搜索词不能为空');
               const result = await electronAPI.agentWebSearch({ query });
+              const resultSummary = result.success
+                ? `${result.directAnswer ? '直答卡 + ' : ''}${result.results?.length || 0} 条结果`
+                : result.error;
               pushDebugItem({
                 stage: 'web:search',
-                summary: `搜索「${query}」→ ${result.success ? `${result.results?.length || 0} 条结果` : result.error}`,
+                summary: `搜索「${query}」→ ${resultSummary}`,
                 payload: result,
                 level: result.success ? 'success' : 'error',
               });
@@ -5060,6 +5063,19 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                   </>
                 )}
               </div>
+              {/* 网络搜索 */}
+              <button
+                onClick={() => setEnableWebSearch(v => !v)}
+                className={`relative w-8 h-8 flex items-center justify-center rounded-xl transition-colors ${
+                  enableWebSearch ? 'text-blue-600 bg-blue-50' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
+                }`}
+                title={enableWebSearch ? '关闭网络搜索' : '开启网络搜索'}
+              >
+                <Globe className="w-4 h-4" />
+                {enableWebSearch && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500" />
+                )}
+              </button>
               <div className="w-5 h-px bg-slate-200 my-1" />
               {/* ── 权限组 ── */}
               {/* 数据权限(读/写) */}
@@ -5357,20 +5373,6 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                 title="删除对话历史"
               >
                 <Trash2 className="w-4 h-4" />
-              </button>
-              <div className="w-5 h-px bg-slate-200 my-1" />
-              {/* 网络搜索 */}
-              <button
-                onClick={() => setEnableWebSearch(v => !v)}
-                className={`relative w-8 h-8 flex items-center justify-center rounded-xl transition-colors ${
-                  enableWebSearch ? 'text-blue-600 bg-blue-50' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
-                }`}
-                title={enableWebSearch ? '关闭网络搜索' : '开启网络搜索'}
-              >
-                <Globe className="w-4 h-4" />
-                {enableWebSearch && (
-                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500" />
-                )}
               </button>
               {/* 调试 */}
               <button

@@ -176,7 +176,7 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
           <h2 className="text-lg font-semibold text-gray-800">
             {initialData ? '编辑文件记录' : (mode === 'note' ? '创建 Markdown 笔记' : '添加重要文件')}
           </h2>
-          <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-200/50 transition-colors">
+          <button type="button" onClick={onClose} className="p-1 rounded-full hover:bg-gray-200/50 transition-colors">
             <X className="w-5 h-5 text-gray-500" />
           </button>
         </div>

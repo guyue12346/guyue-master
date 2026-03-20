@@ -1,7 +1,8 @@
 import React, { useState, useMemo, Suspense } from 'react';
 import { APIRecord, Category } from '../../types';
-import { Plus, Search } from 'lucide-react';
+import { FolderTree, Plus, Search } from 'lucide-react';
 import { APIList } from '../APIList';
+import { CategoryManagerModal } from '../CategoryManagerModal';
 
 const APIModal = React.lazy(() => import('../APIModal').then(m => ({ default: m.APIModal })));
 
@@ -10,6 +11,8 @@ interface APIManagerProps {
   categories: Category[];
   onSave: (record: Partial<APIRecord>) => void;
   onDelete: (id: string) => void;
+  onUpdateCategories: (categories: Category[]) => void;
+  onDeleteCategory: (id: string) => void;
 }
 
 export const APIManager: React.FC<APIManagerProps> = ({
@@ -17,8 +20,11 @@ export const APIManager: React.FC<APIManagerProps> = ({
   categories,
   onSave,
   onDelete,
+  onUpdateCategories,
+  onDeleteCategory,
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<APIRecord | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('全部');
@@ -26,8 +32,11 @@ export const APIManager: React.FC<APIManagerProps> = ({
   const categoryNames = useMemo(() => categories.map(c => c.name), [categories]);
 
   const allCategories = useMemo(() => {
-    return Array.from(new Set(records.map(r => r.category).filter(Boolean)));
-  }, [records]);
+    return Array.from(new Set([
+      ...categories.map(c => c.name).filter(name => name && name !== '全部'),
+      ...records.map(r => r.category).filter(Boolean),
+    ]));
+  }, [categories, records]);
 
   const filteredRecords = useMemo(() => {
     let result = records;
@@ -101,13 +110,22 @@ export const APIManager: React.FC<APIManagerProps> = ({
             ))}
           </div>
         </div>
-        <button
-          onClick={handleAdd}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-sm text-sm font-medium shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          添加 API
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setIsCategoryManagerOpen(true)}
+            className="flex items-center gap-2 px-3 py-2 bg-white text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-colors shadow-sm text-sm font-medium"
+          >
+            <FolderTree className="w-4 h-4" />
+            分类管理
+          </button>
+          <button
+            onClick={handleAdd}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-sm text-sm font-medium shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            添加 API
+          </button>
+        </div>
       </div>
 
       {/* API 列表 */}
@@ -129,6 +147,14 @@ export const APIManager: React.FC<APIManagerProps> = ({
           categories={categoryNames}
         />
       </Suspense>
+
+      <CategoryManagerModal
+        isOpen={isCategoryManagerOpen}
+        onClose={() => setIsCategoryManagerOpen(false)}
+        categories={categories}
+        onUpdateCategories={onUpdateCategories}
+        onDeleteCategory={onDeleteCategory}
+      />
     </div>
   );
 };

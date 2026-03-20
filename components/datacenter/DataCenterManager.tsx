@@ -1,20 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart3, Flame, Package, Settings, X, ToggleLeft, ToggleRight, Shield, Activity, Terminal, Webhook, HelpCircle, GripVertical } from 'lucide-react';
+import * as LucideIcons from 'lucide-react';
 import { OJHeatmapContainer } from './OJHeatmapContainer';
 import { ResourceCenter } from './ResourceCenter';
 import { PasswordManager } from './PasswordManager';
 import { ZenmuxUsagePanel } from './ZenmuxUsagePanel';
 import { AIStudioPanel } from './AIStudioPanel';
+import { KimiPanel } from './KimiPanel';
 import { SSHManager } from './SSHManager';
 import { APIManager } from './APIManager';
 import { HelpModal } from '../HelpModal';
-import type { OJHeatmapData, ResourceCenterData, DataCenterConfig, SSHRecord, Category, APIRecord } from '../../types';
+import type { OJHeatmapData, ResourceCenterData, DataCenterConfig, DataCenterModuleKey, SSHRecord, Category, APIRecord } from '../../types';
+import { AVAILABLE_ICONS } from '../../types';
 
 // localStorage 存储键
 const STORAGE_KEY_DATACENTER_CONFIG = 'linkmaster_datacenter_config';
 
 // 模块默认顺序
-const DEFAULT_MODULE_ORDER = ['ssh', 'apiManager', 'ojHeatmap', 'resourceCenter', 'passwordManager', 'zenmuxUsage', 'aiStudio'];
+const DEFAULT_MODULE_ORDER: DataCenterModuleKey[] = ['ssh', 'apiManager', 'ojHeatmap', 'resourceCenter', 'passwordManager', 'zenmuxUsage', 'aiStudio', 'kimiApi'];
 
 // 默认配置
 const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
@@ -26,8 +29,29 @@ const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
     passwordManager: true,
     zenmuxUsage: true,
     aiStudio: true,
+    kimiApi: true,
   },
   moduleOrder: DEFAULT_MODULE_ORDER,
+  moduleColors: {
+    ssh: '#06b6d4',
+    apiManager: '#a855f7',
+    ojHeatmap: '#f97316',
+    resourceCenter: '#3b82f6',
+    passwordManager: '#10b981',
+    zenmuxUsage: '#8b5cf6',
+    aiStudio: '#06b6d4',
+    kimiApi: '#ec4899',
+  },
+  moduleIcons: {
+    ssh: 'Terminal',
+    apiManager: 'Webhook',
+    ojHeatmap: 'Flame',
+    resourceCenter: 'Package',
+    passwordManager: 'Shield',
+    zenmuxUsage: 'Activity',
+    aiStudio: 'Bot',
+    kimiApi: 'Sparkles',
+  },
 };
 
 const normalizeDataCenterConfig = (rawConfig: Partial<DataCenterConfig> | null | undefined): DataCenterConfig => ({
@@ -35,19 +59,43 @@ const normalizeDataCenterConfig = (rawConfig: Partial<DataCenterConfig> | null |
     ...DEFAULT_DATACENTER_CONFIG.modules,
     ...(rawConfig?.modules ?? {}),
   },
-  moduleOrder: rawConfig?.moduleOrder ?? DEFAULT_MODULE_ORDER,
+  moduleOrder: (rawConfig?.moduleOrder ?? DEFAULT_MODULE_ORDER) as DataCenterModuleKey[],
+  moduleColors: {
+    ...DEFAULT_DATACENTER_CONFIG.moduleColors,
+    ...(rawConfig?.moduleColors ?? {}),
+  },
+  moduleIcons: {
+    ...DEFAULT_DATACENTER_CONFIG.moduleIcons,
+    ...(rawConfig?.moduleIcons ?? {}),
+  },
 });
 
 // 模块元数据（用于设置界面动态渲染）
-const MODULE_DEFS: { key: keyof DataCenterConfig['modules']; label: string; color: string; IconComp: React.ComponentType<{ className?: string }> }[] = [
-  { key: 'ssh',             label: 'SSH管理',  color: 'text-cyan-500',    IconComp: Terminal },
-  { key: 'apiManager',     label: 'API管理',  color: 'text-purple-500',  IconComp: Webhook  },
-  { key: 'ojHeatmap',      label: 'OJ热力图', color: 'text-orange-500',  IconComp: Flame    },
-  { key: 'resourceCenter', label: '资源中心', color: 'text-blue-500',    IconComp: Package  },
-  { key: 'passwordManager',label: '网站管理', color: 'text-emerald-500', IconComp: Shield   },
-  { key: 'zenmuxUsage',    label: 'Zenmux',   color: 'text-violet-500',  IconComp: Activity },
-  { key: 'aiStudio',       label: 'AI Studio', color: 'text-cyan-500',    IconComp: Activity },
+const MODULE_DEFS: { key: DataCenterModuleKey; label: string; defaultColor: string; defaultIcon: string }[] = [
+  { key: 'ssh',             label: 'SSH管理',   defaultColor: '#06b6d4', defaultIcon: 'Terminal' },
+  { key: 'apiManager',      label: 'API管理',   defaultColor: '#a855f7', defaultIcon: 'Webhook' },
+  { key: 'ojHeatmap',       label: 'OJ热力图',  defaultColor: '#f97316', defaultIcon: 'Flame' },
+  { key: 'resourceCenter',  label: '资源中心',  defaultColor: '#3b82f6', defaultIcon: 'Package' },
+  { key: 'passwordManager', label: '网站管理',  defaultColor: '#10b981', defaultIcon: 'Shield' },
+  { key: 'zenmuxUsage',     label: 'Zenmux',   defaultColor: '#8b5cf6', defaultIcon: 'Activity' },
+  { key: 'aiStudio',        label: 'AI Studio', defaultColor: '#06b6d4', defaultIcon: 'Bot' },
+  { key: 'kimiApi',         label: 'Kimi API',  defaultColor: '#ec4899', defaultIcon: 'Sparkles' },
 ];
+
+const getIconComponent = (iconName?: string) => {
+  const IconComp = (LucideIcons as Record<string, React.ComponentType<{ className?: string }>>)[iconName || 'Activity'];
+  return IconComp || Activity;
+};
+
+const getModuleColor = (config: DataCenterConfig, key: DataCenterModuleKey) => {
+  const def = MODULE_DEFS.find(item => item.key === key);
+  return config.moduleColors?.[key] || def?.defaultColor || '#3b82f6';
+};
+
+const getModuleIconName = (config: DataCenterConfig, key: DataCenterModuleKey) => {
+  const def = MODULE_DEFS.find(item => item.key === key);
+  return config.moduleIcons?.[key] || def?.defaultIcon || 'Activity';
+};
 
 // 设置弹窗组件
 const DataCenterSettingsModal: React.FC<{
@@ -66,10 +114,24 @@ const DataCenterSettingsModal: React.FC<{
   const orderedKeys = [
     ...moduleOrder,
     ...DEFAULT_MODULE_ORDER.filter(k => !moduleOrder.includes(k)),
-  ] as (keyof DataCenterConfig['modules'])[];
+  ] as DataCenterModuleKey[];
 
-  const handleToggle = (key: keyof DataCenterConfig['modules']) => {
+  const handleToggle = (key: DataCenterModuleKey) => {
     onUpdateConfig({ ...config, modules: { ...config.modules, [key]: !config.modules[key] } });
+  };
+
+  const handleColorChange = (key: DataCenterModuleKey, color: string) => {
+    onUpdateConfig({
+      ...config,
+      moduleColors: { ...config.moduleColors, [key]: color },
+    });
+  };
+
+  const handleIconChange = (key: DataCenterModuleKey, icon: string) => {
+    onUpdateConfig({
+      ...config,
+      moduleIcons: { ...config.moduleIcons, [key]: icon },
+    });
   };
 
   const handleDrop = (toIndex: number) => {
@@ -109,21 +171,51 @@ const DataCenterSettingsModal: React.FC<{
                 return (
                   <div
                     key={key}
-                    draggable
-                    onDragStart={() => setDragIndex(index)}
                     onDragOver={(e) => { e.preventDefault(); setDropIndex(index); }}
                     onDrop={() => { handleDrop(index); setDragIndex(null); setDropIndex(null); }}
-                    onDragEnd={() => { setDragIndex(null); setDropIndex(null); }}
                     className={`flex items-center justify-between p-3 rounded-lg transition-all select-none
                       ${isDragging ? 'opacity-40' : 'opacity-100'}
                       ${isDropTarget ? 'ring-2 ring-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'bg-gray-50 dark:bg-gray-700/50'}`}
                   >
                     <div className="flex items-center gap-3">
-                      <GripVertical className="w-4 h-4 text-gray-300 cursor-grab active:cursor-grabbing shrink-0" />
-                      <def.IconComp className={`w-4 h-4 ${def.color}`} />
-                      <span className={`text-sm ${enabled ? 'text-gray-900 dark:text-white' : 'text-gray-400 dark:text-gray-500 line-through'}`}>
-                        {def.label}
-                      </span>
+                      <button
+                        type="button"
+                        draggable
+                        onDragStart={() => setDragIndex(index)}
+                        onDragEnd={() => { setDragIndex(null); setDropIndex(null); }}
+                        className="text-gray-300 cursor-grab active:cursor-grabbing shrink-0"
+                      >
+                        <GripVertical className="w-4 h-4" />
+                      </button>
+                      {React.createElement(getIconComponent(getModuleIconName(config, key)), {
+                        className: 'w-4 h-4',
+                        style: { color: getModuleColor(config, key) },
+                      })}
+                      <div className="space-y-2">
+                        <span className={`block text-sm ${enabled ? 'text-gray-900 dark:text-white' : 'text-gray-400 dark:text-gray-500 line-through'}`}>
+                          {def.label}
+                        </span>
+                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                          <select
+                            value={getModuleIconName(config, key)}
+                            onChange={(event) => handleIconChange(key, event.target.value)}
+                            className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 outline-none focus:border-blue-400"
+                          >
+                            {AVAILABLE_ICONS.map(icon => (
+                              <option key={icon} value={icon}>{icon}</option>
+                            ))}
+                          </select>
+                          <label className="flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-1">
+                            <span>颜色</span>
+                            <input
+                              type="color"
+                              value={getModuleColor(config, key)}
+                              onChange={(event) => handleColorChange(key, event.target.value)}
+                              className="h-5 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
+                            />
+                          </label>
+                        </div>
+                      </div>
                     </div>
                     <button
                       onClick={() => handleToggle(key)}
@@ -165,59 +257,58 @@ interface DataCenterManagerProps {
   apiCategories: Category[];
   onSaveAPI: (record: Partial<APIRecord>) => void;
   onDeleteAPI: (id: string) => void;
+  onUpdateAPICategories: (categories: Category[]) => void;
+  onDeleteAPICategory: (id: string) => void;
 }
 
-type SubPage = 'ssh' | 'api-manager' | 'oj-heatmap' | 'resource-center' | 'password-manager' | 'zenmux-usage' | 'ai-studio';
+type SubPage = 'ssh' | 'api-manager' | 'oj-heatmap' | 'resource-center' | 'password-manager' | 'zenmux-usage' | 'ai-studio' | 'kimi-api';
 
 interface NavItem {
   id: SubPage;
   name: string;
-  icon: React.ReactNode;
-  configKey: keyof DataCenterConfig['modules'];
+  configKey: DataCenterModuleKey;
 }
 
 const NAV_ITEMS: NavItem[] = [
   {
     id: 'ssh',
     name: 'SSH管理',
-    icon: <Terminal className="w-4 h-4" />,
     configKey: 'ssh',
   },
   {
     id: 'api-manager',
     name: 'API管理',
-    icon: <Webhook className="w-4 h-4" />,
     configKey: 'apiManager',
   },
   {
     id: 'oj-heatmap',
     name: 'OJ热力图',
-    icon: <Flame className="w-4 h-4" />,
     configKey: 'ojHeatmap',
   },
   {
     id: 'resource-center',
     name: '资源中心',
-    icon: <Package className="w-4 h-4" />,
     configKey: 'resourceCenter',
   },
   {
     id: 'password-manager',
     name: '网站管理',
-    icon: <Shield className="w-4 h-4" />,
     configKey: 'passwordManager',
   },
   {
     id: 'zenmux-usage',
     name: 'Zenmux',
-    icon: <Activity className="w-4 h-4" />,
     configKey: 'zenmuxUsage',
   },
   {
     id: 'ai-studio',
     name: 'AI Studio',
-    icon: <Activity className="w-4 h-4" />,
     configKey: 'aiStudio',
+  },
+  {
+    id: 'kimi-api',
+    name: 'Kimi API',
+    configKey: 'kimiApi',
   },
 ];
 
@@ -235,6 +326,8 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
   apiCategories,
   onSaveAPI,
   onDeleteAPI,
+  onUpdateAPICategories,
+  onDeleteAPICategory,
 }) => {
   const [activePage, setActivePage] = useState<SubPage>('ssh');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -315,7 +408,10 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
                     : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50'
                   }`}
               >
-                {item.icon}
+                {React.createElement(getIconComponent(getModuleIconName(config, item.configKey)), {
+                  className: 'w-4 h-4',
+                  style: { color: getModuleColor(config, item.configKey) },
+                })}
                 {item.name}
               </button>
             ))
@@ -348,6 +444,8 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
             categories={apiCategories}
             onSave={onSaveAPI}
             onDelete={onDeleteAPI}
+            onUpdateCategories={onUpdateAPICategories}
+            onDeleteCategory={onDeleteAPICategory}
           />
         )}
         {activePage === 'oj-heatmap' && (
@@ -370,6 +468,9 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
         )}
         {activePage === 'ai-studio' && (
           <AIStudioPanel />
+        )}
+        {activePage === 'kimi-api' && (
+          <KimiPanel />
         )}
       </div>
 

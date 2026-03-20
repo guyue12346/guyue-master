@@ -528,31 +528,6 @@ const SettingsPanel: React.FC<{
           />
         </div>
 
-        {/* Web Search Toggle (Gemini/Zenmux) */}
-        {(localConfig.provider === 'gemini' || localConfig.provider === 'zenmux') && (
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="block text-sm font-medium text-gray-700">联网搜索</label>
-              <p className="text-xs text-gray-500 mt-0.5">
-                {localConfig.provider === 'gemini' ? '启用 Google Search 实时搜索' : '启用 Web Search 实时搜索'}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setLocalConfig({ ...localConfig, enableWebSearch: !localConfig.enableWebSearch })}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                localConfig.enableWebSearch ? 'bg-blue-600' : 'bg-gray-200'
-              }`}
-            >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  localConfig.enableWebSearch ? 'translate-x-6' : 'translate-x-1'
-                }`}
-              />
-            </button>
-          </div>
-        )}
-
         {/* Keyboard Shortcut Hint */}
         <div className="pt-4 border-t border-gray-100">
           <p className="text-xs text-gray-400">
@@ -614,7 +589,7 @@ const SystemPromptPanel: React.FC<{
             <Wand2 className="w-4 h-4 text-purple-600" />
           </div>
           <div>
-            <h3 className="font-semibold text-gray-800 text-sm leading-tight">对话预设词</h3>
+            <h3 className="font-semibold text-gray-800 text-sm leading-tight">本轮对话定制预设词</h3>
             <p className="text-[10px] text-gray-400 leading-tight">
               {isUsingCustom ? '🟣 已启用自定义预设' : hasCustomPrompt ? '⚪ 已清除预设（无系统提示）' : '🔵 使用全局默认'}
             </p>
@@ -1409,10 +1384,10 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                         type="password"
                         value={kbEmbeddingKey}
                         onChange={e => setKbEmbeddingKey(e.target.value)}
-                        placeholder="AIzaSy... (Gemini Embedding)"
+                        placeholder="AIzaSy...（当前仅支持 Gemini Embedding）"
                         className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-900 font-mono outline-none focus:ring-2 focus:ring-green-500/20"
                       />
-                      <p className="text-[10px] text-gray-400 mt-0.5">用于知识库文本向量化</p>
+                      <p className="text-[10px] text-gray-400 mt-0.5">AI 对话已支持 Kimi；知识库向量化目前仍使用 Gemini Embedding。</p>
                     </div>
                     <div>
                       <label className="text-xs text-gray-500 mb-1 block">Embedding Base URL</label>
@@ -1772,6 +1747,29 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
           </div>
 
           <div className="flex items-center gap-1.5" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            {/* KB mode header buttons */}
+            {isKbMode && (
+              <>
+                {(knowledgeBaseFileIds?.size || 0) > 0 && (
+                  <span className="text-xs px-2.5 py-0.5 bg-green-50 text-green-600 border border-green-100 rounded-full flex items-center gap-1 shrink-0">
+                    <Brain className="w-3 h-3" />{knowledgeBaseFileIds!.size} 个文件
+                  </span>
+                )}
+                <button
+                  onClick={() => {
+                    if (activeKbConversationId) {
+                      setKbConversations(prev => prev.map(c =>
+                        c.id === activeKbConversationId ? { ...c, messages: [createKbWelcomeMessage()] } : c
+                      ));
+                    }
+                  }}
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                  title="清空知识库对话"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </>
+            )}
             {/* Chat mode buttons */}
             {!isKbMode && !compact && (
               <>
@@ -1805,7 +1803,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                       ? 'bg-purple-100 text-purple-600 hover:bg-purple-200'
                       : 'text-purple-400 hover:text-purple-600 hover:bg-purple-50'
                   }`}
-                  title={activeConversation?.systemPrompt !== undefined ? '已设置对话预设词（点击编辑）' : '为此对话设置预设词'}
+                  title={activeConversation?.systemPrompt !== undefined ? '已设置本轮对话定制预设词（点击编辑）' : '为此对话设置预设词'}
                 >
                   <Wand2 className="w-3.5 h-3.5" />
                 </button>
@@ -1968,61 +1966,6 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
 
               {/* Input Area */}
               <div className={`p-4 border-t border-gray-100 ${isKbMode ? 'bg-green-50/30' : 'bg-white'}`}>
-                {isKbMode && (
-                  <div className="flex flex-col gap-1.5 mb-2">
-                    <div className="flex items-center gap-2">
-                      <div className="text-xs rounded-full px-2.5 py-0.5 bg-green-50 text-green-600 border border-green-100 flex items-center gap-1">
-                        <Brain className="w-3 h-3" />知识库对话
-                        {(knowledgeBaseFileIds?.size || 0) > 0 && <span className="ml-1 text-green-500">({knowledgeBaseFileIds!.size} 个文件)</span>}
-                      </div>
-                      <button
-                        onClick={() => {
-                          if (activeKbConversationId) {
-                            setKbConversations(prev => prev.map(c =>
-                              c.id === activeKbConversationId ? { ...c, messages: [createKbWelcomeMessage()] } : c
-                            ));
-                          }
-                        }}
-                        className="text-[10px] text-gray-400 hover:text-red-400 transition-colors"
-                        title="清空知识库对话"
-                      >清空</button>
-                      <button onClick={() => handleToggleKbMode(false)} className="text-[10px] text-gray-400 hover:text-gray-600 transition-colors">✕ 退出</button>
-                    </div>
-                    {kbTags.length > 0 && (
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-xs text-gray-400 shrink-0">范围：</span>
-                        <button
-                          onClick={() => setSelectedKbTagIds([])}
-                          className={`text-xs px-2.5 py-0.5 rounded-full border transition-all font-medium ${
-                            selectedKbTagIds.length === 0
-                              ? 'bg-green-500 text-white border-green-500 shadow-sm'
-                              : 'bg-white text-gray-500 border-gray-200 hover:border-green-300 hover:text-green-600'
-                          }`}
-                        >全部</button>
-                        {kbTags.map(tag => (
-                          <button
-                            key={tag.id}
-                            onClick={() => setSelectedKbTagIds(prev =>
-                              prev.includes(tag.id) ? prev.filter(id => id !== tag.id) : [...prev, tag.id]
-                            )}
-                            className={`text-xs px-2.5 py-0.5 rounded-full border transition-all font-medium flex items-center gap-1 ${
-                              selectedKbTagIds.includes(tag.id)
-                                ? 'text-white border-transparent shadow-sm'
-                                : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300 hover:text-gray-700'
-                            }`}
-                            style={selectedKbTagIds.includes(tag.id) ? { background: tag.color, borderColor: tag.color } : {}}
-                          >
-                            <span
-                              className="w-1.5 h-1.5 rounded-full shrink-0"
-                              style={{ background: selectedKbTagIds.includes(tag.id) ? 'rgba(255,255,255,0.75)' : tag.color }}
-                            />
-                            {tag.name}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
                 <div className={`flex items-end gap-2 border rounded-2xl px-4 py-3 transition-all shadow-sm ${
                   isKbMode
                     ? 'bg-white border-green-200 hover:border-green-300 focus-within:border-green-400 focus-within:ring-2 focus-within:ring-green-100'
@@ -2075,6 +2018,39 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                     </button>
                   )}
                 </div>
+                {isKbMode && kbTags.length > 0 && (
+                  <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                    <span className="text-xs text-gray-400 shrink-0">范围：</span>
+                    <button
+                      onClick={() => setSelectedKbTagIds([])}
+                      className={`text-xs px-2.5 py-0.5 rounded-full border transition-all font-medium ${
+                        selectedKbTagIds.length === 0
+                          ? 'bg-green-500 text-white border-green-500 shadow-sm'
+                          : 'bg-white text-gray-500 border-gray-200 hover:border-green-300 hover:text-green-600'
+                      }`}
+                    >全部</button>
+                    {kbTags.map(tag => (
+                      <button
+                        key={tag.id}
+                        onClick={() => setSelectedKbTagIds(prev =>
+                          prev.includes(tag.id) ? prev.filter(id => id !== tag.id) : [...prev, tag.id]
+                        )}
+                        className={`text-xs px-2.5 py-0.5 rounded-full border transition-all font-medium flex items-center gap-1 ${
+                          selectedKbTagIds.includes(tag.id)
+                            ? 'text-white border-transparent shadow-sm'
+                            : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300 hover:text-gray-700'
+                        }`}
+                        style={selectedKbTagIds.includes(tag.id) ? { background: tag.color, borderColor: tag.color } : {}}
+                      >
+                        <span
+                          className="w-1.5 h-1.5 rounded-full shrink-0"
+                          style={{ background: selectedKbTagIds.includes(tag.id) ? 'rgba(255,255,255,0.75)' : tag.color }}
+                        />
+                        {tag.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <p className="text-[10px] text-gray-300 text-center mt-1.5">Cmd+Enter 发送 · Enter 换行</p>
               </div>
             </div>

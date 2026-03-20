@@ -1578,6 +1578,48 @@ const App: React.FC = () => {
     }
   };
 
+  const handleUpdateAPICategories = (newCategories: Category[]) => {
+    const oldCategories = categoriesMap['api'] || DEFAULT_CATEGORIES;
+    const oldNameMap = new Map(oldCategories.map(category => [category.id, category.name]));
+    const renamedPairs = new Map<string, string>();
+
+    newCategories.forEach(category => {
+      const oldName = oldNameMap.get(category.id);
+      if (oldName && oldName !== category.name) {
+        renamedPairs.set(oldName, category.name);
+      }
+    });
+
+    if (renamedPairs.size > 0) {
+      setApiRecords(prev => prev.map(record => {
+        const nextCategory = renamedPairs.get(record.category);
+        return nextCategory ? { ...record, category: nextCategory } : record;
+      }));
+    }
+
+    setCategoriesMap(prev => ({
+      ...prev,
+      api: newCategories,
+    }));
+  };
+
+  const handleDeleteAPICategory = (id: string) => {
+    const currentCategories = categoriesMap['api'] || DEFAULT_CATEGORIES;
+    const category = currentCategories.find(item => item.id === id);
+    if (!category) return;
+    if (!window.confirm(`确定要删除分类“${category.name}”吗？该分类下的 API 会移动到“未分类”。`)) {
+      return;
+    }
+
+    setApiRecords(prev => prev.map(record =>
+      record.category === category.name ? { ...record, category: '未分类' } : record
+    ));
+    setCategoriesMap(prev => ({
+      ...prev,
+      api: (prev['api'] || DEFAULT_CATEGORIES).filter(item => item.id !== id),
+    }));
+  };
+
   const handleDeleteAPI = (id: string) => {
     if (confirm('确定要删除这个 API 记录吗?')) {
       setApiRecords(prev => prev.filter(r => r.id !== id));
@@ -2634,6 +2676,8 @@ const App: React.FC = () => {
                   apiCategories={categoriesMap['api'] || DEFAULT_CATEGORIES}
                   onSaveAPI={handleSaveAPI}
                   onDeleteAPI={handleDeleteAPI}
+                  onUpdateAPICategories={handleUpdateAPICategories}
+                  onDeleteAPICategory={handleDeleteAPICategory}
                 />
               </div>
             )}
@@ -2655,6 +2699,8 @@ const App: React.FC = () => {
                     onEditTemplateRef={latexEditTemplateRef}
                     onLoadTemplateAsFileRef={latexLoadTemplateAsFileRef}
                     onOpenFileRef={latexOpenFileRef}
+                    isSidebarVisible={isLatexSidebarVisible}
+                    onToggleSidebar={() => setIsLatexSidebarVisible(v => !v)}
                   />
                 </div>
               </div>

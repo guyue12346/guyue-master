@@ -111,7 +111,7 @@ export const VaultImportModal: React.FC<VaultImportModalProps> = ({ files, onImp
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <div>
-            <h3 className="text-lg font-semibold text-gray-800">从 Vault 导入</h3>
+            <h3 className="text-lg font-semibold text-gray-800">从 Obsidian 导入</h3>
             <p className="text-xs text-gray-400 mt-0.5">
               发现 {files.length} 篇新笔记，选择要导入的文件
             </p>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Category, AVAILABLE_ICONS } from '../types';
-import { X, Plus, Trash2, Check, Edit2, ArrowUp, ArrowDown } from 'lucide-react';
+import { X, Plus, Trash2, Check, Edit2, GripVertical } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 
 interface CategoryManagerModalProps {
@@ -24,6 +24,8 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   const [editName, setEditName] = useState('');
   const [editIcon, setEditIcon] = useState('');
   const [isAdding, setIsAdding] = useState(false);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
   useEffect(() => {
     if (isOpen && initialEditId) {
@@ -91,18 +93,18 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   const userCategories = categories.filter(c => !c.isSystem && c.id !== 'all');
   const systemCategories = categories.filter(c => c.isSystem || c.id === 'all');
 
-  const moveCategory = (e: React.MouseEvent, index: number, direction: 'up' | 'down') => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= userCategories.length) return;
-    
+  const handleDrop = (targetIndex: number) => {
+    if (dragIndex === null || dragIndex === targetIndex) {
+      setDragIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
     const newUserCats = [...userCategories];
-    [newUserCats[index], newUserCats[targetIndex]] = [newUserCats[targetIndex], newUserCats[index]];
-    
-    // 保留系统分类（不改变其存储位置）
+    const [removed] = newUserCats.splice(dragIndex, 1);
+    newUserCats.splice(targetIndex, 0, removed);
     onUpdateCategories([...newUserCats, ...systemCategories]);
+    setDragIndex(null);
+    setDragOverIndex(null);
   };
 
   const cancelEdit = () => {
@@ -139,30 +141,21 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                 return (
                   <div
                     key={cat.id}
+                    draggable
+                    onDragStart={() => setDragIndex(index)}
+                    onDragOver={(e) => { e.preventDefault(); setDragOverIndex(index); }}
+                    onDrop={(e) => { e.preventDefault(); handleDrop(index); }}
+                    onDragLeave={() => setDragOverIndex(null)}
+                    onDragEnd={() => { setDragIndex(null); setDragOverIndex(null); }}
                     onClick={() => startEdit(cat)}
                     className={`relative flex items-center gap-2 px-3 py-2.5 rounded-lg transition-all group cursor-pointer
                       ${isEditing ? 'bg-white shadow-sm ring-1 ring-blue-500/20 z-10' : 'hover:bg-white hover:shadow-sm'}
+                      ${dragOverIndex === index ? 'ring-2 ring-blue-300 bg-blue-50' : ''}
+                      ${dragIndex === index ? 'opacity-50' : ''}
                     `}
                   >
-                    {/* Sort Controls */}
-                    <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity mr-1 z-20">
-                      <button 
-                        type="button"
-                        onClick={(e) => moveCategory(e, index, 'up')}
-                        className="p-0.5 hover:bg-gray-200 rounded disabled:opacity-20 text-gray-500"
-                        disabled={index === 0}
-                      >
-                        <ArrowUp className="w-2.5 h-2.5" />
-                      </button>
-                      <button 
-                        type="button"
-                        onClick={(e) => moveCategory(e, index, 'down')}
-                        className="p-0.5 hover:bg-gray-200 rounded disabled:opacity-20 text-gray-500"
-                        disabled={index === userCategories.length - 1}
-                      >
-                        <ArrowDown className="w-2.5 h-2.5" />
-                      </button>
-                    </div>
+                    {/* Drag handle */}
+                    <GripVertical className="w-3.5 h-3.5 text-gray-300 group-hover:text-gray-500 shrink-0 cursor-grab opacity-0 group-hover:opacity-100 transition-opacity" />
 
                     {/* Icon */}
                     <div className={`p-1.5 rounded-md shrink-0 pointer-events-none ${isEditing ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-500'}`}>

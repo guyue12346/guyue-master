@@ -1,23 +1,10 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { X, FileDown, FolderOpen, ExternalLink, ToggleLeft, ToggleRight, ChevronDown, Globe, Package, Plus, Trash2, GripVertical, Mail, Server, Key, Send, Loader2, CheckCircle, AlertCircle, Command, User, Camera } from 'lucide-react';
-import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, ModuleConfig, AVAILABLE_ICONS, PluginMetadata, EmailConfig } from '../types';
+import { X, FileDown, FolderOpen, ExternalLink, ToggleLeft, ToggleRight, ChevronDown, Globe, Package, Plus, Trash2, GripVertical, Command, User, Camera } from 'lucide-react';
+import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, ModuleConfig, AVAILABLE_ICONS, PluginMetadata } from '../types';
 import * as LucideIcons from 'lucide-react';
 
 const DEFAULT_SPLASH_QUOTE = '有善始者实繁，能克终者盖寡';
-const STORAGE_KEY_EMAIL_CONFIG = 'linkmaster_email_config';
-
-const DEFAULT_EMAIL_CONFIG: EmailConfig = {
-  enabled: false,
-  smtp: {
-    host: '',
-    port: 465,
-    secure: true,
-    user: '',
-    pass: '',
-  },
-  recipient: '',
-};
 
 const parseStoredSplashQuotes = () => {
   if (typeof window === 'undefined') return [DEFAULT_SPLASH_QUOTE];
@@ -82,15 +69,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [draggingModuleId, setDraggingModuleId] = useState<string | null>(null);
   const [splashQuotesInput, setSplashQuotesInput] = useState<string>('');
   const [splashEnabled, setSplashEnabled] = useState<boolean>(true);
-  const [localEmailConfig, setLocalEmailConfig] = useState<EmailConfig>(DEFAULT_EMAIL_CONFIG);
-  const [testStatus, setTestStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [testError, setTestError] = useState<string>('');
   const [agentShortcutKey, setAgentShortcutKey] = useState<string>('Meta');
   const [proxyPort, setProxyPort] = useState<string>('');
   const [userAvatar, setUserAvatar] = useState<string>('');
   const [userName, setUserName] = useState<string>('Guyue');
-  const [scheduleShowTimeLine, setScheduleShowTimeLine] = useState<boolean>(true);
-  const [scheduleDimPast, setScheduleDimPast] = useState<boolean>(false);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const iconSelectorRef = useRef<HTMLDivElement>(null);
 
@@ -133,22 +115,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const savedProxyPort = localStorage.getItem('linkmaster_proxy_port');
     setProxyPort(savedProxyPort || '');
 
-    try {
-      const savedEmailConfig = localStorage.getItem(STORAGE_KEY_EMAIL_CONFIG);
-      setLocalEmailConfig(savedEmailConfig ? JSON.parse(savedEmailConfig) : DEFAULT_EMAIL_CONFIG);
-    } catch {
-      setLocalEmailConfig(DEFAULT_EMAIL_CONFIG);
-    }
-    setTestStatus('idle');
-    setTestError('');
-
     // Load avatar & name
     setUserAvatar(localStorage.getItem('guyue_user_avatar') || '');
     setUserName(localStorage.getItem('guyue_user_name') || 'Guyue');
-
-    // Load schedule view settings
-    setScheduleShowTimeLine(localStorage.getItem('guyue_schedule_show_timeline') !== 'false');
-    setScheduleDimPast(localStorage.getItem('guyue_schedule_dim_past') === 'true');
 
     // Load plugins
     if (window.electronAPI) {
@@ -274,41 +243,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       .filter(Boolean);
     const payload = quotes.length > 0 ? quotes : [DEFAULT_SPLASH_QUOTE];
     localStorage.setItem('linkmaster_splash_text_v1', JSON.stringify(payload));
-  };
-
-  const handleTestEmail = async () => {
-    if (!localEmailConfig.smtp.host || !localEmailConfig.smtp.user || !localEmailConfig.smtp.pass || !localEmailConfig.recipient) {
-      setTestStatus('error');
-      setTestError('请填写完整的邮件配置');
-      return;
-    }
-
-    setTestStatus('loading');
-    setTestError('');
-
-    try {
-      if (window.electronAPI?.testEmailConfig) {
-        const result = await window.electronAPI.testEmailConfig(localEmailConfig);
-        if (result.success) {
-          setTestStatus('success');
-        } else {
-          setTestStatus('error');
-          setTestError(result.error || '发送失败');
-        }
-      } else {
-        setTestStatus('error');
-        setTestError('邮件功能仅在桌面端可用');
-      }
-    } catch (error) {
-      setTestStatus('error');
-      setTestError((error as Error).message);
-    }
-  };
-
-  const handleSaveEmailConfig = () => {
-    localStorage.setItem(STORAGE_KEY_EMAIL_CONFIG, JSON.stringify(localEmailConfig));
-    setTestStatus('idle');
-    setTestError('');
   };
 
   const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -905,207 +839,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <span>未设置 (可选)</span>
                 )}
               </div>
-            </div>
-          </div>
-
-          {/* Section: Data Management */}
-          <div className="space-y-4">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
-              邮件提醒设置
-            </h3>
-
-            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-sm font-medium text-gray-700">邮件到期提醒</h4>
-                  <p className="text-xs text-gray-400 mt-1">用于任务到期邮件通知（后续可作为 Agent Tool）</p>
-                </div>
-                <button
-                  onClick={() => setLocalEmailConfig(prev => ({ ...prev, enabled: !prev.enabled }))}
-                  className={`transition-colors ${localEmailConfig.enabled ? 'text-blue-600' : 'text-gray-400'}`}
-                >
-                  {localEmailConfig.enabled ? <ToggleRight className="w-8 h-8" /> : <ToggleLeft className="w-8 h-8" />}
-                </button>
-              </div>
-
-              {localEmailConfig.enabled && (
-                <div className="space-y-3 p-3 bg-white rounded-lg border border-gray-200">
-                  <div>
-                    <label className="flex items-center gap-2 text-xs text-gray-600 mb-1">
-                      <Server className="w-3 h-3" />
-                      SMTP 服务器
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={localEmailConfig.smtp.host}
-                        onChange={(e) => setLocalEmailConfig(prev => ({
-                          ...prev,
-                          smtp: { ...prev.smtp, host: e.target.value }
-                        }))}
-                        placeholder="smtp.163.com"
-                        className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white text-gray-900"
-                      />
-                      <input
-                        type="number"
-                        value={localEmailConfig.smtp.port}
-                        onChange={(e) => setLocalEmailConfig(prev => ({
-                          ...prev,
-                          smtp: { ...prev.smtp, port: parseInt(e.target.value) || 465 }
-                        }))}
-                        placeholder="465"
-                        className="w-20 px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white text-gray-900"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2 mt-1">
-                      <input
-                        type="checkbox"
-                        id="global-smtp-secure"
-                        checked={localEmailConfig.smtp.secure}
-                        onChange={(e) => setLocalEmailConfig(prev => ({
-                          ...prev,
-                          smtp: { ...prev.smtp, secure: e.target.checked }
-                        }))}
-                        className="rounded"
-                      />
-                      <label htmlFor="global-smtp-secure" className="text-xs text-gray-500">
-                        使用 SSL/TLS (端口 465 建议开启)
-                      </label>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="flex items-center gap-2 text-xs text-gray-600 mb-1">
-                      <Mail className="w-3 h-3" />
-                      发件邮箱
-                    </label>
-                    <input
-                      type="email"
-                      value={localEmailConfig.smtp.user}
-                      onChange={(e) => setLocalEmailConfig(prev => ({
-                        ...prev,
-                        smtp: { ...prev.smtp, user: e.target.value }
-                      }))}
-                      placeholder="your-email@163.com"
-                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white text-gray-900"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="flex items-center gap-2 text-xs text-gray-600 mb-1">
-                      <Key className="w-3 h-3" />
-                      授权码 (非邮箱密码)
-                    </label>
-                    <input
-                      type="password"
-                      value={localEmailConfig.smtp.pass}
-                      onChange={(e) => setLocalEmailConfig(prev => ({
-                        ...prev,
-                        smtp: { ...prev.smtp, pass: e.target.value }
-                      }))}
-                      placeholder="SMTP授权码"
-                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white text-gray-900"
-                    />
-                    <p className="text-xs text-gray-400 mt-1">163/QQ邮箱需要在设置中开启SMTP并获取授权码</p>
-                  </div>
-
-                  <div>
-                    <label className="flex items-center gap-2 text-xs text-gray-600 mb-1">
-                      <Mail className="w-3 h-3" />
-                      收件邮箱
-                    </label>
-                    <input
-                      type="email"
-                      value={localEmailConfig.recipient}
-                      onChange={(e) => setLocalEmailConfig(prev => ({
-                        ...prev,
-                        recipient: e.target.value
-                      }))}
-                      placeholder="receive@example.com"
-                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white text-gray-900"
-                    />
-                  </div>
-
-                  <div className="flex items-center gap-2 pt-2">
-                    <button
-                      onClick={handleTestEmail}
-                      disabled={testStatus === 'loading'}
-                      className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg transition-colors disabled:opacity-50"
-                    >
-                      {testStatus === 'loading' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                      发送测试邮件
-                    </button>
-                    <button
-                      onClick={handleSaveEmailConfig}
-                      className="flex items-center gap-2 px-3 py-2 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors"
-                    >
-                      保存配置
-                    </button>
-                  </div>
-
-                  {testStatus === 'success' && (
-                    <div className="flex items-center gap-2 text-green-500 text-sm">
-                      <CheckCircle className="w-4 h-4" />
-                      测试邮件发送成功！
-                    </div>
-                  )}
-                  {testStatus === 'error' && (
-                    <div className="flex items-center gap-2 text-red-500 text-sm">
-                      <AlertCircle className="w-4 h-4" />
-                      {testError}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Section: Schedule View */}
-          <div className="space-y-4">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
-              日程视图
-            </h3>
-            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 space-y-3">
-              <label className="flex items-center justify-between cursor-pointer">
-                <div>
-                  <div className="text-sm font-medium text-gray-700">显示当前时间线</div>
-                  <div className="text-xs text-gray-400 mt-0.5">在今天列显示红色时刻指示线</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !scheduleShowTimeLine;
-                    setScheduleShowTimeLine(next);
-                    try { localStorage.setItem('guyue_schedule_show_timeline', String(next)); } catch {}
-                    window.dispatchEvent(new CustomEvent('guyue:schedule_settings_change'));
-                  }}
-                  className="shrink-0 ml-4"
-                >
-                  {scheduleShowTimeLine
-                    ? <ToggleRight className="w-8 h-8 text-blue-500" />
-                    : <ToggleLeft className="w-8 h-8 text-gray-300" />}
-                </button>
-              </label>
-              <label className="flex items-center justify-between cursor-pointer">
-                <div>
-                  <div className="text-sm font-medium text-gray-700">过去时段变暗</div>
-                  <div className="text-xs text-gray-400 mt-0.5">当前时间之前的区域显示灰色遮罩</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !scheduleDimPast;
-                    setScheduleDimPast(next);
-                    try { localStorage.setItem('guyue_schedule_dim_past', String(next)); } catch {}
-                    window.dispatchEvent(new CustomEvent('guyue:schedule_settings_change'));
-                  }}
-                  className="shrink-0 ml-4"
-                >
-                  {scheduleDimPast
-                    ? <ToggleRight className="w-8 h-8 text-blue-500" />
-                    : <ToggleLeft className="w-8 h-8 text-gray-300" />}
-                </button>
-              </label>
             </div>
           </div>
 

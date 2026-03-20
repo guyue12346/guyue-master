@@ -1622,50 +1622,81 @@ ipcMain.handle('test-email-config', async (_, config: EmailConfig) => {
   }
 });
 
-// Agent 网络搜索：使用 net.fetch 经由 Chromium 网络栈发起请求
-// net.fetch 会继承 session.defaultSession 的代理设置，Node.js 原生 fetch 不会
+// Agent 网络搜索：用隐藏 BrowserWindow 加载 Bing 搜索页，渲染完毕后提取真实结果
+// 相比 net.fetch RSS 方案，这种方式能拿到 Bing 渲染后的 JS 结果，包括天气直答卡等
 ipcMain.handle('agent-web-search', async (_, { query }: { query: string }) => {
+  let searchWin: BrowserWindow | null = null;
   try {
     const encoded = encodeURIComponent(query);
-    // 使用 Bing RSS 接口，国内可直接访问；配置了代理的用户也可访问 Google 等
-    const url = `https://www.bing.com/search?q=${encoded}&format=rss&setlang=zh-CN&count=10`;
-    const response = await net.fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    const searchUrl = `https://www.bing.com/search?q=${encoded}&setlang=zh-CN&cc=CN&count=10`;
+
+    searchWin = new BrowserWindow({
+      width: 1280,
+      height: 900,
+      show: false,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        // 复用 defaultSession，继承代理设置
+        session: session.defaultSession,
       },
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const xml = await response.text();
 
-    const results: Array<{ title: string; url: string; snippet: string }> = [];
+    // 等待页面完全加载（含 JS 渲染）
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('搜索页面加载超时')), 15000);
+      searchWin!.webContents.once('did-finish-load', () => {
+        clearTimeout(timeout);
+        // 额外等待 1.5s，确保 Bing JS 渲染完成（天气卡等动态内容）
+        setTimeout(resolve, 1500);
+      });
+      searchWin!.webContents.once('did-fail-load', (_, code, desc) => {
+        clearTimeout(timeout);
+        reject(new Error(`页面加载失败: ${desc} (${code})`));
+      });
+      searchWin!.loadURL(searchUrl, {
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        extraHeaders: 'Accept-Language: zh-CN,zh;q=0.9,en;q=0.8\n',
+      });
+    });
 
-    // 解析 Bing RSS XML
-    const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-    const titleRegex = /<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>|<title>([^<]*)<\/title>/;
-    const linkRegex = /<link>([^<]+)<\/link>/;
-    const descRegex = /<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>|<description>([^<]*)<\/description>/;
+    // 在页面上下文中提取搜索结果
+    const extracted = await searchWin.webContents.executeJavaScript(`
+      (() => {
+        const results = [];
 
-    let m: RegExpExecArray | null;
-    while ((m = itemRegex.exec(xml)) !== null && results.length < 8) {
-      const block = m[1];
-      const titleM = titleRegex.exec(block);
-      const linkM  = linkRegex.exec(block);
-      const descM  = descRegex.exec(block);
-      const title   = (titleM?.[1] || titleM?.[2] || '').trim();
-      const link    = (linkM?.[1] || '').trim();
-      const snippet = (descM?.[1] || descM?.[2] || '').replace(/<[^>]+>/g, '').trim();
-      if (title && link) {
-        results.push({ title, url: link, snippet: snippet.substring(0, 300) });
-      }
-    }
+        // 1. 直答卡（天气、计算、知识卡等）
+        const answerBox = document.querySelector('#b_content .b_ans, #b_content .b_direct_answer, .wtr_maincard, .b_focusTextMedium');
+        const directAnswer = answerBox ? answerBox.innerText.trim().replace(/\\s+/g, ' ').substring(0, 500) : null;
 
-    if (results.length === 0) {
+        // 2. 普通搜索条目 #b_results > li.b_algo
+        const items = document.querySelectorAll('#b_results > li.b_algo');
+        items.forEach(item => {
+          if (results.length >= 8) return;
+          const titleEl = item.querySelector('h2 a');
+          const snippetEl = item.querySelector('.b_caption p, .b_snippet, .b_algoSlug');
+          const title = titleEl ? titleEl.innerText.trim() : '';
+          const url = titleEl ? (titleEl.href || '') : '';
+          const snippet = snippetEl ? snippetEl.innerText.trim().replace(/\\s+/g, ' ').substring(0, 400) : '';
+          if (title && url) results.push({ title, url, snippet });
+        });
+
+        return { directAnswer, results };
+      })()
+    `);
+
+    searchWin.destroy();
+    searchWin = null;
+
+    const { directAnswer, results } = extracted as { directAnswer: string | null; results: Array<{ title: string; url: string; snippet: string }> };
+
+    if (!directAnswer && results.length === 0) {
       return { success: false, error: '未获得搜索结果，请检查网络或代理设置', results: [] };
     }
 
-    return { success: true, results, query };
+    return { success: true, directAnswer, results, query };
   } catch (e) {
+    searchWin?.destroy();
     return { success: false, error: (e as Error).message, results: [] };
   }
 });

@@ -4,7 +4,7 @@ import {
   Play, ChevronDown, ChevronUp, FolderOpen, Save,
   AlertCircle, AlertTriangle, Info, Loader2, FileType2, CheckCircle2,
   ZoomIn, ZoomOut, Settings2, X, FolderSearch, Download, Package, Search,
-  Copy, Plus, Trash2, Image, Check, Omega, GripVertical
+  Copy, Plus, Trash2, Image, Check, Omega, GripVertical, PanelLeftClose, PanelLeftOpen
 } from 'lucide-react';
 import { LatexCompileResult, LatexEnvironment, LatexLogEntry, LatexSettings } from '../types';
 import { GoogleGenAI } from '@google/genai';
@@ -1438,9 +1438,13 @@ interface LatexEditorProps {
   onLoadTemplateAsFileRef?: React.MutableRefObject<((content: string) => void) | null>;
   /** Called by LatexSidebar to open a managed file (content + path) */
   onOpenFileRef?: React.MutableRefObject<((file: { path: string; content: string }) => void) | null>;
+  /** Toggle the LatexSidebar from within the editor toolbar */
+  onToggleSidebar?: () => void;
+  /** Current sidebar visibility (used to set the correct icon) */
+  isSidebarVisible?: boolean;
 }
 
-export const LatexEditor: React.FC<LatexEditorProps> = ({ onEditTemplateRef, onLoadTemplateAsFileRef, onOpenFileRef }) => {
+export const LatexEditor: React.FC<LatexEditorProps> = ({ onEditTemplateRef, onLoadTemplateAsFileRef, onOpenFileRef, onToggleSidebar, isSidebarVisible = true }) => {
   const [content, setContent] = useState('');
   const [engine, setEngine] = useState<Engine>('xelatex');
   const [compiling, setCompiling] = useState(false);
@@ -1923,6 +1927,15 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onEditTemplateRef, onL
           >
             <Settings2 className="w-3.5 h-3.5" />
           </button>
+          {onToggleSidebar && (
+            <button
+              onClick={onToggleSidebar}
+              className="p-1.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+              title={isSidebarVisible ? '隐藏侧边栏（全屏编辑）' : '显示侧边栏'}
+            >
+              {isSidebarVisible ? <PanelLeftClose className="w-3.5 h-3.5" /> : <PanelLeftOpen className="w-3.5 h-3.5" />}
+            </button>
+          )}
         </div>
       </div>
 

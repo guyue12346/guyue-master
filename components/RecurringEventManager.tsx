@@ -180,25 +180,25 @@ export const RecurringEventManager: React.FC<RecurringEventManagerProps> = ({
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setCatModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 text-sm rounded-xl transition-colors"
-            title="管理分类"
-          >
-            <Settings2 className="w-4 h-4" />
-            <span className="text-xs">分类</span>
-          </button>
-          <button
             onClick={() => { setEditingEvent(null); setModalOpen(true); }}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium rounded-xl transition-colors shadow-sm"
+            className="flex items-center gap-1.5 px-2.5 py-2 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium rounded-xl transition-colors shadow-sm"
+            title="新建重复事件"
           >
             <Plus className="w-4 h-4" />
-            新建
           </button>
         </div>
       </div>
 
       {/* Category filter tabs */}
       <div className="flex items-center gap-1.5 px-5 py-2.5 border-b border-gray-100 shrink-0 overflow-x-auto scrollbar-none">
+        <button
+          onClick={() => setCatModalOpen(true)}
+          className="shrink-0 p-1.5 text-gray-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
+          title="管理分类"
+        >
+          <Settings2 className="w-3.5 h-3.5" />
+        </button>
+        <div className="w-px h-4 bg-gray-200 shrink-0" />
         <button
           onClick={() => setSelectedCatId('all')}
           className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-all ${

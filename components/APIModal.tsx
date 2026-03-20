@@ -77,7 +77,7 @@ export const APIModal: React.FC<APIModalProps> = ({ isOpen, onClose, onSave, ini
       <div className="absolute inset-0 bg-black/20 backdrop-blur-sm transition-opacity" onClick={onClose} />
 
       {/* Modal Content */}
-      <div className="relative bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl w-full max-w-lg border border-white/50 overflow-hidden transform transition-all scale-100">
+      <div className="relative bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl w-full max-w-lg border border-white/50 overflow-hidden transform transition-all scale-100 max-h-[88vh] flex flex-col">
         
         <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-white/50">
           <h2 className="text-lg font-semibold text-gray-800">
@@ -88,8 +88,9 @@ export const APIModal: React.FC<APIModalProps> = ({ isOpen, onClose, onSave, ini
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+          <div className="flex-1 overflow-y-auto p-6 space-y-5">
+
           {/* Row 1: Title & Category */}
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -241,7 +242,9 @@ export const APIModal: React.FC<APIModalProps> = ({ isOpen, onClose, onSave, ini
             />
           </div>
 
-          <div className="flex justify-end gap-3 pt-2">
+          </div>
+
+          <div className="flex justify-end gap-3 border-t border-gray-100 bg-white/80 px-6 py-4">
             <button
               type="button"
               onClick={onClose}
