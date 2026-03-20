@@ -15,6 +15,7 @@ import {
 } from '../services/chatService';
 import { AgentSettingsModal } from './AgentSettingsModal';
 import { AgentHelpModal } from './AgentHelpModal';
+import { MarkdownContent } from './MarkdownContent';
 import { buildIndex, loadRagIndex, saveRagIndex, searchIndex } from '../utils/ragService';
 
 /* ─── 类型定义 ─── */
@@ -5520,20 +5521,12 @@ const MessageBubble: React.FC<{
           </div>
         )}
 
-        <div className="text-sm whitespace-pre-wrap leading-relaxed">
-          {message.content.split(/(`[^`]+`|\*\*[^*]+\*\*)/).map((part, i) => {
-            if (part.startsWith('**') && part.endsWith('**')) {
-              return <strong key={i}>{part.slice(2, -2)}</strong>;
-            }
-            if (part.startsWith('`') && part.endsWith('`')) {
-              return (
-                <code key={i} className={`inline-block px-1.5 py-0.5 rounded text-[0.8em] font-mono ${
-                  isUser ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-700'
-                }`}>{part.slice(1, -1)}</code>
-              );
-            }
-            return part;
-          })}
+        <div className="text-sm leading-relaxed">
+          {isUser ? (
+            <p className="whitespace-pre-wrap">{message.content}</p>
+          ) : (
+            <MarkdownContent content={message.content} />
+          )}
         </div>
 
         {/* 二次确认卡片 */}

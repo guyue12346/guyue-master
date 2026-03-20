@@ -1497,7 +1497,19 @@ const App: React.FC = () => {
 
   const handleSaveSSH = (record: Partial<SSHRecord>) => {
     const catName = record.category || '未分类';
-    ensureCategoryExists(catName);
+    if (catName !== '全部' && catName !== '未分类') {
+      setCategoriesMap(prev => {
+        const currentCategories = prev['ssh'] || DEFAULT_CATEGORIES;
+        if (currentCategories.some(c => c.name === catName)) return prev;
+        const newCategory: Category = {
+          id: crypto.randomUUID(),
+          name: catName,
+          icon: 'Server',
+          isSystem: false,
+        };
+        return { ...prev, ssh: [...currentCategories, newCategory] };
+      });
+    }
 
     if (record.id) {
       setSSHRecords(prev => prev.map(r => r.id === record.id ? { ...r, ...record } as SSHRecord : r));
@@ -1533,6 +1545,48 @@ const App: React.FC = () => {
   const handleEditSSH = (record: SSHRecord) => {
     setEditingSSH(record);
     setIsSSHModalOpen(true);
+  };
+
+  const handleUpdateSSHCategories = (newCategories: Category[]) => {
+    const oldCategories = categoriesMap['ssh'] || DEFAULT_CATEGORIES;
+    const oldNameMap = new Map(oldCategories.map(category => [category.id, category.name]));
+    const renamedPairs = new Map<string, string>();
+
+    newCategories.forEach(category => {
+      const oldName = oldNameMap.get(category.id);
+      if (oldName && oldName !== category.name) {
+        renamedPairs.set(oldName, category.name);
+      }
+    });
+
+    if (renamedPairs.size > 0) {
+      setSSHRecords(prev => prev.map(record => {
+        const nextCategory = renamedPairs.get(record.category);
+        return nextCategory ? { ...record, category: nextCategory } : record;
+      }));
+    }
+
+    setCategoriesMap(prev => ({
+      ...prev,
+      ssh: newCategories,
+    }));
+  };
+
+  const handleDeleteSSHCategory = (id: string) => {
+    const currentCategories = categoriesMap['ssh'] || DEFAULT_CATEGORIES;
+    const category = currentCategories.find(item => item.id === id);
+    if (!category) return;
+    if (!window.confirm(`确定要删除分类“${category.name}”吗？该分类下的 SSH 记录会移动到“未分类”。`)) {
+      return;
+    }
+
+    setSSHRecords(prev => prev.map(record =>
+      record.category === category.name ? { ...record, category: '未分类' } : record
+    ));
+    setCategoriesMap(prev => ({
+      ...prev,
+      ssh: (prev['ssh'] || DEFAULT_CATEGORIES).filter(item => item.id !== id),
+    }));
   };
 
   // --- Handlers: API ---
@@ -2672,6 +2726,8 @@ const App: React.FC = () => {
                   onSaveSSH={handleSaveSSH}
                   onDeleteSSH={handleDeleteSSH}
                   onOpenSSHInTerminal={handleOpenSSHInTerminal}
+                  onUpdateSSHCategories={handleUpdateSSHCategories}
+                  onDeleteSSHCategory={handleDeleteSSHCategory}
                   apiRecords={apiRecords}
                   apiCategories={categoriesMap['api'] || DEFAULT_CATEGORIES}
                   onSaveAPI={handleSaveAPI}

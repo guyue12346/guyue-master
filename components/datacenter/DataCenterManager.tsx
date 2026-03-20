@@ -253,6 +253,8 @@ interface DataCenterManagerProps {
   onSaveSSH: (record: Partial<SSHRecord>) => void;
   onDeleteSSH: (id: string) => void;
   onOpenSSHInTerminal: (command: string, title: string) => void;
+  onUpdateSSHCategories: (categories: Category[]) => void;
+  onDeleteSSHCategory: (id: string) => void;
   apiRecords: APIRecord[];
   apiCategories: Category[];
   onSaveAPI: (record: Partial<APIRecord>) => void;
@@ -322,6 +324,8 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
   onSaveSSH,
   onDeleteSSH,
   onOpenSSHInTerminal,
+  onUpdateSSHCategories,
+  onDeleteSSHCategory,
   apiRecords,
   apiCategories,
   onSaveAPI,
@@ -436,6 +440,8 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
             onSave={onSaveSSH}
             onDelete={onDeleteSSH}
             onOpenInTerminal={onOpenSSHInTerminal}
+            onUpdateCategories={onUpdateSSHCategories}
+            onDeleteCategory={onDeleteSSHCategory}
           />
         )}
         {activePage === 'api-manager' && (

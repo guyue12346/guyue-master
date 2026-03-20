@@ -124,7 +124,8 @@ export const AVAILABLE_MODELS: Record<string, { id: string; name: string; provid
     { id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'moonshot', description: '最新旗舰' },
     { id: 'kimi-k2-turbo-preview', name: 'Kimi K2 Turbo', provider: 'moonshot', description: '高速版' },
     { id: 'kimi-k2-thinking', name: 'Kimi K2 Thinking', provider: 'moonshot', description: '推理' },
-    { id: 'moonshot-v1-128k', name: 'Moonshot (128k)', provider: 'moonshot', description: '长文本' },
+    { id: 'moonshot-v1-128k', name: 'Moonshot V1 (128k)', provider: 'moonshot', description: '长文本' },
+    { id: 'moonshot-v1-32k', name: 'Moonshot V1 (32k)', provider: 'moonshot', description: '通用' },
   ],
   minimax: [
     { id: 'MiniMax-M2.5', name: 'MiniMax M2.5', provider: 'minimax', description: '最新旗舰' },
@@ -158,7 +159,8 @@ export const AGENT_AVAILABLE_MODELS: Record<string, { id: string; name: string; 
     { id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'moonshot', description: '最新旗舰' },
     { id: 'kimi-k2-turbo-preview', name: 'Kimi K2 Turbo', provider: 'moonshot', description: '高速版' },
     { id: 'kimi-k2-thinking', name: 'Kimi K2 Thinking', provider: 'moonshot', description: '推理' },
-    { id: 'moonshot-v1-128k', name: 'Moonshot (128k)', provider: 'moonshot', description: '长文本' },
+    { id: 'moonshot-v1-128k', name: 'Moonshot V1 (128k)', provider: 'moonshot', description: '长文本' },
+    { id: 'moonshot-v1-32k', name: 'Moonshot V1 (32k)', provider: 'moonshot', description: '通用' },
   ],
 };
 
@@ -442,16 +444,32 @@ export class ChatService {
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       const includeTools = iteration < MAX_ITERATIONS - 1;
+      const isMoonshot = this.config.provider === 'moonshot';
+      const isKimiK25 = isMoonshot && this.config.model === 'kimi-k2.5';
       const requestBody: any = {
         model: this.config.model,
         messages: currentMessages,
         stream: false,
-        temperature: this.config.temperature,
-        max_tokens: this.config.maxTokens,
       };
+      // kimi-k2.5 不允许修改 temperature，且默认开启 thinking 模式
+      // tool_calls 场景下必须关闭 thinking，否则会触发 access_denied (403)
+      if (isKimiK25) {
+        requestBody.thinking = { type: 'disabled' };
+        // kimi-k2.5 thinking 模式下不设置 max_completion_tokens，让 API 使用默认值
+      } else {
+        requestBody.temperature = this.config.temperature;
+        if (isMoonshot) {
+          requestBody.max_completion_tokens = this.config.maxTokens;
+        } else {
+          requestBody.max_tokens = this.config.maxTokens;
+        }
+      }
       if (includeTools) {
         requestBody.tools = formattedTools;
-        requestBody.tool_choice = 'auto';
+        // Kimi API 不支持 tool_choice 参数
+        if (!isMoonshot) {
+          requestBody.tool_choice = 'auto';
+        }
       }
 
       emitDebug({
@@ -471,7 +489,42 @@ export class ChatService {
       });
 
       if (!response.ok) {
-        throw new Error(`API Error: ${response.status} - ${await response.text()}`);
+        const errorText = await response.text();
+        // Moonshot/Kimi 403: 可能是模型或工具权限不足，降级为无工具模式重试
+        if (response.status === 403 && this.config.provider === 'moonshot' && includeTools) {
+          emitDebug({
+            stage: 'openai:moonshot-403-fallback',
+            detail: '工具调用返回 403，尝试不带 tools 重新请求',
+            response: { status: 403, body: errorText },
+          });
+          const fallbackBody = { ...requestBody };
+          delete fallbackBody.tools;
+          delete fallbackBody.tool_choice;
+          const fallbackResp = await fetch(`${baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(fallbackBody),
+            signal: this.abortController?.signal,
+          });
+          if (!fallbackResp.ok) {
+            const fbErr = await fallbackResp.text();
+            throw new Error(
+              fallbackResp.status === 403
+                ? `Kimi API 权限不足 (403)：请检查 API Key 是否有效，或尝试切换到 moonshot-v1-128k 模型。\n${fbErr}`
+                : `API Error: ${fallbackResp.status} - ${fbErr}`
+            );
+          }
+          const fbData = await fallbackResp.json();
+          const fbMsg = fbData.choices?.[0]?.message;
+          return {
+            text: typeof fbMsg?.content === 'string' ? fbMsg.content : '',
+            toolCalls: [],
+          };
+        }
+        if (response.status === 403 && this.config.provider === 'moonshot') {
+          throw new Error(`Kimi API 权限不足 (403)：请检查 API Key 是否有效，或尝试切换到 moonshot-v1-128k 模型。\n${errorText}`);
+        }
+        throw new Error(`API Error: ${response.status} - ${errorText}`);
       }
 
       const data = await response.json();
@@ -925,13 +978,25 @@ export class ChatService {
     const formattedMessages = this.toOpenAIMessages(messages);
     const headers = this.getRequestHeaders();
 
+    const isMoonshot = this.config.provider === 'moonshot';
+    const isKimiK25 = isMoonshot && this.config.model === 'kimi-k2.5';
     const body: any = {
       model: this.config.model,
       messages: formattedMessages,
       stream: true,
-      temperature: this.config.temperature,
-      max_tokens: this.config.maxTokens
     };
+    // kimi-k2.5 默认开启 thinking 模式，需显式关闭以避免 403；
+    // 同时不设置 max_completion_tokens，让 API 使用默认值
+    if (isKimiK25) {
+      body.thinking = { type: 'disabled' };
+    } else {
+      body.temperature = this.config.temperature;
+      if (isMoonshot) {
+        body.max_completion_tokens = this.config.maxTokens;
+      } else {
+        body.max_tokens = this.config.maxTokens;
+      }
+    }
 
     // Enable Web Search for Zenmux (暂时禁用，需要确认正确的格式)
     // TODO: 确认Zenmux的web search正确格式
@@ -953,6 +1018,9 @@ export class ChatService {
 
     if (!response.ok) {
       const errorText = await response.text();
+      if (response.status === 403 && this.config.provider === 'moonshot') {
+        throw new Error(`Kimi API 权限不足 (403)：请检查 API Key 是否正确（需从 platform.moonshot.cn 获取），或尝试切换到 moonshot-v1-128k 模型。\n${errorText}`);
+      }
       throw new Error(`API Error: ${response.status} - ${errorText}`);
     }
 

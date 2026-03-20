@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, Suspense } from 'react';
 import { SSHRecord, Category } from '../../types';
-import { Plus, Search, Terminal } from 'lucide-react';
+import { FolderTree, Plus, Search, Terminal } from 'lucide-react';
 import { SSHList } from '../SSHList';
+import { CategoryManagerModal } from '../CategoryManagerModal';
 
 // 动态导入 SSHModal（避免循环依赖）
 const SSHModal = React.lazy(() => import('../SSHModal').then(m => ({ default: m.SSHModal })));
@@ -12,6 +13,8 @@ interface SSHManagerProps {
   onSave: (record: Partial<SSHRecord>) => void;
   onDelete: (id: string) => void;
   onOpenInTerminal: (command: string, title: string) => void;
+  onUpdateCategories: (categories: Category[]) => void;
+  onDeleteCategory: (id: string) => void;
 }
 
 export const SSHManager: React.FC<SSHManagerProps> = ({
@@ -20,8 +23,11 @@ export const SSHManager: React.FC<SSHManagerProps> = ({
   onSave,
   onDelete,
   onOpenInTerminal,
+  onUpdateCategories,
+  onDeleteCategory,
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<SSHRecord | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('全部');
@@ -70,16 +76,21 @@ export const SSHManager: React.FC<SSHManagerProps> = ({
 
   // 所有存在的分类
   const allCategories = useMemo(() => {
-    const fromRecords = Array.from(new Set(records.map(r => r.category).filter(Boolean)));
-    return fromRecords;
-  }, [records]);
+    return Array.from(new Set([
+      ...categories.map(c => c.name).filter(name => name && name !== '全部'),
+      ...records.map(r => r.category).filter(Boolean),
+    ]));
+  }, [categories, records]);
+
+  const activeCategoryCount = selectedCategory === '全部'
+    ? records.length
+    : records.filter(record => record.category === selectedCategory).length;
 
   return (
     <div className="h-full flex flex-col">
-      {/* 顶部工具栏 */}
-      <div className="flex items-center justify-between mb-4 gap-3">
-        <div className="flex items-center gap-2 flex-1">
-          <div className="relative flex-1 max-w-sm">
+      <div className="mb-4 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
               type="text"
@@ -89,8 +100,33 @@ export const SSHManager: React.FC<SSHManagerProps> = ({
               className="w-full pl-9 pr-4 py-2 text-sm bg-gray-100 dark:bg-gray-700/50 border-none rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:bg-white dark:focus:bg-gray-700 transition-all text-gray-900 dark:text-white placeholder-gray-400"
             />
           </div>
-          {/* 分类筛选 */}
-          <div className="flex items-center gap-1 flex-wrap">
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => setIsCategoryManagerOpen(true)}
+              className="flex items-center gap-2 px-3 py-2 bg-white text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-colors shadow-sm text-sm font-medium"
+            >
+              <FolderTree className="w-4 h-4" />
+              分类管理
+            </button>
+            <button
+              onClick={handleAdd}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-sm text-sm font-medium shrink-0"
+            >
+              <Plus className="w-4 h-4" />
+              添加连接
+            </button>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-gray-200 bg-white/70 px-4 py-3">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">分类与标签</p>
+              <p className="text-sm text-gray-500 mt-1">把筛选单独放在这里，搜索区只负责检索。</p>
+            </div>
+            <span className="text-xs text-gray-400">当前 {activeCategoryCount} 条</span>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
             {['全部', ...allCategories].map(cat => (
               <button
                 key={cat}
@@ -106,13 +142,6 @@ export const SSHManager: React.FC<SSHManagerProps> = ({
             ))}
           </div>
         </div>
-        <button
-          onClick={handleAdd}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-sm text-sm font-medium shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          添加连接
-        </button>
       </div>
 
       {/* SSH 列表 */}
@@ -125,6 +154,14 @@ export const SSHManager: React.FC<SSHManagerProps> = ({
             <p className="text-sm font-medium text-gray-500 dark:text-gray-400">暂无 SSH 记录</p>
             <p className="text-xs text-gray-400 mt-1">点击右上角添加服务器连接</p>
           </div>
+        ) : filteredRecords.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-64 text-center text-gray-400">
+            <div className="w-16 h-16 bg-gray-100 dark:bg-gray-700/50 rounded-full flex items-center justify-center mb-3">
+              <Search className="w-8 h-8 text-gray-300 dark:text-gray-500" />
+            </div>
+            <p className="text-sm font-medium text-gray-500 dark:text-gray-400">没有匹配的 SSH 记录</p>
+            <p className="text-xs text-gray-400 mt-1">换个关键词，或切换上方分类筛选</p>
+          </div>
         ) : (
           <SSHList
             records={filteredRecords}
@@ -136,7 +173,7 @@ export const SSHManager: React.FC<SSHManagerProps> = ({
       </div>
 
       {/* SSH Modal */}
-      <React.Suspense fallback={null}>
+      <Suspense fallback={null}>
         <SSHModal
           isOpen={isModalOpen}
           onClose={handleClose}
@@ -144,7 +181,15 @@ export const SSHManager: React.FC<SSHManagerProps> = ({
           initialData={editingRecord}
           categories={categoryNames}
         />
-      </React.Suspense>
+      </Suspense>
+
+      <CategoryManagerModal
+        isOpen={isCategoryManagerOpen}
+        onClose={() => setIsCategoryManagerOpen(false)}
+        categories={categories}
+        onUpdateCategories={onUpdateCategories}
+        onDeleteCategory={onDeleteCategory}
+      />
     </div>
   );
 };
