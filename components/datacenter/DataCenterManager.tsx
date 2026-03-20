@@ -4,7 +4,7 @@ import { OJHeatmapContainer } from './OJHeatmapContainer';
 import { ResourceCenter } from './ResourceCenter';
 import { PasswordManager } from './PasswordManager';
 import { ZenmuxUsagePanel } from './ZenmuxUsagePanel';
-import { GCPBillingPanel } from './GCPBillingPanel';
+import { AIStudioPanel } from './AIStudioPanel';
 import { SSHManager } from './SSHManager';
 import { APIManager } from './APIManager';
 import { HelpModal } from '../HelpModal';
@@ -14,7 +14,7 @@ import type { OJHeatmapData, ResourceCenterData, DataCenterConfig, SSHRecord, Ca
 const STORAGE_KEY_DATACENTER_CONFIG = 'linkmaster_datacenter_config';
 
 // 模块默认顺序
-const DEFAULT_MODULE_ORDER = ['ssh', 'apiManager', 'ojHeatmap', 'resourceCenter', 'passwordManager', 'zenmuxUsage', 'gcpBilling'];
+const DEFAULT_MODULE_ORDER = ['ssh', 'apiManager', 'ojHeatmap', 'resourceCenter', 'passwordManager', 'zenmuxUsage', 'aiStudio'];
 
 // 默认配置
 const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
@@ -25,7 +25,7 @@ const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
     resourceCenter: true,
     passwordManager: true,
     zenmuxUsage: true,
-    gcpBilling: true,
+    aiStudio: true,
   },
   moduleOrder: DEFAULT_MODULE_ORDER,
 };
@@ -46,7 +46,7 @@ const MODULE_DEFS: { key: keyof DataCenterConfig['modules']; label: string; colo
   { key: 'resourceCenter', label: '资源中心', color: 'text-blue-500',    IconComp: Package  },
   { key: 'passwordManager',label: '网站管理', color: 'text-emerald-500', IconComp: Shield   },
   { key: 'zenmuxUsage',    label: 'Zenmux',   color: 'text-violet-500',  IconComp: Activity },
-  { key: 'gcpBilling',     label: 'GCP Cloud', color: 'text-blue-500',    IconComp: BarChart3 },
+  { key: 'aiStudio',       label: 'AI Studio', color: 'text-cyan-500',    IconComp: Activity },
 ];
 
 // 设置弹窗组件
@@ -167,7 +167,7 @@ interface DataCenterManagerProps {
   onDeleteAPI: (id: string) => void;
 }
 
-type SubPage = 'ssh' | 'api-manager' | 'oj-heatmap' | 'resource-center' | 'password-manager' | 'zenmux-usage' | 'gcp-billing';
+type SubPage = 'ssh' | 'api-manager' | 'oj-heatmap' | 'resource-center' | 'password-manager' | 'zenmux-usage' | 'ai-studio';
 
 interface NavItem {
   id: SubPage;
@@ -214,10 +214,10 @@ const NAV_ITEMS: NavItem[] = [
     configKey: 'zenmuxUsage',
   },
   {
-    id: 'gcp-billing',
-    name: 'GCP Cloud',
-    icon: <BarChart3 className="w-4 h-4" />,
-    configKey: 'gcpBilling',
+    id: 'ai-studio',
+    name: 'AI Studio',
+    icon: <Activity className="w-4 h-4" />,
+    configKey: 'aiStudio',
   },
 ];
 
@@ -368,8 +368,8 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
         {activePage === 'zenmux-usage' && (
           <ZenmuxUsagePanel />
         )}
-        {activePage === 'gcp-billing' && (
-          <GCPBillingPanel />
+        {activePage === 'ai-studio' && (
+          <AIStudioPanel />
         )}
       </div>
 

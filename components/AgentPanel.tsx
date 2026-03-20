@@ -2734,6 +2734,7 @@ const TOOL_REGISTRY: ToolRegistration[] = [
       if (!embeddingApiKey) {
         return { success: false, error: '未配置知识库 Embedding API Key。请在 Agent 右侧栏点击知识库图标并配置 Gemini API Key。' };
       }
+      const embeddingBaseUrl = localStorage.getItem('guyue_rag_embedding_base_url')?.trim() || undefined;
       const kbFileIds = ctx.knowledgeBaseFileIds;
       if (kbFileIds.size === 0) {
         return { success: false, error: '知识库中没有文件。请先在文件管理模块中悬停文件、点击绿色脑图标将文件加入知识库。' };
@@ -2745,10 +2746,10 @@ const TOOL_REGISTRY: ToolRegistration[] = [
       try {
         let index = await loadRagIndex();
         const progressLogs: string[] = [];
-        index = await buildIndex(kbFiles, index, embeddingApiKey, msg => progressLogs.push(msg));
+        index = await buildIndex(kbFiles, index, embeddingApiKey, msg => progressLogs.push(msg), embeddingBaseUrl);
         await saveRagIndex(index);
         const topK = Math.min(Math.max(typeof args.topK === 'number' ? args.topK : 5, 1), 10);
-        const results = await searchIndex(args.query as string, index, embeddingApiKey, topK);
+        const results = await searchIndex(args.query as string, index, embeddingApiKey, topK, embeddingBaseUrl);
         if (results.length === 0) {
           return { success: true, results: [], message: '知识库中未找到与该问题相关的内容。', indexLog: progressLogs };
         }
@@ -2786,6 +2787,7 @@ const TOOL_REGISTRY: ToolRegistration[] = [
       if (!embeddingApiKey) {
         return { success: false, error: '未配置知识库 Embedding API Key。请点击右侧知识库图标进行配置。' };
       }
+      const embeddingBaseUrl = localStorage.getItem('guyue_rag_embedding_base_url')?.trim() || undefined;
       const kbFileIds = ctx.knowledgeBaseFileIds;
       if (kbFileIds.size === 0) {
         return { success: false, error: '知识库中没有文件，请先在文件管理模块添加文件。' };
@@ -2794,7 +2796,7 @@ const TOOL_REGISTRY: ToolRegistration[] = [
       try {
         const existingIndex = args.forceRebuild ? [] : await loadRagIndex();
         const progressLogs: string[] = [];
-        const newIndex = await buildIndex(kbFiles, existingIndex as any[], embeddingApiKey, msg => progressLogs.push(msg));
+        const newIndex = await buildIndex(kbFiles, existingIndex as any[], embeddingApiKey, msg => progressLogs.push(msg), embeddingBaseUrl);
         await saveRagIndex(newIndex);
         const chunkCount = newIndex.filter((c: any) => kbFileIds.has(c.fileId)).length;
         return {

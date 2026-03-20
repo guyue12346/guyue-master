@@ -301,6 +301,9 @@ export interface ElectronAPI {
   openZenmuxLogin: () => Promise<boolean>;
   fetchZenmuxUsageFromBrowser: () => Promise<ZenmuxUsage>;
   fetchZenmuxDashboardData: () => Promise<any>;
+  // AI Studio API
+  openAIStudioLogin: () => Promise<boolean>;
+  fetchAIStudioData: (params?: { projectId?: string }) => Promise<any>;
   // GCP Billing API
   fetchGCPBillingData: (params: { serviceAccountJson: string; projectId: string; billingAccountId?: string }) => Promise<any>;
   queryBigQueryBilling: (params: { serviceAccountJson: string; projectId: string; bqTablePath: string; bqLocation?: string }) => Promise<any>;
@@ -453,7 +456,7 @@ export interface DataCenterConfig {
     resourceCenter: boolean;
     passwordManager: boolean;
     zenmuxUsage: boolean;
-    gcpBilling: boolean;
+    aiStudio: boolean;
   };
   moduleOrder?: string[];
 }

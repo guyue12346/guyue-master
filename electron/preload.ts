@@ -65,6 +65,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchZenmuxUsageFromBrowser: () => ipcRenderer.invoke('fetch-zenmux-usage-browser'),
   fetchZenmuxDashboardData: () => ipcRenderer.invoke('fetch-zenmux-dashboard-data'),
 
+  // AI Studio API
+  openAIStudioLogin: () => ipcRenderer.invoke('open-aistudio-login'),
+  fetchAIStudioData: (params?: { projectId?: string }) => ipcRenderer.invoke('fetch-aistudio-data', params),
+
   // GCP Billing API
   fetchGCPBillingData: (params: { serviceAccountJson: string; projectId: string; billingAccountId?: string }) =>
     ipcRenderer.invoke('fetch-gcp-billing-data', params),

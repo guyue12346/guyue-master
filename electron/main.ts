@@ -1,11 +1,10 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, session } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, dialog, session, net } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { createSign } from 'crypto';
 import pty from 'node-pty';
 import os from 'os';
-import net from 'net';
 import nodemailer from 'nodemailer';
 import dns from 'dns';
 import { spawn, exec } from 'child_process';
@@ -18,6 +17,7 @@ const isDev = process.env.NODE_ENV === 'development';
 
 let mainWindow: BrowserWindow | null = null;
 let zenmuxUsageWindow: BrowserWindow | null = null;
+let aiStudioWindow: BrowserWindow | null = null;
 
 const isMac = process.platform === 'darwin';
 const isWin = process.platform === 'win32';
@@ -161,8 +161,10 @@ function waitForWindowLoad(win: BrowserWindow, timeoutMs = 30000): Promise<void>
 
     const cleanup = () => {
       clearTimeout(timer);
-      win.webContents.removeListener('did-finish-load', onFinish);
-      win.webContents.removeListener('did-fail-load', onFail);
+      if (!win.isDestroyed()) {
+        win.webContents.removeListener('did-finish-load', onFinish);
+        win.webContents.removeListener('did-fail-load', onFail);
+      }
     };
 
     const onFinish = () => {
@@ -680,6 +682,320 @@ ipcMain.handle('fetch-zenmux-usage-browser', async () => {
 ipcMain.handle('fetch-zenmux-dashboard-data', async () => {
   try {
     return await fetchZenmuxDashboardData();
+  } catch (error) {
+    return { error: (error as Error).message, loginRequired: false };
+  }
+});
+
+// --- AI Studio Usage ---
+
+const AISTUDIO_URL = 'https://aistudio.google.com/apikey';
+
+function createAIStudioWindow(showWindow = true): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 1280,
+    height: 860,
+    minWidth: 960,
+    minHeight: 640,
+    show: showWindow,
+    title: 'Google AI Studio 登录',
+    autoHideMenuBar: true,
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      partition: 'persist:aistudio',
+    },
+  });
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http:') || url.startsWith('https:')) {
+      void shell.openExternal(url);
+      return { action: 'deny' };
+    }
+    return { action: 'allow' };
+  });
+
+  void win.loadURL(AISTUDIO_URL);
+
+  win.on('closed', () => {
+    if (aiStudioWindow === win) {
+      aiStudioWindow = null;
+    }
+  });
+
+  return win;
+}
+
+async function ensureAIStudioWindow(showWindow = false): Promise<BrowserWindow> {
+  if (!aiStudioWindow || aiStudioWindow.isDestroyed()) {
+    aiStudioWindow = createAIStudioWindow(showWindow);
+  } else if (showWindow) {
+    aiStudioWindow.show();
+    aiStudioWindow.focus();
+  }
+
+  const currentUrl = aiStudioWindow.webContents.getURL();
+  if (!currentUrl.includes('aistudio.google.com')) {
+    void aiStudioWindow.loadURL(AISTUDIO_URL);
+  }
+
+  await waitForWindowLoad(aiStudioWindow);
+  return aiStudioWindow;
+}
+
+async function fetchAIStudioData(projectId?: string): Promise<any> {
+  if (!aiStudioWindow || aiStudioWindow.isDestroyed()) {
+    aiStudioWindow = createAIStudioWindow(false);
+  }
+
+  // 加载 API Keys 页面
+  const targetUrl = projectId
+    ? `https://aistudio.google.com/api-keys?project=${encodeURIComponent(projectId)}`
+    : AISTUDIO_URL;
+
+  const currentUrl = aiStudioWindow.webContents.getURL();
+  if (!currentUrl.includes('aistudio.google.com')) {
+    void aiStudioWindow.loadURL(targetUrl);
+    await waitForWindowLoad(aiStudioWindow);
+  }
+
+  // 确保在 apikey 页面
+  if (!currentUrl.includes('/apikey') && !currentUrl.includes('/api-keys')) {
+    void aiStudioWindow.loadURL(targetUrl);
+    await waitForWindowLoad(aiStudioWindow);
+  }
+
+  // SPA 需要额外等待渲染
+  await new Promise(r => setTimeout(r, 3000));
+
+  // ── Step 1: 检查登录 + 抓取 API Keys ──
+  const keysScript = `
+    (async () => {
+      const result = { loginRequired: false, error: null, keys: [], userEmail: '', projectId: null };
+      try {
+        const url = window.location.href;
+        if (url.includes('accounts.google.com') || url.includes('/signin')) {
+          result.loginRequired = true;
+          return result;
+        }
+        const bodyText = (document.body && document.body.innerText) || '';
+        if (bodyText.includes('Sign in') && bodyText.length < 3000) {
+          result.loginRequired = true;
+          return result;
+        }
+
+        await new Promise(r => setTimeout(r, 2000));
+
+        const projectMatch = url.match(/project=([^&]+)/);
+        result.projectId = projectMatch ? projectMatch[1] : null;
+
+        const rows = document.querySelectorAll('tbody[role="rowgroup"] tr[role="row"]');
+        rows.forEach(row => {
+          const cells = row.querySelectorAll('td[role="cell"]');
+          if (cells.length < 4) return;
+
+          const cell0 = cells[0];
+          const keyStringEl = cell0.querySelector('ms-api-key-key-string');
+          const keyHash = keyStringEl ? keyStringEl.textContent.trim() : '';
+          const subheaderEl = cell0.querySelector('ms-api-key-subheader');
+          let keyName = '';
+          if (subheaderEl) {
+            keyName = subheaderEl.textContent.trim();
+          } else {
+            keyName = cell0.textContent.trim().replace(keyHash, '').trim();
+          }
+
+          const cell1 = cells[1];
+          const cell1Text = cell1.textContent.trim();
+          const projMatch = cell1Text.match(/(gen-lang-client-\\d+)/);
+          const keyProjectId = projMatch ? projMatch[1] : '';
+          const keyId = cell1Text.replace(keyProjectId, '').trim();
+
+          const createdDate = cells[2].textContent.trim();
+
+          const tierEl = cells[3].querySelector('[data-test-quota-tier-text]');
+          const quotaTier = tierEl ? tierEl.textContent.trim() : cells[3].textContent.trim();
+          const billingBtn = cells[3].querySelector('[data-test-set-up-billing-link]');
+          const needsBilling = !!billingBtn;
+
+          result.keys.push({ keyHash, keyName, keyId, projectId: keyProjectId, createdDate, quotaTier, needsBilling });
+        });
+
+        const avatarBtn = document.querySelector('connect-avatar button');
+        if (avatarBtn) result.userEmail = avatarBtn.textContent.trim();
+
+        return result;
+      } catch (error) {
+        result.error = (error && error.message) || 'unknown-error';
+        return result;
+      }
+    })();
+  `;
+
+  try {
+    const keysResult = await aiStudioWindow.webContents.executeJavaScript(keysScript, true);
+    if (keysResult?.loginRequired) {
+      return { loginRequired: true, error: null, data: null, lastUpdated: Date.now() };
+    }
+    if (keysResult?.error) {
+      return { error: keysResult.error, loginRequired: false, data: null, lastUpdated: Date.now() };
+    }
+
+    // ── Step 2: 按项目 ID 直接导航到 /spend?project=xxx 逐个抓取花费 ──
+    const uniqueProjects = [...new Map(
+      (keysResult.keys as any[]).filter(k => k.projectId).map((k: any) => [k.projectId, k])
+    ).values()];
+
+    const spendScript = `
+      (function readCurrentSpend(projectName) {
+        const tier = (document.querySelector('ms-quota-tier-badge') || {}).textContent?.trim() || '';
+        const dashboard = document.querySelector('ms-billing-dashboard');
+        const dashText = dashboard ? dashboard.innerText.trim() : '';
+        const noBilling = dashText.includes('未设置结算信息') || !dashboard;
+
+        let monthlyLimit = '';
+        const limitMatch = dashText.match(/每月支出上限[\\s\\S]*?\\n\\s*([A-Z]{2,3}\\s*[\\d,.]+[^\\n]*)/);
+        if (limitMatch) monthlyLimit = limitMatch[1].trim();
+
+        const amounts = dashText.match(/(?:[A-Z]{2,3}|[$¥€£])\\s*[\\d,.]+/g) || [];
+
+        let cost = '', savings = '', totalCost = '';
+        const costMatch = dashText.match(/费用\\s*\\n\\s*((?:[A-Z]{2,3}|[$¥€£])\\s*[\\d,.]+)/);
+        if (costMatch) cost = costMatch[1].trim();
+        const savingsMatch = dashText.match(/节省的费用\\s*\\n\\s*((?:[A-Z]{2,3}|[$¥€£])\\s*[\\d,.]+)/);
+        if (savingsMatch) savings = savingsMatch[1].trim();
+        const totalMatch = dashText.match(/总费用\\s*\\n\\s*((?:[A-Z]{2,3}|[$¥€£])\\s*[\\d,.]+)/);
+        if (totalMatch) totalCost = totalMatch[1].trim();
+
+        let dateRange = '';
+        const dateMatch = dashText.match(/\\(([A-Za-z]+ \\d+\\s*[-–]\\s*[A-Za-z]+ \\d+,?\\s*\\d{4})\\)/);
+        if (dateMatch) dateRange = dateMatch[1];
+
+        return { name: projectName, tier, noBilling, monthlyLimit, cost, savings, totalCost, dateRange, amounts };
+      })
+    `;
+
+    const spendProjects: any[] = [];
+    for (const proj of uniqueProjects) {
+      void aiStudioWindow.loadURL(`https://aistudio.google.com/spend?project=${encodeURIComponent((proj as any).projectId)}`);
+      await waitForWindowLoad(aiStudioWindow);
+      await new Promise(r => setTimeout(r, 3000));
+      try {
+        const info = await aiStudioWindow.webContents.executeJavaScript(
+          `(${spendScript})(${JSON.stringify((proj as any).keyName || (proj as any).projectId)})`, true
+        );
+        spendProjects.push(info);
+      } catch { /* skip */ }
+    }
+    const spendResult = { projects: spendProjects };
+
+    // ── Step 3: 按项目 ID 直接导航到 /usage?project=xxx 逐个抓取用量 ──
+    const usageScript = `
+      (function readCurrentUsage(projectName) {
+        const tier = (document.querySelector('ms-quota-tier-badge') || {}).textContent?.trim() || '';
+        const timeRange = (document.querySelector('ms-timerange-selector') || {}).textContent?.trim() || '';
+
+        const sectionIds = [
+          { id: 'overview', label: '概览' },
+          { id: 'generate-content', label: '生成内容' },
+          { id: 'generate-media', label: '生成媒体' },
+          { id: 'embed-content', label: '嵌入内容' },
+        ];
+
+        const sections = [];
+        for (const sec of sectionIds) {
+          const el = document.querySelector('[data-test-id="' + sec.id + '-section"]');
+          if (!el) continue;
+          const sectionText = el.innerText || '';
+          const noData = sectionText.includes('无可用数据');
+
+          const charts = [];
+          el.querySelectorAll('ms-dashboard-chart').forEach(ch => {
+            const chText = ch.innerText || '';
+            const lines = chText.split('\\n').map(l => l.trim()).filter(Boolean);
+            const title = lines[0] || '';
+            const chartNoData = chText.includes('无可用数据');
+            const rangeMatch = chText.match(/数据值介于\\s*([^\\s]+)\\s*和\\s*([^\\s]+)\\s*之间/);
+            const dataRange = rangeMatch ? { min: rangeMatch[1], max: rangeMatch[2] } : null;
+            const legends = [];
+            ch.querySelectorAll('ac-inline-legend ac-key').forEach(k => {
+              const t = k.textContent?.trim();
+              if (t && !legends.includes(t)) legends.push(t);
+            });
+            charts.push({ title, noData: chartNoData, dataRange, legends });
+          });
+
+          sections.push({ id: sec.id, label: sec.label, noData, charts });
+        }
+
+        return { name: projectName, tier, timeRange, sections };
+      })
+    `;
+
+    const usageProjects: any[] = [];
+    for (const proj of uniqueProjects) {
+      void aiStudioWindow.loadURL(`https://aistudio.google.com/usage?project=${encodeURIComponent((proj as any).projectId)}`);
+      await waitForWindowLoad(aiStudioWindow);
+      await new Promise(r => setTimeout(r, 3000));
+      try {
+        const info = await aiStudioWindow.webContents.executeJavaScript(
+          `(${usageScript})(${JSON.stringify((proj as any).keyName || (proj as any).projectId)})`, true
+        );
+        usageProjects.push(info);
+      } catch { /* skip */ }
+    }
+    const usageResult = { projects: usageProjects };
+
+    // ── 导航回 API Keys 页面 ──
+    void aiStudioWindow.loadURL(AISTUDIO_URL);
+    waitForWindowLoad(aiStudioWindow).catch(() => {});
+
+    // ── 获取汇率（CNY 为基准）──
+    let exchangeRates: Record<string, number> = {};
+    try {
+      const rateRes = await net.fetch('https://api.frankfurter.app/latest?from=CNY');
+      if (rateRes.ok) {
+        const rateData = await rateRes.json() as any;
+        // rateData.rates: 1 CNY = X foreign, 反转得到 1 foreign = Y CNY
+        for (const [currency, rate] of Object.entries(rateData.rates || {})) {
+          exchangeRates[currency] = 1 / (rate as number);
+        }
+        exchangeRates['CNY'] = 1;
+      }
+    } catch { /* 汇率获取失败不影响主流程 */ }
+
+    return {
+      loginRequired: false,
+      error: null,
+      lastUpdated: Date.now(),
+      data: {
+        projectId: keysResult.projectId,
+        keys: keysResult.keys,
+        userEmail: keysResult.userEmail,
+        spend: spendResult,
+        usage: usageResult,
+        exchangeRates,
+      },
+    };
+  } catch (error) {
+    return { error: (error as Error).message, loginRequired: false };
+  }
+}
+
+ipcMain.handle('open-aistudio-login', async () => {
+  try {
+    await ensureAIStudioWindow(true);
+    return true;
+  } catch (error) {
+    throw new Error((error as Error).message || '打开登录窗口失败');
+  }
+});
+
+ipcMain.handle('fetch-aistudio-data', async (_event, params?: { projectId?: string }) => {
+  try {
+    return await fetchAIStudioData(params?.projectId);
   } catch (error) {
     return { error: (error as Error).message, loginRequired: false };
   }
@@ -1306,40 +1622,46 @@ ipcMain.handle('test-email-config', async (_, config: EmailConfig) => {
   }
 });
 
-// Agent 网络搜索：通过主进程发起请求，绕过渲染进程的 CORS 限制
+// Agent 网络搜索：使用 net.fetch 经由 Chromium 网络栈发起请求
+// net.fetch 会继承 session.defaultSession 的代理设置，Node.js 原生 fetch 不会
 ipcMain.handle('agent-web-search', async (_, { query }: { query: string }) => {
   try {
     const encoded = encodeURIComponent(query);
-    const url = `https://api.duckduckgo.com/?q=${encoded}&format=json&no_html=1&skip_disambig=1`;
-    const response = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; GuyueMaster/1.0)' },
-      signal: AbortSignal.timeout(10000),
+    // 使用 Bing RSS 接口，国内可直接访问；配置了代理的用户也可访问 Google 等
+    const url = `https://www.bing.com/search?q=${encoded}&format=rss&setlang=zh-CN&count=10`;
+    const response = await net.fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      },
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = await response.json() as any;
+    const xml = await response.text();
 
     const results: Array<{ title: string; url: string; snippet: string }> = [];
 
-    if (data.AbstractText) {
-      results.push({
-        title: data.Heading || query,
-        url: data.AbstractURL || '',
-        snippet: data.AbstractText,
-      });
+    // 解析 Bing RSS XML
+    const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+    const titleRegex = /<title><!\[CDATA\[([\s\S]*?)\]\]><\/title>|<title>([^<]*)<\/title>/;
+    const linkRegex = /<link>([^<]+)<\/link>/;
+    const descRegex = /<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>|<description>([^<]*)<\/description>/;
+
+    let m: RegExpExecArray | null;
+    while ((m = itemRegex.exec(xml)) !== null && results.length < 8) {
+      const block = m[1];
+      const titleM = titleRegex.exec(block);
+      const linkM  = linkRegex.exec(block);
+      const descM  = descRegex.exec(block);
+      const title   = (titleM?.[1] || titleM?.[2] || '').trim();
+      const link    = (linkM?.[1] || '').trim();
+      const snippet = (descM?.[1] || descM?.[2] || '').replace(/<[^>]+>/g, '').trim();
+      if (title && link) {
+        results.push({ title, url: link, snippet: snippet.substring(0, 300) });
+      }
     }
 
-    for (const topic of ((data.RelatedTopics || []) as any[])) {
-      if (results.length >= 8) break;
-      if (topic.Text && topic.FirstURL) {
-        results.push({ title: topic.Text.substring(0, 80), url: topic.FirstURL, snippet: topic.Text });
-      } else if (topic.Topics) {
-        for (const sub of (topic.Topics as any[]).slice(0, 3)) {
-          if (results.length >= 8) break;
-          if (sub.Text && sub.FirstURL) {
-            results.push({ title: sub.Text.substring(0, 80), url: sub.FirstURL, snippet: sub.Text });
-          }
-        }
-      }
+    if (results.length === 0) {
+      return { success: false, error: '未获得搜索结果，请检查网络或代理设置', results: [] };
     }
 
     return { success: true, results, query };
