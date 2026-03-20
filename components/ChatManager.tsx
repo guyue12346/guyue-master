@@ -27,6 +27,36 @@ import { buildIndex, loadRagIndex, saveRagIndex, searchIndex } from '../utils/ra
 
 const STORAGE_KEY_KB_MESSAGES = 'guyue_kb_agent_history';
 
+export interface SavedChatApiConfig {
+  id: string;
+  label: string;
+  provider: string;
+  apiKey: string;
+  baseUrl?: string;
+}
+
+const STORAGE_KEY_CHAT_API_CONFIGS = 'guyue_chat_api_profiles_v1';
+const loadChatApiConfigs = (): SavedChatApiConfig[] => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_CHAT_API_CONFIGS);
+    return saved ? JSON.parse(saved) : [];
+  } catch { return []; }
+};
+const persistChatApiConfigs = (configs: SavedChatApiConfig[]) => {
+  localStorage.setItem(STORAGE_KEY_CHAT_API_CONFIGS, JSON.stringify(configs));
+};
+
+const STORAGE_KEY_KB_API_CONFIGS = 'guyue_kb_api_profiles_v1';
+const loadKbApiConfigs = (): SavedChatApiConfig[] => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_KB_API_CONFIGS);
+    return saved ? JSON.parse(saved) : [];
+  } catch { return []; }
+};
+const persistKbApiConfigs = (configs: SavedChatApiConfig[]) => {
+  localStorage.setItem(STORAGE_KEY_KB_API_CONFIGS, JSON.stringify(configs));
+};
+
 const createKbWelcomeMessage = (): ChatMessage => ({
   id: 'kb-welcome',
   role: 'assistant',
@@ -175,12 +205,90 @@ const MessageBubble: React.FC<{
 
 // ==================== Settings Panel ====================
 
+const PROVIDER_LABELS: Record<string, string> = {
+  zenmux: 'Zenmux', gemini: 'Google', openai: 'OpenAI', anthropic: 'Anthropic',
+  deepseek: 'DeepSeek', zhipu: '智谱 GLM', moonshot: '月之暗面', minimax: 'MiniMax',
+  ollama: 'Ollama (本地)', custom: '自定义 API',
+};
+
+const maskApiKey = (key: string) => {
+  if (!key) return '';
+  if (key.length <= 8) return '*'.repeat(key.length);
+  return key.slice(0, 4) + '*'.repeat(8) + key.slice(-4);
+};
+
 const SettingsPanel: React.FC<{
   config: ChatConfig;
   onUpdateConfig: (config: ChatConfig) => void;
   onClose: () => void;
 }> = ({ config, onUpdateConfig, onClose }) => {
   const [localConfig, setLocalConfig] = useState(config);
+  const [savedApiConfigs, setSavedApiConfigs] = useState<SavedChatApiConfig[]>(() => loadChatApiConfigs());
+  const [selectedApiConfigId, setSelectedApiConfigId] = useState<string>(() => {
+    const configs = loadChatApiConfigs();
+    return configs.find(c => c.apiKey === config.apiKey && c.provider === config.provider)?.id || '';
+  });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formLabel, setFormLabel] = useState('');
+  const [formProvider, setFormProvider] = useState<ChatConfig['provider']>('zenmux');
+  const [formApiKey, setFormApiKey] = useState('');
+  const [formBaseUrl, setFormBaseUrl] = useState('');
+
+  const applyConfig = (item: SavedChatApiConfig) => {
+    const provider = item.provider as ChatConfig['provider'];
+    const nextModel = AVAILABLE_MODELS[provider]?.some((m: any) => m.id === localConfig.model)
+      ? localConfig.model
+      : AVAILABLE_MODELS[provider]?.[0]?.id || '';
+    setSelectedApiConfigId(item.id);
+    setLocalConfig({ ...localConfig, provider, model: nextModel, apiKey: item.apiKey, baseUrl: item.baseUrl || '' });
+  };
+
+  const startEdit = (item: SavedChatApiConfig) => {
+    setEditingId(item.id);
+    setFormLabel(item.label);
+    setFormProvider(item.provider as ChatConfig['provider']);
+    setFormApiKey(item.apiKey);
+    setFormBaseUrl(item.baseUrl || '');
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setFormLabel(''); setFormProvider('zenmux'); setFormApiKey(''); setFormBaseUrl('');
+  };
+
+  const handleAdd = () => {
+    if (!formLabel.trim() || !formApiKey.trim()) return;
+    const newItem: SavedChatApiConfig = {
+      id: crypto.randomUUID(), label: formLabel.trim(), provider: formProvider,
+      apiKey: formApiKey.trim(), baseUrl: formBaseUrl.trim() || '',
+    };
+    const next = [...savedApiConfigs, newItem];
+    setSavedApiConfigs(next);
+    persistChatApiConfigs(next);
+    applyConfig(newItem);
+    cancelEdit();
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingId || !formLabel.trim() || !formApiKey.trim()) return;
+    const updated: SavedChatApiConfig = {
+      id: editingId, label: formLabel.trim(), provider: formProvider,
+      apiKey: formApiKey.trim(), baseUrl: formBaseUrl.trim() || '',
+    };
+    const next = savedApiConfigs.map(c => c.id === editingId ? updated : c);
+    setSavedApiConfigs(next);
+    persistChatApiConfigs(next);
+    if (selectedApiConfigId === editingId) applyConfig(updated);
+    cancelEdit();
+  };
+
+  const handleDelete = (id: string) => {
+    const next = savedApiConfigs.filter(c => c.id !== id);
+    setSavedApiConfigs(next);
+    persistChatApiConfigs(next);
+    if (selectedApiConfigId === id) setSelectedApiConfigId('');
+    if (editingId === id) cancelEdit();
+  };
 
   const handleSave = () => {
     onUpdateConfig(localConfig);
@@ -188,171 +296,303 @@ const SettingsPanel: React.FC<{
     onClose();
   };
 
+  const isEditing = editingId !== null;
+  const formNeedsBaseUrl = formProvider === 'custom' || formProvider === 'ollama' || formProvider === 'zenmux';
   const models = AVAILABLE_MODELS[localConfig.provider] || [];
 
   return (
     <div className="absolute inset-0 bg-white z-50 flex flex-col">
-      <div className="h-14 border-b border-gray-200 flex items-center justify-between px-4" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+      <div className="h-14 border-b border-gray-200 flex items-center justify-between px-4 shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
         <h3 className="font-semibold text-gray-800">Chat 设置</h3>
         <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <X className="w-5 h-5 text-gray-500" />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        {/* Provider Selection */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">服务提供商</label>
-          <select
-            value={localConfig.provider}
-            onChange={(e) => {
-              const provider = e.target.value as ChatConfig['provider'];
-              const firstModel = AVAILABLE_MODELS[provider]?.[0]?.id || '';
-              setLocalConfig({ ...localConfig, provider, model: firstModel });
-            }}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          >
-            <option value="zenmux">Zenmux</option>
-            <option value="gemini">Google</option>
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="deepseek">DeepSeek</option>
-            <option value="zhipu">智谱 GLM</option>
-            <option value="moonshot">月之暗面</option>
-            <option value="minimax">MiniMax</option>
-            <option value="ollama">Ollama (本地)</option>
-            <option value="custom">自定义 API</option>
-          </select>
-        </div>
-
-        {/* API Key */}
-        {localConfig.provider !== 'ollama' && (
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">API Key</label>
-            <input
-              type="password"
-              value={localConfig.apiKey}
-              onChange={(e) => setLocalConfig({ ...localConfig, apiKey: e.target.value })}
-              placeholder="输入 API Key"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
-        )}
-
-        {/* Base URL (for custom/ollama/zenmux) */}
-        {(localConfig.provider === 'custom' || localConfig.provider === 'ollama' || localConfig.provider === 'zenmux') && (
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Base URL</label>
-            <input
-              type="text"
-              value={localConfig.baseUrl || ''}
-              onChange={(e) => setLocalConfig({ ...localConfig, baseUrl: e.target.value })}
-              placeholder={
-                localConfig.provider === 'zenmux' ? 'https://zenmux.ai/api/v1' :
-                localConfig.provider === 'ollama' ? 'http://localhost:11434/v1' : 
-                'https://api.example.com/v1'
-              }
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
-        )}
-
-        {/* Model Selection */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            模型 {localConfig.provider === 'zenmux' && <span className="text-xs text-gray-500">({models.length} 个可用)</span>}
-          </label>
-          {models.length > 0 ? (
-            <select
-              value={localConfig.model}
-              onChange={(e) => setLocalConfig({ ...localConfig, model: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-            >
-              {localConfig.provider === 'zenmux' ? (
-                // Zenmux 模型按类别分组显示
-                (() => {
-                  const grouped: Record<string, typeof models> = {};
-                  models.forEach((m: any) => {
-                    const category = m.category || '其他';
-                    if (!grouped[category]) grouped[category] = [];
-                    grouped[category].push(m);
-                  });
-                  
-                  return Object.entries(grouped).map(([category, categoryModels]) => (
-                    <optgroup key={category} label={`━━ ${category} ━━`}>
-                      {categoryModels.map((m: any) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name} {m.description ? `(${m.description})` : ''}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ));
-                })()
-              ) : (
-                // 其他 provider 正常显示
-                models.map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))
-              )}
-            </select>
+      <div className="flex-1 overflow-y-auto min-h-0">
+        {/* ── API 配置列表 ── */}
+        <div className="px-5 pt-4 pb-2">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">API 配置</p>
+          {savedApiConfigs.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-gray-200 py-5 text-center text-sm text-gray-400">
+              暂无配置，在下方添加第一条
+            </div>
           ) : (
-            <input
-              type="text"
-              value={localConfig.model}
-              onChange={(e) => setLocalConfig({ ...localConfig, model: e.target.value })}
-              placeholder="输入模型名称"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
+            <div className="space-y-1.5">
+              {savedApiConfigs.map(item => {
+                const isActive = selectedApiConfigId === item.id;
+                return (
+                  <div key={item.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${isActive ? 'border-blue-300 bg-blue-50' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
+                    <button onClick={() => applyConfig(item)} className="shrink-0" title="设为当前使用">
+                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${isActive ? 'border-blue-500' : 'border-gray-300 hover:border-blue-400'}`}>
+                        {isActive && <div className="w-2 h-2 rounded-full bg-blue-500" />}
+                      </div>
+                    </button>
+                    <button className="flex-1 text-left min-w-0" onClick={() => applyConfig(item)}>
+                      <p className={`text-sm font-medium truncate ${isActive ? 'text-blue-800' : 'text-gray-800'}`}>{item.label}</p>
+                      <p className="text-xs text-gray-400 mt-0.5 truncate">{PROVIDER_LABELS[item.provider] || item.provider} · {maskApiKey(item.apiKey)}</p>
+                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={() => startEdit(item)} className="w-7 h-7 rounded-lg hover:bg-gray-200 text-gray-400 hover:text-gray-700 flex items-center justify-center" title="编辑">
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => handleDelete(item.id)} className="w-7 h-7 rounded-lg hover:bg-red-100 text-gray-400 hover:text-red-500 flex items-center justify-center" title="删除">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
 
-        {/* Temperature */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Temperature: {localConfig.temperature?.toFixed(1)}
-          </label>
-          <input
-            type="range"
-            min="0"
-            max="2"
-            step="0.1"
-            value={localConfig.temperature || 0.7}
-            onChange={(e) => setLocalConfig({ ...localConfig, temperature: parseFloat(e.target.value) })}
-            className="w-full"
-          />
-          <div className="flex justify-between text-xs text-gray-400 mt-1">
-            <span>精确</span>
-            <span>创意</span>
+        {/* ── 添加 / 编辑表单 ── */}
+        <div className="px-5 pt-2 pb-4">
+          <div className="rounded-xl border border-gray-200 overflow-hidden">
+            <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{isEditing ? '编辑配置' : '添加新配置'}</p>
+              {isEditing && <button onClick={cancelEdit} className="text-xs text-gray-400 hover:text-gray-600">取消</button>}
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">名称 <span className="text-red-400">*</span></label>
+                  <input type="text" value={formLabel} onChange={e => setFormLabel(e.target.value)} placeholder="例如：主力 API" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">提供商 <span className="text-red-400">*</span></label>
+                  <select value={formProvider} onChange={e => setFormProvider(e.target.value as ChatConfig['provider'])} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 bg-white">
+                    {Object.entries(PROVIDER_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">API Key <span className="text-red-400">*</span></label>
+                <input type="password" value={formApiKey} onChange={e => setFormApiKey(e.target.value)} placeholder="输入 API Key" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100" />
+              </div>
+              {formNeedsBaseUrl && (
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Base URL</label>
+                  <input type="text" value={formBaseUrl} onChange={e => setFormBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100" />
+                </div>
+              )}
+              <div className="pt-1">
+                {isEditing ? (
+                  <button onClick={handleSaveEdit} disabled={!formLabel.trim() || !formApiKey.trim()} className="w-full rounded-lg bg-blue-600 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 transition-colors">保存修改</button>
+                ) : (
+                  <button onClick={handleAdd} disabled={!formLabel.trim() || !formApiKey.trim()} className="w-full rounded-lg bg-gray-900 py-2 text-sm font-medium text-white hover:bg-black disabled:opacity-40 flex items-center justify-center gap-1.5 transition-colors">
+                    <Plus className="w-4 h-4" />添加
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* System Prompt */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">系统提示词</label>
-          <textarea
-            value={localConfig.systemPrompt || ''}
-            onChange={(e) => setLocalConfig({ ...localConfig, systemPrompt: e.target.value })}
-            placeholder="设定 AI 的角色和行为..."
-            rows={4}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
-          />
-        </div>
-
-        {/* Keyboard Shortcut Hint */}
-        <div className="pt-4 border-t border-gray-100">
-          <p className="text-xs text-gray-400">
-            💡 发送快捷键：⌘/Ctrl + Enter 发送，Enter 换行
-          </p>
+        {/* ── 高级设置 ── */}
+        <div className="px-5 pb-4 border-t border-gray-100 pt-4 space-y-4">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">高级设置</p>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">模型 {localConfig.provider === 'zenmux' && <span className="text-xs text-gray-500">({models.length} 个可用)</span>}</label>
+            {models.length > 0 ? (
+              <select value={localConfig.model} onChange={e => setLocalConfig({ ...localConfig, model: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 text-sm">
+                {localConfig.provider === 'zenmux' ? (() => {
+                  const grouped: Record<string, typeof models> = {};
+                  models.forEach((m: any) => { const cat = m.category || '其他'; if (!grouped[cat]) grouped[cat] = []; grouped[cat].push(m); });
+                  return Object.entries(grouped).map(([cat, ms]) => (
+                    <optgroup key={cat} label={`━━ ${cat} ━━`}>
+                      {ms.map((m: any) => <option key={m.id} value={m.id}>{m.name}{m.description ? ` (${m.description})` : ''}</option>)}
+                    </optgroup>
+                  ));
+                })() : models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+            ) : (
+              <input type="text" value={localConfig.model} onChange={e => setLocalConfig({ ...localConfig, model: e.target.value })} placeholder="输入模型名称" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500" />
+            )}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Temperature: {localConfig.temperature?.toFixed(1)}</label>
+            <input type="range" min="0" max="2" step="0.1" value={localConfig.temperature || 0.7} onChange={e => setLocalConfig({ ...localConfig, temperature: parseFloat(e.target.value) })} className="w-full" />
+            <div className="flex justify-between text-xs text-gray-400 mt-1"><span>精确</span><span>创意</span></div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">系统提示词</label>
+            <textarea value={localConfig.systemPrompt || ''} onChange={e => setLocalConfig({ ...localConfig, systemPrompt: e.target.value })} placeholder="设定 AI 的角色和行为..." rows={3} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 resize-none" />
+          </div>
         </div>
       </div>
 
-      <div className="p-4 border-t border-gray-200">
-        <button
-          onClick={handleSave}
-          className="w-full py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
-        >
-          保存设置
+      <div className="p-4 border-t border-gray-200 shrink-0">
+        <button onClick={handleSave} className="w-full py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors">应用并保存</button>
+      </div>
+    </div>
+  );
+};
+
+// ==================== KB Settings Panel ====================
+
+const KbSettingsPanel: React.FC<{
+  kbEmbeddingKey: string;
+  kbEmbeddingBaseUrl: string;
+  onChangeKbSettings: (key: string, baseUrl: string) => void;
+  onClose: () => void;
+}> = ({ kbEmbeddingKey, kbEmbeddingBaseUrl, onChangeKbSettings, onClose }) => {
+  const [savedApiConfigs, setSavedApiConfigs] = useState<SavedChatApiConfig[]>(() => loadKbApiConfigs());
+  const [selectedApiConfigId, setSelectedApiConfigId] = useState<string>(() => {
+    const configs = loadKbApiConfigs();
+    return configs.find(c => c.apiKey === kbEmbeddingKey && (c.baseUrl || '') === kbEmbeddingBaseUrl)?.id || '';
+  });
+  const [localKey, setLocalKey] = useState(kbEmbeddingKey);
+  const [localBaseUrl, setLocalBaseUrl] = useState(kbEmbeddingBaseUrl);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formLabel, setFormLabel] = useState('');
+  const [formApiKey, setFormApiKey] = useState('');
+  const [formBaseUrl, setFormBaseUrl] = useState('');
+
+  const applyConfig = (item: SavedChatApiConfig) => {
+    setSelectedApiConfigId(item.id);
+    setLocalKey(item.apiKey);
+    setLocalBaseUrl(item.baseUrl || '');
+  };
+
+  const startEdit = (item: SavedChatApiConfig) => {
+    setEditingId(item.id);
+    setFormLabel(item.label);
+    setFormApiKey(item.apiKey);
+    setFormBaseUrl(item.baseUrl || '');
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setFormLabel(''); setFormApiKey(''); setFormBaseUrl('');
+  };
+
+  const handleAdd = () => {
+    if (!formLabel.trim() || !formApiKey.trim()) return;
+    const newItem: SavedChatApiConfig = {
+      id: crypto.randomUUID(), label: formLabel.trim(), provider: 'gemini',
+      apiKey: formApiKey.trim(), baseUrl: formBaseUrl.trim() || '',
+    };
+    const next = [...savedApiConfigs, newItem];
+    setSavedApiConfigs(next);
+    persistKbApiConfigs(next);
+    applyConfig(newItem);
+    cancelEdit();
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingId || !formLabel.trim() || !formApiKey.trim()) return;
+    const updated: SavedChatApiConfig = {
+      id: editingId, label: formLabel.trim(), provider: 'gemini',
+      apiKey: formApiKey.trim(), baseUrl: formBaseUrl.trim() || '',
+    };
+    const next = savedApiConfigs.map(c => c.id === editingId ? updated : c);
+    setSavedApiConfigs(next);
+    persistKbApiConfigs(next);
+    if (selectedApiConfigId === editingId) applyConfig(updated);
+    cancelEdit();
+  };
+
+  const handleDelete = (id: string) => {
+    const next = savedApiConfigs.filter(c => c.id !== id);
+    setSavedApiConfigs(next);
+    persistKbApiConfigs(next);
+    if (selectedApiConfigId === id) setSelectedApiConfigId('');
+    if (editingId === id) cancelEdit();
+  };
+
+  const handleSave = () => {
+    onChangeKbSettings(localKey, localBaseUrl);
+    onClose();
+  };
+
+  const isEditing = editingId !== null;
+
+  return (
+    <div className="absolute inset-0 bg-white z-50 flex flex-col">
+      <div className="h-14 border-b border-gray-200 flex items-center justify-between px-4 shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+        <h3 className="font-semibold text-gray-800">知识库设置</h3>
+        <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <X className="w-5 h-5 text-gray-500" />
         </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto min-h-0">
+        {/* ── API 配置列表 ── */}
+        <div className="px-5 pt-4 pb-2">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">知识库 Embedding 配置</p>
+          {savedApiConfigs.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-gray-200 py-5 text-center text-sm text-gray-400">
+              暂无配置，在下方添加第一条
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {savedApiConfigs.map(item => {
+                const isActive = selectedApiConfigId === item.id;
+                return (
+                  <div key={item.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${isActive ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
+                    <button onClick={() => applyConfig(item)} className="shrink-0" title="设为当前使用">
+                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${isActive ? 'border-green-500' : 'border-gray-300 hover:border-green-400'}`}>
+                        {isActive && <div className="w-2 h-2 rounded-full bg-green-500" />}
+                      </div>
+                    </button>
+                    <button className="flex-1 text-left min-w-0" onClick={() => applyConfig(item)}>
+                      <p className={`text-sm font-medium truncate ${isActive ? 'text-green-800' : 'text-gray-800'}`}>{item.label}</p>
+                      <p className="text-xs text-gray-400 mt-0.5 truncate">Gemini Embedding · {maskApiKey(item.apiKey)}</p>
+                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={() => startEdit(item)} className="w-7 h-7 rounded-lg hover:bg-gray-200 text-gray-400 hover:text-gray-700 flex items-center justify-center" title="编辑">
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => handleDelete(item.id)} className="w-7 h-7 rounded-lg hover:bg-red-100 text-gray-400 hover:text-red-500 flex items-center justify-center" title="删除">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── 添加 / 编辑表单 ── */}
+        <div className="px-5 pt-2 pb-4">
+          <div className="rounded-xl border border-gray-200 overflow-hidden">
+            <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{isEditing ? '编辑配置' : '添加新配置'}</p>
+              {isEditing && <button onClick={cancelEdit} className="text-xs text-gray-400 hover:text-gray-600">取消</button>}
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">名称 <span className="text-red-400">*</span></label>
+                <input type="text" value={formLabel} onChange={e => setFormLabel(e.target.value)} placeholder="例如：我的 Gemini 密钥" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Embedding API Key <span className="text-red-400">*</span></label>
+                <input type="password" value={formApiKey} onChange={e => setFormApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
+                <p className="text-[10px] text-gray-400 mt-1">当前知识库向量化仅支持 Gemini Embedding</p>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Base URL</label>
+                <input type="text" value={formBaseUrl} onChange={e => setFormBaseUrl(e.target.value)} placeholder="留空使用官方地址" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
+              </div>
+              <div className="pt-1">
+                {isEditing ? (
+                  <button onClick={handleSaveEdit} disabled={!formLabel.trim() || !formApiKey.trim()} className="w-full rounded-lg bg-green-600 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-40 transition-colors">保存修改</button>
+                ) : (
+                  <button onClick={handleAdd} disabled={!formLabel.trim() || !formApiKey.trim()} className="w-full rounded-lg bg-gray-900 py-2 text-sm font-medium text-white hover:bg-black disabled:opacity-40 flex items-center justify-center gap-1.5 transition-colors">
+                    <Plus className="w-4 h-4" />添加
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="p-4 border-t border-gray-200 shrink-0">
+        <button onClick={handleSave} className="w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium transition-colors">应用并保存</button>
       </div>
     </div>
   );
@@ -1185,38 +1425,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
 
               {/* KB Sidebar Footer */}
               <div className="p-3 border-t border-green-100 relative">
-                {showKbSettings && (
-                  <div className="absolute bottom-full left-3 right-3 mb-2 bg-white rounded-xl shadow-lg border border-green-100 p-3 space-y-2.5 z-50">
-                    <div className="text-xs font-semibold text-gray-500 mb-1">知识库设置</div>
-                    <div>
-                      <label className="text-xs text-gray-500 mb-1 block">Embedding API Key</label>
-                      <input
-                        type="password"
-                        value={kbEmbeddingKey}
-                        onChange={e => setKbEmbeddingKey(e.target.value)}
-                        placeholder="AIzaSy...（当前仅支持 Gemini Embedding）"
-                        className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-900 font-mono outline-none focus:ring-2 focus:ring-green-500/20"
-                      />
-                      <p className="text-[10px] text-gray-400 mt-0.5">AI 对话已支持 Kimi；知识库向量化目前仍使用 Gemini Embedding。</p>
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-500 mb-1 block">Embedding Base URL</label>
-                      <input
-                        type="text"
-                        value={kbEmbeddingBaseUrl}
-                        onChange={e => setKbEmbeddingBaseUrl(e.target.value)}
-                        placeholder="留空使用官方地址"
-                        className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-900 font-mono outline-none focus:ring-2 focus:ring-green-500/20"
-                      />
-                    </div>
-                    <button
-                      onClick={handleSaveKbSettings}
-                      className="w-full px-3 py-1.5 text-xs bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors"
-                    >
-                      保存
-                    </button>
-                  </div>
-                )}
+                
                 {/* 标签管理 */}
                 <button
                   onClick={() => setShowKbTagManager(v => !v)}
@@ -1909,6 +2118,21 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
           config={config}
           onUpdateConfig={handleUpdateConfig}
           onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {/* KB Settings Panel */}
+      {showKbSettings && (
+        <KbSettingsPanel
+          kbEmbeddingKey={kbEmbeddingKey}
+          kbEmbeddingBaseUrl={kbEmbeddingBaseUrl}
+          onChangeKbSettings={(key, baseUrl) => {
+            setKbEmbeddingKey(key);
+            setKbEmbeddingBaseUrl(baseUrl);
+            localStorage.setItem('guyue_rag_embedding_key', key.trim());
+            localStorage.setItem('guyue_rag_embedding_base_url', baseUrl.trim());
+          }}
+          onClose={() => setShowKbSettings(false)}
         />
       )}
 

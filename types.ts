@@ -216,6 +216,7 @@ export interface Category {
   id: string;
   name: string;
   icon: string; // Lucide icon name
+  color?: string; // Hex color code
   isSystem?: boolean; // If true, cannot be deleted (e.g., 'All')
 }
 

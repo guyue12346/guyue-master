@@ -3,6 +3,12 @@ import { Category, AVAILABLE_ICONS } from '../types';
 import { X, Plus, Trash2, Check, Edit2, GripVertical } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 
+const PRESET_COLORS = [
+  '#ef4444','#f97316','#f59e0b','#84cc16',
+  '#22c55e','#10b981','#06b6d4','#3b82f6',
+  '#8b5cf6','#ec4899','#64748b','#a8a29e',
+];
+
 interface CategoryManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -23,6 +29,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editIcon, setEditIcon] = useState('');
+  const [editColor, setEditColor] = useState<string>('#3b82f6');
   const [isAdding, setIsAdding] = useState(false);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -46,6 +53,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
     setEditingId(cat.id);
     setEditName(cat.name);
     setEditIcon(cat.icon);
+    setEditColor(cat.color || '#3b82f6');
     setIsAdding(false);
   };
 
@@ -53,6 +61,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
     setEditingId(null);
     setEditName('');
     setEditIcon('Folder');
+    setEditColor('#3b82f6');
     setIsAdding(true);
   };
 
@@ -64,12 +73,13 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
         id: crypto.randomUUID(),
         name: editName,
         icon: editIcon,
+        color: editColor,
       };
       onUpdateCategories([...userCategories, newCat, ...systemCategories]);
     } else if (editingId) {
       onUpdateCategories(
         categories.map((c) =>
-          c.id === editingId ? { ...c, name: editName, icon: editIcon } : c
+          c.id === editingId ? { ...c, name: editName, icon: editIcon, color: editColor } : c
         )
       );
     }
@@ -112,6 +122,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
     setIsAdding(false);
     setEditName('');
     setEditIcon('');
+    setEditColor('#3b82f6');
   };
 
   if (!isOpen) return null;
@@ -158,7 +169,13 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                     <GripVertical className="w-3.5 h-3.5 text-gray-300 group-hover:text-gray-500 shrink-0 cursor-grab opacity-0 group-hover:opacity-100 transition-opacity" />
 
                     {/* Icon */}
-                    <div className={`p-1.5 rounded-md shrink-0 pointer-events-none ${isEditing ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-500'}`}>
+                    <div
+                      className={`p-1.5 rounded-md shrink-0 pointer-events-none ${isEditing ? 'ring-1 ring-blue-500/50' : ''}`}
+                      style={{ 
+                        backgroundColor: cat.color ? `${cat.color}20` : '#f3f4f6', 
+                        color: cat.color || '#6b7280' 
+                      }}
+                    >
                       <IconRender name={cat.icon} className="w-4 h-4" />
                     </div>
                     
@@ -210,6 +227,22 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                          placeholder="例如: 常用工具"
                          autoFocus
                        />
+                     </div>
+
+                     <div>
+                       <label className="block text-xs font-medium text-gray-500 mb-2 uppercase">选择颜色</label>
+                       <div className="flex flex-wrap gap-2">
+                         {PRESET_COLORS.map(c => (
+                           <button
+                             key={c}
+                             onClick={() => setEditColor(c)}
+                             className={`w-6 h-6 rounded-full transition-all ${
+                               editColor === c ? 'ring-2 ring-offset-2 ring-gray-400 scale-110' : 'hover:scale-110'
+                             }`}
+                             style={{ background: c }}
+                           />
+                         ))}
+                       </div>
                      </div>
 
                      <div>

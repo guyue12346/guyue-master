@@ -120,26 +120,31 @@ export const SSHManager: React.FC<SSHManagerProps> = ({
 
         <div className="rounded-2xl border border-gray-200 bg-white/70 px-4 py-3">
           <div className="flex items-center justify-between gap-3 mb-3">
-            <div>
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">分类与标签</p>
-              <p className="text-sm text-gray-500 mt-1">把筛选单独放在这里，搜索区只负责检索。</p>
-            </div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">分类与标签</p>
             <span className="text-xs text-gray-400">当前 {activeCategoryCount} 条</span>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {['全部', ...allCategories].map(cat => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
-                  selectedCategory === cat
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-100 dark:bg-gray-700/50 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
+            {['全部', ...allCategories].map(catName => {
+              const categoryObj = categories.find(c => c.name === catName);
+              const color = categoryObj?.color;
+              const isActive = selectedCategory === catName;
+              return (
+                <button
+                  key={catName}
+                  onClick={() => setSelectedCategory(catName)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-colors ${
+                    isActive
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-gray-100 dark:bg-gray-700/50 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                  }`}
+                >
+                  {color && !isActive && (
+                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+                  )}
+                  {catName}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>

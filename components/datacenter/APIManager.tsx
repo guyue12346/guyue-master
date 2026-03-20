@@ -82,9 +82,10 @@ export const APIManager: React.FC<APIManagerProps> = ({
   return (
     <div className="h-full flex flex-col">
       {/* 顶部工具栏 */}
-      <div className="flex items-center justify-between mb-4 gap-3">
-        <div className="flex items-center gap-2 flex-1">
-          <div className="relative flex-1 max-w-sm">
+      <div className="mb-4 space-y-3">
+        {/* 第一行：搜索框 + 操作按钮 */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
               type="text"
@@ -94,37 +95,49 @@ export const APIManager: React.FC<APIManagerProps> = ({
               className="w-full pl-9 pr-4 py-2 text-sm bg-gray-100 dark:bg-gray-700/50 border-none rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:bg-white dark:focus:bg-gray-700 transition-all text-gray-900 dark:text-white placeholder-gray-400"
             />
           </div>
-          <div className="flex items-center gap-1 flex-wrap">
-            {['全部', ...allCategories].map(cat => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
-                  selectedCategory === cat
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-100 dark:bg-gray-700/50 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => setIsCategoryManagerOpen(true)}
+              className="flex items-center gap-2 px-3 py-2 bg-white text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-colors shadow-sm text-sm font-medium"
+            >
+              <FolderTree className="w-4 h-4" />
+              分类管理
+            </button>
+            <button
+              onClick={handleAdd}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-sm text-sm font-medium shrink-0"
+            >
+              <Plus className="w-4 h-4" />
+              添加 API
+            </button>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => setIsCategoryManagerOpen(true)}
-            className="flex items-center gap-2 px-3 py-2 bg-white text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-colors shadow-sm text-sm font-medium"
-          >
-            <FolderTree className="w-4 h-4" />
-            分类管理
-          </button>
-          <button
-            onClick={handleAdd}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-sm text-sm font-medium shrink-0"
-          >
-            <Plus className="w-4 h-4" />
-            添加 API
-          </button>
+        {/* 第二行：分类筛选 */}
+        <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/50 px-4 py-3">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">分类与标签</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            {['全部', ...allCategories].map(catName => {
+              const categoryObj = categories.find(c => c.name === catName);
+              const color = categoryObj?.color;
+              const isActive = selectedCategory === catName;
+              return (
+                <button
+                  key={catName}
+                  onClick={() => setSelectedCategory(catName)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-colors ${
+                    isActive
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-gray-100 dark:bg-gray-700/50 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                  }`}
+                >
+                  {color && !isActive && (
+                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+                  )}
+                  {catName}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 

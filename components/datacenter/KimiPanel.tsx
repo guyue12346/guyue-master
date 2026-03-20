@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { RefreshCw, Loader2, Settings, X, Eye, EyeOff, ExternalLink, AlertCircle } from 'lucide-react';
 
 const STORAGE_KEY = 'kimi_panel_api_key';
@@ -62,6 +62,10 @@ export const KimiPanel: React.FC = () => {
       setLoading(false);
     }
   }, [apiKey]);
+
+  useEffect(() => {
+    fetchBalance();
+  }, [fetchBalance]);
 
   const handleSaveKey = () => {
     const trimmed = inputKey.trim();
