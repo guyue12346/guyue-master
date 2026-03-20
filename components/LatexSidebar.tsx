@@ -126,7 +126,7 @@ const InlineEdit: React.FC<InlineEditProps> = ({ value, onCommit, onCancel, clas
       value={v}
       onChange={e => setV(e.target.value)}
       onKeyDown={e => {
-        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); commit(); }
         if (e.key === 'Escape') onCancel();
       }}
       onBlur={commit}
@@ -229,7 +229,7 @@ const CategoryEditorPopover: React.FC<CategoryEditorProps> = ({
           ref={nameRef}
           value={name}
           onChange={e => setName(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') handleCommit(); if (e.key === 'Escape') onCancel(); }}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleCommit(); if (e.key === 'Escape') onCancel(); }}
           placeholder="分类名称"
           className="flex-1 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-800 outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
         />
@@ -651,7 +651,7 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
                   autoFocus
                   type="text" value={newName} onChange={e => setNewName(e.target.value)}
                   placeholder="例如：中文毕业论文"
-                  onKeyDown={e => { if (e.key === 'Enter') handleSaveAsTemplate(); }}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSaveAsTemplate(); }}
                   className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400"
                 />
               </div>

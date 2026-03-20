@@ -614,6 +614,11 @@ export const LeetCodeSyncModal: React.FC<LeetCodeSyncModalProps> = ({
                 首次同步将获取全部记录
               </p>
             )}
+            {syncMode === 'full' && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+                ⚠️ 受 LeetCode API 限制，全量同步每批最多处理 60 道题目的详情信息；历史提交过多时可能只能同步到近期 60 道题。
+              </p>
+            )}
           </div>
 
           {/* 状态提示 */}

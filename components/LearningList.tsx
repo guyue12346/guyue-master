@@ -1436,7 +1436,7 @@ export const LearningList: React.FC<LearningListProps> = ({
                   type="text"
                   value={newModuleTitle}
                   onChange={(e) => setNewModuleTitle(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && confirmAddModule()}
+                  onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && !e.nativeEvent.isComposing && confirmAddModule()}
                   placeholder="输入章节名称..."
                   className="flex-1 text-sm px-2 py-1 border border-blue-200 rounded focus:outline-none focus:border-blue-400"
                 />
@@ -1451,7 +1451,7 @@ export const LearningList: React.FC<LearningListProps> = ({
                 type="text"
                 value={newModuleDesc}
                 onChange={(e) => setNewModuleDesc(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && confirmAddModule()}
+                onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && !e.nativeEvent.isComposing && confirmAddModule()}
                 placeholder="输入章节备注 (可选)..."
                 className="w-full text-xs px-2 py-1 border border-blue-200 rounded focus:outline-none focus:border-blue-400 text-gray-600"
               />
@@ -1555,7 +1555,7 @@ export const LearningList: React.FC<LearningListProps> = ({
                               type="text"
                               value={newLinkUrl}
                               onChange={(e) => setNewLinkUrl(e.target.value)}
-                              onKeyDown={(e) => e.key === 'Enter' && confirmAddLink()}
+                              onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && !e.nativeEvent.isComposing && confirmAddLink()}
                               placeholder="链接 URL (http://...)"
                               className="w-full text-sm px-2 py-1 border border-blue-200 rounded focus:outline-none focus:border-blue-400"
                             />
@@ -1692,7 +1692,7 @@ export const LearningList: React.FC<LearningListProps> = ({
                   type="text"
                   value={newModuleTitle}
                   onChange={(e) => setNewModuleTitle(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && confirmAddModule()}
+                  onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && !e.nativeEvent.isComposing && confirmAddModule()}
                   placeholder="输入章节名称..."
                   className="flex-1 text-sm px-2 py-1 border border-green-200 rounded focus:outline-none focus:border-green-400"
                 />
@@ -1707,7 +1707,7 @@ export const LearningList: React.FC<LearningListProps> = ({
                 type="text"
                 value={newModuleDesc}
                 onChange={(e) => setNewModuleDesc(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && confirmAddModule()}
+                onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && !e.nativeEvent.isComposing && confirmAddModule()}
                 placeholder="输入章节备注 (可选)..."
                 className="w-full text-xs px-2 py-1 border border-green-200 rounded focus:outline-none focus:border-green-400 text-gray-600"
               />
@@ -1813,7 +1813,7 @@ export const LearningList: React.FC<LearningListProps> = ({
                                 type="text"
                                 value={newLinkUrl}
                                 onChange={(e) => setNewLinkUrl(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && confirmAddLink()}
+                                onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && !e.nativeEvent.isComposing && confirmAddLink()}
                                 placeholder="练习链接 URL"
                                 className="w-full text-sm px-2 py-1 border border-green-200 rounded focus:outline-none focus:border-green-400"
                               />
@@ -1958,7 +1958,7 @@ export const LearningList: React.FC<LearningListProps> = ({
                   type="text"
                   value={newModuleTitle}
                   onChange={(e) => setNewModuleTitle(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && confirmAddModule()}
+                  onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && !e.nativeEvent.isComposing && confirmAddModule()}
                   placeholder="输入章节名称..."
                   className="flex-1 text-sm px-2 py-1 border border-orange-200 rounded focus:outline-none focus:border-orange-400"
                 />
@@ -1973,7 +1973,7 @@ export const LearningList: React.FC<LearningListProps> = ({
                 type="text"
                 value={newModuleDesc}
                 onChange={(e) => setNewModuleDesc(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && confirmAddModule()}
+                onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && !e.nativeEvent.isComposing && confirmAddModule()}
                 placeholder="输入章节备注 (可选)..."
                 className="w-full text-xs px-2 py-1 border border-orange-200 rounded focus:outline-none focus:border-orange-400 text-gray-600"
               />
@@ -2079,7 +2079,7 @@ export const LearningList: React.FC<LearningListProps> = ({
                                 type="text"
                                 value={newLinkUrl}
                                 onChange={(e) => setNewLinkUrl(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && confirmAddLink()}
+                                onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && !e.nativeEvent.isComposing && confirmAddLink()}
                                 placeholder="资源链接 URL"
                                 className="w-full text-sm px-2 py-1 border border-orange-200 rounded focus:outline-none focus:border-orange-400"
                               />
@@ -2238,7 +2238,7 @@ export const LearningList: React.FC<LearningListProps> = ({
                       type="text"
                       value={newModuleTitle}
                       onChange={(e) => setNewModuleTitle(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && confirmAddCustomModule()}
+                      onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && !e.nativeEvent.isComposing && confirmAddCustomModule()}
                       placeholder="输入章节名称..."
                       className="flex-1 text-sm px-2 py-1 border border-gray-200 rounded focus:outline-none focus:border-blue-400"
                     />
@@ -2253,7 +2253,7 @@ export const LearningList: React.FC<LearningListProps> = ({
                     type="text"
                     value={newModuleDesc}
                     onChange={(e) => setNewModuleDesc(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && confirmAddCustomModule()}
+                    onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && !e.nativeEvent.isComposing && confirmAddCustomModule()}
                     placeholder="输入章节备注 (可选)..."
                     className="w-full text-xs px-2 py-1 border border-gray-200 rounded focus:outline-none focus:border-blue-400 text-gray-600"
                   />
@@ -2341,7 +2341,7 @@ export const LearningList: React.FC<LearningListProps> = ({
                                     type="text"
                                     value={newLinkUrl}
                                     onChange={(e) => setNewLinkUrl(e.target.value)}
-                                    onKeyDown={(e) => e.key === 'Enter' && confirmAddLink()}
+                                    onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && !e.nativeEvent.isComposing && confirmAddLink()}
                                     placeholder="资源链接 URL"
                                     className="w-full text-sm px-2 py-1 border border-blue-200 rounded focus:outline-none focus:border-blue-400"
                                   />
@@ -2588,7 +2588,7 @@ export const LearningList: React.FC<LearningListProps> = ({
                   type="text"
                   value={customSectionModal.title}
                   onChange={(e) => setCustomSectionModal(prev => prev ? { ...prev, title: e.target.value } : null)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSaveCustomSection()}
+                  onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && !e.nativeEvent.isComposing && handleSaveCustomSection()}
                   placeholder="如：笔记、参考文献..."
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />

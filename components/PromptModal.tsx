@@ -51,7 +51,7 @@ export const PromptModal: React.FC<PromptModalProps> = ({
   };
 
   const handleTagKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); handleAddTag(); }
+    if ((e.key === 'Enter' && !e.nativeEvent.isComposing) || e.key === ',') { e.preventDefault(); handleAddTag(); }
     if (e.key === 'Backspace' && !tagInput && tags.length > 0) setTags(prev => prev.slice(0, -1));
   };
 

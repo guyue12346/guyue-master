@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { X, FileDown, FolderOpen, ToggleLeft, ToggleRight, ChevronDown, Globe, Package, Plus, Trash2, GripVertical, Mail, Server, Key, Send, Loader2, CheckCircle, AlertCircle, Command, User, Camera } from 'lucide-react';
+import { X, FileDown, FolderOpen, ExternalLink, ToggleLeft, ToggleRight, ChevronDown, Globe, Package, Plus, Trash2, GripVertical, Mail, Server, Key, Send, Loader2, CheckCircle, AlertCircle, Command, User, Camera } from 'lucide-react';
 import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, ModuleConfig, AVAILABLE_ICONS, PluginMetadata, EmailConfig } from '../types';
 import * as LucideIcons from 'lucide-react';
 
@@ -89,6 +89,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [proxyPort, setProxyPort] = useState<string>('');
   const [userAvatar, setUserAvatar] = useState<string>('');
   const [userName, setUserName] = useState<string>('Guyue');
+  const [scheduleShowTimeLine, setScheduleShowTimeLine] = useState<boolean>(true);
+  const [scheduleDimPast, setScheduleDimPast] = useState<boolean>(false);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const iconSelectorRef = useRef<HTMLDivElement>(null);
 
@@ -143,6 +145,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     // Load avatar & name
     setUserAvatar(localStorage.getItem('guyue_user_avatar') || '');
     setUserName(localStorage.getItem('guyue_user_name') || 'Guyue');
+
+    // Load schedule view settings
+    setScheduleShowTimeLine(localStorage.getItem('guyue_schedule_show_timeline') !== 'false');
+    setScheduleDimPast(localStorage.getItem('guyue_schedule_dim_past') === 'true');
 
     // Load plugins
     if (window.electronAPI) {
@@ -836,13 +842,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <h4 className="text-sm font-medium text-gray-700">本地归档根目录</h4>
                   <p className="text-xs text-gray-400 mt-1">文件管理和学习模块的资源文件都将保存到此目录</p>
                 </div>
-                <button 
-                  onClick={handleSelectArchiveDir}
-                  className="p-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-all text-gray-600"
-                  title="选择文件夹"
-                >
-                  <FolderOpen className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button 
+                    onClick={handleSelectArchiveDir}
+                    className="p-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-all text-gray-600"
+                    title="选择文件夹"
+                  >
+                    <FolderOpen className="w-4 h-4" />
+                  </button>
+                  {archivePath && (
+                    <button 
+                      onClick={() => window.electronAPI?.openPath(archivePath)}
+                      className="p-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-all text-gray-600"
+                      title="在文件管理器中打开"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
               </div>
               
               <div className={`text-xs font-mono border rounded-lg p-2 break-all flex items-center gap-2 ${archivePath ? 'bg-white border-gray-200 text-gray-600' : 'bg-orange-50 border-orange-100 text-orange-600'}`}>
@@ -861,13 +878,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <h4 className="text-sm font-medium text-gray-700">Obsidian Vault 路径</h4>
                   <p className="text-xs text-gray-400 mt-1">配置后可在文件管理中快速导入 Vault 中的笔记</p>
                 </div>
-                <button 
-                  onClick={handleSelectVaultDir}
-                  className="p-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-all text-gray-600"
-                  title="选择 Vault 文件夹"
-                >
-                  <FolderOpen className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button 
+                    onClick={handleSelectVaultDir}
+                    className="p-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-all text-gray-600"
+                    title="选择 Vault 文件夹"
+                  >
+                    <FolderOpen className="w-4 h-4" />
+                  </button>
+                  {vaultPath && (
+                    <button 
+                      onClick={() => window.electronAPI?.openPath(vaultPath)}
+                      className="p-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-all text-gray-600"
+                      title="在文件管理器中打开"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
               </div>
               
               <div className={`text-xs font-mono border rounded-lg p-2 break-all flex items-center gap-2 ${vaultPath ? 'bg-white border-gray-200 text-gray-600' : 'bg-gray-100 border-gray-100 text-gray-400'}`}>
@@ -1029,6 +1057,55 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   )}
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* Section: Schedule View */}
+          <div className="space-y-4">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
+              日程视图
+            </h3>
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 space-y-3">
+              <label className="flex items-center justify-between cursor-pointer">
+                <div>
+                  <div className="text-sm font-medium text-gray-700">显示当前时间线</div>
+                  <div className="text-xs text-gray-400 mt-0.5">在今天列显示红色时刻指示线</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !scheduleShowTimeLine;
+                    setScheduleShowTimeLine(next);
+                    try { localStorage.setItem('guyue_schedule_show_timeline', String(next)); } catch {}
+                    window.dispatchEvent(new CustomEvent('guyue:schedule_settings_change'));
+                  }}
+                  className="shrink-0 ml-4"
+                >
+                  {scheduleShowTimeLine
+                    ? <ToggleRight className="w-8 h-8 text-blue-500" />
+                    : <ToggleLeft className="w-8 h-8 text-gray-300" />}
+                </button>
+              </label>
+              <label className="flex items-center justify-between cursor-pointer">
+                <div>
+                  <div className="text-sm font-medium text-gray-700">过去时段变暗</div>
+                  <div className="text-xs text-gray-400 mt-0.5">当前时间之前的区域显示灰色遮罩</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !scheduleDimPast;
+                    setScheduleDimPast(next);
+                    try { localStorage.setItem('guyue_schedule_dim_past', String(next)); } catch {}
+                    window.dispatchEvent(new CustomEvent('guyue:schedule_settings_change'));
+                  }}
+                  className="shrink-0 ml-4"
+                >
+                  {scheduleDimPast
+                    ? <ToggleRight className="w-8 h-8 text-blue-500" />
+                    : <ToggleLeft className="w-8 h-8 text-gray-300" />}
+                </button>
+              </label>
             </div>
           </div>
 

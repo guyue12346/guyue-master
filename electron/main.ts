@@ -371,6 +371,16 @@ ipcMain.handle('check-file-exists', async (_, filePath: string) => {
   }
 });
 
+// IPC: 获取文件修改时间戳（ms）
+ipcMain.handle('get-file-mtime', async (_, filePath: string): Promise<number | null> => {
+  try {
+    const stat = await fs.stat(filePath);
+    return stat.mtimeMs;
+  } catch {
+    return null;
+  }
+});
+
 // IPC: 写入文件
 ipcMain.handle('write-file', async (_, filePath, content) => {
   try {
@@ -1296,6 +1306,48 @@ ipcMain.handle('test-email-config', async (_, config: EmailConfig) => {
   }
 });
 
+// Agent 网络搜索：通过主进程发起请求，绕过渲染进程的 CORS 限制
+ipcMain.handle('agent-web-search', async (_, { query }: { query: string }) => {
+  try {
+    const encoded = encodeURIComponent(query);
+    const url = `https://api.duckduckgo.com/?q=${encoded}&format=json&no_html=1&skip_disambig=1`;
+    const response = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; GuyueMaster/1.0)' },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json() as any;
+
+    const results: Array<{ title: string; url: string; snippet: string }> = [];
+
+    if (data.AbstractText) {
+      results.push({
+        title: data.Heading || query,
+        url: data.AbstractURL || '',
+        snippet: data.AbstractText,
+      });
+    }
+
+    for (const topic of ((data.RelatedTopics || []) as any[])) {
+      if (results.length >= 8) break;
+      if (topic.Text && topic.FirstURL) {
+        results.push({ title: topic.Text.substring(0, 80), url: topic.FirstURL, snippet: topic.Text });
+      } else if (topic.Topics) {
+        for (const sub of (topic.Topics as any[]).slice(0, 3)) {
+          if (results.length >= 8) break;
+          if (sub.Text && sub.FirstURL) {
+            results.push({ title: sub.Text.substring(0, 80), url: sub.FirstURL, snippet: sub.Text });
+          }
+        }
+      }
+    }
+
+    return { success: true, results, query };
+  } catch (e) {
+    return { success: false, error: (e as Error).message, results: [] };
+  }
+});
+
 // 代理设置：供渲染进程配置 HTTP 代理
 ipcMain.handle('set-proxy', async (_, port: number | null) => {
   try {
@@ -1581,6 +1633,31 @@ ipcMain.handle('latex-read-pdf', async (_, pdfPath: string) => {
     const buf = await fs.readFile(pdfPath);
     return buf.toString('base64');
   } catch {
+    return null;
+  }
+});
+
+/** 用 pdfjs-dist (Node.js legacy build) 提取 PDF 纯文本 — 主进程执行，无 Web Worker 问题 */
+ipcMain.handle('extract-pdf-text', async (_, filePath: string): Promise<string | null> => {
+  try {
+    // Dynamic import: pdfjs legacy build works in Node.js without Web Worker
+    const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs') as any;
+    const data = new Uint8Array(await fs.readFile(filePath) as Buffer);
+    const pdf = await getDocument({ data, useWorkerFetch: false, isEvalSupported: false, disableAutoFetch: true, disableStream: true }).promise;
+    const pages: string[] = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const text = (content.items as any[])
+        .map((item: any) => ('str' in item ? item.str : ''))
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (text) pages.push(`[第${i}页]\n${text}`);
+    }
+    return pages.join('\n\n') || null;
+  } catch (e) {
+    console.error('extract-pdf-text failed:', (e as Error).message);
     return null;
   }
 });

@@ -392,7 +392,7 @@ const ImportModal: React.FC<{
                 <input
                   type="url" value={urlInput}
                   onChange={e => setUrlInput(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleFetchUrlWith(urlInput)}
+                  onKeyDown={e => e.key === 'Enter' && !e.nativeEvent.isComposing && !e.nativeEvent.isComposing && handleFetchUrlWith(urlInput)}
                   placeholder="https://raw.githubusercontent.com/.../skills.json"
                   className="flex-1 px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
                 />

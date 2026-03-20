@@ -7,6 +7,7 @@ interface Props {
   onClose: () => void;
   categories: RecurringCategory[];
   onUpdateCategories: (cats: RecurringCategory[]) => void;
+  onDeleteEventsByCategory?: (catName: string) => void;
 }
 
 const PRESET_COLORS = [
@@ -16,7 +17,7 @@ const PRESET_COLORS = [
 ];
 
 export const RecurringCategoryManagerModal: React.FC<Props> = ({
-  isOpen, onClose, categories, onUpdateCategories,
+  isOpen, onClose, categories, onUpdateCategories, onDeleteEventsByCategory,
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -63,6 +64,8 @@ export const RecurringCategoryManagerModal: React.FC<Props> = ({
   };
 
   const handleDelete = (id: string) => {
+    const catName = categories.find(c => c.id === id)?.name;
+    if (catName) onDeleteEventsByCategory?.(catName);
     onUpdateCategories(categories.filter(c => c.id !== id));
     if (editingId === id) cancelEdit();
   };
@@ -100,7 +103,7 @@ export const RecurringCategoryManagerModal: React.FC<Props> = ({
                       autoFocus
                       value={editName}
                       onChange={e => setEditName(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancelEdit(); }}
+                      onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) save(); if (e.key === 'Escape') cancelEdit(); }}
                       placeholder="分类名称"
                       className="w-full px-2.5 py-1.5 bg-white border border-gray-200 rounded-lg text-sm outline-none focus:border-violet-400"
                     />
@@ -162,7 +165,7 @@ export const RecurringCategoryManagerModal: React.FC<Props> = ({
                   autoFocus
                   value={editName}
                   onChange={e => setEditName(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancelEdit(); }}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) save(); if (e.key === 'Escape') cancelEdit(); }}
                   placeholder="新分类名称"
                   className="w-full px-2.5 py-1.5 bg-white border border-gray-200 rounded-lg text-sm outline-none focus:border-violet-400"
                 />

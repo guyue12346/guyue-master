@@ -286,7 +286,7 @@ const ApiKeySection: React.FC<{
           <input
             value={newValue}
             onChange={e => setNewValue(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') handleAdd(); if (e.key === 'Escape') setAdding(false); }}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleAdd(); if (e.key === 'Escape') setAdding(false); }}
             placeholder="粘贴 API Key"
             className="w-full px-2.5 py-1.5 text-xs font-mono bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-violet-400"
           />

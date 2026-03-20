@@ -5,6 +5,8 @@
 import * as pdfjsLib from 'pdfjs-dist';
 
 // pdfjs worker（在 Electron 渲染进程中禁用独立 worker，使用内联假 worker 避免跨域）
+// 注意：workerSrc = '' 在某些 Windows Electron 版本中可能导致 FakeWorker 初始化失败
+// 因此主要路径已改为通过 IPC 在主进程（Node.js）中解析 PDF
 pdfjsLib.GlobalWorkerOptions.workerSrc = '';
 
 export interface RagChunk {
@@ -14,6 +16,7 @@ export interface RagChunk {
   chunkIndex: number;
   text: string;
   embedding: number[];
+  indexedAt?: number; // 索引构建时间戳（ms），用于检测文件更新
 }
 
 export type RagIndex = RagChunk[];
@@ -86,9 +89,17 @@ export async function getGeminiEmbedding(text: string, apiKey: string, baseUrl?:
   return values;
 }
 
-/** 从 PDF 文件提取纯文本（逐页提取，合并所有 TextItem） */
+/** 从 PDF 文件提取纯文本（优先通过主进程 IPC，绕开 Windows Web Worker 限制） */
 async function extractPdfText(filePath: string): Promise<string> {
   const electronAPI = (window as any).electronAPI;
+
+  // 首选：主进程（Node.js）提取，完全避开 Web Worker，跨平台可靠
+  if (electronAPI?.extractPdfText) {
+    const mainText = await electronAPI.extractPdfText(filePath);
+    if (mainText && typeof mainText === 'string' && mainText.trim()) return mainText;
+  }
+
+  // 回退：渲染进程提取（使用 pdfjs FakeWorker）
   const base64: string | null = electronAPI?.readFileBase64
     ? await electronAPI.readFileBase64(filePath)
     : null;
@@ -155,6 +166,20 @@ export async function saveRagIndex(index: RagIndex): Promise<void> {
   }
 }
 
+/** 从索引中移除指定文件的所有分块 */
+export async function removeFileFromIndex(fileId: string): Promise<void> {
+  const index = await loadRagIndex();
+  const filtered = index.filter(c => c.fileId !== fileId);
+  if (filtered.length !== index.length) {
+    await saveRagIndex(filtered);
+  }
+}
+
+/** 使文件索引失效（删除该文件的分块，下次查询时会重新构建） */
+export async function invalidateFileIndex(fileId: string): Promise<void> {
+  return removeFileFromIndex(fileId);
+}
+
 /**
  * 增量构建/更新索引：只为尚未建立索引的文件生成 embedding
  * @param kbFiles       知识库文件列表（{id, name, path}）
@@ -176,10 +201,30 @@ export async function buildIndex(
   const filteredExisting = existingIndex.filter(c => kbFileIdSet.has(c.fileId));
   const indexedFileIds = new Set(filteredExisting.map(c => c.fileId));
 
+  // 检测已索引文件是否有更新（对比文件修改时间与索引时间）
+  const staleFileIds = new Set<string>();
+  if (electronAPI?.getFileMtime) {
+    for (const file of kbFiles) {
+      if (!indexedFileIds.has(file.id)) continue;
+      const chunk = filteredExisting.find(c => c.fileId === file.id);
+      if (!chunk?.indexedAt) continue; // 旧索引没有时间戳，跳过
+      try {
+        const mtime = await electronAPI.getFileMtime(file.path);
+        if (mtime && mtime > chunk.indexedAt) {
+          staleFileIds.add(file.id);
+          onProgress?.(`🔄 检测到更新：${file.name}`);
+        }
+      } catch {}
+    }
+  }
+
+  // 移除过期文件的旧分块
+  const cleanedExisting = filteredExisting.filter(c => !staleFileIds.has(c.fileId));
+
   const newChunks: RagChunk[] = [];
 
   for (const file of kbFiles) {
-    if (indexedFileIds.has(file.id)) {
+    if (indexedFileIds.has(file.id) && !staleFileIds.has(file.id)) {
       onProgress?.(`✓ 已有索引：${file.name}`);
       continue;
     }
@@ -224,6 +269,7 @@ export async function buildIndex(
           chunkIndex: i,
           text: chunks[i],
           embedding,
+          indexedAt: Date.now(),
         });
       }
 
@@ -233,7 +279,7 @@ export async function buildIndex(
     }
   }
 
-  return [...filteredExisting, ...newChunks];
+  return [...cleanedExisting, ...newChunks];
 }
 
 /**

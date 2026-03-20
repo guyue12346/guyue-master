@@ -59,6 +59,21 @@ function getNextOccurrence(event: RecurringEvent): string {
   return '无安排';
 }
 
+function getLunarMonthDay(date: Date): { month: number; day: number } | null {
+  try {
+    const parts = new Intl.DateTimeFormat('zh-u-ca-chinese', { month: 'numeric', day: 'numeric' }).formatToParts(date);
+    const mRaw = parts.find(p => p.type === 'month')?.value ?? '';
+    const dRaw = parts.find(p => p.type === 'day')?.value ?? '';
+    const CM: Record<string, number> = {'正':1,'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10,'冬':11,'腊':12};
+    const CD: Record<string, number> = {'初一':1,'初二':2,'初三':3,'初四':4,'初五':5,'初六':6,'初七':7,'初八':8,'初九':9,'初十':10,'十一':11,'十二':12,'十三':13,'十四':14,'十五':15,'十六':16,'十七':17,'十八':18,'十九':19,'二十':20,'廿一':21,'廿二':22,'廿三':23,'廿四':24,'廿五':25,'廿六':26,'廿七':27,'廿八':28,'廿九':29,'三十':30};
+    const mStr = mRaw.replace(/月|闰|\s/g, '');
+    const dStr = dRaw.replace(/日|\s/g, '');
+    const m = parseInt(mStr) || CM[mStr] || 0;
+    const d = parseInt(dStr) || CD[dStr] || 0;
+    return (m >= 1 && m <= 13 && d >= 1 && d <= 30) ? { month: m, day: d } : null;
+  } catch { return null; }
+}
+
 function checkOccurs(event: RecurringEvent, date: Date): boolean {
   const start = new Date(event.startDate);
   start.setHours(0, 0, 0, 0);
@@ -82,11 +97,19 @@ function checkOccurs(event: RecurringEvent, date: Date): boolean {
     case 'monthly': {
       const mDiff = (day.getFullYear() - start.getFullYear()) * 12 + (day.getMonth() - start.getMonth());
       if (mDiff < 0 || mDiff % event.interval !== 0) return false;
+      if (event.lunarRecurrence && event.lunarDay) {
+        const lunar = getLunarMonthDay(day);
+        return !!lunar && lunar.day === event.lunarDay;
+      }
       return day.getDate() === start.getDate();
     }
     case 'yearly': {
       const yDiff = day.getFullYear() - start.getFullYear();
       if (yDiff < 0 || yDiff % event.interval !== 0) return false;
+      if (event.lunarRecurrence && event.lunarMonth && event.lunarDay) {
+        const lunar = getLunarMonthDay(day);
+        return !!lunar && lunar.month === event.lunarMonth && lunar.day === event.lunarDay;
+      }
       return day.getMonth() === start.getMonth() && day.getDate() === start.getDate();
     }
     default: return false;
@@ -231,7 +254,8 @@ export const RecurringEventManager: React.FC<RecurringEventManagerProps> = ({
           <div className="space-y-2 pb-4">
             {filtered.map(event => {
               const next = event.isActive ? getNextOccurrence(event) : null;
-              const colorClass = event.color ? EVENT_COLORS[event.color] : 'bg-violet-400';
+              const dotColor = event.color || categories.find(c => c.name === event.category)?.color || '#8b5cf6';
+              const catColor = categories.find(c => c.name === event.category)?.color;
               const timeDesc = event.allDay
                 ? '全天'
                 : (() => {
@@ -255,14 +279,19 @@ export const RecurringEventManager: React.FC<RecurringEventManagerProps> = ({
                   }`}
                 >
                   {/* Color dot */}
-                  <div className={`w-3 h-3 rounded-full mt-1 shrink-0 ${colorClass}`} />
+                  <div className="w-3 h-3 rounded-full mt-1 shrink-0" style={{ backgroundColor: dotColor }} />
 
                   {/* Content */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <div className="font-semibold text-gray-800 text-sm truncate">{event.title}</div>
                       {event.category && (
-                        <span className="shrink-0 text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">{event.category}</span>
+                        <span
+                          className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full"
+                          style={catColor
+                            ? { backgroundColor: catColor + '22', color: catColor }
+                            : { backgroundColor: '#f3f4f6', color: '#9ca3af' }}
+                        >{event.category}</span>
                       )}
                     </div>
                     <div className="flex items-center gap-2 mt-1 text-xs text-gray-500 flex-wrap">
@@ -339,6 +368,9 @@ export const RecurringEventManager: React.FC<RecurringEventManagerProps> = ({
         onClose={() => setCatModalOpen(false)}
         categories={categories}
         onUpdateCategories={onUpdateCategories}
+        onDeleteEventsByCategory={(catName) => {
+          events.filter(e => e.category === catName).forEach(e => onDelete(e.id));
+        }}
       />
 
       <ConfirmDialog

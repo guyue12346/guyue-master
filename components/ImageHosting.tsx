@@ -351,7 +351,7 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
                   placeholder="请输入图片名称"
                   autoFocus
                   onKeyDown={e => {
-                    if (e.key === 'Enter') confirmUpload();
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) confirmUpload();
                     if (e.key === 'Escape') setIsNameModalOpen(false);
                   }}
                 />
@@ -410,7 +410,7 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
                   placeholder="https://example.com/image.jpg"
                   autoFocus
                   onKeyDown={e => {
-                    if (e.key === 'Enter') confirmAddLink();
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) confirmAddLink();
                     if (e.key === 'Escape') setIsAddLinkModalOpen(false);
                   }}
                 />
@@ -424,7 +424,7 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
                   className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
                   placeholder="请输入图片名称"
                   onKeyDown={e => {
-                    if (e.key === 'Enter') confirmAddLink();
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) confirmAddLink();
                     if (e.key === 'Escape') setIsAddLinkModalOpen(false);
                   }}
                 />
@@ -483,7 +483,7 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
                   placeholder="请输入图片名称"
                   autoFocus
                   onKeyDown={e => {
-                    if (e.key === 'Enter') confirmEditRecord();
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) confirmEditRecord();
                     if (e.key === 'Escape') setIsEditModalOpen(false);
                   }}
                 />

@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
-import { FileRecord, Category } from '../types';
-import { Folder, ChevronRight, ChevronDown, FileText, Image, FileCode, Archive, File, Edit2, Trash2, AlertCircle, FolderPlus, Upload, FilePlus, Plus, Settings2, BookOpen, HelpCircle, Brain } from 'lucide-react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { FileRecord, Category, KbTag, KbFileEntry } from '../types';
+import { Folder, ChevronRight, ChevronDown, FileText, Image, FileCode, Archive, File, Edit2, Trash2, AlertCircle, FolderPlus, Upload, FilePlus, Plus, Settings2, BookOpen, HelpCircle, Brain, Check } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 
 interface ArchiveSidebarProps {
@@ -19,7 +20,10 @@ interface ArchiveSidebarProps {
   onHelp?: () => void;
   activeFileId: string | null;
   knowledgeBaseFileIds: Set<string>;
-  onToggleKnowledgeBase: (fileId: string) => void;
+  kbTags: KbTag[];
+  kbFileEntries: KbFileEntry[];
+  onToggleKnowledgeBase: (fileId: string, tagIds?: string[]) => void;
+  onSaveKbTags: (tags: KbTag[]) => void;
 }
 
 export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({ 
@@ -38,8 +42,29 @@ export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({
   onHelp,
   activeFileId,
   knowledgeBaseFileIds,
+  kbTags,
+  kbFileEntries,
   onToggleKnowledgeBase,
+  onSaveKbTags,
 }) => {
+  const [tagPickerFileId, setTagPickerFileId] = useState<string | null>(null);
+  const [tagPickerSelectedIds, setTagPickerSelectedIds] = useState<string[]>([]);
+  const [tagPickerPos, setTagPickerPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [tagPickerMode, setTagPickerMode] = useState<'add' | 'manage'>('add');
+  const tagPickerRef = useRef<HTMLDivElement>(null);
+
+  // 点击外部关闭标签选择弹出框
+  useEffect(() => {
+    if (!tagPickerFileId) return;
+    const handler = (e: MouseEvent) => {
+      if (tagPickerRef.current && !tagPickerRef.current.contains(e.target as Node)) {
+        setTagPickerFileId(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [tagPickerFileId]);
+
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => {
     try {
       const saved = localStorage.getItem('guyue-archive-sidebar-expanded');
@@ -233,14 +258,33 @@ export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({
                         </div>
                       </div>
                       
-                      {/* 知识库状态：已加入时常驻显示绿色图标；未加入时悬停显示 */}
+                      {/* 知识库状态：已加入时常驻显示图标（颜色/图标跟随第一个标签）*/}
                       {knowledgeBaseFileIds.has(file.id) ? (
                         <button
-                          onClick={(e) => { e.stopPropagation(); onToggleKnowledgeBase(file.id); }}
-                          className="p-1 rounded transition-colors text-green-500 bg-green-50 hover:bg-red-50 hover:text-red-400 shrink-0"
-                          title="已加入知识库（点击移除）"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const entry = kbFileEntries.find(en => en.fileId === file.id);
+                            setTagPickerSelectedIds(entry?.tagIds ?? []);
+                            setTagPickerPos({ top: rect.bottom + 6, left: Math.min(rect.left, window.innerWidth - 216) });
+                            setTagPickerMode('manage');
+                            setTagPickerFileId(tagPickerFileId === file.id ? null : file.id);
+                          }}
+                          className={`p-1 rounded transition-colors shrink-0 ${
+                            tagPickerFileId === file.id
+                              ? 'bg-green-100 ring-1 ring-green-300'
+                              : 'bg-green-50 hover:bg-green-100'
+                          }`}
+                          title="已加入知识库（点击管理标签）"
                         >
-                          <Brain className="w-3 h-3" />
+                          {(() => {
+                            const entry = kbFileEntries.find(en => en.fileId === file.id);
+                            const firstTag = entry?.tagIds?.[0] ? kbTags.find(t => t.id === entry!.tagIds[0]) : null;
+                            const TIcon = firstTag?.icon ? (LucideIcons as any)[firstTag.icon] : null;
+                            return TIcon
+                              ? <TIcon className="w-3 h-3" style={{ color: firstTag!.color }} />
+                              : <Brain className="w-3 h-3 text-green-500" />;
+                          })()}
                         </button>
                       ) : null}
 
@@ -248,7 +292,14 @@ export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({
                       <div className={`flex gap-1 shrink-0 ${activeFileId === file.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                         {!knowledgeBaseFileIds.has(file.id) && (
                           <button
-                            onClick={(e) => { e.stopPropagation(); onToggleKnowledgeBase(file.id); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              setTagPickerSelectedIds([]);
+                              setTagPickerPos({ top: rect.bottom + 6, left: Math.min(rect.left, window.innerWidth - 216) });
+                              setTagPickerMode('add');
+                              setTagPickerFileId(tagPickerFileId === file.id ? null : file.id);
+                            }}
                             className="p-1 rounded transition-colors text-gray-400 hover:text-green-500 hover:bg-green-50"
                             title="加入知识库"
                           >
@@ -276,6 +327,120 @@ export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({
           ))
         )}
       </div>
+
+      {/* 知识库标签选择弹出框（fixed portal，避免被 sidebar overflow 和 backdrop-filter 裁剪）*/}
+      {tagPickerFileId && createPortal(
+        <div
+          ref={tagPickerRef}
+          style={{ position: 'fixed', top: tagPickerPos.top, left: tagPickerPos.left, zIndex: 9999 }}
+          className="bg-white border border-gray-200 rounded-2xl shadow-2xl w-52 overflow-hidden"
+          onClick={e => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex items-center gap-1.5 px-3 py-2 border-b border-gray-100 bg-green-50/80">
+            <Brain className="w-3.5 h-3.5 text-green-500 shrink-0" />
+            <span className="text-xs font-semibold text-gray-700">
+              {tagPickerMode === 'manage' ? '管理标签' : '加入知识库'}
+            </span>
+          </div>
+
+          {/* Vertical tag list */}
+          <div className="py-1 max-h-56 overflow-y-auto">
+            {kbTags.length === 0 ? (
+              <p className="text-[11px] text-gray-400 text-center py-3">
+                {tagPickerMode === 'add' ? '直接加入（暂无标签）' : '暂无标签'}
+              </p>
+            ) : (
+              <>
+                {/* 不分类 option */}
+                <button
+                  onClick={() => setTagPickerSelectedIds([])}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-colors ${
+                    tagPickerSelectedIds.length === 0
+                      ? 'bg-gray-100 text-gray-700 font-medium'
+                      : 'text-gray-500 hover:bg-gray-50'
+                  }`}
+                >
+                  <span className="w-5 h-5 rounded-full bg-gray-200 flex items-center justify-center shrink-0">
+                    {tagPickerSelectedIds.length === 0 && <Check className="w-3 h-3 text-gray-600" />}
+                  </span>
+                  <span className="flex-1 text-left">不分类</span>
+                </button>
+
+                {/* Tag rows */}
+                {kbTags.map(tag => {
+                  const sel = tagPickerSelectedIds.includes(tag.id);
+                  const TIcon = tag.icon ? (LucideIcons as any)[tag.icon] : null;
+                  return (
+                    <button
+                      key={tag.id}
+                      onClick={() => setTagPickerSelectedIds(prev =>
+                        prev.includes(tag.id) ? prev.filter(id => id !== tag.id) : [...prev, tag.id]
+                      )}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-colors hover:bg-gray-50"
+                      style={sel ? { background: tag.color + '18' } : {}}
+                    >
+                      <span
+                        className="w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-all"
+                        style={{ background: sel ? tag.color : tag.color + '33' }}
+                      >
+                        {TIcon
+                          ? <TIcon className="w-3 h-3" style={{ color: sel ? 'white' : tag.color }} />
+                          : sel
+                            ? <Check className="w-3 h-3 text-white" />
+                            : null
+                        }
+                      </span>
+                      <span
+                        className="flex-1 text-left font-medium truncate"
+                        style={{ color: sel ? tag.color : undefined }}
+                      >{tag.name}</span>
+                      {sel && <Check className="w-3 h-3 shrink-0" style={{ color: tag.color }} />}
+                    </button>
+                  );
+                })}
+              </>
+            )}
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-1.5 px-2.5 py-2 border-t border-gray-100 bg-gray-50/70">
+            {tagPickerMode === 'manage' ? (
+              <>
+                <button
+                  onClick={() => {
+                    if (tagPickerFileId) onToggleKnowledgeBase(tagPickerFileId);
+                    setTagPickerFileId(null);
+                  }}
+                  className="flex-1 text-xs py-1.5 text-red-500 hover:bg-red-50 rounded-lg border border-red-100 hover:border-red-200 transition-colors font-medium"
+                >移出知识库</button>
+                <button
+                  onClick={() => {
+                    if (tagPickerFileId) onToggleKnowledgeBase(tagPickerFileId, tagPickerSelectedIds);
+                    setTagPickerFileId(null);
+                  }}
+                  className="flex-1 text-xs py-1.5 bg-green-500 text-white hover:bg-green-600 rounded-lg transition-colors font-medium shadow-sm"
+                >保存</button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => setTagPickerFileId(null)}
+                  className="flex-1 text-xs py-1.5 text-gray-500 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors font-medium"
+                >取消</button>
+                <button
+                  onClick={() => {
+                    if (tagPickerFileId) onToggleKnowledgeBase(tagPickerFileId, tagPickerSelectedIds);
+                    setTagPickerFileId(null);
+                  }}
+                  className="flex-1 text-xs py-1.5 bg-green-500 text-white hover:bg-green-600 rounded-lg transition-colors font-medium shadow-sm"
+                >加入</button>
+              </>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };

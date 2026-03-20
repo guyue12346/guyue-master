@@ -68,6 +68,20 @@ export interface FileRecord {
   createdAt: number;
 }
 
+/** 知识库标签 */
+export interface KbTag {
+  id: string;       // UUID
+  name: string;
+  color: string;    // hex color, e.g. '#3b82f6'
+  icon?: string;    // Lucide icon name, e.g. 'BookOpen'
+}
+
+/** 知识库文件条目（fileId → tagIds 映射） */
+export interface KbFileEntry {
+  fileId: string;
+  tagIds: string[]; // 空数组 = 未分类
+}
+
 export interface PromptRecord {
   id: string;
   title: string;
@@ -193,6 +207,9 @@ export interface RecurringEvent {
   weekDays?: number[];     // for weekly: 0=Sun … 6=Sat
   isActive: boolean;
   createdAt: number;
+  lunarRecurrence?: boolean; // monthly/yearly follows lunar calendar
+  lunarMonth?: number;       // 1-12, for yearly lunar recurrence
+  lunarDay?: number;         // 1-30, for monthly/yearly lunar recurrence
 }
 
 export interface Category {

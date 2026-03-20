@@ -4,7 +4,7 @@ import {
   Play, ChevronDown, ChevronUp, FolderOpen, Save,
   AlertCircle, AlertTriangle, Info, Loader2, FileType2, CheckCircle2,
   ZoomIn, ZoomOut, Settings2, X, FolderSearch, Download, Package, Search,
-  Copy, Plus, Trash2, Image, Check, Omega
+  Copy, Plus, Trash2, Image, Check, Omega, GripVertical
 } from 'lucide-react';
 import { LatexCompileResult, LatexEnvironment, LatexLogEntry, LatexSettings } from '../types';
 import { GoogleGenAI } from '@google/genai';
@@ -756,7 +756,7 @@ const PackageListPanel: React.FC<PackageListPanelProps> = ({ onClose }) => {
               type="text"
               value={installPkg}
               onChange={e => setInstallPkg(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') handleInstall(); }}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleInstall(); }}
               placeholder="输入包名，如 tikz、minted..."
               className="flex-1 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-xs text-gray-700 placeholder-gray-400 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200 font-mono"
               disabled={installing}
@@ -990,7 +990,7 @@ const SymbolPalettePanel: React.FC<SymbolPalettePanelProps> = ({ onClose }) => {
               <input
                 value={newCode}
                 onChange={e => setNewCode(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') handleAdd(); }}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleAdd(); }}
                 placeholder="如：\\nabla^2"
                 className="w-full bg-gray-50 border border-gray-200 rounded px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-blue-400"
               />
@@ -1466,6 +1466,34 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onEditTemplateRef, onL
   const jobIdRef = useRef(0);
   const newFileInputRef = useRef<HTMLInputElement>(null);
 
+  // Split pane drag state
+  const [splitRatio, setSplitRatio] = useState(0.5); // 0..1 left pane fraction
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  const isDraggingRef = useRef(false);
+
+  const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMove = (ev: MouseEvent) => {
+      if (!isDraggingRef.current || !splitContainerRef.current) return;
+      const rect = splitContainerRef.current.getBoundingClientRect();
+      const ratio = Math.min(0.85, Math.max(0.15, (ev.clientX - rect.left) / rect.width));
+      setSplitRatio(ratio);
+    };
+    const onUp = () => {
+      isDraggingRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, []);
+
   // Check environment on mount
   const checkEnv = useCallback(() => {
     if (window.electronAPI?.latexCheckEnv) {
@@ -1902,7 +1930,7 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onEditTemplateRef, onL
       <EnvBanner env={env} engine={engine} />
 
       {/* ── Split Pane ── */}
-      <div className="flex-1 flex overflow-hidden min-h-0 relative">
+      <div ref={splitContainerRef} className="flex-1 flex overflow-hidden min-h-0 relative">
         {/* Settings overlay */}
         {showSettings && (
           <LatexSettingsPanel
@@ -1930,7 +1958,10 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onEditTemplateRef, onL
         )}
 
         {/* Left: Monaco Editor or Empty State */}
-        <div className="flex-1 flex flex-col border-r border-gray-200 min-w-0">
+        <div
+          className="flex flex-col min-w-0 overflow-hidden"
+          style={{ width: `${splitRatio * 100}%`, flexShrink: 0 }}
+        >
           {hasDocument ? (
             <Editor
               height="100%"
@@ -1970,8 +2001,21 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onEditTemplateRef, onL
           )}
         </div>
 
+        {/* Resizable Divider */}
+        <div
+          onMouseDown={handleDividerMouseDown}
+          className="flex-shrink-0 w-1 relative flex items-center justify-center cursor-col-resize group hover:w-1.5 transition-all z-10"
+          style={{ background: 'transparent' }}
+        >
+          <div className="absolute inset-y-0 -left-1 -right-1" />
+          <div className="h-full w-px bg-transparent group-hover:bg-blue-300 transition-colors" />
+          <div className="absolute top-1/2 -translate-y-1/2 w-4 h-8 rounded-full bg-white border border-gray-200 group-hover:border-blue-300 shadow-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all">
+            <GripVertical className="w-2.5 h-2.5 text-blue-400" />
+          </div>
+        </div>
+
         {/* Right: PDF Viewer */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex flex-col min-w-0 overflow-hidden" style={{ flex: 1 }}>
           <PdfViewer pdfBase64={pdfBase64} loading={compiling} onDownload={handleDownloadPdf} />
         </div>
       </div>
@@ -1996,7 +2040,7 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onEditTemplateRef, onL
                 onChange={e => setNewFileName(e.target.value)}
                 placeholder="例如: my-paper"
                 onKeyDown={e => {
-                  if (e.key === 'Enter') { e.preventDefault(); handleConfirmNewFile(); }
+                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); handleConfirmNewFile(); }
                   if (e.key === 'Escape') { setShowNewFileDialog(false); setPendingTemplateContent(null); }
                 }}
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400"

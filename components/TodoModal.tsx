@@ -128,7 +128,7 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
   };
 
   const handleSubtaskKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleAddSubtask();
     }

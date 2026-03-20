@@ -134,6 +134,8 @@ interface AgentDebugItem {
   payload?: any;
   level?: 'info' | 'success' | 'error';
   timestamp: number;
+  turnId?: string;
+  turnIndex?: number;
 }
 
 const MAX_DEBUG_ITEMS = 200;
@@ -182,7 +184,18 @@ const STAGE_DISPLAY: Record<string, string> = {
   'native:max-iterations': '⚠️ 达到最大迭代次数',
   'history:clear': '🗑️ 清空历史',
   'history:delete-message': '🗑️ 删除消息',
+  'web:search': '🌐 网络搜索',
 };
+
+/* ─── 调试面板每轮配色 ─── */
+const TURN_COLORS = [
+  { borderL: 'border-l-blue-400',    badge: 'bg-blue-50 text-blue-600 border border-blue-200',    title: 'text-blue-600' },
+  { borderL: 'border-l-violet-400',  badge: 'bg-violet-50 text-violet-600 border border-violet-200',  title: 'text-violet-600' },
+  { borderL: 'border-l-emerald-400', badge: 'bg-emerald-50 text-emerald-600 border border-emerald-200', title: 'text-emerald-600' },
+  { borderL: 'border-l-amber-400',   badge: 'bg-amber-50 text-amber-600 border border-amber-200',   title: 'text-amber-600' },
+  { borderL: 'border-l-rose-400',    badge: 'bg-rose-50 text-rose-600 border border-rose-200',    title: 'text-rose-600' },
+  { borderL: 'border-l-teal-400',    badge: 'bg-teal-50 text-teal-600 border border-teal-200',    title: 'text-teal-600' },
+] as const;
 
 /* ─── Agent 配置存储 ─── */
 
@@ -3161,13 +3174,28 @@ const TOOL_REGISTRY: ToolRegistration[] = [
   },
 ];
 
+/* ─── Agent 网络搜索工具定义 ─── */
+const WEB_SEARCH_TOOL: ChatTool = {
+  name: 'web_search',
+  description: '使用 DuckDuckGo 搜索互联网上的信息。当需要获取最新资讯、查询事实、了解某个话题时使用。',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: '搜索关键词或问题，建议使用英文可获得更好的结果' },
+    },
+    required: ['query'],
+  },
+};
+
 /** 获取所有已启用模块的工具（如指定 selectedModule 则只返回该模块的） */
-const getAllNativeTools = (selectedModule?: string | null): ChatTool[] => {
+const getAllNativeTools = (selectedModule?: string | null, enableWebSearch?: boolean): ChatTool[] => {
   const enabledModuleIds = new Set(ENABLED_AGENT_MODULES.map(m => m.id));
-  return TOOL_REGISTRY
+  const tools = TOOL_REGISTRY
     .filter(reg => enabledModuleIds.has(reg.module))
     .filter(reg => !selectedModule || reg.module === selectedModule)
     .map(reg => reg.tool);
+  if (enableWebSearch) tools.push(WEB_SEARCH_TOOL);
+  return tools;
 };
 
 /** 根据工具名查找注册项 */
@@ -3333,6 +3361,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const [isDebugCollapsed, setIsDebugCollapsed] = useState(true);
   const [expandedDebugIds, setExpandedDebugIds] = useState<Set<string>>(new Set());
   const [debugItems, setDebugItems] = useState<AgentDebugItem[]>([]);
+  const [enableWebSearch, setEnableWebSearch] = useState(() =>
+    localStorage.getItem('guyue_agent_web_search') === 'true'
+  );
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -3342,16 +3373,22 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
   const turnStepRef = useRef(0);
   const turnStartTimeRef = useRef(0);
+  const turnIndexRef = useRef(-1);
+  const turnIdRef = useRef('');
 
   const resetTurnDebug = useCallback(() => {
     turnStepRef.current = 0;
     turnStartTimeRef.current = Date.now();
+    turnIndexRef.current += 1;
+    turnIdRef.current = crypto.randomUUID();
   }, []);
 
   const pushDebugItem = useCallback((item: Omit<AgentDebugItem, 'id' | 'timestamp'>) => {
     turnStepRef.current += 1;
     const elapsed = turnStartTimeRef.current ? Date.now() - turnStartTimeRef.current : 0;
     const displayStage = STAGE_DISPLAY[item.stage] || item.stage;
+    const currentTurnId = turnIdRef.current || crypto.randomUUID();
+    const currentTurnIndex = Math.max(0, turnIndexRef.current);
     setDebugItems(prev => {
       const next: AgentDebugItem = {
         id: crypto.randomUUID(),
@@ -3359,6 +3396,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         ...item,
         stage: `#${turnStepRef.current} ${displayStage}`,
         summary: elapsed > 0 ? `${item.summary} (+${elapsed}ms)` : item.summary,
+        turnId: currentTurnId,
+        turnIndex: currentTurnIndex,
       };
       return [...prev, next].slice(-MAX_DEBUG_ITEMS);
     });
@@ -3491,6 +3530,10 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       }),
     });
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem('guyue_agent_web_search', enableWebSearch ? 'true' : 'false');
+  }, [enableWebSearch]);
 
   useEffect(() => {
     saveAgentConfig(config);
@@ -4104,7 +4147,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       }
 
       // 原生模式：注册所有已启用工具，让 tool_choice=auto 自路由
-      const nativeTools = supportsNativeTools ? getAllNativeTools(selectedModule) : [];
+      const nativeTools = supportsNativeTools ? getAllNativeTools(selectedModule, enableWebSearch) : [];
       const toolExecContext: ToolExecutionContext = { todos: [...todos], notes, dataPermissions, filePermissions, fileRecords, lastUserAttachments: currentAttachments, onCreateTodo, onUpdateTodo, onDeleteTodo, onCreateNote, onUpdateNote, onDeleteNote, onCreatePrompt, onCreateMarkdownNote, onCreateOJSubmission, ojHeatmapData, onCreateResource, onUpdateResource, onDeleteResource, resourceData, recurringEvents, recurringCategories, onCreateRecurring, onUpdateRecurring, onDeleteRecurring, onUpdateRecurringCategories, todoCategories, promptCategories, markdownCategories, onAddCategory, knowledgeBaseFileIds, latexFileReadPermissions, latexFileWritePermissions, latexTemplatePermissions, onAutoAuthLatexFileCategory: (catId: string) => { setLatexFileReadPermissions(p => p.includes(catId) ? p : [...p, catId]); setLatexFileWritePermissions(p => p.includes(catId) ? p : [...p, catId]); }, onAutoAuthLatexTemplateCategory: (catName: string) => { setLatexTemplatePermissions(p => p.includes(catName) ? p : [...p, catName]); } };
 
       pushDebugItem({
@@ -4169,6 +4212,27 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               arguments: toolCall.arguments,
             },
           });
+
+          // 内置网络搜索工具（不在 TOOL_REGISTRY 中，单独处理）
+          if (toolCall.name === 'web_search') {
+            try {
+              const electronAPI = (window as any).electronAPI;
+              const query = typeof toolCall.arguments.query === 'string' ? toolCall.arguments.query.trim() : '';
+              if (!query) throw new Error('搜索词不能为空');
+              const result = await electronAPI.agentWebSearch({ query });
+              pushDebugItem({
+                stage: 'web:search',
+                summary: `搜索「${query}」→ ${result.success ? `${result.results?.length || 0} 条结果` : result.error}`,
+                payload: result,
+                level: result.success ? 'success' : 'error',
+              });
+              return result;
+            } catch (e) {
+              const err = (e as Error).message;
+              pushDebugItem({ stage: 'web:search', summary: `网络搜索失败：${err}`, level: 'error' });
+              return { success: false, error: err };
+            }
+          }
 
           const registration = findToolRegistration(toolCall.name);
           if (!registration) {
@@ -4509,7 +4573,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   }, []);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (event.key === 'Enter' && !event.nativeEvent.isComposing && !event.shiftKey) {
       event.preventDefault();
       handleSend();
     }
@@ -4718,59 +4782,90 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
-                <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+                <div className="flex-1 overflow-y-auto p-2 space-y-2">
                   {debugItems.length === 0 ? (
                     <div className="text-xs text-slate-400 text-center py-6">暂无调试数据</div>
-                  ) : (
-                    debugItems.map((item) => {
-                      const isExpanded = expandedDebugIds.has(item.id);
-                      const hasPayload = item.payload !== undefined;
+                  ) : (() => {
+                    // 按 turnId 分组（保持插入顺序）
+                    const groups: Array<{ turnId: string; turnIndex: number; items: AgentDebugItem[] }> = [];
+                    for (const item of debugItems) {
+                      const tid = item.turnId || '__root__';
+                      const tidx = item.turnIndex ?? 0;
+                      const last = groups[groups.length - 1];
+                      if (!last || last.turnId !== tid) {
+                        groups.push({ turnId: tid, turnIndex: tidx, items: [item] });
+                      } else {
+                        last.items.push(item);
+                      }
+                    }
+                    return groups.map(({ turnId, turnIndex, items }) => {
+                      const tc = TURN_COLORS[turnIndex % TURN_COLORS.length];
                       return (
-                        <div
-                          key={item.id}
-                          className={`rounded-xl border ${
-                            item.level === 'error'
-                              ? 'border-red-200 bg-red-50/70'
-                              : item.level === 'success'
-                                ? 'border-emerald-200 bg-emerald-50/70'
-                                : 'border-slate-200 bg-white'
-                          }`}
-                        >
-                          <div
-                            className={`flex items-start justify-between gap-2 p-2.5 ${hasPayload ? 'cursor-pointer select-none' : ''}`}
-                            onClick={() => {
-                              if (!hasPayload) return;
-                              setExpandedDebugIds(prev => {
-                                const next = new Set(prev);
-                                next.has(item.id) ? next.delete(item.id) : next.add(item.id);
-                                return next;
-                              });
-                            }}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <span className="text-[11px] font-semibold text-slate-700 block leading-tight">{STAGE_DISPLAY[item.stage] || item.stage}</span>
-                              <p className="text-[11px] text-slate-500 leading-relaxed mt-0.5">{item.summary}</p>
-                            </div>
-                            <div className="flex items-center gap-1 shrink-0 mt-0.5">
-                              <span className="text-[10px] text-slate-400">
-                                {new Date(item.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                              </span>
-                              {hasPayload && (
-                                <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform duration-150 ${isExpanded ? '' : '-rotate-90'}`} />
-                              )}
-                            </div>
+                        <div key={turnId}>
+                          {/* 轮次标题 */}
+                          <div className="flex items-center gap-1.5 px-1 pt-0.5 pb-1">
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${tc.badge}`}>
+                              第 {turnIndex + 1} 轮
+                            </span>
+                            <span className="text-[10px] text-slate-400">
+                              {new Date(items[0].timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                            </span>
                           </div>
-                          {isExpanded && hasPayload && (
-                            <div className="px-2.5 pb-2.5">
-                              <pre className="rounded-lg bg-slate-900 text-slate-100 text-[11px] leading-5 p-2.5 overflow-x-auto whitespace-pre-wrap break-all">
-                                {serializeDebugPayload(item.payload)}
-                              </pre>
-                            </div>
-                          )}
+                          {/* 步骤列表 */}
+                          <div className="space-y-1 pl-1">
+                            {items.map((item) => {
+                              const isExpanded = expandedDebugIds.has(item.id);
+                              const hasPayload = item.payload !== undefined;
+                              return (
+                                <div
+                                  key={item.id}
+                                  className={`rounded-xl border border-l-[3px] ${tc.borderL} ${
+                                    item.level === 'error'
+                                      ? 'border-red-200 bg-red-50/60'
+                                      : item.level === 'success'
+                                        ? 'border-emerald-100 bg-emerald-50/40'
+                                        : 'border-slate-200 bg-white'
+                                  }`}
+                                >
+                                  <div
+                                    className={`flex items-start justify-between gap-2 p-2.5 ${hasPayload ? 'cursor-pointer select-none' : ''}`}
+                                    onClick={() => {
+                                      if (!hasPayload) return;
+                                      setExpandedDebugIds(prev => {
+                                        const next = new Set(prev);
+                                        next.has(item.id) ? next.delete(item.id) : next.add(item.id);
+                                        return next;
+                                      });
+                                    }}
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <span className={`text-[11px] font-semibold block leading-tight ${tc.title}`}>{item.stage}</span>
+                                      <p className="text-[11px] text-slate-500 leading-relaxed mt-0.5">{item.summary}</p>
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0 mt-0.5">
+                                      <span className="text-[10px] text-slate-400">
+                                        {new Date(item.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                      </span>
+                                      {hasPayload && (
+                                        <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform duration-150 ${isExpanded ? '' : '-rotate-90'}`} />
+                                      )}
+                                    </div>
+                                  </div>
+                                  {isExpanded && hasPayload && (
+                                    <div className="px-2.5 pb-2.5">
+                                      <pre className="rounded-lg bg-slate-900 text-slate-100 text-[11px] leading-5 p-2.5 overflow-x-auto whitespace-pre-wrap break-all">
+                                        {serializeDebugPayload(item.payload)}
+                                      </pre>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       );
-                    })
-                  )}
+                    });
+                  })()}
                 </div>
               </div>
             )}
@@ -5262,6 +5357,19 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                 <Trash2 className="w-4 h-4" />
               </button>
               <div className="w-5 h-px bg-slate-200 my-1" />
+              {/* 网络搜索 */}
+              <button
+                onClick={() => setEnableWebSearch(v => !v)}
+                className={`relative w-8 h-8 flex items-center justify-center rounded-xl transition-colors ${
+                  enableWebSearch ? 'text-blue-600 bg-blue-50' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
+                }`}
+                title={enableWebSearch ? '关闭网络搜索' : '开启网络搜索'}
+              >
+                <Globe className="w-4 h-4" />
+                {enableWebSearch && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500" />
+                )}
+              </button>
               {/* 调试 */}
               <button
                 onClick={() => setIsDebugCollapsed(v => !v)}

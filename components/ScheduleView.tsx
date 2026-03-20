@@ -36,6 +36,7 @@ const WEEK_DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '
 
 const STORAGE_KEY_COMPRESS = 'guyue_schedule_compress_night';
 const STORAGE_KEY_TIMELINE = 'guyue_schedule_show_timeline';
+const STORAGE_KEY_DIM_PAST = 'guyue_schedule_dim_past';
 
 /** Event custom-color → Tailwind-style inline colors */
 const EVENT_COLOR_MAP: Record<string, { bar: string; block: string; text: string }> = {
@@ -61,6 +62,12 @@ const COMPLETED_COLORS = { bar: 'bg-gray-100 text-gray-400 line-through', block:
 
 function isSameDay(d1: Date, d2: Date): boolean {
   return d1.getFullYear() === d2.getFullYear() && d1.getMonth() === d2.getMonth() && d1.getDate() === d2.getDate();
+}
+
+function isBeforeDay(d1: Date, d2: Date): boolean {
+  if (d1.getFullYear() !== d2.getFullYear()) return d1.getFullYear() < d2.getFullYear();
+  if (d1.getMonth() !== d2.getMonth()) return d1.getMonth() < d2.getMonth();
+  return d1.getDate() < d2.getDate();
 }
 
 function getWeekStart(date: Date): Date {
@@ -102,6 +109,21 @@ function todoToEvent(todo: TodoItem): CalendarEvent | null {
   return null;
 }
 
+function getLunarMonthDay(date: Date): { month: number; day: number } | null {
+  try {
+    const parts = new Intl.DateTimeFormat('zh-u-ca-chinese', { month: 'numeric', day: 'numeric' }).formatToParts(date);
+    const mRaw = parts.find(p => p.type === 'month')?.value ?? '';
+    const dRaw = parts.find(p => p.type === 'day')?.value ?? '';
+    const CM: Record<string, number> = { '\u6b63':1,'\u4e00':1,'\u4e8c':2,'\u4e09':3,'\u56db':4,'\u4e94':5,'\u516d':6,'\u4e03':7,'\u516b':8,'\u4e5d':9,'\u5341':10,'\u51ac':11,'\u814a':12 };
+    const CD: Record<string, number> = { '\u521d\u4e00':1,'\u521d\u4e8c':2,'\u521d\u4e09':3,'\u521d\u56db':4,'\u521d\u4e94':5,'\u521d\u516d':6,'\u521d\u4e03':7,'\u521d\u516b':8,'\u521d\u4e5d':9,'\u521d\u5341':10,'\u5341\u4e00':11,'\u5341\u4e8c':12,'\u5341\u4e09':13,'\u5341\u56db':14,'\u5341\u4e94':15,'\u5341\u516d':16,'\u5341\u4e03':17,'\u5341\u516b':18,'\u5341\u4e5d':19,'\u4e8c\u5341':20,'\u5eff\u4e00':21,'\u5eff\u4e8c':22,'\u5eff\u4e09':23,'\u5eff\u56db':24,'\u5eff\u4e94':25,'\u5eff\u516d':26,'\u5eff\u4e03':27,'\u5eff\u516b':28,'\u5eff\u4e5d':29,'\u4e09\u5341':30 };
+    const mStr = mRaw.replace(/\u6708|\u95f0|\s/g, '');
+    const dStr = dRaw.replace(/\u65e5|\s/g, '');
+    const m = parseInt(mStr) || CM[mStr] || 0;
+    const d = parseInt(dStr) || CD[dStr] || 0;
+    return (m >= 1 && m <= 13 && d >= 1 && d <= 30) ? { month: m, day: d } : null;
+  } catch { return null; }
+}
+
 /** Check if a recurring event occurs on a given date */
 function doesRecurOccurOn(event: RecurringEvent, date: Date): boolean {
   const start = new Date(event.startDate);
@@ -126,11 +148,19 @@ function doesRecurOccurOn(event: RecurringEvent, date: Date): boolean {
     case 'monthly': {
       const mDiff = (day.getFullYear() - start.getFullYear()) * 12 + (day.getMonth() - start.getMonth());
       if (mDiff < 0 || mDiff % event.interval !== 0) return false;
+      if (event.lunarRecurrence && event.lunarDay) {
+        const lunar = getLunarMonthDay(day);
+        return !!lunar && lunar.day === event.lunarDay;
+      }
       return day.getDate() === start.getDate();
     }
     case 'yearly': {
       const yDiff = day.getFullYear() - start.getFullYear();
       if (yDiff < 0 || yDiff % event.interval !== 0) return false;
+      if (event.lunarRecurrence && event.lunarMonth && event.lunarDay) {
+        const lunar = getLunarMonthDay(day);
+        return !!lunar && lunar.month === event.lunarMonth && lunar.day === event.lunarDay;
+      }
       return day.getMonth() === start.getMonth() && day.getDate() === start.getDate();
     }
     default: return false;
@@ -434,7 +464,8 @@ const TimeGrid: React.FC<{
   scrollRef: React.RefObject<HTMLDivElement | null>;
   compressNight: boolean;
   showTimeLine: boolean;
-}> = ({ days, events, onClickEvent, onClickRecurring, scrollRef, compressNight, showTimeLine }) => {
+  dimPast?: boolean;
+}> = ({ days, events, onClickEvent, onClickRecurring, scrollRef, compressNight, showTimeLine, dimPast = false }) => {
   const today = new Date();
   const [now, setNow] = useState(new Date());
 
@@ -590,24 +621,39 @@ const TimeGrid: React.FC<{
                 {days.map((d, i) => isSameDay(d, today) ? (
                   <div
                     key={`dot${i}`}
-                    className="absolute w-2.5 h-2.5 rounded-full bg-red-400 z-20 pointer-events-none -translate-y-1/2"
-                    style={{ top: nowTop, left: `calc(${(i / days.length) * 100}%)` }}
+                    className="absolute w-2.5 h-2.5 rounded-full bg-red-400 z-20 pointer-events-none -translate-y-1/2 -translate-x-1/2"
+                    style={{ top: nowTop, left: `calc(${((i + 0.5) / days.length) * 100}%)` }}
                   />
                 ) : null)}
               </>
             )}
 
             {/* Event blocks per column */}
-            {dayLayouts.map((layouted, colIdx) => (
-              <div key={colIdx} className="relative border-l border-gray-100 first:border-l-0">
-                {layouted.map(le => {
-                  const evKey = le.event.todo?.id || `${le.event.recurring?.id}_${le.event.start.toDateString()}`;
-                  return (
-                    <EventBlock key={evKey} le={le} onClickTodo={onClickEvent} onClickRecurring={onClickRecurring} compressNight={compressNight} />
-                  );
-                })}
-              </div>
-            ))}
+            {dayLayouts.map((layouted, colIdx) => {
+              const colDay = days[colIdx];
+              const colIsPast = isBeforeDay(colDay, today);
+              const colIsToday = isSameDay(colDay, today);
+              return (
+                <div key={colIdx} className="relative border-l border-gray-100 first:border-l-0">
+                  {/* Past-time dim overlay: full column for past days, partial for today */}
+                  {dimPast && colIsPast && (
+                    <div className="absolute inset-0 bg-black/[0.04] pointer-events-none z-[5]" />
+                  )}
+                  {dimPast && colIsToday && nowTop > 0 && (
+                    <div
+                      className="absolute top-0 left-0 right-0 bg-black/[0.04] pointer-events-none z-[5]"
+                      style={{ height: nowTop }}
+                    />
+                  )}
+                  {layouted.map(le => {
+                    const evKey = le.event.todo?.id || `${le.event.recurring?.id}_${le.event.start.toDateString()}`;
+                    return (
+                      <EventBlock key={evKey} le={le} onClickTodo={onClickEvent} onClickRecurring={onClickRecurring} compressNight={compressNight} />
+                    );
+                  })}
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -648,6 +694,30 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
     });
   }, []);
 
+  // Dim-past-time setting with localStorage memory
+  const [dimPast, setDimPast] = useState(() => {
+    try { return localStorage.getItem(STORAGE_KEY_DIM_PAST) === 'true'; } catch { return false; } // default OFF
+  });
+  const toggleDimPast = useCallback(() => {
+    setDimPast(prev => {
+      const next = !prev;
+      try { localStorage.setItem(STORAGE_KEY_DIM_PAST, String(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  // Sync settings when changed from SettingsModal
+  useEffect(() => {
+    const handleSettingsChange = () => {
+      try {
+        setShowTimeLine(localStorage.getItem(STORAGE_KEY_TIMELINE) !== 'false');
+        setDimPast(localStorage.getItem(STORAGE_KEY_DIM_PAST) === 'true');
+      } catch {}
+    };
+    window.addEventListener('guyue:schedule_settings_change', handleSettingsChange);
+    return () => window.removeEventListener('guyue:schedule_settings_change', handleSettingsChange);
+  }, []);
+
   // Settings popover
   const [showSettings, setShowSettings] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
@@ -686,7 +756,9 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
   // Combined events
   const events = useMemo(() => [...todoEvents, ...recurringOccurrences], [todoEvents, recurringOccurrences]);
 
-  // Smart auto-scroll to the nearest event time
+  // Smart auto-scroll to the nearest event time.
+  // Only trigger on navigation/view changes, NOT on every event data update
+  // (e.g. toggling a subtask or expanding a todo would otherwise scroll back to top).
   useEffect(() => {
     if ((viewMode === 'week' || viewMode === 'day') && timeGridRef.current) {
       const days = viewMode === 'week' ? (() => {
@@ -698,7 +770,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
         timeGridRef.current?.scrollTo({ top: scrollTarget, behavior: 'auto' });
       });
     }
-  }, [viewMode, currentDate, events, compressNight]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, currentDate, compressNight]);
 
   // Navigation
   const goToday = useCallback(() => setCurrentDate(new Date()), []);
@@ -852,8 +925,18 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
                       <div className="font-medium text-xs">显示当前时间线</div>
                       <div className="text-[10px] text-gray-400">在今天列显示时刻指示线</div>
                     </div>
-                  </label>
-                </div>
+                  </label>                  <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-700 hover:text-gray-900 mt-2">
+                    <input
+                      type="checkbox"
+                      checked={dimPast}
+                      onChange={toggleDimPast}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <div>
+                      <div className="font-medium text-xs">过去时段变暗</div>
+                      <div className="text-[10px] text-gray-400">当前时间之前区域灰化</div>
+                    </div>
+                  </label>                </div>
               )}
             </div>
           )}
@@ -868,10 +951,10 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
           </div>
         )}
         {viewMode === 'week' && (
-          <TimeGrid days={weekDays} events={events} onClickEvent={onEditTodo} onClickRecurring={onEditRecurring} scrollRef={timeGridRef} compressNight={compressNight} showTimeLine={showTimeLine} />
+          <TimeGrid days={weekDays} events={events} onClickEvent={onEditTodo} onClickRecurring={onEditRecurring} scrollRef={timeGridRef} compressNight={compressNight} showTimeLine={showTimeLine} dimPast={dimPast} />
         )}
         {viewMode === 'day' && (
-          <TimeGrid days={dayArray} events={events} onClickEvent={onEditTodo} onClickRecurring={onEditRecurring} scrollRef={timeGridRef} compressNight={compressNight} showTimeLine={showTimeLine} />
+          <TimeGrid days={dayArray} events={events} onClickEvent={onEditTodo} onClickRecurring={onEditRecurring} scrollRef={timeGridRef} compressNight={compressNight} showTimeLine={showTimeLine} dimPast={dimPast} />
         )}
       </div>
     </div>

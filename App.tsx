@@ -4,9 +4,10 @@ import { Sidebar } from './components/Sidebar';
 import { TodoSidebar, TodoSubMode } from './components/TodoSidebar';
 import { SplashScreen } from './components/SplashScreen';
 import { FloatingChatWindow } from './components/FloatingChatWindow';
-import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig, RecurringEvent, RecurringCategory, DEFAULT_RECURRING_CATEGORIES, STORAGE_KEY_RECURRING_CATS } from './types';
+import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig, RecurringEvent, RecurringCategory, DEFAULT_RECURRING_CATEGORIES, STORAGE_KEY_RECURRING_CATS, KbTag, KbFileEntry } from './types';
 import { Plus, Search, Command, Loader2, ChevronRight, Upload, Edit3, Save, List, HelpCircle } from 'lucide-react';
 import type { VaultFileEntry } from './components/VaultImportModal';
+import { removeFileFromIndex } from './utils/ragService';
 
 // Lazy load components to improve initial load performance
 const NoteList = React.lazy(() => import('./components/NoteList').then(m => ({ default: m.NoteList })));
@@ -69,6 +70,8 @@ const STORAGE_KEY_AGENT_SHORTCUT = 'linkmaster_agent_shortcut';
 const STORAGE_KEY_LAST_EMAIL_CHECK = 'linkmaster_last_email_check';
 const STORAGE_KEY_RECURRING = 'linkmaster_recurring_v1';
 const STORAGE_KEY_KB_FILES = 'linkmaster_kb_files_v1';
+const STORAGE_KEY_KB_TAGS = 'guyue_kb_tags_v1';
+const STORAGE_KEY_KB_FILE_MAP = 'guyue_kb_file_tag_map_v1';
 
 const DEFAULT_SPLASH_QUOTES = [
   '有善始者实繁，能克终者盖寡',
@@ -412,20 +415,72 @@ const App: React.FC = () => {
     });
   }, []);
 
-  // Knowledge Base File IDs
-  const [knowledgeBaseFileIds, setKnowledgeBaseFileIds] = useState<Set<string>>(() => {
+  // Knowledge Base Tags
+  const [kbTags, setKbTags] = useState<KbTag[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY_KB_FILES);
-      if (saved) return new Set<string>(JSON.parse(saved));
+      const saved = localStorage.getItem(STORAGE_KEY_KB_TAGS);
+      if (saved) return JSON.parse(saved) as KbTag[];
     } catch {}
-    return new Set<string>();
+    return [];
   });
 
-  const handleToggleKnowledgeBase = (fileId: string) => {
-    setKnowledgeBaseFileIds(prev => {
-      const next = new Set(prev);
-      if (next.has(fileId)) next.delete(fileId); else next.add(fileId);
-      localStorage.setItem(STORAGE_KEY_KB_FILES, JSON.stringify([...next]));
+  // Knowledge Base File→Tag mapping
+  const [kbFileEntries, setKbFileEntries] = useState<KbFileEntry[]>(() => {
+    try {
+      // Migrate from old Set-based storage
+      const oldSaved = localStorage.getItem(STORAGE_KEY_KB_FILES);
+      const newSaved = localStorage.getItem(STORAGE_KEY_KB_FILE_MAP);
+      if (newSaved) return JSON.parse(newSaved) as KbFileEntry[];
+      if (oldSaved) {
+        const ids = JSON.parse(oldSaved) as string[];
+        return ids.map(fileId => ({ fileId, tagIds: [] }));
+      }
+    } catch {}
+    return [];
+  });
+
+  // Derived: Set of all KB file IDs (for backward compat with existing components)
+  const knowledgeBaseFileIds = useMemo(
+    () => new Set(kbFileEntries.map(e => e.fileId)),
+    [kbFileEntries]
+  );
+
+  // 自动清理孤立的 KB 条目：若对应文件记录已被删除，同步移除 KB 条目和 RAG 索引
+  useEffect(() => {
+    if (kbFileEntries.length === 0 || fileRecords.length === 0) return;
+    const fileIdSet = new Set(fileRecords.map(f => f.id));
+    const orphans = kbFileEntries.filter(e => !fileIdSet.has(e.fileId));
+    if (orphans.length === 0) return;
+    // 移除孤立条目
+    setKbFileEntries(prev => {
+      const next = prev.filter(e => fileIdSet.has(e.fileId));
+      localStorage.setItem(STORAGE_KEY_KB_FILE_MAP, JSON.stringify(next));
+      return next;
+    });
+    // 同步清理这些孤立文件的 RAG 向量索引
+    orphans.forEach(e => removeFileFromIndex(e.fileId).catch(() => {}));
+  }, [fileRecords]); // 只依赖 fileRecords，避免循环触发
+
+  const handleSaveKbTags = (newTags: KbTag[]) => {
+    setKbTags(newTags);
+    localStorage.setItem(STORAGE_KEY_KB_TAGS, JSON.stringify(newTags));
+  };
+
+  const handleToggleKnowledgeBase = (fileId: string, tagIds?: string[]) => {
+    setKbFileEntries(prev => {
+      const exists = prev.find(e => e.fileId === fileId);
+      let next: KbFileEntry[];
+      if (exists) {
+        // If tagIds supplied, update tags; otherwise remove
+        if (tagIds !== undefined) {
+          next = prev.map(e => e.fileId === fileId ? { ...e, tagIds } : e);
+        } else {
+          next = prev.filter(e => e.fileId !== fileId);
+        }
+      } else {
+        next = [...prev, { fileId, tagIds: tagIds ?? [] }];
+      }
+      localStorage.setItem(STORAGE_KEY_KB_FILE_MAP, JSON.stringify(next));
       return next;
     });
   };
@@ -1693,6 +1748,11 @@ const App: React.FC = () => {
         }
       }
       setFileRecords(prev => prev.filter(f => f.id !== id));
+      // 同步清理知识库条目和RAG索引
+      if (knowledgeBaseFileIds.has(id)) {
+        handleToggleKnowledgeBase(id); // 从 kbFileEntries 中移除
+        removeFileFromIndex(id).catch(() => {}); // 清理向量索引
+      }
     }
   };
 
@@ -2070,7 +2130,10 @@ const App: React.FC = () => {
               onImportFromVault={handleImportFromVault}
               onHelp={() => setIsHelpOpen(true)}
               knowledgeBaseFileIds={knowledgeBaseFileIds}
+              kbTags={kbTags}
+              kbFileEntries={kbFileEntries}
               onToggleKnowledgeBase={handleToggleKnowledgeBase}
+              onSaveKbTags={handleSaveKbTags}
             />
           </Suspense>
         )
@@ -2531,6 +2594,10 @@ const App: React.FC = () => {
               <div className={appMode === 'chat' ? 'h-full' : 'hidden'}>
                 <ChatManager
                   knowledgeBaseFileIds={knowledgeBaseFileIds}
+                  kbTags={kbTags}
+                  kbFileEntries={kbFileEntries}
+                  onSaveKbTags={handleSaveKbTags}
+                  onToggleKnowledgeBase={handleToggleKnowledgeBase}
                   fileRecords={fileRecords}
                 />
               </div>

@@ -25,6 +25,26 @@ const COLOR_OPTIONS = [
 
 const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六'];
 
+const LUNAR_MONTH_NAMES = ['', '正', '二', '三', '四', '五', '六', '七', '八', '九', '十', '冬', '腊'];
+const LUNAR_DAY_NAMES = ['', '初一', '初二', '初三', '初四', '初五', '初六', '初七', '初八', '初九', '初十',
+  '十一', '十二', '十三', '十四', '十五', '十六', '十七', '十八', '十九', '二十',
+  '廿一', '廿二', '廿三', '廿四', '廿五', '廿六', '廿七', '廿八', '廿九', '三十'];
+
+function getLunarMonthDay(date: Date): { month: number; day: number } | null {
+  try {
+    const parts = new Intl.DateTimeFormat('zh-u-ca-chinese', { month: 'numeric', day: 'numeric' }).formatToParts(date);
+    const mRaw = parts.find(p => p.type === 'month')?.value ?? '';
+    const dRaw = parts.find(p => p.type === 'day')?.value ?? '';
+    const CM: Record<string, number> = { '正':1,'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10,'冬':11,'腊':12 };
+    const CD: Record<string, number> = { '初一':1,'初二':2,'初三':3,'初四':4,'初五':5,'初六':6,'初七':7,'初八':8,'初九':9,'初十':10,'十一':11,'十二':12,'十三':13,'十四':14,'十五':15,'十六':16,'十七':17,'十八':18,'十九':19,'二十':20,'廿一':21,'廿二':22,'廿三':23,'廿四':24,'廿五':25,'廿六':26,'廿七':27,'廿八':28,'廿九':29,'三十':30 };
+    const mStr = mRaw.replace(/月|闰|\s/g, '');
+    const dStr = dRaw.replace(/日|\s/g, '');
+    const m = parseInt(mStr) || CM[mStr] || 0;
+    const d = parseInt(dStr) || CD[dStr] || 0;
+    return (m >= 1 && m <= 13 && d >= 1 && d <= 30) ? { month: m, day: d } : null;
+  } catch { return null; }
+}
+
 const toDateString = (ts: number): string => {
   const d = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -59,6 +79,9 @@ export const RecurringEventModal: React.FC<RecurringEventModalProps> = ({
   const [recurrence, setRecurrence] = useState<RecurringEvent['recurrence']>('weekly');
   const [interval, setInterval] = useState(1);
   const [weekDays, setWeekDays] = useState<number[]>([new Date().getDay()]);
+  const [useLunar, setUseLunar] = useState(false);
+  const [lunarMonth, setLunarMonth] = useState(1);
+  const [lunarDay, setLunarDay] = useState(1);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -79,6 +102,9 @@ export const RecurringEventModal: React.FC<RecurringEventModalProps> = ({
       setRecurrence(initialData.recurrence);
       setInterval(initialData.interval);
       setWeekDays(initialData.weekDays ?? [new Date(initialData.startDate).getDay()]);
+      setUseLunar(initialData.lunarRecurrence ?? false);
+      setLunarMonth(initialData.lunarMonth ?? 1);
+      setLunarDay(initialData.lunarDay ?? 1);
     } else {
       setTitle('');
       setDescription('');
@@ -92,6 +118,9 @@ export const RecurringEventModal: React.FC<RecurringEventModalProps> = ({
       setRecurrence('weekly');
       setInterval(1);
       setWeekDays([new Date().getDay()]);
+      setUseLunar(false);
+      setLunarMonth(1);
+      setLunarDay(1);
     }
   }, [isOpen, initialData]);
 
@@ -123,6 +152,9 @@ export const RecurringEventModal: React.FC<RecurringEventModalProps> = ({
       recurrence,
       interval: Math.max(interval, 1),
       weekDays: recurrence === 'weekly' ? weekDays : undefined,
+      lunarRecurrence: (useLunar && (recurrence === 'monthly' || recurrence === 'yearly')) ? true : undefined,
+      lunarMonth: (useLunar && recurrence === 'yearly' && lunarMonth > 0) ? lunarMonth : undefined,
+      lunarDay: (useLunar && lunarDay > 0) ? lunarDay : undefined,
       isActive: initialData?.isActive ?? true,
     });
     onClose();
@@ -254,6 +286,62 @@ export const RecurringEventModal: React.FC<RecurringEventModalProps> = ({
                       {label}
                     </button>
                   ))}
+                </div>
+              )}
+
+              {/* Lunar recurrence option (monthly / yearly) */}
+              {(recurrence === 'monthly' || recurrence === 'yearly') && (
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={useLunar}
+                      onChange={e => {
+                        const v = e.target.checked;
+                        setUseLunar(v);
+                        if (v) {
+                          const lunar = getLunarMonthDay(new Date(startDate + 'T00:00:00'));
+                          if (lunar) {
+                            setLunarDay(lunar.day);
+                            if (recurrence === 'yearly') setLunarMonth(lunar.month);
+                          }
+                        }
+                      }}
+                      className="w-3.5 h-3.5 rounded border-gray-300 accent-violet-600"
+                    />
+                    <span className="text-sm text-gray-700">按农历计算</span>
+                    <span className="text-xs text-gray-400">（适合生日、节日等）</span>
+                  </label>
+                  {useLunar && (
+                    <div className={recurrence === 'yearly' ? 'grid grid-cols-2 gap-3' : ''}>
+                      {recurrence === 'yearly' && (
+                        <div>
+                          <p className="text-[10px] text-gray-400 mb-1">农历月份</p>
+                          <select
+                            value={lunarMonth}
+                            onChange={e => setLunarMonth(Number(e.target.value))}
+                            className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:border-violet-400"
+                          >
+                            {LUNAR_MONTH_NAMES.slice(1).map((n, i) => (
+                              <option key={i + 1} value={i + 1}>{n}月（第{i + 1}月）</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-[10px] text-gray-400 mb-1">农历日期</p>
+                        <select
+                          value={lunarDay}
+                          onChange={e => setLunarDay(Number(e.target.value))}
+                          className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:border-violet-400"
+                        >
+                          {LUNAR_DAY_NAMES.slice(1).map((n, i) => (
+                            <option key={i + 1} value={i + 1}>{n}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

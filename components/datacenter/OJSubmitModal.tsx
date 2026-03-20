@@ -83,7 +83,7 @@ export const OJSubmitModal: React.FC<OJSubmitModalProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
     }

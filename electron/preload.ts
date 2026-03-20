@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readFile: (path: string) => ipcRenderer.invoke('read-file', path),
   readFileBase64: (path: string) => ipcRenderer.invoke('read-file-base64', path),
   checkFileExists: (path: string) => ipcRenderer.invoke('check-file-exists', path),
+  getFileMtime: (path: string) => ipcRenderer.invoke('get-file-mtime', path),
   writeFile: (path: string, content: string) => ipcRenderer.invoke('write-file', path, content),
   deleteFile: (path: string) => ipcRenderer.invoke('delete-file', path),
   renameFile: (oldPath: string, newPath: string) => ipcRenderer.invoke('rename-file', oldPath, newPath),
@@ -74,6 +75,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sendEmail: (params: { config: any; subject: string; content: string }) => ipcRenderer.invoke('send-email', params),
   testEmailConfig: (config: any) => ipcRenderer.invoke('test-email-config', config),
 
+  // Agent 网络搜索
+  agentWebSearch: (params: { query: string }) => ipcRenderer.invoke('agent-web-search', params),
+
   // 代理设置
   setProxy: (port: number | null) => ipcRenderer.invoke('set-proxy', port),
 
@@ -82,6 +86,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   latexCompile: (params: { content: string; engine: string; jobId: string }) =>
     ipcRenderer.invoke('latex-compile', params),
   latexReadPdf: (pdfPath: string) => ipcRenderer.invoke('latex-read-pdf', pdfPath),
+  extractPdfText: (filePath: string) => ipcRenderer.invoke('extract-pdf-text', filePath),
   latexGetTemplates: () => ipcRenderer.invoke('latex-get-templates'),
   latexSaveTemplate: (template: any) => ipcRenderer.invoke('latex-save-template', template),
   latexDeleteTemplate: (id: string) => ipcRenderer.invoke('latex-delete-template', id),
@@ -129,6 +134,7 @@ export interface ElectronAPI {
   readFile: (path: string) => Promise<string>;
   readFileBase64: (path: string) => Promise<string>;
   checkFileExists: (path: string) => Promise<boolean>;
+  getFileMtime: (path: string) => Promise<number | null>;
   writeFile: (path: string, content: string) => Promise<boolean>;
   deleteFile: (path: string) => Promise<boolean>;
   listDir: (path: string) => Promise<Array<{ name: string; isDirectory: boolean; path: string }>>;
@@ -180,6 +186,9 @@ export interface ElectronAPI {
   // GCP Billing API
   fetchGCPBillingData: (params: { serviceAccountJson: string; projectId: string; billingAccountId?: string }) => Promise<any>;
   queryBigQueryBilling: (params: { serviceAccountJson: string; projectId: string; bqTablePath: string; bqLocation?: string }) => Promise<any>;
+  // Agent 网络搜索
+  agentWebSearch: (params: { query: string }) => Promise<{ success: boolean; results: Array<{ title: string; url: string; snippet: string }>; error?: string; query?: string }>;
   // 代理设置
   setProxy: (port: number | null) => Promise<{ success: boolean; error?: string }>;
+  extractPdfText: (filePath: string) => Promise<string | null>;
 }

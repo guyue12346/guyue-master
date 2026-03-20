@@ -3,7 +3,7 @@ import {
   MessageSquarePlus, Send, Settings2, Trash2, StopCircle, Copy, Check,
   ChevronDown, Bot, User, Sparkles, AlertCircle, Loader2, Plus, X,
   PanelLeftClose, PanelLeftOpen, RotateCcw, Download, Globe, Columns, Square, Zap, Wand2, Search, HelpCircle,
-  Brain, Key
+  Brain, Key, Pencil, Quote, Tag
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -28,7 +28,8 @@ import {
   createNewConversation,
 } from '../services/chatService';
 import { Terminal as TerminalComponent } from './Terminal';
-import { PromptRecord, FileRecord } from '../types';
+import { PromptRecord, FileRecord, KbTag, KbFileEntry } from '../types';
+import * as LucideIcons from 'lucide-react';
 import { HelpModal } from './HelpModal';
 import { buildIndex, loadRagIndex, saveRagIndex, searchIndex } from '../utils/ragService';
 
@@ -44,6 +45,10 @@ const createKbWelcomeMessage = (): ChatMessage => ({
 interface ChatManagerProps {
   compact?: boolean;
   knowledgeBaseFileIds?: Set<string>;
+  kbTags?: KbTag[];
+  kbFileEntries?: KbFileEntry[];
+  onSaveKbTags?: (tags: KbTag[]) => void;
+  onToggleKnowledgeBase?: (fileId: string, tagIds?: string[]) => void;
   fileRecords?: FileRecord[];
 }
 
@@ -263,7 +268,8 @@ const MessageBubble: React.FC<{
   message: ChatMessage;
   isStreaming?: boolean;
   isKb?: boolean;
-}> = React.memo(({ message, isStreaming, isKb }) => {
+  onQuote?: (content: string) => void;
+}> = React.memo(({ message, isStreaming, isKb, onQuote }) => {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
 
@@ -297,6 +303,16 @@ const MessageBubble: React.FC<{
               <p className="whitespace-pre-wrap text-sm text-white leading-relaxed">{message.content}</p>
             </div>
             <div className="mt-1 flex justify-end items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              {onQuote && (
+                <button
+                  onClick={() => onQuote(message.content)}
+                  className="flex items-center gap-1 px-2 py-1 text-[11px] text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                  title="引用此消息"
+                >
+                  <Quote className="w-3 h-3" />
+                  <span>引用</span>
+                </button>
+              )}
               <span className="text-[11px] text-gray-400">{timeStr}</span>
             </div>
           </div>
@@ -322,6 +338,16 @@ const MessageBubble: React.FC<{
                 >
                   {copied ? <><Check className="w-3 h-3 text-green-500" /><span className="text-green-600">已复制</span></> : <><Copy className="w-3 h-3" /><span>复制</span></>}
                 </button>
+                {onQuote && (
+                  <button
+                    onClick={() => onQuote(message.content)}
+                    className="flex items-center gap-1 px-2 py-1 text-[11px] text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                    title="引用此消息"
+                  >
+                    <Quote className="w-3 h-3" />
+                    <span>引用</span>
+                  </button>
+                )}
                 <span className="text-[11px] text-gray-300">{timeStr}</span>
               </div>
             )}
@@ -706,6 +732,68 @@ const SystemPromptPanel: React.FC<{
   );
 };
 
+// ==================== Scroll Navigation Track ====================
+
+const ScrollNavTrack: React.FC<{
+  turns: ChatMessage[];
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  msgRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
+  isKb?: boolean;
+}> = ({ turns, containerRef, msgRefs, isKb }) => {
+  const [activeIdx, setActiveIdx] = useState(0);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const handler = () => {
+      const mid = container.scrollTop + container.clientHeight / 2;
+      let best = 0;
+      turns.forEach((t, i) => {
+        const el = msgRefs.current.get(t.id);
+        if (el && el.offsetTop <= mid) best = i;
+      });
+      setActiveIdx(best);
+    };
+    container.addEventListener('scroll', handler, { passive: true });
+    return () => container.removeEventListener('scroll', handler);
+  }, [containerRef, turns, msgRefs]);
+
+  const validTurns = turns.filter(t => t.id !== 'kb-welcome');
+  if (validTurns.length <= 1) return null;
+
+  return (
+    <div className="absolute right-0 top-0 bottom-0 w-5 flex flex-col py-3 items-center gap-0.5" style={{ zIndex: 5 }}>
+      {validTurns.map((t, i) => {
+        const el = msgRefs.current.get(t.id);
+        const container = containerRef.current;
+        const topPct = el && container
+          ? `${Math.min(96, (el.offsetTop / container.scrollHeight) * 100)}%`
+          : `${(i / validTurns.length) * 100}%`;
+        const isActive = i === activeIdx;
+        return (
+          <button
+            key={t.id}
+            className="absolute left-1/2 -translate-x-1/2 group/dot"
+            style={{ top: topPct }}
+            title={t.content.substring(0, 50)}
+            onClick={() => {
+              msgRefs.current.get(t.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }}
+          >
+            <div
+              className={`rounded-full transition-all duration-150 ${
+                isActive
+                  ? (isKb ? 'w-1.5 h-3 bg-green-500' : 'w-1.5 h-3 bg-purple-500')
+                  : (isKb ? 'w-1 h-1.5 bg-green-200 group-hover/dot:bg-green-400 group-hover/dot:h-2.5' : 'w-1 h-1.5 bg-gray-200 group-hover/dot:bg-purple-300 group-hover/dot:h-2.5')
+              }`}
+            />
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
 // ==================== KB Conversation Types ====================
 interface KbConversation {
   id: string;
@@ -733,7 +821,20 @@ const createNewKbConversation = (): KbConversation => ({
 
 // ==================== Main ChatManager Component ====================
 
-export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowledgeBaseFileIds, fileRecords }) => {
+// 预设知识库标签颜色和图标
+const PRESET_COLORS = [
+  '#ef4444','#f97316','#f59e0b','#84cc16',
+  '#22c55e','#10b981','#06b6d4','#3b82f6',
+  '#8b5cf6','#ec4899','#64748b','#a8a29e',
+];
+const PRESET_ICONS = [
+  'BookOpen','Code2','Lightbulb','Star',
+  'Briefcase','FlaskConical','Globe','GraduationCap',
+  'Heart','Zap','Database','Cpu',
+  'Music','Camera','Tag','FileText',
+];
+
+export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowledgeBaseFileIds, kbTags = [], kbFileEntries = [], onSaveKbTags, onToggleKnowledgeBase, fileRecords }) => {
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [config, setConfig] = useState<ChatConfig>(DEFAULT_CHAT_CONFIG);
@@ -751,9 +852,26 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
   const [layoutMode, setLayoutMode] = useState<'single' | 'split'>('single'); // single or split view
   const [showTerminal, setShowTerminal] = useState(false); // show terminal pane
 
+  // ── Rename conversation ──
+  const [renamingConvId, setRenamingConvId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  // ── Scroll navigation refs ──
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const msgRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
   // ── Knowledge Base mode ──
   const [isKbMode, setIsKbMode] = useState(false);
   const [showKbSettings, setShowKbSettings] = useState(false);
+  const [selectedKbTagIds, setSelectedKbTagIds] = useState<string[]>([]); // 空 = 全部
+  const [showKbTagManager, setShowKbTagManager] = useState(false);
+  const [newTagName, setNewTagName] = useState('');
+  const [newTagColor, setNewTagColor] = useState('#10b981');
+  const [newTagIcon, setNewTagIcon] = useState('');
+  const [editingTagId, setEditingTagId] = useState<string | null>(null);
+  const [editingTagName, setEditingTagName] = useState('');
+  const [editingTagColor, setEditingTagColor] = useState('');
+  const [editingTagIcon, setEditingTagIcon] = useState('');
   const [kbEmbeddingKey, setKbEmbeddingKey] = useState(() => localStorage.getItem('guyue_rag_embedding_key') || '');
   const [kbEmbeddingBaseUrl, setKbEmbeddingBaseUrl] = useState(() => localStorage.getItem('guyue_rag_embedding_base_url') || '');
   const [isKbProcessing, setIsKbProcessing] = useState(false);
@@ -820,6 +938,17 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [streamingContent, conversations, kbConversations]);
 
+  // Windows / Electron focus fix:
+  // When textarea transitions from disabled→enabled (after streaming/kb processing),
+  // the OS does NOT auto-restore focus on Windows. Manually refocus it.
+  useEffect(() => {
+    if (!isStreaming && !isKbProcessing) {
+      // Use a short timeout so React finishes committing the disabled→enabled DOM change first.
+      const t = setTimeout(() => textareaRef.current?.focus(), 80);
+      return () => clearTimeout(t);
+    }
+  }, [isStreaming, isKbProcessing]);
+
   // Get active conversation
   const activeConversation = conversations.find(c => c.id === activeConversationId);
   const activeKbConversation = kbConversations.find(c => c.id === activeKbConversationId);
@@ -858,7 +987,6 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
   // Toggle mode: auto-create first KB conversation if needed
   const handleToggleKbMode = (value: boolean) => {
     setIsKbMode(value);
-    setShowKbSettings(false);
     if (value && kbConversations.length === 0) {
       const firstConv = createNewKbConversation();
       setKbConversations([firstConv]);
@@ -888,6 +1016,32 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
       }
     }
   };
+
+  // Handle rename conversation
+  const handleStartRename = (id: string, title: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRenamingConvId(id);
+    setRenameValue(title);
+  };
+
+  const handleFinishRename = (isKb = false) => {
+    if (renamingConvId && renameValue.trim()) {
+      if (isKb) {
+        setKbConversations(prev => prev.map(c => c.id === renamingConvId ? { ...c, title: renameValue.trim() } : c));
+      } else {
+        setConversations(prev => prev.map(c => c.id === renamingConvId ? { ...c, title: renameValue.trim() } : c));
+      }
+    }
+    setRenamingConvId(null);
+    setRenameValue('');
+  };
+
+  // Handle quote message into input
+  const handleQuoteMessage = useCallback((content: string) => {
+    const quoted = '> ' + content.replace(/\n/g, '\n> ');
+    setInputValue(prev => prev ? `${quoted}\n\n${prev}` : `${quoted}\n\n`);
+    textareaRef.current?.focus();
+  }, []);
 
   // Handle send message
   const handleSend = useCallback(async () => {
@@ -996,7 +1150,10 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
     const trimmedInput = inputValue.trim();
     if (!trimmedInput || isKbProcessing) return;
     const embeddingApiKey = localStorage.getItem('guyue_rag_embedding_key') || '';
-    if (!embeddingApiKey) { setShowKbSettings(true); return; }
+    if (!embeddingApiKey) {
+      setError('请先在设置中配置知识库 Embedding API Key（右下角设置→知识库）');
+      return;
+    }
     if (!chatService) return;
 
     // Ensure there's an active KB conversation
@@ -1019,9 +1176,33 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
     setIsKbProcessing(true);
     try {
       const embeddingBaseUrl = localStorage.getItem('guyue_rag_embedding_base_url')?.trim() || undefined;
-      const kbFiles = (fileRecords || []).filter(f => (knowledgeBaseFileIds || new Set()).has(f.id));
+      // 按已选标签过滤：空 = 全部；否则只搜索包含任一所选标签的文件（或无标签文件）
+      const kbFiles = (fileRecords || []).filter(f => {
+        if (!(knowledgeBaseFileIds || new Set()).has(f.id)) return false;
+        if (selectedKbTagIds.length === 0) return true;
+        const entry = kbFileEntries.find(e => e.fileId === f.id);
+        if (!entry) return true; // 老数据兼容
+        if (entry.tagIds.length === 0) return selectedKbTagIds.includes('__uncat__');
+        return selectedKbTagIds.some(tid => entry.tagIds.includes(tid));
+      });
       let index = await loadRagIndex();
-      index = await buildIndex(kbFiles, index, embeddingApiKey, undefined, embeddingBaseUrl);
+      // 记录索引构建进度，将警告/错误通过 setError 反馈给用户
+      const indexProgressMessages: string[] = [];
+      index = await buildIndex(kbFiles, index, embeddingApiKey, (msg) => {
+        indexProgressMessages.push(msg);
+        // 实时在状态消息中更新进度（仅索引中）
+        if (msg.startsWith('正在索引')) {
+          setKbConversations(prev => prev.map(c => c.id === kbConv!.id
+            ? { ...c, messages: c.messages.map(m => m.id === assistantId ? { ...m, content: `⏳ ${msg}` } : m) }
+            : c
+          ));
+        }
+      }, embeddingBaseUrl);
+      // 若有索引失败/跳过，收集并通过 error 提示用户
+      const indexErrors = indexProgressMessages.filter(m => m.startsWith('❌') || m.startsWith('⚠️'));
+      if (indexErrors.length > 0) {
+        setError(`索引警告：${indexErrors.join(' | ')}`);
+      }
       await saveRagIndex(index);
       const results = await searchIndex(trimmedInput, index, embeddingApiKey, 5, embeddingBaseUrl);
 
@@ -1034,7 +1215,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
       } else {
         contextBlock = '\n\n## 知识库检索结果\n未检索到与用户问题相关的内容。';
       }
-      const kbSize = (knowledgeBaseFileIds || new Set()).size;
+      const kbSize = kbFiles.length;
       const fileListBlock = kbFiles.length > 0
         ? '\n\n## 知识库文件列表\n' + kbFiles.map((f, i) => `${i + 1}. ${f.name}`).join('\n')
         : '';
@@ -1162,6 +1343,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                 ) : (
                   kbConversations.map((conv) => {
                     const isActive = activeKbConversationId === conv.id;
+                    const isRenaming = renamingConvId === conv.id;
                     return (
                       <button
                         key={conv.id}
@@ -1175,14 +1357,41 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                         `}
                       >
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{conv.title}</p>
+                          {isRenaming ? (
+                            <input
+                              autoFocus
+                              value={renameValue}
+                              onChange={e => setRenameValue(e.target.value)}
+                              onBlur={() => handleFinishRename(true)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') handleFinishRename(true);
+                                if (e.key === 'Escape') { setRenamingConvId(null); setRenameValue(''); }
+                                e.stopPropagation();
+                              }}
+                              onClick={e => e.stopPropagation()}
+                              className="w-full text-sm bg-white border border-green-300 rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-green-400"
+                            />
+                          ) : (
+                            <p className="text-sm font-medium truncate">{conv.title}</p>
+                          )}
                         </div>
-                        <button
-                          onClick={(e) => handleDeleteKbConversation(conv.id, e)}
-                          className="p-1 mt-0.5 opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-500 rounded-lg transition-all flex-shrink-0"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
+                        {!isRenaming && (
+                          <>
+                            <button
+                              onClick={(e) => handleStartRename(conv.id, conv.title, e)}
+                              className="p-1 mt-0.5 opacity-0 group-hover:opacity-100 hover:bg-green-50 hover:text-green-600 rounded-lg transition-all flex-shrink-0"
+                              title="重命名"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={(e) => handleDeleteKbConversation(conv.id, e)}
+                              className="p-1 mt-0.5 opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-500 rounded-lg transition-all flex-shrink-0"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </>
+                        )}
                       </button>
                     );
                   })
@@ -1190,7 +1399,248 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
               </div>
 
               {/* KB Sidebar Footer */}
-              <div className="p-3 border-t border-green-100">
+              <div className="p-3 border-t border-green-100 relative">
+                {showKbSettings && (
+                  <div className="absolute bottom-full left-3 right-3 mb-2 bg-white rounded-xl shadow-lg border border-green-100 p-3 space-y-2.5 z-50">
+                    <div className="text-xs font-semibold text-gray-500 mb-1">知识库设置</div>
+                    <div>
+                      <label className="text-xs text-gray-500 mb-1 block">Embedding API Key</label>
+                      <input
+                        type="password"
+                        value={kbEmbeddingKey}
+                        onChange={e => setKbEmbeddingKey(e.target.value)}
+                        placeholder="AIzaSy... (Gemini Embedding)"
+                        className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-900 font-mono outline-none focus:ring-2 focus:ring-green-500/20"
+                      />
+                      <p className="text-[10px] text-gray-400 mt-0.5">用于知识库文本向量化</p>
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500 mb-1 block">Embedding Base URL</label>
+                      <input
+                        type="text"
+                        value={kbEmbeddingBaseUrl}
+                        onChange={e => setKbEmbeddingBaseUrl(e.target.value)}
+                        placeholder="留空使用官方地址"
+                        className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-900 font-mono outline-none focus:ring-2 focus:ring-green-500/20"
+                      />
+                    </div>
+                    <button
+                      onClick={handleSaveKbSettings}
+                      className="w-full px-3 py-1.5 text-xs bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors"
+                    >
+                      保存
+                    </button>
+                  </div>
+                )}
+                {/* 标签管理 */}
+                <button
+                  onClick={() => setShowKbTagManager(v => !v)}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-gray-500 hover:text-green-700 hover:bg-green-50 rounded-xl transition-colors text-sm"
+                >
+                  <Tag className="w-4 h-4" />
+                  <span>标签管理</span>
+                  {kbTags.length > 0 && (
+                    <span className="ml-auto px-1.5 py-0.5 text-[10px] bg-green-100 text-green-600 rounded-full font-medium">{kbTags.length}</span>
+                  )}
+                  <ChevronDown className={`w-3.5 h-3.5 ml-0.5 transition-transform ${showKbTagManager ? 'rotate-180' : ''} ${kbTags.length > 0 ? '' : 'ml-auto'}`} />
+                </button>
+                {showKbTagManager && (
+                  <div className="mx-1 mb-1 rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                    {/* 标签列表 */}
+                    <div className="divide-y divide-gray-100">
+                      {kbTags.length === 0 && (
+                        <div className="px-3 py-3 text-xs text-gray-400 text-center">暂无标签，在下方新建</div>
+                      )}
+                      {kbTags.map(tag => (
+                        editingTagId === tag.id ? (
+                          <div key={tag.id} className="px-2.5 py-2 bg-green-50/70 border-b border-green-100 space-y-1.5">
+                            {/* 名称行 */}
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="w-5 h-5 rounded-full shrink-0 flex items-center justify-center ring-1 ring-black/10"
+                                style={{ background: editingTagColor }}
+                              >
+                                {editingTagIcon && (() => {
+                                  const TIcon = (LucideIcons as any)[editingTagIcon];
+                                  return TIcon ? <TIcon className="w-3 h-3 text-white" /> : null;
+                                })()}
+                              </span>
+                              <input
+                                autoFocus
+                                value={editingTagName}
+                                onChange={e => setEditingTagName(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter' && !e.nativeEvent.isComposing && editingTagName.trim()) {
+                                    const updated = kbTags.map(t => t.id === tag.id ? { ...t, name: editingTagName.trim(), color: editingTagColor, icon: editingTagIcon || undefined } : t);
+                                    onSaveKbTags?.(updated);
+                                    setEditingTagId(null);
+                                  }
+                                  if (e.key === 'Escape') setEditingTagId(null);
+                                }}
+                                className="flex-1 text-xs px-2 py-1 border border-green-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-green-300/40"
+                              />
+                              <button
+                                onClick={() => { const updated = kbTags.map(t => t.id === tag.id ? { ...t, name: editingTagName.trim(), color: editingTagColor, icon: editingTagIcon || undefined } : t); onSaveKbTags?.(updated); setEditingTagId(null); }}
+                                className="p-1 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors"
+                              ><Check className="w-3 h-3" /></button>
+                              <button
+                                onClick={() => setEditingTagId(null)}
+                                className="p-1 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-lg transition-colors"
+                              ><X className="w-3 h-3" /></button>
+                            </div>
+                            {/* 颜色色块 */}
+                            <div className="grid grid-cols-6 gap-1">
+                              {PRESET_COLORS.map(c => (
+                                <button
+                                  key={c}
+                                  onClick={() => setEditingTagColor(c)}
+                                  className={`w-5 h-5 rounded-full transition-all ${
+                                    editingTagColor === c ? 'ring-2 ring-offset-1 ring-gray-500 scale-110' : 'hover:scale-110'
+                                  }`}
+                                  style={{ background: c }}
+                                />
+                              ))}
+                            </div>
+                            {/* 图标选择 */}
+                            <div className="grid grid-cols-6 gap-1">
+                              <button
+                                onClick={() => setEditingTagIcon('')}
+                                className={`flex items-center justify-center w-5 h-5 rounded-md text-[10px] font-bold transition-all ${
+                                  !editingTagIcon ? 'bg-gray-300 text-gray-700' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                                }`}
+                                title="无图标"
+                              >—</button>
+                              {PRESET_ICONS.map(iconName => {
+                                const TIcon = (LucideIcons as any)[iconName];
+                                if (!TIcon) return null;
+                                const active = editingTagIcon === iconName;
+                                return (
+                                  <button
+                                    key={iconName}
+                                    onClick={() => setEditingTagIcon(iconName)}
+                                    className={`flex items-center justify-center w-5 h-5 rounded-md transition-all ${
+                                      active ? 'ring-2 ring-green-400 scale-110' : 'bg-gray-100 hover:bg-gray-200 text-gray-500'
+                                    }`}
+                                    style={active ? { background: editingTagColor + '28', color: editingTagColor } : {}}
+                                    title={iconName}
+                                  >
+                                    <TIcon className="w-3 h-3" />
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : (
+                          <div key={tag.id} className="flex items-center gap-2 px-2.5 py-2 group hover:bg-gray-50 transition-colors">
+                            {(() => {
+                              const TIcon = tag.icon ? (LucideIcons as any)[tag.icon] : null;
+                              return (
+                                <span
+                                  className="w-5 h-5 rounded-full shrink-0 flex items-center justify-center ring-1 ring-black/10"
+                                  style={{ background: tag.color }}
+                                >
+                                  {TIcon && <TIcon className="w-3 h-3 text-white" />}
+                                </span>
+                              );
+                            })()}
+                            <span className="flex-1 text-xs text-gray-700 font-medium truncate">{tag.name}</span>
+                            <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => { setEditingTagId(tag.id); setEditingTagName(tag.name); setEditingTagColor(tag.color); setEditingTagIcon(tag.icon || ''); }}
+                                className="p-1 hover:bg-green-100 rounded-md text-gray-400 hover:text-green-600 transition-colors"
+                                title="编辑"
+                              ><Pencil className="w-3 h-3" /></button>
+                              <button
+                                onClick={() => onSaveKbTags?.(kbTags.filter(t => t.id !== tag.id))}
+                                className="p-1 hover:bg-red-50 rounded-md text-gray-400 hover:text-red-500 transition-colors"
+                                title="删除"
+                              ><X className="w-3 h-3" /></button>
+                            </div>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                    {/* 新增标签 */}
+                    <div className="px-2.5 py-2 bg-gray-50 border-t border-gray-100 space-y-1.5">
+                      {/* 名称行 */}
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="w-5 h-5 rounded-full shrink-0 flex items-center justify-center ring-1 ring-black/10 flex-none"
+                          style={{ background: newTagColor }}
+                        >
+                          {newTagIcon && (() => {
+                            const TIcon = (LucideIcons as any)[newTagIcon];
+                            return TIcon ? <TIcon className="w-3 h-3 text-white" /> : null;
+                          })()}
+                        </span>
+                        <input
+                          value={newTagName}
+                          onChange={e => setNewTagName(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' && !e.nativeEvent.isComposing && newTagName.trim()) {
+                              const newTag: KbTag = { id: crypto.randomUUID(), name: newTagName.trim(), color: newTagColor, icon: newTagIcon || undefined };
+                              onSaveKbTags?.([...kbTags, newTag]);
+                              setNewTagName('');
+                            }
+                          }}
+                          placeholder="新标签名称..."
+                          className="flex-1 text-xs px-2 py-1 border border-gray-200 rounded-lg bg-white outline-none focus:ring-2 focus:ring-green-300/40 focus:border-green-300 placeholder-gray-300"
+                        />
+                        <button
+                          onClick={() => {
+                            if (!newTagName.trim()) return;
+                            const newTag: KbTag = { id: crypto.randomUUID(), name: newTagName.trim(), color: newTagColor, icon: newTagIcon || undefined };
+                            onSaveKbTags?.([...kbTags, newTag]);
+                            setNewTagName('');
+                          }}
+                          className="p-1.5 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors shrink-0"
+                          title="添加标签"
+                        ><Plus className="w-3 h-3" /></button>
+                      </div>
+                      {/* 颜色色块 */}
+                      <div className="grid grid-cols-6 gap-1">
+                        {PRESET_COLORS.map(c => (
+                          <button
+                            key={c}
+                            onClick={() => setNewTagColor(c)}
+                            className={`w-5 h-5 rounded-full transition-all ${
+                              newTagColor === c ? 'ring-2 ring-offset-1 ring-gray-500 scale-110' : 'hover:scale-110'
+                            }`}
+                            style={{ background: c }}
+                          />
+                        ))}
+                      </div>
+                      {/* 图标选择 */}
+                      <div className="grid grid-cols-6 gap-1">
+                        <button
+                          onClick={() => setNewTagIcon('')}
+                          className={`flex items-center justify-center w-5 h-5 rounded-md text-[10px] font-bold transition-all ${
+                            !newTagIcon ? 'bg-gray-300 text-gray-700' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                          }`}
+                          title="无图标"
+                        >—</button>
+                        {PRESET_ICONS.map(iconName => {
+                          const TIcon = (LucideIcons as any)[iconName];
+                          if (!TIcon) return null;
+                          const active = newTagIcon === iconName;
+                          return (
+                            <button
+                              key={iconName}
+                              onClick={() => setNewTagIcon(iconName)}
+                              className={`flex items-center justify-center w-5 h-5 rounded-md transition-all ${
+                                active ? 'ring-2 ring-green-400 scale-110' : 'bg-gray-100 hover:bg-gray-200 text-gray-500'
+                              }`}
+                              style={active ? { background: newTagColor + '28', color: newTagColor } : {}}
+                              title={iconName}
+                            >
+                              <TIcon className="w-3 h-3" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <button
                   onClick={() => setShowKbSettings(v => !v)}
                   className="w-full flex items-center gap-2.5 px-3 py-2 text-gray-500 hover:text-green-700 hover:bg-green-50 rounded-xl transition-colors text-sm"
@@ -1232,6 +1682,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                     const dateStr = conv.updatedAt
                       ? new Date(conv.updatedAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
                       : '';
+                    const isRenaming = renamingConvId === conv.id;
                     return (
                       <button
                         key={conv.id}
@@ -1245,14 +1696,41 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                         `}
                       >
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{conv.title}</p>
+                          {isRenaming ? (
+                            <input
+                              autoFocus
+                              value={renameValue}
+                              onChange={e => setRenameValue(e.target.value)}
+                              onBlur={() => handleFinishRename(false)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') handleFinishRename(false);
+                                if (e.key === 'Escape') { setRenamingConvId(null); setRenameValue(''); }
+                                e.stopPropagation();
+                              }}
+                              onClick={e => e.stopPropagation()}
+                              className="w-full text-sm bg-white border border-purple-300 rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-purple-400"
+                            />
+                          ) : (
+                            <p className="text-sm font-medium truncate">{conv.title}</p>
+                          )}
                         </div>
-                        <button
-                          onClick={(e) => handleDeleteConversation(conv.id, e)}
-                          className="p-1 mt-0.5 opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-500 rounded-lg transition-all flex-shrink-0"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
+                        {!isRenaming && (
+                          <>
+                            <button
+                              onClick={(e) => handleStartRename(conv.id, conv.title, e)}
+                              className="p-1 mt-0.5 opacity-0 group-hover:opacity-100 hover:bg-gray-100 hover:text-gray-600 rounded-lg transition-all flex-shrink-0"
+                              title="重命名"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={(e) => handleDeleteConversation(conv.id, e)}
+                              className="p-1 mt-0.5 opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-500 rounded-lg transition-all flex-shrink-0"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </>
+                        )}
                       </button>
                     );
                   })
@@ -1362,72 +1840,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                 </button>
               </>
             )}
-            {/* KB mode settings button */}
-            {isKbMode && !compact && (
-              <div className="relative">
-                <button
-                  onClick={() => setShowKbSettings(v => !v)}
-                  className={`p-1.5 rounded-lg transition-colors ${
-                    showKbSettings ? 'text-green-600 bg-green-50' : 'text-gray-400 hover:text-green-600 hover:bg-green-50'
-                  }`}
-                  title="知识库设置"
-                >
-                  <Settings2 className="w-4 h-4" />
-                </button>
-                {/* KB Settings Popover */}
-                {showKbSettings && (
-                  <div className="absolute right-0 top-10 w-72 bg-white border border-gray-200 rounded-2xl shadow-xl z-50 overflow-hidden">
-                    <div className="px-3 py-2.5 border-b border-gray-100 flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <Brain className="w-3.5 h-3.5 text-green-600" />
-                        <p className="text-xs font-semibold text-gray-800">知识库设置</p>
-                      </div>
-                      <button onClick={() => setShowKbSettings(false)} className="w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-600">
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                    <div className="p-3 space-y-3">
-                      <div>
-                        <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1">
-                          <Key className="w-3 h-3" />Gemini Embedding API Key
-                        </label>
-                        <input
-                          type="password"
-                          value={kbEmbeddingKey}
-                          onChange={e => setKbEmbeddingKey(e.target.value)}
-                          placeholder="AIzaSy..."
-                          className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-900 font-mono"
-                        />
-                        <p className="text-[11px] text-gray-400 mt-0.5">用于文本向量化，不发送给 LLM</p>
-                      </div>
-                      <div>
-                        <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1">
-                          <Globe className="w-3 h-3" />Embedding API Base URL
-                        </label>
-                        <input
-                          type="text"
-                          value={kbEmbeddingBaseUrl}
-                          onChange={e => setKbEmbeddingBaseUrl(e.target.value)}
-                          placeholder="留空使用官方地址"
-                          className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-900 font-mono"
-                        />
-                        <p className="text-[11px] text-gray-400 mt-0.5">可填代理地址，解决地区限制问题</p>
-                      </div>
-                      <div className="text-[11px] text-gray-500 bg-gray-50 rounded-lg p-2">
-                        <p className="font-medium text-gray-600 mb-1">知识库文件：{knowledgeBaseFileIds?.size || 0} 个</p>
-                        <p>在文件管理中悬停文件，点击 🧠 图标将文件加入知识库</p>
-                      </div>
-                      <button
-                        onClick={handleSaveKbSettings}
-                        className="w-full px-3 py-1.5 text-xs bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors"
-                      >
-                        保存
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+            {/* KB mode: no inline settings popover — KB settings now live in the main SettingsModal */}
             {/* Mode Toggle Pill */}
             {!compact && (
               <div className="flex items-center ml-1.5 bg-gray-100 rounded-lg p-0.5">
@@ -1458,12 +1871,18 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
           <div className={`flex-1 flex overflow-hidden`}>
             {/* Left Chat Pane */}
             <div className={layoutMode === 'split' ? 'w-1/2 border-r border-gray-100 flex flex-col overflow-hidden' : 'flex-1 flex flex-col overflow-hidden'}>
-              {/* Messages Area */}
-              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+              {/* Messages Area + Nav Track */}
+              <div className="flex-1 relative overflow-hidden">
+                <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto px-6 py-5 space-y-5 pr-7">
                 {isKbMode ? (
                   <>
                     {(activeKbConversation?.messages || []).map((msg) => (
-                      <MessageBubble key={msg.id} message={msg} isKb />
+                      <div
+                        key={msg.id}
+                        ref={msg.role === 'user' ? (el) => { if (el) msgRefs.current.set(msg.id, el); else msgRefs.current.delete(msg.id); } : undefined}
+                      >
+                        <MessageBubble message={msg} isKb onQuote={handleQuoteMessage} />
+                      </div>
                     ))}
                     {isKbProcessing && (
                       <div className="flex gap-3">
@@ -1484,7 +1903,12 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                 ) : (
                   <>
                     {activeConversation.messages.map((msg) => (
-                      <MessageBubble key={msg.id} message={msg} />
+                      <div
+                        key={msg.id}
+                        ref={msg.role === 'user' ? (el) => { if (el) msgRefs.current.set(msg.id, el); else msgRefs.current.delete(msg.id); } : undefined}
+                      >
+                        <MessageBubble message={msg} onQuote={handleQuoteMessage} />
+                      </div>
                     ))}
 
                     {/* Streaming Message */}
@@ -1517,6 +1941,18 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                     <div ref={messagesEndRef} />
                   </>
                 )}
+                </div>
+
+                {/* Scroll Navigation Track */}
+                <ScrollNavTrack
+                  turns={isKbMode
+                    ? (activeKbConversation?.messages || []).filter(m => m.role === 'user')
+                    : (activeConversation?.messages || []).filter(m => m.role === 'user')
+                  }
+                  containerRef={messagesContainerRef}
+                  msgRefs={msgRefs}
+                  isKb={isKbMode}
+                />
               </div>
 
               {/* Error Banner */}
@@ -1533,23 +1969,58 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
               {/* Input Area */}
               <div className={`p-4 border-t border-gray-100 ${isKbMode ? 'bg-green-50/30' : 'bg-white'}`}>
                 {isKbMode && (
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="text-xs rounded-full px-2.5 py-0.5 bg-green-50 text-green-600 border border-green-100 flex items-center gap-1">
-                      <Brain className="w-3 h-3" />知识库对话
-                      {(knowledgeBaseFileIds?.size || 0) > 0 && <span className="ml-1 text-green-500">({knowledgeBaseFileIds!.size} 个文件)</span>}
+                  <div className="flex flex-col gap-1.5 mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs rounded-full px-2.5 py-0.5 bg-green-50 text-green-600 border border-green-100 flex items-center gap-1">
+                        <Brain className="w-3 h-3" />知识库对话
+                        {(knowledgeBaseFileIds?.size || 0) > 0 && <span className="ml-1 text-green-500">({knowledgeBaseFileIds!.size} 个文件)</span>}
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (activeKbConversationId) {
+                            setKbConversations(prev => prev.map(c =>
+                              c.id === activeKbConversationId ? { ...c, messages: [createKbWelcomeMessage()] } : c
+                            ));
+                          }
+                        }}
+                        className="text-[10px] text-gray-400 hover:text-red-400 transition-colors"
+                        title="清空知识库对话"
+                      >清空</button>
+                      <button onClick={() => handleToggleKbMode(false)} className="text-[10px] text-gray-400 hover:text-gray-600 transition-colors">✕ 退出</button>
                     </div>
-                    <button
-                      onClick={() => {
-                        if (activeKbConversationId) {
-                          setKbConversations(prev => prev.map(c =>
-                            c.id === activeKbConversationId ? { ...c, messages: [createKbWelcomeMessage()] } : c
-                          ));
-                        }
-                      }}
-                      className="text-[10px] text-gray-400 hover:text-red-400 transition-colors"
-                      title="清空知识库对话"
-                    >清空</button>
-                    <button onClick={() => handleToggleKbMode(false)} className="text-[10px] text-gray-400 hover:text-gray-600 transition-colors">✕ 退出</button>
+                    {kbTags.length > 0 && (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs text-gray-400 shrink-0">范围：</span>
+                        <button
+                          onClick={() => setSelectedKbTagIds([])}
+                          className={`text-xs px-2.5 py-0.5 rounded-full border transition-all font-medium ${
+                            selectedKbTagIds.length === 0
+                              ? 'bg-green-500 text-white border-green-500 shadow-sm'
+                              : 'bg-white text-gray-500 border-gray-200 hover:border-green-300 hover:text-green-600'
+                          }`}
+                        >全部</button>
+                        {kbTags.map(tag => (
+                          <button
+                            key={tag.id}
+                            onClick={() => setSelectedKbTagIds(prev =>
+                              prev.includes(tag.id) ? prev.filter(id => id !== tag.id) : [...prev, tag.id]
+                            )}
+                            className={`text-xs px-2.5 py-0.5 rounded-full border transition-all font-medium flex items-center gap-1 ${
+                              selectedKbTagIds.includes(tag.id)
+                                ? 'text-white border-transparent shadow-sm'
+                                : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300 hover:text-gray-700'
+                            }`}
+                            style={selectedKbTagIds.includes(tag.id) ? { background: tag.color, borderColor: tag.color } : {}}
+                          >
+                            <span
+                              className="w-1.5 h-1.5 rounded-full shrink-0"
+                              style={{ background: selectedKbTagIds.includes(tag.id) ? 'rgba(255,255,255,0.75)' : tag.color }}
+                            />
+                            {tag.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
                 <div className={`flex items-end gap-2 border rounded-2xl px-4 py-3 transition-all shadow-sm ${
