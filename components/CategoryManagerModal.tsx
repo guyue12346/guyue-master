@@ -44,9 +44,9 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   }, [isOpen, initialEditId]);
 
   // Dynamic Icon Renderer
-  const IconRender = ({ name, className }: { name: string; className?: string }) => {
+  const IconRender = ({ name, className, color }: { name: string; className?: string; color?: string }) => {
     const Icon = (LucideIcons as any)[name] || LucideIcons.Folder;
-    return <Icon className={className} />;
+    return color ? <Icon className={className} color={color} /> : <Icon className={className} />;
   };
 
   const startEdit = (cat: Category) => {
@@ -171,14 +171,10 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                     {/* Icon */}
                     <div
                       className={`p-1.5 rounded-md shrink-0 pointer-events-none ${isEditing ? 'ring-1 ring-blue-500/50' : ''}`}
-                      style={{ 
-                        backgroundColor: cat.color ? `${cat.color}20` : '#f3f4f6', 
-                        color: cat.color || '#6b7280' 
-                      }}
+                      style={{ backgroundColor: cat.color ? `${cat.color}20` : '#f3f4f6' }}
                     >
-                      <IconRender name={cat.icon} className="w-4 h-4" />
+                      <IconRender name={cat.icon} className="w-4 h-4" color={cat.color || '#9ca3af'} />
                     </div>
-                    
                     {/* Name */}
                     <span className="flex-1 text-sm font-medium text-gray-700 truncate pointer-events-none">{cat.name}</span>
                     

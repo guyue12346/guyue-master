@@ -3,7 +3,7 @@ import {
   MessageSquarePlus, Send, Settings2, Trash2, StopCircle, Copy, Check,
   ChevronDown, Bot, User, Sparkles, AlertCircle, Loader2, Plus, X,
   PanelLeftClose, PanelLeftOpen, RotateCcw, Download, Globe, Columns, Square, Zap, Wand2, Search, HelpCircle,
-  Brain, Key, Pencil, Quote, Tag
+  Brain, Key, Pencil, Quote, Tag, Database, RefreshCw, AlertTriangle, CheckCircle2
 } from 'lucide-react';
 import { MarkdownContent } from './MarkdownContent';
 import {
@@ -23,7 +23,7 @@ import { Terminal as TerminalComponent } from './Terminal';
 import { PromptRecord, FileRecord, KbTag, KbFileEntry } from '../types';
 import * as LucideIcons from 'lucide-react';
 import { HelpModal } from './HelpModal';
-import { buildIndex, loadRagIndex, saveRagIndex, searchIndex } from '../utils/ragService';
+import { buildIndex, loadRagIndex, saveRagIndex, searchIndex, checkIndexStatus, loadRagIndexMeta, saveRagIndexMeta, EMBEDDING_MODELS, EMBEDDING_PROVIDER_LABELS, EmbeddingConfig, RagIndexMeta } from '../utils/ragService';
 
 const STORAGE_KEY_KB_MESSAGES = 'guyue_kb_agent_history';
 
@@ -57,6 +57,112 @@ const persistKbApiConfigs = (configs: SavedChatApiConfig[]) => {
   localStorage.setItem(STORAGE_KEY_KB_API_CONFIGS, JSON.stringify(configs));
 };
 
+// ── KB Embedding 配置持久化（旧单项，保留用于迁移） ──
+const STORAGE_KEY_KB_EMBEDDING_CONFIG = 'guyue_kb_embedding_config_v1';
+const loadKbEmbeddingConfig = (): EmbeddingConfig => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_KB_EMBEDDING_CONFIG);
+    if (saved) return JSON.parse(saved);
+  } catch {}
+  return { provider: 'gemini', model: 'gemini-embedding-001', apiKey: '', baseUrl: '' };
+};
+const saveKbEmbeddingConfig = (config: EmbeddingConfig) => {
+  localStorage.setItem(STORAGE_KEY_KB_EMBEDDING_CONFIG, JSON.stringify(config));
+  localStorage.setItem('guyue_rag_embedding_key', config.apiKey);
+  localStorage.setItem('guyue_rag_embedding_base_url', config.baseUrl || '');
+};
+
+// ── KB 对话模型配置持久化（旧单项，保留用于迁移） ──
+const STORAGE_KEY_KB_CHAT_CONFIG = 'guyue_kb_chat_config_v1';
+interface KbChatConfig {
+  provider: string;
+  apiKey: string;
+  baseUrl?: string;
+  model: string;
+}
+const loadKbChatConfig = (): KbChatConfig | null => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_KB_CHAT_CONFIG);
+    if (saved) return JSON.parse(saved);
+  } catch {}
+  return null;
+};
+const saveKbChatConfig = (config: KbChatConfig) => {
+  localStorage.setItem(STORAGE_KEY_KB_CHAT_CONFIG, JSON.stringify(config));
+};
+
+// ── Embedding 配置列表（新版多配置） ──
+interface SavedEmbeddingProfile {
+  id: string;
+  label: string;
+  provider: string;
+  model: string;
+  apiKey: string;
+  baseUrl?: string;
+}
+
+const STORAGE_KEY_KB_EMB_PROFILES = 'guyue_kb_emb_profiles_v1';
+const STORAGE_KEY_KB_EMB_ACTIVE_ID = 'guyue_kb_emb_active_id';
+
+const loadEmbeddingProfiles = (): SavedEmbeddingProfile[] => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_KB_EMB_PROFILES);
+    if (saved) return JSON.parse(saved);
+  } catch {}
+  // 迁移旧的单项配置
+  try {
+    const old = localStorage.getItem(STORAGE_KEY_KB_EMBEDDING_CONFIG);
+    if (old) {
+      const cfg: EmbeddingConfig = JSON.parse(old);
+      if (cfg.apiKey) {
+        return [{ id: 'migrated-default', label: '默认配置', provider: cfg.provider || 'gemini', model: cfg.model || 'gemini-embedding-001', apiKey: cfg.apiKey, baseUrl: cfg.baseUrl }];
+      }
+    }
+  } catch {}
+  return [];
+};
+const persistEmbeddingProfiles = (profiles: SavedEmbeddingProfile[]) => {
+  localStorage.setItem(STORAGE_KEY_KB_EMB_PROFILES, JSON.stringify(profiles));
+};
+const loadActiveEmbId = (): string => localStorage.getItem(STORAGE_KEY_KB_EMB_ACTIVE_ID) || '';
+const persistActiveEmbId = (id: string) => localStorage.setItem(STORAGE_KEY_KB_EMB_ACTIVE_ID, id);
+
+// ── KB Chat 配置列表（新版多配置） ──
+interface SavedKbChatProfile {
+  id: string;
+  label: string;
+  provider: string;
+  model: string;
+  apiKey: string;
+  baseUrl?: string;
+}
+
+const STORAGE_KEY_KB_CHAT_PROFILES = 'guyue_kb_chat_profiles_v1';
+const STORAGE_KEY_KB_CHAT_ACTIVE_ID = 'guyue_kb_chat_active_id';
+
+const loadKbChatProfiles = (): SavedKbChatProfile[] => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_KB_CHAT_PROFILES);
+    if (saved) return JSON.parse(saved);
+  } catch {}
+  // 迁移旧的单项配置
+  try {
+    const old = localStorage.getItem(STORAGE_KEY_KB_CHAT_CONFIG);
+    if (old) {
+      const cfg: KbChatConfig = JSON.parse(old);
+      if (cfg.apiKey) {
+        return [{ id: 'migrated-chat-default', label: '默认对话配置', provider: cfg.provider, model: cfg.model, apiKey: cfg.apiKey, baseUrl: cfg.baseUrl }];
+      }
+    }
+  } catch {}
+  return [];
+};
+const persistKbChatProfiles = (profiles: SavedKbChatProfile[]) => {
+  localStorage.setItem(STORAGE_KEY_KB_CHAT_PROFILES, JSON.stringify(profiles));
+};
+const loadActiveKbChatId = (): string => localStorage.getItem(STORAGE_KEY_KB_CHAT_ACTIVE_ID) || '';
+const persistActiveKbChatId = (id: string) => localStorage.setItem(STORAGE_KEY_KB_CHAT_ACTIVE_ID, id);
+
 const createKbWelcomeMessage = (): ChatMessage => ({
   id: 'kb-welcome',
   role: 'assistant',
@@ -84,6 +190,25 @@ const AIAvatar: React.FC<{ size?: 'sm' | 'md' | 'lg' }> = ({ size = 'md' }) => {
       style={{ background: 'linear-gradient(135deg, #6d28d9 0%, #9333ea 40%, #db2777 100%)' }}
     >
       <Sparkles className={`${iconSizeMap[size]} text-white`} />
+    </div>
+  );
+};
+
+// ==================== User Avatar ====================
+const getUserAvatar = () => {
+  try { return localStorage.getItem('guyue_user_avatar') || ''; } catch { return ''; }
+};
+const UserAvatar: React.FC<{ size?: 'sm' | 'md' | 'lg' }> = ({ size = 'md' }) => {
+  const sizeMap = { sm: 'w-6 h-6', md: 'w-8 h-8', lg: 'w-16 h-16' };
+  const iconSizeMap = { sm: 'w-3 h-3', md: 'w-4 h-4', lg: 'w-8 h-8' };
+  const avatar = getUserAvatar();
+  return avatar ? (
+    <div className={`${sizeMap[size]} rounded-xl flex-shrink-0 overflow-hidden shadow-sm`}>
+      <img src={avatar} alt="用户头像" className="w-full h-full object-cover" />
+    </div>
+  ) : (
+    <div className={`${sizeMap[size]} rounded-xl flex-shrink-0 flex items-center justify-center bg-gradient-to-br from-blue-500 to-blue-700 shadow-sm`}>
+      <User className={`${iconSizeMap[size]} text-white`} />
     </div>
   );
 };
@@ -127,9 +252,7 @@ const MessageBubble: React.FC<{
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} group`}>
       {/* Avatar */}
       {isUser ? (
-        <div className="w-8 h-8 rounded-xl flex-shrink-0 flex items-center justify-center bg-gradient-to-br from-blue-500 to-blue-700 shadow-sm">
-          <User className="w-4 h-4 text-white" />
-        </div>
+        <UserAvatar />
       ) : (
         isKb ? <KBAvatar /> : <AIAvatar />
       )}
@@ -210,6 +333,39 @@ const PROVIDER_LABELS: Record<string, string> = {
   deepseek: 'DeepSeek', zhipu: '智谱 GLM', moonshot: '月之暗面', minimax: 'MiniMax',
   ollama: 'Ollama (本地)', custom: '自定义 API',
 };
+
+const PROVIDER_MODEL_HINTS: Record<string, string[]> = {
+  zenmux: ['代理 100+ 模型', 'GPT / Claude / Gemini / DeepSeek', 'Kimi / GLM / Qwen / Grok 等'],
+  gemini: ['gemini-2.5-pro（旗舰）', 'gemini-2.5-flash / 2.5-flash-lite', 'gemini-2.0-flash / 2.0-flash-lite', 'gemini-1.5-pro / 1.5-flash'],
+  openai: ['gpt-4.1 / 4.1-mini / 4.1-nano', 'gpt-4o / 4o-mini', 'o4-mini / o3 / o3-mini（推理）'],
+  anthropic: ['claude-opus-4-5（最强）', 'claude-sonnet-4-5 / haiku-4-5', 'claude-3-7-sonnet（扩展思考）', 'claude-3-5-sonnet / 3-5-haiku'],
+  deepseek: ['deepseek-chat（DeepSeek-V3）', 'deepseek-reasoner（DeepSeek-R1）'],
+  zhipu: ['glm-4-plus / glm-4-air / glm-4-flash', 'glm-z1-air / glm-z1-flash（推理）'],
+  moonshot: ['kimi-k2.5 / k2-turbo / k2-thinking', 'moonshot-v1-128k / v1-32k'],
+  minimax: ['MiniMax-M2.5 / M2.5-highspeed', 'MiniMax-M2.1 / M2'],
+  ollama: ['llama3.3 / qwen3 / deepseek-r1 / gemma3', '本地部署，可自定义模型'],
+  custom: ['任意 OpenAI 兼容接口', '自定义 Base URL 与模型名称'],
+};
+
+const EMBEDDING_PROVIDER_HINTS: Record<string, string[]> = {
+  gemini: ['gemini-embedding-exp-03-07（3072维，推荐）', 'text-embedding-004（768维，稳定）', 'gemini-embedding-001（768维，旧版）'],
+  qwen: ['text-embedding-v3（1024维，推荐）', 'text-embedding-v2（1536维）', 'text-embedding-v1（1536维）'],
+  openai: ['text-embedding-3-large（3072维，最强）', 'text-embedding-3-small（1536维，性价比）', 'text-embedding-ada-002（1536维）'],
+  zhipu: ['embedding-3（2048维，最新）', 'embedding-2（1024维）'],
+  'custom-openai': ['任意 OpenAI 兼容嵌入接口', '自定义 Base URL 与模型名称'],
+};
+
+const ProviderHint: React.FC<{ hints: string[] }> = ({ hints }) => (
+  <span className="relative group inline-flex items-center ml-1 align-middle">
+    <span className="w-3.5 h-3.5 rounded-full bg-gray-200 text-gray-500 hover:bg-blue-100 hover:text-blue-500 text-[10px] font-bold flex items-center justify-center cursor-help leading-none select-none">?</span>
+    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-[300] hidden group-hover:block bg-gray-800 text-white text-[11px] rounded-lg px-2.5 py-2 w-56 shadow-xl pointer-events-none whitespace-nowrap">
+      <ul className="space-y-0.5">
+        {hints.map((h, i) => <li key={i} className="text-gray-200">{h}</li>)}
+      </ul>
+      <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-800" />
+    </span>
+  </span>
+);
 
 const maskApiKey = (key: string) => {
   if (!key) return '';
@@ -347,8 +503,35 @@ const SettingsPanel: React.FC<{
           )}
         </div>
 
+        {/* ── 模型选择（跟随选中的 API 配置） ── */}
+        {selectedApiConfigId && (
+          <div className="px-5 pt-2 pb-3">
+            <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-3.5">
+              <label className="block text-xs font-semibold text-blue-600 mb-2">
+                模型
+                {localConfig.provider === 'zenmux' && <span className="ml-1 font-normal text-blue-400">({models.length} 个可用)</span>}
+              </label>
+              {models.length > 0 ? (
+                <select value={localConfig.model} onChange={e => setLocalConfig({ ...localConfig, model: e.target.value })} className="w-full px-3 py-2 border border-blue-200 bg-white rounded-lg focus:ring-1 focus:ring-blue-400 focus:border-blue-400 text-sm outline-none">
+                  {localConfig.provider === 'zenmux' ? (() => {
+                    const grouped: Record<string, typeof models> = {};
+                    models.forEach((m: any) => { const cat = m.category || '其他'; if (!grouped[cat]) grouped[cat] = []; grouped[cat].push(m); });
+                    return Object.entries(grouped).map(([cat, ms]) => (
+                      <optgroup key={cat} label={`━━ ${cat} ━━`}>
+                        {ms.map((m: any) => <option key={m.id} value={m.id}>{m.name}{m.description ? ` (${m.description})` : ''}</option>)}
+                      </optgroup>
+                    ));
+                  })() : models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              ) : (
+                <input type="text" value={localConfig.model} onChange={e => setLocalConfig({ ...localConfig, model: e.target.value })} placeholder="输入模型名称" className="w-full px-3 py-2 border border-blue-200 bg-white rounded-lg focus:ring-1 focus:ring-blue-400 text-sm outline-none" />
+              )}
+            </div>
+          </div>
+        )}
+
         {/* ── 添加 / 编辑表单 ── */}
-        <div className="px-5 pt-2 pb-4">
+        <div className="px-5 pt-1 pb-4">
           <div className="rounded-xl border border-gray-200 overflow-hidden">
             <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{isEditing ? '编辑配置' : '添加新配置'}</p>
@@ -361,7 +544,7 @@ const SettingsPanel: React.FC<{
                   <input type="text" value={formLabel} onChange={e => setFormLabel(e.target.value)} placeholder="例如：主力 API" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100" />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">提供商 <span className="text-red-400">*</span></label>
+                  <label className="block text-xs text-gray-500 mb-1 flex items-center">提供商 <span className="text-red-400">*</span><ProviderHint hints={PROVIDER_MODEL_HINTS[formProvider] || []} /></label>
                   <select value={formProvider} onChange={e => setFormProvider(e.target.value as ChatConfig['provider'])} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 bg-white">
                     {Object.entries(PROVIDER_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
@@ -390,27 +573,9 @@ const SettingsPanel: React.FC<{
           </div>
         </div>
 
-        {/* ── 高级设置 ── */}
+        {/* ── 高级设置（Temperature + 系统提示词） ── */}
         <div className="px-5 pb-4 border-t border-gray-100 pt-4 space-y-4">
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">高级设置</p>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">模型 {localConfig.provider === 'zenmux' && <span className="text-xs text-gray-500">({models.length} 个可用)</span>}</label>
-            {models.length > 0 ? (
-              <select value={localConfig.model} onChange={e => setLocalConfig({ ...localConfig, model: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 text-sm">
-                {localConfig.provider === 'zenmux' ? (() => {
-                  const grouped: Record<string, typeof models> = {};
-                  models.forEach((m: any) => { const cat = m.category || '其他'; if (!grouped[cat]) grouped[cat] = []; grouped[cat].push(m); });
-                  return Object.entries(grouped).map(([cat, ms]) => (
-                    <optgroup key={cat} label={`━━ ${cat} ━━`}>
-                      {ms.map((m: any) => <option key={m.id} value={m.id}>{m.name}{m.description ? ` (${m.description})` : ''}</option>)}
-                    </optgroup>
-                  ));
-                })() : models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </select>
-            ) : (
-              <input type="text" value={localConfig.model} onChange={e => setLocalConfig({ ...localConfig, model: e.target.value })} placeholder="输入模型名称" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500" />
-            )}
-          </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Temperature: {localConfig.temperature?.toFixed(1)}</label>
             <input type="range" min="0" max="2" step="0.1" value={localConfig.temperature || 0.7} onChange={e => setLocalConfig({ ...localConfig, temperature: parseFloat(e.target.value) })} className="w-full" />
@@ -433,155 +598,298 @@ const SettingsPanel: React.FC<{
 // ==================== KB Settings Panel ====================
 
 const KbSettingsPanel: React.FC<{
-  kbEmbeddingKey: string;
-  kbEmbeddingBaseUrl: string;
-  onChangeKbSettings: (key: string, baseUrl: string) => void;
+  kbEmbeddingConfig: EmbeddingConfig;
+  onChangeEmbeddingConfig: (config: EmbeddingConfig) => void;
+  kbChatConfig: KbChatConfig | null;
+  onChangeKbChatConfig: (config: KbChatConfig) => void;
+  indexMeta: RagIndexMeta | null;
+  indexStatus: { newFiles: string[]; staleFiles: string[]; removedFiles: string[]; upToDate: boolean } | null;
+  onRebuildIndex: () => void;
+  onUpdateIndex: () => void;
+  isIndexing: boolean;
+  indexProgressMsg: string;
+  indexProgressDone: number;
+  indexProgressTotal: number;
   onClose: () => void;
-}> = ({ kbEmbeddingKey, kbEmbeddingBaseUrl, onChangeKbSettings, onClose }) => {
-  const [savedApiConfigs, setSavedApiConfigs] = useState<SavedChatApiConfig[]>(() => loadKbApiConfigs());
-  const [selectedApiConfigId, setSelectedApiConfigId] = useState<string>(() => {
-    const configs = loadKbApiConfigs();
-    return configs.find(c => c.apiKey === kbEmbeddingKey && (c.baseUrl || '') === kbEmbeddingBaseUrl)?.id || '';
+}> = ({ kbEmbeddingConfig, onChangeEmbeddingConfig, kbChatConfig, onChangeKbChatConfig, indexMeta, indexStatus, onRebuildIndex, onUpdateIndex, isIndexing, indexProgressMsg, indexProgressDone, indexProgressTotal, onClose }) => {
+
+  // ── Embedding 配置列表 ──
+  const [embProfiles, setEmbProfiles] = useState<SavedEmbeddingProfile[]>(() => loadEmbeddingProfiles());
+  const [activeEmbId, setActiveEmbId] = useState<string>(() => {
+    const savedId = loadActiveEmbId();
+    const profiles = loadEmbeddingProfiles();
+    if (profiles.find(p => p.id === savedId)) return savedId;
+    const match = profiles.find(p => p.apiKey === kbEmbeddingConfig.apiKey && p.provider === kbEmbeddingConfig.provider);
+    return match?.id || profiles[0]?.id || '';
   });
-  const [localKey, setLocalKey] = useState(kbEmbeddingKey);
-  const [localBaseUrl, setLocalBaseUrl] = useState(kbEmbeddingBaseUrl);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [formLabel, setFormLabel] = useState('');
-  const [formApiKey, setFormApiKey] = useState('');
-  const [formBaseUrl, setFormBaseUrl] = useState('');
+  const [embEditingId, setEmbEditingId] = useState<string | null>(null);
+  const [embFormLabel, setEmbFormLabel] = useState('');
+  const [embFormProvider, setEmbFormProvider] = useState('gemini');
+  const [embFormModel, setEmbFormModel] = useState('gemini-embedding-001');
+  const [embFormCustomModel, setEmbFormCustomModel] = useState('');
+  const [embFormApiKey, setEmbFormApiKey] = useState('');
+  const [embFormBaseUrl, setEmbFormBaseUrl] = useState('');
 
-  const applyConfig = (item: SavedChatApiConfig) => {
-    setSelectedApiConfigId(item.id);
-    setLocalKey(item.apiKey);
-    setLocalBaseUrl(item.baseUrl || '');
+  // ── KB Chat 配置列表 ──
+  const [chatProfiles, setChatProfiles] = useState<SavedKbChatProfile[]>(() => loadKbChatProfiles());
+  const [activeChatId, setActiveChatId] = useState<string>(() => {
+    const savedId = loadActiveKbChatId();
+    const profiles = loadKbChatProfiles();
+    if (profiles.find(p => p.id === savedId)) return savedId;
+    const match = kbChatConfig ? profiles.find(p => p.apiKey === kbChatConfig.apiKey && p.provider === kbChatConfig.provider) : null;
+    return match?.id || profiles[0]?.id || '';
+  });
+  const [chatEditingId, setChatEditingId] = useState<string | null>(null);
+  const [chatFormLabel, setChatFormLabel] = useState('');
+  const [chatFormProvider, setChatFormProvider] = useState('zenmux');
+  const [chatFormApiKey, setChatFormApiKey] = useState('');
+  const [chatFormBaseUrl, setChatFormBaseUrl] = useState('');
+  // 当前激活的对话模型（独立于表单，选中配置后可自由切换）
+  const [activeChatModel, setActiveChatModel] = useState<string>(() => {
+    const savedId = loadActiveKbChatId();
+    const profiles = loadKbChatProfiles();
+    const active = profiles.find(p => p.id === savedId) || profiles[0];
+    return active?.model || '';
+  });
+
+  const activeEmbProfile = embProfiles.find(p => p.id === activeEmbId) || null;
+  const activeChatProfile = chatProfiles.find(p => p.id === activeChatId) || null;
+
+  const embFormModels = EMBEDDING_MODELS[embFormProvider] || [];
+  const activeChatModels = AVAILABLE_MODELS[activeChatProfile?.provider || ''] || [];
+
+  // 选中的 Embedding 配置 vs 当前索引的兼容性
+  const getEmbProfileIndexCompat = (profile: SavedEmbeddingProfile): 'ok' | 'mismatch' | 'no-index' => {
+    if (!indexMeta) return 'no-index';
+    if (indexMeta.embeddingProvider === profile.provider && indexMeta.embeddingModel === profile.model) return 'ok';
+    return 'mismatch';
   };
 
-  const startEdit = (item: SavedChatApiConfig) => {
-    setEditingId(item.id);
-    setFormLabel(item.label);
-    setFormApiKey(item.apiKey);
-    setFormBaseUrl(item.baseUrl || '');
+  // ── Embedding CRUD ──
+  const selectEmbProfile = (p: SavedEmbeddingProfile) => {
+    setActiveEmbId(p.id);
+    persistActiveEmbId(p.id);
+  };
+  const startEditEmb = (p: SavedEmbeddingProfile) => {
+    setEmbEditingId(p.id);
+    setEmbFormLabel(p.label); setEmbFormProvider(p.provider); setEmbFormModel(p.model);
+    setEmbFormApiKey(p.apiKey); setEmbFormBaseUrl(p.baseUrl || ''); setEmbFormCustomModel('');
+  };
+  const cancelEditEmb = () => {
+    setEmbEditingId(null);
+    setEmbFormLabel(''); setEmbFormProvider('gemini'); setEmbFormModel('gemini-embedding-001');
+    setEmbFormApiKey(''); setEmbFormBaseUrl(''); setEmbFormCustomModel('');
+  };
+  const handleAddEmb = () => {
+    if (!embFormLabel.trim() || !embFormApiKey.trim()) return;
+    const resolvedModel = embFormModels.length === 0 ? (embFormCustomModel.trim() || '') : embFormModel;
+    const newP: SavedEmbeddingProfile = { id: crypto.randomUUID(), label: embFormLabel.trim(), provider: embFormProvider, model: resolvedModel, apiKey: embFormApiKey.trim(), baseUrl: embFormBaseUrl.trim() || undefined };
+    const next = [...embProfiles, newP];
+    setEmbProfiles(next); persistEmbeddingProfiles(next);
+    selectEmbProfile(newP); cancelEditEmb();
+  };
+  const handleSaveEditEmb = () => {
+    if (!embEditingId || !embFormLabel.trim() || !embFormApiKey.trim()) return;
+    const resolvedModel = embFormModels.length === 0 ? (embFormCustomModel.trim() || '') : embFormModel;
+    const updated: SavedEmbeddingProfile = { id: embEditingId, label: embFormLabel.trim(), provider: embFormProvider, model: resolvedModel, apiKey: embFormApiKey.trim(), baseUrl: embFormBaseUrl.trim() || undefined };
+    const next = embProfiles.map(p => p.id === embEditingId ? updated : p);
+    setEmbProfiles(next); persistEmbeddingProfiles(next); cancelEditEmb();
+  };
+  const handleDeleteEmb = (id: string) => {
+    const next = embProfiles.filter(p => p.id !== id);
+    setEmbProfiles(next); persistEmbeddingProfiles(next);
+    if (activeEmbId === id) { const na = next[0]?.id || ''; setActiveEmbId(na); persistActiveEmbId(na); }
+    if (embEditingId === id) cancelEditEmb();
   };
 
-  const cancelEdit = () => {
-    setEditingId(null);
-    setFormLabel(''); setFormApiKey(''); setFormBaseUrl('');
+  // ── Chat CRUD ──
+  const selectChatProfile = (p: SavedKbChatProfile) => {
+    setActiveChatId(p.id);
+    persistActiveKbChatId(p.id);
+    setActiveChatModel(p.model || AVAILABLE_MODELS[p.provider]?.[0]?.id || '');
   };
-
-  const handleAdd = () => {
-    if (!formLabel.trim() || !formApiKey.trim()) return;
-    const newItem: SavedChatApiConfig = {
-      id: crypto.randomUUID(), label: formLabel.trim(), provider: 'gemini',
-      apiKey: formApiKey.trim(), baseUrl: formBaseUrl.trim() || '',
-    };
-    const next = [...savedApiConfigs, newItem];
-    setSavedApiConfigs(next);
-    persistKbApiConfigs(next);
-    applyConfig(newItem);
-    cancelEdit();
+  const startEditChat = (p: SavedKbChatProfile) => {
+    setChatEditingId(p.id);
+    setChatFormLabel(p.label); setChatFormProvider(p.provider);
+    setChatFormApiKey(p.apiKey); setChatFormBaseUrl(p.baseUrl || '');
   };
-
-  const handleSaveEdit = () => {
-    if (!editingId || !formLabel.trim() || !formApiKey.trim()) return;
-    const updated: SavedChatApiConfig = {
-      id: editingId, label: formLabel.trim(), provider: 'gemini',
-      apiKey: formApiKey.trim(), baseUrl: formBaseUrl.trim() || '',
-    };
-    const next = savedApiConfigs.map(c => c.id === editingId ? updated : c);
-    setSavedApiConfigs(next);
-    persistKbApiConfigs(next);
-    if (selectedApiConfigId === editingId) applyConfig(updated);
-    cancelEdit();
+  const cancelEditChat = () => {
+    setChatEditingId(null);
+    setChatFormLabel(''); setChatFormProvider('zenmux');
+    setChatFormApiKey(''); setChatFormBaseUrl('');
   };
-
-  const handleDelete = (id: string) => {
-    const next = savedApiConfigs.filter(c => c.id !== id);
-    setSavedApiConfigs(next);
-    persistKbApiConfigs(next);
-    if (selectedApiConfigId === id) setSelectedApiConfigId('');
-    if (editingId === id) cancelEdit();
+  const handleAddChat = () => {
+    if (!chatFormLabel.trim() || !chatFormApiKey.trim()) return;
+    const defaultModel = AVAILABLE_MODELS[chatFormProvider]?.[0]?.id || '';
+    const newP: SavedKbChatProfile = { id: crypto.randomUUID(), label: chatFormLabel.trim(), provider: chatFormProvider, model: defaultModel, apiKey: chatFormApiKey.trim(), baseUrl: chatFormBaseUrl.trim() || undefined };
+    const next = [...chatProfiles, newP];
+    setChatProfiles(next); persistKbChatProfiles(next);
+    setActiveChatId(newP.id); persistActiveKbChatId(newP.id);
+    setActiveChatModel(defaultModel);
+    cancelEditChat();
+  };
+  const handleSaveEditChat = () => {
+    if (!chatEditingId || !chatFormLabel.trim() || !chatFormApiKey.trim()) return;
+    // 保留原有模型，更新其他字段
+    const orig = chatProfiles.find(p => p.id === chatEditingId);
+    const updated: SavedKbChatProfile = { id: chatEditingId, label: chatFormLabel.trim(), provider: chatFormProvider, model: orig?.model || AVAILABLE_MODELS[chatFormProvider]?.[0]?.id || '', apiKey: chatFormApiKey.trim(), baseUrl: chatFormBaseUrl.trim() || undefined };
+    const next = chatProfiles.map(p => p.id === chatEditingId ? updated : p);
+    setChatProfiles(next); persistKbChatProfiles(next);
+    // 若提供商改变，同步更新当前激活模型
+    if (chatEditingId === activeChatId && updated.provider !== orig?.provider) {
+      const newModel = AVAILABLE_MODELS[updated.provider]?.[0]?.id || '';
+      setActiveChatModel(newModel);
+    }
+    cancelEditChat();
+  };
+  const handleDeleteChat = (id: string) => {
+    const next = chatProfiles.filter(p => p.id !== id);
+    setChatProfiles(next); persistKbChatProfiles(next);
+    if (activeChatId === id) {
+      const na = next[0]?.id || '';
+      setActiveChatId(na); persistActiveKbChatId(na);
+      setActiveChatModel(next[0]?.model || '');
+    }
+    if (chatEditingId === id) cancelEditChat();
   };
 
   const handleSave = () => {
-    onChangeKbSettings(localKey, localBaseUrl);
+    if (activeEmbProfile) {
+      const cfg: EmbeddingConfig = { provider: activeEmbProfile.provider, model: activeEmbProfile.model, apiKey: activeEmbProfile.apiKey, baseUrl: activeEmbProfile.baseUrl };
+      onChangeEmbeddingConfig(cfg);
+    }
+    if (activeChatProfile) {
+      // 持久化当前选中的模型到配置中
+      const modelToSave = activeChatModel || AVAILABLE_MODELS[activeChatProfile.provider]?.[0]?.id || '';
+      const updatedProfile = { ...activeChatProfile, model: modelToSave };
+      const next = chatProfiles.map(p => p.id === activeChatProfile.id ? updatedProfile : p);
+      setChatProfiles(next); persistKbChatProfiles(next);
+      const cfg: KbChatConfig = { provider: activeChatProfile.provider, model: modelToSave, apiKey: activeChatProfile.apiKey, baseUrl: activeChatProfile.baseUrl };
+      onChangeKbChatConfig(cfg);
+    }
     onClose();
   };
 
-  const isEditing = editingId !== null;
+  // ── 复用 SettingsPanel 样式的配置卡片 ──
+  const renderEmbProfileCard = (p: SavedEmbeddingProfile) => {
+    const isActive = activeEmbId === p.id;
+    const compat = getEmbProfileIndexCompat(p);
+    return (
+      <div key={p.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${isActive ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
+        <button onClick={() => selectEmbProfile(p)} className="shrink-0" title="设为当前使用">
+          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${isActive ? 'border-green-500' : 'border-gray-300 hover:border-green-400'}`}>
+            {isActive && <div className="w-2 h-2 rounded-full bg-green-500" />}
+          </div>
+        </button>
+        <button className="flex-1 text-left min-w-0" onClick={() => selectEmbProfile(p)}>
+          <p className={`text-sm font-medium truncate ${isActive ? 'text-green-800' : 'text-gray-800'}`}>{p.label}</p>
+          <p className="text-xs text-gray-400 mt-0.5 truncate">
+            {EMBEDDING_PROVIDER_LABELS[p.provider] || p.provider} / {p.model} · {maskApiKey(p.apiKey)}
+          </p>
+        </button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {compat === 'ok' && <span className="text-[10px] bg-green-100 text-green-700 rounded px-1.5 py-0.5">索引兼容</span>}
+          {compat === 'mismatch' && <span className="text-[10px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5">需重建</span>}
+          {compat === 'no-index' && <span className="text-[10px] bg-gray-100 text-gray-500 rounded px-1.5 py-0.5">无索引</span>}
+          <button onClick={() => startEditEmb(p)} className="w-7 h-7 rounded-lg hover:bg-gray-200 text-gray-400 hover:text-gray-700 flex items-center justify-center"><Pencil className="w-3.5 h-3.5" /></button>
+          <button onClick={() => handleDeleteEmb(p.id)} className="w-7 h-7 rounded-lg hover:bg-red-100 text-gray-400 hover:text-red-500 flex items-center justify-center"><Trash2 className="w-3.5 h-3.5" /></button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderChatProfileCard = (p: SavedKbChatProfile) => {
+    const isActive = activeChatId === p.id;
+    return (
+      <div key={p.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${isActive ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
+        <button onClick={() => selectChatProfile(p)} className="shrink-0" title="设为当前使用">
+          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${isActive ? 'border-green-500' : 'border-gray-300 hover:border-green-400'}`}>
+            {isActive && <div className="w-2 h-2 rounded-full bg-green-500" />}
+          </div>
+        </button>
+        <button className="flex-1 text-left min-w-0" onClick={() => selectChatProfile(p)}>
+          <p className={`text-sm font-medium truncate ${isActive ? 'text-green-800' : 'text-gray-800'}`}>{p.label}</p>
+          <p className="text-xs text-gray-400 mt-0.5 truncate">
+            {PROVIDER_LABELS[p.provider] || p.provider} / {p.model} · {maskApiKey(p.apiKey)}
+          </p>
+        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          <button onClick={() => startEditChat(p)} className="w-7 h-7 rounded-lg hover:bg-gray-200 text-gray-400 hover:text-gray-700 flex items-center justify-center"><Pencil className="w-3.5 h-3.5" /></button>
+          <button onClick={() => handleDeleteChat(p.id)} className="w-7 h-7 rounded-lg hover:bg-red-100 text-gray-400 hover:text-red-500 flex items-center justify-center"><Trash2 className="w-3.5 h-3.5" /></button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="absolute inset-0 bg-white z-50 flex flex-col">
       <div className="h-14 border-b border-gray-200 flex items-center justify-between px-4 shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
-        <h3 className="font-semibold text-gray-800">知识库设置</h3>
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-green-100 flex items-center justify-center">
+            <Database className="w-4 h-4 text-green-600" />
+          </div>
+          <h3 className="font-semibold text-gray-800">知识库设置</h3>
+        </div>
         <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <X className="w-5 h-5 text-gray-500" />
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0">
-        {/* ── API 配置列表 ── */}
+
+        {/* ══ Embedding 模型配置列表 ══ */}
         <div className="px-5 pt-4 pb-2">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">知识库 Embedding 配置</p>
-          {savedApiConfigs.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-gray-200 py-5 text-center text-sm text-gray-400">
-              暂无配置，在下方添加第一条
-            </div>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Embedding 模型（向量化）</p>
+          {embProfiles.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-gray-200 py-5 text-center text-sm text-gray-400">暂无配置，在下方添加</div>
           ) : (
-            <div className="space-y-1.5">
-              {savedApiConfigs.map(item => {
-                const isActive = selectedApiConfigId === item.id;
-                return (
-                  <div key={item.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${isActive ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
-                    <button onClick={() => applyConfig(item)} className="shrink-0" title="设为当前使用">
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${isActive ? 'border-green-500' : 'border-gray-300 hover:border-green-400'}`}>
-                        {isActive && <div className="w-2 h-2 rounded-full bg-green-500" />}
-                      </div>
-                    </button>
-                    <button className="flex-1 text-left min-w-0" onClick={() => applyConfig(item)}>
-                      <p className={`text-sm font-medium truncate ${isActive ? 'text-green-800' : 'text-gray-800'}`}>{item.label}</p>
-                      <p className="text-xs text-gray-400 mt-0.5 truncate">Gemini Embedding · {maskApiKey(item.apiKey)}</p>
-                    </button>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button onClick={() => startEdit(item)} className="w-7 h-7 rounded-lg hover:bg-gray-200 text-gray-400 hover:text-gray-700 flex items-center justify-center" title="编辑">
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button onClick={() => handleDelete(item.id)} className="w-7 h-7 rounded-lg hover:bg-red-100 text-gray-400 hover:text-red-500 flex items-center justify-center" title="删除">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <div className="space-y-1.5">{embProfiles.map(renderEmbProfileCard)}</div>
           )}
         </div>
 
-        {/* ── 添加 / 编辑表单 ── */}
-        <div className="px-5 pt-2 pb-4">
+        {/* Embedding 添加/编辑表单 */}
+        <div className="px-5 pt-1 pb-3">
           <div className="rounded-xl border border-gray-200 overflow-hidden">
             <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{isEditing ? '编辑配置' : '添加新配置'}</p>
-              {isEditing && <button onClick={cancelEdit} className="text-xs text-gray-400 hover:text-gray-600">取消</button>}
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{embEditingId ? '编辑 Embedding 配置' : '添加 Embedding 配置'}</p>
+              {embEditingId && <button onClick={cancelEditEmb} className="text-xs text-gray-400 hover:text-gray-600">取消</button>}
             </div>
             <div className="p-4 space-y-3">
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">名称 <span className="text-red-400">*</span></label>
-                <input type="text" value={formLabel} onChange={e => setFormLabel(e.target.value)} placeholder="例如：我的 Gemini 密钥" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">名称 <span className="text-red-400">*</span></label>
+                  <input type="text" value={embFormLabel} onChange={e => setEmbFormLabel(e.target.value)} placeholder="例如：Gemini 主力" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1 flex items-center">提供商 <span className="text-red-400">*</span><ProviderHint hints={EMBEDDING_PROVIDER_HINTS[embFormProvider] || []} /></label>
+                  <select value={embFormProvider} onChange={e => { const p = e.target.value; setEmbFormProvider(p); const ms = EMBEDDING_MODELS[p] || []; setEmbFormModel(ms[0]?.id || ''); setEmbFormCustomModel(''); }} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100 bg-white">
+                    {Object.entries(EMBEDDING_PROVIDER_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </div>
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Embedding API Key <span className="text-red-400">*</span></label>
-                <input type="password" value={formApiKey} onChange={e => setFormApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
-                <p className="text-[10px] text-gray-400 mt-1">当前知识库向量化仅支持 Gemini Embedding</p>
+                <label className="block text-xs text-gray-500 mb-1">模型</label>
+                {embFormModels.length > 0 ? (
+                  <select value={embFormModel} onChange={e => setEmbFormModel(e.target.value)} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100 bg-white">
+                    {embFormModels.map(m => <option key={m.id} value={m.id}>{m.name}{m.dimensions ? ` (${m.dimensions}维)` : ''}</option>)}
+                  </select>
+                ) : (
+                  <input type="text" value={embFormCustomModel} onChange={e => setEmbFormCustomModel(e.target.value)} placeholder="输入模型名称，如 text-embedding-3-small" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
+                )}
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">API Key <span className="text-red-400">*</span></label>
+                <input type="password" value={embFormApiKey} onChange={e => setEmbFormApiKey(e.target.value)} placeholder="输入 API Key" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Base URL</label>
-                <input type="text" value={formBaseUrl} onChange={e => setFormBaseUrl(e.target.value)} placeholder="留空使用官方地址" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
+                <input type="text" value={embFormBaseUrl} onChange={e => setEmbFormBaseUrl(e.target.value)} placeholder="留空使用官方地址" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
               </div>
               <div className="pt-1">
-                {isEditing ? (
-                  <button onClick={handleSaveEdit} disabled={!formLabel.trim() || !formApiKey.trim()} className="w-full rounded-lg bg-green-600 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-40 transition-colors">保存修改</button>
+                {embEditingId ? (
+                  <button onClick={handleSaveEditEmb} disabled={!embFormLabel.trim() || !embFormApiKey.trim()} className="w-full rounded-lg bg-green-600 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-40 transition-colors">保存修改</button>
                 ) : (
-                  <button onClick={handleAdd} disabled={!formLabel.trim() || !formApiKey.trim()} className="w-full rounded-lg bg-gray-900 py-2 text-sm font-medium text-white hover:bg-black disabled:opacity-40 flex items-center justify-center gap-1.5 transition-colors">
+                  <button onClick={handleAddEmb} disabled={!embFormLabel.trim() || !embFormApiKey.trim()} className="w-full rounded-lg bg-gray-900 py-2 text-sm font-medium text-white hover:bg-black disabled:opacity-40 flex items-center justify-center gap-1.5 transition-colors">
                     <Plus className="w-4 h-4" />添加
                   </button>
                 )}
@@ -589,6 +897,173 @@ const KbSettingsPanel: React.FC<{
             </div>
           </div>
         </div>
+
+        {/* ══ 向量索引状态（基于当前选中的 Embedding 配置） ══ */}
+        <div className="px-5 pt-1 pb-3 border-t border-gray-100">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2 pt-3">向量索引状态</p>
+          <div className="rounded-xl border border-gray-200 p-3.5 space-y-2">
+            {!activeEmbProfile ? (
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-gray-400" />
+                <span className="text-sm text-gray-500">请先添加并选择 Embedding 配置</span>
+              </div>
+            ) : (() => {
+              const compat = getEmbProfileIndexCompat(activeEmbProfile);
+              return (
+                <>
+                  {compat === 'ok' && indexMeta && (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        <span className="text-sm text-gray-700">已索引 <strong>{indexMeta.fileCount}</strong> 个文件，<strong>{indexMeta.chunkCount}</strong> 个分块</span>
+                      </div>
+                      <p className="text-xs text-gray-400 ml-6">
+                        {EMBEDDING_PROVIDER_LABELS[indexMeta.embeddingProvider] || indexMeta.embeddingProvider} / {indexMeta.embeddingModel}
+                        &nbsp;·&nbsp;构建于 {new Date(indexMeta.builtAt).toLocaleString()}
+                      </p>
+                      {indexStatus && !indexStatus.upToDate && (
+                        <div className="mt-2 p-2.5 bg-amber-50 rounded-lg border border-amber-100">
+                          <p className="text-xs font-semibold text-amber-700 mb-1">索引需要更新：</p>
+                          {indexStatus.newFiles.length > 0 && <p className="text-xs text-amber-600">+{indexStatus.newFiles.length} 个新文件待索引</p>}
+                          {indexStatus.staleFiles.length > 0 && <p className="text-xs text-amber-600">🔄 {indexStatus.staleFiles.length} 个文件已修改</p>}
+                          {indexStatus.removedFiles.length > 0 && <p className="text-xs text-amber-600">-{indexStatus.removedFiles.length} 个文件已移除</p>}
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {compat === 'mismatch' && indexMeta && (
+                    <div className="flex items-start gap-2 p-2.5 bg-amber-50 rounded-lg border border-amber-100">
+                      <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium text-amber-800">当前索引由不同模型构建</p>
+                        <p className="text-xs text-amber-600 mt-0.5">
+                          已有索引：{EMBEDDING_PROVIDER_LABELS[indexMeta.embeddingProvider] || indexMeta.embeddingProvider} / {indexMeta.embeddingModel}
+                        </p>
+                        <p className="text-xs text-amber-600">应用此配置后需要<strong>完全重建</strong>索引才能使用</p>
+                      </div>
+                    </div>
+                  )}
+                  {compat === 'no-index' && (
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-gray-400" />
+                      <span className="text-sm text-gray-500">尚未构建向量索引，发送第一条问题时将自动构建</span>
+                    </div>
+                  )}
+                  {isIndexing && indexProgressTotal > 0 && (
+                    <div className="mt-2 p-3 bg-blue-50 rounded-lg border border-blue-100 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <RefreshCw className="w-3 h-3 text-blue-500 animate-spin" />
+                          <span className="text-xs font-medium text-blue-700">正在构建索引...</span>
+                        </div>
+                        <span className="text-xs text-blue-500">{indexProgressDone} / {indexProgressTotal}</span>
+                      </div>
+                      <div className="w-full bg-blue-100 rounded-full h-1.5">
+                        <div
+                          className="bg-blue-500 h-1.5 rounded-full transition-all duration-300"
+                          style={{ width: `${indexProgressTotal > 0 ? Math.round(indexProgressDone / indexProgressTotal * 100) : 0}%` }}
+                        />
+                      </div>
+                      {indexProgressMsg && (
+                        <p className="text-[11px] text-blue-500 truncate">{indexProgressMsg}</p>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex gap-2 mt-2">
+                    <button onClick={onUpdateIndex} disabled={isIndexing} className="flex-1 flex items-center justify-center gap-1.5 py-2 text-sm font-medium rounded-lg border border-green-200 text-green-700 hover:bg-green-50 disabled:opacity-40 transition-colors">
+                      <RefreshCw className={`w-3.5 h-3.5 ${isIndexing ? 'animate-spin' : ''}`} />
+                      {isIndexing ? '索引中...' : '增量更新'}
+                    </button>
+                    <button onClick={onRebuildIndex} disabled={isIndexing} className="flex-1 flex items-center justify-center gap-1.5 py-2 text-sm font-medium rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50 disabled:opacity-40 transition-colors">
+                      <Database className="w-3.5 h-3.5" />
+                      完全重建
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* ══ KB 对话模型配置列表 ══ */}
+        <div className="px-5 pt-1 pb-2 border-t border-gray-100">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1 pt-3">对话模型（知识库问答）</p>
+          <p className="text-[11px] text-gray-400 mb-2">用于理解检索结果并生成回答。不配置则使用 AI Chat 当前配置。</p>
+          {chatProfiles.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-gray-200 py-5 text-center text-sm text-gray-400">暂无配置，在下方添加</div>
+          ) : (
+            <div className="space-y-1.5">{chatProfiles.map(renderChatProfileCard)}</div>
+          )}
+        </div>
+
+        {/* 模型选择（跟随选中的对话配置） */}
+        {activeChatId && activeChatProfile && (
+          <div className="px-5 pt-0 pb-3">
+            <div className="rounded-xl border border-green-100 bg-green-50/50 p-3.5">
+              <label className="block text-xs font-semibold text-green-600 mb-2">
+                模型
+                {activeChatProfile.provider === 'zenmux' && <span className="ml-1 font-normal text-green-400">({activeChatModels.length} 个可用)</span>}
+              </label>
+              {activeChatModels.length > 0 ? (
+                <select value={activeChatModel} onChange={e => setActiveChatModel(e.target.value)} className="w-full px-3 py-2 border border-green-200 bg-white rounded-lg focus:ring-1 focus:ring-green-400 focus:border-green-400 text-sm outline-none">
+                  {activeChatProfile.provider === 'zenmux' ? (() => {
+                    const grouped: Record<string, typeof activeChatModels> = {};
+                    activeChatModels.forEach((m: any) => { const cat = m.category || '其他'; if (!grouped[cat]) grouped[cat] = []; grouped[cat].push(m); });
+                    return Object.entries(grouped).map(([cat, ms]) => (
+                      <optgroup key={cat} label={`━━ ${cat} ━━`}>
+                        {ms.map((m: any) => <option key={m.id} value={m.id}>{m.name}{m.description ? ` (${m.description})` : ''}</option>)}
+                      </optgroup>
+                    ));
+                  })() : activeChatModels.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              ) : (
+                <input type="text" value={activeChatModel} onChange={e => setActiveChatModel(e.target.value)} placeholder="输入模型名称" className="w-full px-3 py-2 border border-green-200 bg-white rounded-lg focus:ring-1 focus:ring-green-400 text-sm outline-none" />
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Chat 添加/编辑表单 */}
+        <div className="px-5 pt-1 pb-5">
+          <div className="rounded-xl border border-gray-200 overflow-hidden">
+            <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{chatEditingId ? '编辑对话配置' : '添加对话配置'}</p>
+              {chatEditingId && <button onClick={cancelEditChat} className="text-xs text-gray-400 hover:text-gray-600">取消</button>}
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">名称 <span className="text-red-400">*</span></label>
+                  <input type="text" value={chatFormLabel} onChange={e => setChatFormLabel(e.target.value)} placeholder="例如：Claude 知识库" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1 flex items-center">提供商 <span className="text-red-400">*</span><ProviderHint hints={PROVIDER_MODEL_HINTS[chatFormProvider] || []} /></label>
+                  <select value={chatFormProvider} onChange={e => setChatFormProvider(e.target.value)} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100 bg-white">
+                    {Object.entries(PROVIDER_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">API Key <span className="text-red-400">*</span></label>
+                <input type="password" value={chatFormApiKey} onChange={e => setChatFormApiKey(e.target.value)} placeholder="输入 API Key" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Base URL</label>
+                <input type="text" value={chatFormBaseUrl} onChange={e => setChatFormBaseUrl(e.target.value)} placeholder="留空使用默认地址" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
+              </div>
+              <div className="pt-1">
+                {chatEditingId ? (
+                  <button onClick={handleSaveEditChat} disabled={!chatFormLabel.trim() || !chatFormApiKey.trim()} className="w-full rounded-lg bg-green-600 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-40 transition-colors">保存修改</button>
+                ) : (
+                  <button onClick={handleAddChat} disabled={!chatFormLabel.trim() || !chatFormApiKey.trim()} className="w-full rounded-lg bg-gray-900 py-2 text-sm font-medium text-white hover:bg-black disabled:opacity-40 flex items-center justify-center gap-1.5 transition-colors">
+                    <Plus className="w-4 h-4" />添加
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
 
       <div className="p-4 border-t border-gray-200 shrink-0">
@@ -897,9 +1372,31 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
   const [editingTagName, setEditingTagName] = useState('');
   const [editingTagColor, setEditingTagColor] = useState('');
   const [editingTagIcon, setEditingTagIcon] = useState('');
-  const [kbEmbeddingKey, setKbEmbeddingKey] = useState(() => localStorage.getItem('guyue_rag_embedding_key') || '');
-  const [kbEmbeddingBaseUrl, setKbEmbeddingBaseUrl] = useState(() => localStorage.getItem('guyue_rag_embedding_base_url') || '');
+  const [kbEmbeddingConfig, setKbEmbeddingConfig] = useState<EmbeddingConfig>(() => {
+    const profiles = loadEmbeddingProfiles();
+    const activeId = loadActiveEmbId();
+    const active = profiles.find(p => p.id === activeId) || profiles[0];
+    if (active) return { provider: active.provider, model: active.model, apiKey: active.apiKey, baseUrl: active.baseUrl };
+    return loadKbEmbeddingConfig();
+  });
+  const [kbChatConfig, setKbChatConfigState] = useState<KbChatConfig | null>(() => {
+    const profiles = loadKbChatProfiles();
+    const activeId = loadActiveKbChatId();
+    const active = profiles.find(p => p.id === activeId) || profiles[0];
+    if (active) return { provider: active.provider, model: active.model, apiKey: active.apiKey, baseUrl: active.baseUrl };
+    return loadKbChatConfig();
+  });
+  const [kbIndexMeta, setKbIndexMeta] = useState<RagIndexMeta | null>(null);
+  const [kbIndexStatus, setKbIndexStatus] = useState<{ newFiles: string[]; staleFiles: string[]; removedFiles: string[]; upToDate: boolean } | null>(null);
   const [isKbProcessing, setIsKbProcessing] = useState(false);
+  const [kbIndexProgressMsg, setKbIndexProgressMsg] = useState('');
+  const [kbIndexProgressDone, setKbIndexProgressDone] = useState(0);
+  const [kbIndexProgressTotal, setKbIndexProgressTotal] = useState(0);
+
+  // Load async index meta on mount
+  useEffect(() => {
+    loadRagIndexMeta().then(meta => setKbIndexMeta(meta));
+  }, []);
   const [kbConversations, setKbConversations] = useState<KbConversation[]>(() => loadKbConversations());
   const [activeKbConversationId, setActiveKbConversationId] = useState<string | null>(() => {
     const convs = loadKbConversations();
@@ -1166,17 +1663,81 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
 
   // ── KB mode handlers ──
   const handleSaveKbSettings = () => {
-    localStorage.setItem('guyue_rag_embedding_key', kbEmbeddingKey.trim());
-    localStorage.setItem('guyue_rag_embedding_base_url', kbEmbeddingBaseUrl.trim());
     setShowKbSettings(false);
   };
+
+  // Rebuild KB index from scratch
+  const handleRebuildKbIndex = useCallback(async () => {
+    if (isKbProcessing) return;
+    if (!kbEmbeddingConfig.apiKey) { setError('请先配置 Embedding API Key'); return; }
+    setIsKbProcessing(true);
+    try {
+      const kbFiles = (fileRecords || []).filter(f => (knowledgeBaseFileIds || new Set()).has(f.id));
+      setKbIndexProgressMsg(''); setKbIndexProgressDone(0); setKbIndexProgressTotal(kbFiles.length);
+      let done = 0;
+      const index = await buildIndex(kbFiles, [], kbEmbeddingConfig, (msg) => {
+        setKbIndexProgressMsg(msg);
+        if (msg.startsWith('✅') || msg.startsWith('⚠️') || msg.startsWith('❌')) {
+          done++; setKbIndexProgressDone(done);
+        }
+      });
+      await saveRagIndex(index);
+      const meta: RagIndexMeta = { embeddingProvider: kbEmbeddingConfig.provider, embeddingModel: kbEmbeddingConfig.model, builtAt: Date.now(), fileCount: kbFiles.length, chunkCount: index.length };
+      saveRagIndexMeta(meta);
+      setKbIndexMeta(meta);
+      setKbIndexStatus({ newFiles: [], staleFiles: [], removedFiles: [], upToDate: true });
+    } catch (err) {
+      setError(`索引重建失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsKbProcessing(false);
+      setKbIndexProgressMsg('');
+    }
+  }, [isKbProcessing, kbEmbeddingConfig, fileRecords, knowledgeBaseFileIds]);
+
+  // Incremental update KB index
+  const handleUpdateKbIndex = useCallback(async () => {
+    if (isKbProcessing) return;
+    if (!kbEmbeddingConfig.apiKey) { setError('请先配置 Embedding API Key'); return; }
+    setIsKbProcessing(true);
+    try {
+      const kbFiles = (fileRecords || []).filter(f => (knowledgeBaseFileIds || new Set()).has(f.id));
+      setKbIndexProgressMsg(''); setKbIndexProgressDone(0); setKbIndexProgressTotal(kbFiles.length);
+      let done = 0;
+      let index = await loadRagIndex();
+      index = await buildIndex(kbFiles, index, kbEmbeddingConfig, (msg) => {
+        setKbIndexProgressMsg(msg);
+        if (msg.startsWith('✅') || msg.startsWith('⚠️') || msg.startsWith('❌') || msg.startsWith('✓')) {
+          done++; setKbIndexProgressDone(done);
+        }
+      });
+      await saveRagIndex(index);
+      const meta: RagIndexMeta = { embeddingProvider: kbEmbeddingConfig.provider, embeddingModel: kbEmbeddingConfig.model, builtAt: Date.now(), fileCount: kbFiles.length, chunkCount: index.length };
+      saveRagIndexMeta(meta);
+      setKbIndexMeta(meta);
+      setKbIndexStatus({ newFiles: [], staleFiles: [], removedFiles: [], upToDate: true });
+    } catch (err) {
+      setError(`索引更新失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsKbProcessing(false);
+      setKbIndexProgressMsg('');
+    }
+  }, [isKbProcessing, kbEmbeddingConfig, fileRecords, knowledgeBaseFileIds]);
+
+  // Refresh index status when KB mode is entered
+  useEffect(() => {
+    if (isKbMode && knowledgeBaseFileIds) {
+      const kbFiles = (fileRecords || []).filter(f => (knowledgeBaseFileIds || new Set()).has(f.id));
+      loadRagIndex().then(index => {
+        checkIndexStatus(kbFiles, index).then(status => setKbIndexStatus(status));
+      });
+    }
+  }, [isKbMode, knowledgeBaseFileIds, fileRecords]);
 
   const handleKbSend = useCallback(async () => {
     const trimmedInput = inputValue.trim();
     if (!trimmedInput || isKbProcessing) return;
-    const embeddingApiKey = localStorage.getItem('guyue_rag_embedding_key') || '';
-    if (!embeddingApiKey) {
-      setError('请先在设置中配置知识库 Embedding API Key（右下角设置→知识库）');
+    if (!kbEmbeddingConfig.apiKey) {
+      setError('请先在知识库设置中配置 Embedding API Key');
       return;
     }
     if (!chatService) return;
@@ -1200,7 +1761,6 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
     setInputValue('');
     setIsKbProcessing(true);
     try {
-      const embeddingBaseUrl = localStorage.getItem('guyue_rag_embedding_base_url')?.trim() || undefined;
       // 按已选标签过滤：空 = 全部；否则只搜索包含任一所选标签的文件（或无标签文件）
       const kbFiles = (fileRecords || []).filter(f => {
         if (!(knowledgeBaseFileIds || new Set()).has(f.id)) return false;
@@ -1213,7 +1773,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
       let index = await loadRagIndex();
       // 记录索引构建进度，将警告/错误通过 setError 反馈给用户
       const indexProgressMessages: string[] = [];
-      index = await buildIndex(kbFiles, index, embeddingApiKey, (msg) => {
+      index = await buildIndex(kbFiles, index, kbEmbeddingConfig, (msg) => {
         indexProgressMessages.push(msg);
         // 实时在状态消息中更新进度（仅索引中）
         if (msg.startsWith('正在索引')) {
@@ -1222,14 +1782,19 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
             : c
           ));
         }
-      }, embeddingBaseUrl);
+      });
       // 若有索引失败/跳过，收集并通过 error 提示用户
       const indexErrors = indexProgressMessages.filter(m => m.startsWith('❌') || m.startsWith('⚠️'));
       if (indexErrors.length > 0) {
         setError(`索引警告：${indexErrors.join(' | ')}`);
       }
       await saveRagIndex(index);
-      const results = await searchIndex(trimmedInput, index, embeddingApiKey, 5, embeddingBaseUrl);
+      // 更新索引元数据
+      const meta: RagIndexMeta = { embeddingProvider: kbEmbeddingConfig.provider, embeddingModel: kbEmbeddingConfig.model, builtAt: Date.now(), fileCount: kbFiles.length, chunkCount: index.length };
+      saveRagIndexMeta(meta);
+      setKbIndexMeta(meta);
+
+      const results = await searchIndex(trimmedInput, index, kbEmbeddingConfig, 5);
 
       let contextBlock = '';
       if (results.length > 0) {
@@ -1281,7 +1846,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
     } finally {
       setIsKbProcessing(false);
     }
-  }, [inputValue, isKbProcessing, chatService, activeKbConversation, knowledgeBaseFileIds, fileRecords]);
+  }, [inputValue, isKbProcessing, chatService, activeKbConversation, knowledgeBaseFileIds, fileRecords, kbEmbeddingConfig]);
 
   // Handle config update
   const handleUpdateConfig = (newConfig: ChatConfig) => {
@@ -1901,18 +2466,6 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                         <MessageBubble message={msg} isKb onQuote={handleQuoteMessage} />
                       </div>
                     ))}
-                    {isKbProcessing && (
-                      <div className="flex gap-3">
-                        <KBAvatar />
-                        <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white border border-gray-100 shadow-sm">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-green-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-                            <span className="w-2 h-2 rounded-full bg-green-500 animate-bounce" style={{ animationDelay: '160ms' }} />
-                            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce" style={{ animationDelay: '320ms' }} />
-                          </div>
-                        </div>
-                      </div>
-                    )}
                     <div ref={messagesEndRef} />
                   </>
                 ) : !activeConversation || activeConversation.messages.length === 0 ? (
@@ -2124,14 +2677,24 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
       {/* KB Settings Panel */}
       {showKbSettings && (
         <KbSettingsPanel
-          kbEmbeddingKey={kbEmbeddingKey}
-          kbEmbeddingBaseUrl={kbEmbeddingBaseUrl}
-          onChangeKbSettings={(key, baseUrl) => {
-            setKbEmbeddingKey(key);
-            setKbEmbeddingBaseUrl(baseUrl);
-            localStorage.setItem('guyue_rag_embedding_key', key.trim());
-            localStorage.setItem('guyue_rag_embedding_base_url', baseUrl.trim());
+          kbEmbeddingConfig={kbEmbeddingConfig}
+          onChangeEmbeddingConfig={(config) => {
+            setKbEmbeddingConfig(config);
+            saveKbEmbeddingConfig(config);
           }}
+          kbChatConfig={kbChatConfig}
+          onChangeKbChatConfig={(config) => {
+            setKbChatConfigState(config);
+            saveKbChatConfig(config);
+          }}
+          indexMeta={kbIndexMeta}
+          indexStatus={kbIndexStatus}
+          onRebuildIndex={handleRebuildKbIndex}
+          onUpdateIndex={handleUpdateKbIndex}
+          isIndexing={isKbProcessing}
+          indexProgressMsg={kbIndexProgressMsg}
+          indexProgressDone={kbIndexProgressDone}
+          indexProgressTotal={kbIndexProgressTotal}
           onClose={() => setShowKbSettings(false)}
         />
       )}

@@ -1053,7 +1053,7 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
                       onCancel={() => setCatRenaming(null)}
                     />
                   ) : (
-                    <span className={`text-[13px] font-semibold truncate flex-1 ${isUncategorized ? 'text-gray-400 italic' : 'text-gray-600'}`}>
+                    <span className="text-[13px] font-semibold truncate flex-1 text-gray-600">
                       {getCatName(catId)}
                     </span>
                   )}

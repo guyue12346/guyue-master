@@ -5180,7 +5180,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                     <div className="fixed inset-0 z-40" onClick={() => setShowFilePermissions(false)} />
                     <div className="absolute right-full top-0 mr-2 z-50 w-64 bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
                       <div className="px-4 pt-3.5 pb-2 border-b border-gray-100 flex items-center justify-between">
-                        <p className="text-xs font-semibold text-gray-800">Agent 文件分类权限</p>
+                        <p className="text-xs font-semibold text-gray-800">Agent 文件权限</p>
                         <button
                           onClick={() => {
                             if (filePermissions.length === fileCategories.length) {

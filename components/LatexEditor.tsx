@@ -4,7 +4,7 @@ import {
   Play, ChevronDown, ChevronUp, FolderOpen, Save,
   AlertCircle, AlertTriangle, Info, Loader2, FileType2, CheckCircle2,
   ZoomIn, ZoomOut, Settings2, X, FolderSearch, Download, Package, Search,
-  Copy, Plus, Trash2, Image, Check, Omega, GripVertical, PanelLeftClose, PanelLeftOpen
+  Copy, Plus, Trash2, Image, Check, Omega, GripVertical, PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2
 } from 'lucide-react';
 import { LatexCompileResult, LatexEnvironment, LatexLogEntry, LatexSettings } from '../types';
 import { GoogleGenAI } from '@google/genai';
@@ -1442,9 +1442,13 @@ interface LatexEditorProps {
   onToggleSidebar?: () => void;
   /** Current sidebar visibility (used to set the correct icon) */
   isSidebarVisible?: boolean;
+  /** Whether the editor is currently in true fullscreen mode */
+  isFullscreen?: boolean;
+  /** Toggle true fullscreen mode */
+  onToggleFullscreen?: () => void;
 }
 
-export const LatexEditor: React.FC<LatexEditorProps> = ({ onEditTemplateRef, onLoadTemplateAsFileRef, onOpenFileRef, onToggleSidebar, isSidebarVisible = true }) => {
+export const LatexEditor: React.FC<LatexEditorProps> = ({ onEditTemplateRef, onLoadTemplateAsFileRef, onOpenFileRef, onToggleSidebar, isSidebarVisible = true, isFullscreen = false, onToggleFullscreen }) => {
   const [content, setContent] = useState('');
   const [engine, setEngine] = useState<Engine>('xelatex');
   const [compiling, setCompiling] = useState(false);
@@ -1787,7 +1791,7 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onEditTemplateRef, onL
   const hasDocument = content.length > 0 || filePath !== null || editingTemplate !== null;
 
   return (
-    <div className="flex flex-col h-full bg-white overflow-hidden">
+    <div className={isFullscreen ? 'fixed inset-0 z-[100] flex flex-col bg-white overflow-hidden' : 'flex flex-col h-full bg-white overflow-hidden'}>
       {/* ── Toolbar ── */}
       <div
         className="h-12 flex items-center gap-1.5 px-3 bg-white border-b border-gray-200 shrink-0"
@@ -1931,9 +1935,18 @@ export const LatexEditor: React.FC<LatexEditorProps> = ({ onEditTemplateRef, onL
             <button
               onClick={onToggleSidebar}
               className="p-1.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-              title={isSidebarVisible ? '隐藏侧边栏（全屏编辑）' : '显示侧边栏'}
+              title={isSidebarVisible ? '隐藏侧边栏' : '显示侧边栏'}
             >
               {isSidebarVisible ? <PanelLeftClose className="w-3.5 h-3.5" /> : <PanelLeftOpen className="w-3.5 h-3.5" />}
+            </button>
+          )}
+          {onToggleFullscreen && (
+            <button
+              onClick={onToggleFullscreen}
+              className="p-1.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+              title={isFullscreen ? '退出全屏' : '全屏编辑'}
+            >
+              {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
             </button>
           )}
         </div>

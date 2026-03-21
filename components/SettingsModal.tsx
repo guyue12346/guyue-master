@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { X, FileDown, FolderOpen, ExternalLink, ToggleLeft, ToggleRight, ChevronDown, Globe, Package, Plus, Trash2, GripVertical, Command, User, Camera } from 'lucide-react';
+import { X, FileDown, FolderOpen, ExternalLink, ToggleLeft, ToggleRight, ChevronDown, Globe, Package, Plus, Trash2, GripVertical, Command, User, Camera, ArrowUpRight } from 'lucide-react';
 import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, ModuleConfig, AVAILABLE_ICONS, PluginMetadata } from '../types';
 import * as LucideIcons from 'lucide-react';
 
@@ -73,6 +73,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [proxyPort, setProxyPort] = useState<string>('');
   const [userAvatar, setUserAvatar] = useState<string>('');
   const [userName, setUserName] = useState<string>('Guyue');
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [exportProgress, setExportProgress] = useState<number>(0);
+  const [exportStep, setExportStep] = useState<string>('');
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const iconSelectorRef = useRef<HTMLDivElement>(null);
 
@@ -271,75 +274,100 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     localStorage.setItem('guyue_user_name', name);
   };
   
-  const handleExportMarkdown = () => {
-    // 1. Header
-    const dateStr = new Date().toISOString().split('T')[0];
-    let mdContent = `# LinkMaster Backup\n> Exported on ${dateStr}\n\n`;
+  const handleExportMarkdown = async () => {
+    setIsExporting(true);
+    setExportProgress(0);
+    const tick = (step: string, pct: number) => {
+      setExportStep(step);
+      setExportProgress(pct);
+      return new Promise<void>(r => setTimeout(r, 0));
+    };
+    const read = (key: string) => {
+      try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch { return null; }
+    };
 
-    // 2. Export SSH Records
-    if (sshRecords.length > 0) {
-      mdContent += `---\n\n# SSH Records\n\n`;
-      mdContent += `| Hostname | Address | User | Port | Note |\n`;
-      mdContent += `| --- | --- | --- | --- | --- |\n`;
-      sshRecords.forEach(rec => {
-        mdContent += `| ${rec.title} | ${rec.host} | ${rec.username} | ${rec.port} | ${rec.note} |\n`;
-      });
-      mdContent += `\n`;
-    }
+    await tick('读取用户资料…', 5);
+    const profile = { name: localStorage.getItem('guyue_user_name') || 'Guyue', avatar: localStorage.getItem('guyue_user_avatar') || '' };
 
-    // 4. Export API Records
-    if (apiRecords.length > 0) {
-      mdContent += `---\n\n# API Records\n\n`;
-      apiRecords.forEach(rec => {
-        mdContent += `### ${rec.title} (${rec.method})\n`;
-        mdContent += `- **URL**: \`${rec.baseUrl}${rec.endpoint}\`\n`;
-        mdContent += `- **Key**: \`${rec.apiKey}\`\n`;
-        if (rec.usage) mdContent += `- **Usage**: \`${rec.usage}\`\n`;
-        if (rec.note) mdContent += `- **Note**: ${rec.note}\n`;
-        mdContent += `\n`;
-      });
-    }
+    await tick('导出笔记与待办…', 15);
+    const todoPlan = read('linkmaster_todo_plan_v1');
 
-    // 5. Export Notes
-    if (notes.length > 0) {
-      mdContent += `---\n\n# Notes\n\n`;
-      notes.forEach(note => {
-        mdContent += `### Note (${new Date(note.createdAt).toLocaleString()})\n`;
-        mdContent += `${note.content}\n\n`;
-      });
-    }
+    await tick('导出 SSH / API 记录…', 25);
 
-    // 6. Export Todos
-    if (todos.length > 0) {
-      mdContent += `---\n\n# ToDos\n\n`;
-      todos.forEach(todo => {
-        const status = todo.isCompleted ? '[x]' : '[ ]';
-        const due = todo.dueDate ? ` (Due: ${new Date(todo.dueDate).toLocaleDateString()})` : '';
-        const priority = `[${todo.priority.toUpperCase()}]`;
-        mdContent += `- ${status} ${priority} ${todo.content}${due}\n`;
-      });
-    }
+    await tick('导出文件记录与分类…', 35);
+    const exportCategories = read('linkmaster_categories_v1');
 
-    // 7. Export Files
-    if (fileRecords.length > 0) {
-      mdContent += `---\n\n# Important Files\n\n`;
-      mdContent += `| Name | Size | Type | Importance | Note |\n`;
-      mdContent += `| --- | --- | --- | --- | --- |\n`;
-      fileRecords.forEach(file => {
-        mdContent += `| ${file.name} | ${file.size} | ${file.type} | ${file.importance} | ${file.note} |\n`;
-      });
-    }
+    await tick('导出 Prompts / Markdown…', 45);
+    const exportPrompts = read('linkmaster_prompts_v1');
+    const exportMarkdown = read('linkmaster_markdown_v1');
 
-    // 8. Trigger Download
-    const blob = new Blob([mdContent], { type: 'text/markdown' });
+    await tick('导出学习记录…', 55);
+    const learningCategories = read('learning_categories_v1');
+    const learningCourses = read('learning_courses_v1');
+    const learningProgress = read('learning_progress');
+
+    await tick('导出 LeetCode 记录…', 65);
+    const leetcodeLists = read('leetcode_lists');
+    const leetcodeProgress = read('leetcode_progress');
+
+    await tick('导出日历 / 循环事项…', 75);
+    const recurringEvents = read('linkmaster_recurring_v1');
+    const recurringCategories = read('linkmaster_recurring_cats_v1');
+
+    await tick('导出图片 / 配置…', 85);
+    const imageRecords = read('linkmaster_image_records_v1');
+    const imageConfig = read('linkmaster_image_config_v1');
+    const settings = {
+      archivePath: localStorage.getItem('linkmaster_archive_path') || '',
+      vaultPath: localStorage.getItem('linkmaster_vault_path') || '',
+      browserStartPage: localStorage.getItem('linkmaster_browser_start') || '',
+      splashQuotes: read('linkmaster_splash_text_v1'),
+      agentShortcutKey: localStorage.getItem('linkmaster_agent_shortcut') || 'Meta',
+      proxyPort: localStorage.getItem('linkmaster_proxy_port') || '',
+    };
+
+    await tick('生成备份文件…', 93);
+    const backup = {
+      exportedAt: new Date().toISOString(),
+      version: '2.0',
+      app: 'Guyue Master',
+      userProfile: profile,
+      notes,
+      todoPlan,
+      todos,
+      sshRecords,
+      apiRecords,
+      fileRecords,
+      categories: exportCategories,
+      prompts: exportPrompts,
+      markdownNotes: exportMarkdown,
+      learningCategories,
+      learningCourses,
+      learningProgress,
+      leetcodeLists,
+      leetcodeProgress,
+      recurringEvents,
+      recurringCategories,
+      imageRecords,
+      imageHostingConfig: imageConfig,
+      moduleConfig,
+      settings,
+    };
+
+    await tick('正在下载…', 98);
+    const dateStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `LinkMaster_Backup_${dateStr}.md`;
+    link.download = `GuyueMaster_Backup_${dateStr}.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+
+    await tick('完成', 100);
+    setTimeout(() => { setIsExporting(false); setExportProgress(0); setExportStep(''); }, 1200);
   };
 
   if (!isOpen) return null;
@@ -864,25 +892,42 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   }
                 }}
                 className="p-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-all text-gray-600"
-                title="打开数据文件夹"
+                title="在 Finder 中打开"
               >
-                <FolderOpen className="w-4 h-4" />
+                <ArrowUpRight className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 flex items-center justify-between">
-              <div>
-                <h4 className="text-sm font-medium text-gray-700">导出数据</h4>
-                <p className="text-xs text-gray-400 mt-1">导出所有数据为 Markdown</p>
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-sm font-medium text-gray-700">导出数据</h4>
+                  <p className="text-xs text-gray-400 mt-1">导出全量数据为 JSON 备份（笔记、待办、学习、LeetCode 等全部模块）</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleExportMarkdown}
+                  disabled={isExporting}
+                  className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 hover:border-gray-300 hover:text-gray-900 transition-all shadow-sm active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap"
+                >
+                  <FileDown className="w-4 h-4" />
+                  <span>{isExporting ? '导出中…' : '导出 JSON'}</span>
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={handleExportMarkdown}
-                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 hover:border-gray-300 hover:text-gray-900 transition-all shadow-sm active:scale-95"
-              >
-                <FileDown className="w-4 h-4" />
-                <span>导出 .md</span>
-              </button>
+              {isExporting && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs text-gray-500">
+                    <span>{exportStep}</span>
+                    <span>{exportProgress}%</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                      style={{ width: `${exportProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

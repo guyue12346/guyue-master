@@ -1990,12 +1990,33 @@ ipcMain.handle('latex-read-pdf', async (_, pdfPath: string) => {
   }
 });
 
-/** 用 pdfjs-dist (Node.js legacy build) 提取 PDF 纯文本 — 主进程执行，无 Web Worker 问题 */
+/** 从 PDF 文件提取纯文本 — 主进程执行
+ * 优先使用 pdf-parse（对双栏学术 PDF 和特殊字体更可靠），失败后回退到 pdfjs legacy build
+ */
 ipcMain.handle('extract-pdf-text', async (_, filePath: string): Promise<string | null> => {
+  const buf = await fs.readFile(filePath) as Buffer;
+
+  // ── 首选：pdf-parse（纯 Node.js，无 Worker，处理学术 PDF 效果更好）──
   try {
-    // Dynamic import: pdfjs legacy build works in Node.js without Web Worker
+    const pdfParseModule = await import('pdf-parse') as any;
+    const pdfParse = pdfParseModule.default ?? pdfParseModule;
+    const result = await pdfParse(buf);
+    if (result.text && result.text.trim()) {
+      // 按换页符分页，保留原始段落结构
+      const pages = result.text
+        .split(/\f/)
+        .map((p: string, i: number) => p.trim() ? `[第${i + 1}页]\n${p.trim()}` : '')
+        .filter(Boolean);
+      return pages.join('\n\n') || result.text;
+    }
+  } catch (e) {
+    console.warn('pdf-parse failed, falling back to pdfjs:', (e as Error).message);
+  }
+
+  // ── 回退：pdfjs legacy build ──
+  try {
     const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs') as any;
-    const data = new Uint8Array(await fs.readFile(filePath) as Buffer);
+    const data = new Uint8Array(buf);
     const pdf = await getDocument({ data, useWorkerFetch: false, isEvalSupported: false, disableAutoFetch: true, disableStream: true }).promise;
     const pages: string[] = [];
     for (let i = 1; i <= pdf.numPages; i++) {
@@ -2010,7 +2031,7 @@ ipcMain.handle('extract-pdf-text', async (_, filePath: string): Promise<string |
     }
     return pages.join('\n\n') || null;
   } catch (e) {
-    console.error('extract-pdf-text failed:', (e as Error).message);
+    console.error('extract-pdf-text (pdfjs fallback) failed:', (e as Error).message);
     return null;
   }
 });

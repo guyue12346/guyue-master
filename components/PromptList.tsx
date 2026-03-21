@@ -114,6 +114,13 @@ const SkillCard: React.FC<{
         </div>
         <div className="flex items-center gap-0.5 shrink-0 mt-0.5">
           <button
+            onClick={handleCopy}
+            className={`p-1.5 rounded-lg transition-colors ${copied ? 'text-green-600 bg-green-50' : 'text-gray-400 hover:text-purple-600 hover:bg-purple-50'}`}
+            title={copied ? '已复制' : '复制内容'}
+          >
+            {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+          </button>
+          <button
             onClick={e => { e.stopPropagation(); onEdit(); }}
             className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
             title="编辑"
@@ -155,21 +162,6 @@ const SkillCard: React.FC<{
             >
               {skill.content || '*（暂无内容）*'}
             </ReactMarkdown>
-          </div>
-          <div className="flex justify-end px-4 pb-3">
-            <button
-              onClick={handleCopy}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-all ${
-                copied
-                  ? 'bg-green-100 border-green-200 text-green-700'
-                  : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              {copied
-                ? <><Check className="w-3.5 h-3.5" />已复制</>
-                : <><Copy className="w-3.5 h-3.5" />复制内容</>
-              }
-            </button>
           </div>
         </div>
       )}

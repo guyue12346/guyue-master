@@ -85,23 +85,39 @@ import { ZENMUX_MODELS, ZENMUX_AGENT_MODELS } from './zenmuxModels';
 export const AVAILABLE_MODELS: Record<string, { id: string; name: string; provider: string; category?: string; description?: string }[]> = {
   zenmux: ZENMUX_MODELS,
   gemini: [
-    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview', provider: 'gemini', description: '最新旗舰' },
-    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', provider: 'gemini' },
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini' },
+    // Gemini 2.5 系列（当前最新，2025 年推出）
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini', description: '旗舰·推荐' },
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini', description: '性价比' },
     { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: 'gemini', description: '最快最省' },
+    // Gemini 2.0 系列（GA）
+    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'gemini' },
+    { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash-Lite', provider: 'gemini' },
+    // Gemini 1.5 系列（稳定）
+    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'gemini' },
+    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: 'gemini' },
   ],
   openai: [
-    { id: 'gpt-5.4', name: 'GPT-5.4', provider: 'openai', description: '旗舰模型' },
-    { id: 'gpt-5-mini', name: 'GPT-5 Mini', provider: 'openai', description: '高性价比' },
+    // GPT-4.1 系列（2025 年 4 月发布）
+    { id: 'gpt-4.1', name: 'GPT-4.1', provider: 'openai', description: '旗舰模型' },
+    { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini', provider: 'openai', description: '高性价比' },
+    { id: 'gpt-4.1-nano', name: 'GPT-4.1 Nano', provider: 'openai', description: '超快响应' },
+    // GPT-4o 系列
     { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai' },
     { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' },
-    { id: 'o3', name: 'o3', provider: 'openai', description: '推理' },
+    // 推理模型
+    { id: 'o4-mini', name: 'o4-mini', provider: 'openai', description: '快速推理' },
+    { id: 'o3', name: 'o3', provider: 'openai', description: '强力推理' },
+    { id: 'o3-mini', name: 'o3-mini', provider: 'openai' },
   ],
   anthropic: [
-    { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', provider: 'anthropic', description: '最强智能' },
-    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'anthropic', description: '速度与智能' },
-    { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', provider: 'anthropic', description: '最快' },
+    // Claude 4.5 系列（2025 年下半年发布）
+    { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', provider: 'anthropic', description: '最强智能' },
+    { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', provider: 'anthropic', description: '速度与智能' },
+    { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', provider: 'anthropic', description: '最快' },
+    // Claude 3.7 / 3.5 系列（稳定）
+    { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet', provider: 'anthropic', description: '扩展思考' },
+    { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', provider: 'anthropic' },
+    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', provider: 'anthropic' },
   ],
   ollama: [
     { id: 'llama3.3', name: 'Llama 3.3', provider: 'ollama' },
@@ -139,21 +155,24 @@ export const AVAILABLE_MODELS: Record<string, { id: string; name: string; provid
 export const AGENT_AVAILABLE_MODELS: Record<string, { id: string; name: string; provider: string; category?: string; description?: string }[]> = {
   zenmux: ZENMUX_AGENT_MODELS,
   gemini: [
-    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview', provider: 'gemini', description: '最新旗舰' },
-    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', provider: 'gemini' },
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini' },
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini', description: '旗舰·推荐' },
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini', description: '性价比' },
+    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: 'gemini', description: '最快最省' },
+    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'gemini' },
   ],
   openai: [
-    { id: 'gpt-5.4', name: 'GPT-5.4', provider: 'openai', description: '旗舰模型' },
-    { id: 'gpt-5-mini', name: 'GPT-5 Mini', provider: 'openai', description: '高性价比' },
+    { id: 'gpt-4.1', name: 'GPT-4.1', provider: 'openai', description: '旗舰模型' },
+    { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini', provider: 'openai', description: '高性价比' },
+    { id: 'gpt-4.1-nano', name: 'GPT-4.1 Nano', provider: 'openai', description: '超快响应' },
     { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai' },
     { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' },
   ],
   anthropic: [
-    { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', provider: 'anthropic', description: '最强智能' },
-    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'anthropic', description: '速度与智能' },
-    { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', provider: 'anthropic', description: '最快' },
+    { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', provider: 'anthropic', description: '最强智能' },
+    { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', provider: 'anthropic', description: '速度与智能' },
+    { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', provider: 'anthropic', description: '最快' },
+    { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet', provider: 'anthropic', description: '扩展思考' },
+    { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', provider: 'anthropic' },
   ],
   moonshot: [
     { id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'moonshot', description: '最新旗舰' },

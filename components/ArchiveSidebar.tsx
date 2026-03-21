@@ -84,9 +84,12 @@ export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({
     return <File className="w-4 h-4 text-gray-400" />;
   };
 
-  const getCategoryIcon = (iconName: string) => {
+  const getCategoryIcon = (iconName: string, color?: string) => {
     const Icon = (LucideIcons as any)[iconName] || LucideIcons.Folder;
-    return <Icon className="w-4 h-4 text-blue-400 fill-blue-50" />;
+    if (color) {
+      return <Icon className="w-4 h-4" color={color} />;
+    }
+    return <Icon className="w-4 h-4" color="#60a5fa" />;
   };
 
   // Group by category (Folder)
@@ -216,7 +219,7 @@ export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({
                 ) : (
                   <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
                 )}
-                {getCategoryIcon(category.icon)}
+                {getCategoryIcon(category.icon, category.color)}
                 <span className="flex-1 text-sm text-gray-700 truncate font-medium">{folderName}</span>
                 {/* Folder Actions */}
                 <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">

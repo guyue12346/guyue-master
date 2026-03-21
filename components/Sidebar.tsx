@@ -82,6 +82,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const renderCategoryItem = (cat: Category) => {
     const IconComponent = getIcon(cat.icon);
     const isSelected = selectedCategory === cat.name;
+    const iconColor = cat.color
+      ? { color: cat.color }
+      : undefined;
 
     return (
       <div key={cat.id} className="mb-1">
@@ -93,7 +96,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               : 'text-gray-600 hover:bg-black/5 hover:text-gray-900'
             }`}
         >
-          <IconComponent className={`w-4 h-4 transition-colors ${isSelected ? 'text-blue-500' : 'text-gray-400 group-hover:text-gray-600'}`} />
+          <IconComponent
+            className={`w-4 h-4 transition-colors ${!cat.color ? (isSelected ? 'text-blue-500' : 'text-gray-400 group-hover:text-gray-600') : ''}`}
+            style={iconColor}
+          />
           <span className="flex-1 text-left truncate">{cat.name}</span>
           {(cat.id === 'all' || cat.isSystem) && (
             <span className={`text-[10px] py-0.5 px-2 rounded-md transition-colors ${isSelected ? 'bg-gray-100 text-gray-600' : 'bg-transparent text-gray-400 group-hover:bg-white/50'}`}>

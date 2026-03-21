@@ -6,6 +6,7 @@ export interface VaultFileEntry {
   path: string;
   relativePath: string;
   folder: string;
+  fileType?: string;
 }
 
 interface VaultImportModalProps {

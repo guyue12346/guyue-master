@@ -1,13 +1,68 @@
 /**
- * RAG 服务：文本分块、Gemini Embedding、余弦相似度检索
- * 使用 Gemini text-embedding-004 API（768 维向量）
+ * RAG 服务：文本分块、多模型 Embedding、余弦相似度检索
+ * 支持 Gemini、Qwen（阿里云百练）、OpenAI 兼容（OpenAI/DeepSeek/智谱/Moonshot/MiniMax）等 Embedding 提供商
  */
 import * as pdfjsLib from 'pdfjs-dist';
 
 // pdfjs worker（在 Electron 渲染进程中禁用独立 worker，使用内联假 worker 避免跨域）
-// 注意：workerSrc = '' 在某些 Windows Electron 版本中可能导致 FakeWorker 初始化失败
-// 因此主要路径已改为通过 IPC 在主进程（Node.js）中解析 PDF
 pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+
+// ── Embedding 配置 ──
+export interface EmbeddingConfig {
+  provider: string;   // 'gemini' | 'qwen' | 'openai' | 'zhipu' | 'custom-openai'
+  model: string;      // e.g. 'gemini-embedding-001', 'text-embedding-v3'
+  apiKey: string;
+  baseUrl?: string;
+}
+
+// ── 可选 Embedding 模型列表 ──
+export interface EmbeddingModelDef {
+  id: string;
+  name: string;
+  provider: string;
+  dimensions?: number;
+  description?: string;
+}
+
+export const EMBEDDING_MODELS: Record<string, EmbeddingModelDef[]> = {
+  gemini: [
+    { id: 'gemini-embedding-exp-03-07', name: 'Gemini Embedding Exp 03-07', provider: 'gemini', dimensions: 3072, description: '最新·推荐' },
+    { id: 'text-embedding-004', name: 'Text Embedding 004', provider: 'gemini', dimensions: 768, description: '稳定版' },
+    { id: 'gemini-embedding-001', name: 'Gemini Embedding 001', provider: 'gemini', dimensions: 768, description: '旧版' },
+  ],
+  qwen: [
+    { id: 'text-embedding-v3', name: 'text-embedding-v3', provider: 'qwen', dimensions: 1024, description: '最新·推荐' },
+    { id: 'text-embedding-v2', name: 'text-embedding-v2', provider: 'qwen', dimensions: 1536 },
+    { id: 'text-embedding-v1', name: 'text-embedding-v1', provider: 'qwen', dimensions: 1536 },
+  ],
+  openai: [
+    { id: 'text-embedding-3-small', name: 'Text Embedding 3 Small', provider: 'openai', dimensions: 1536, description: '性价比' },
+    { id: 'text-embedding-3-large', name: 'Text Embedding 3 Large', provider: 'openai', dimensions: 3072, description: '最强' },
+    { id: 'text-embedding-ada-002', name: 'Ada 002', provider: 'openai', dimensions: 1536 },
+  ],
+  zhipu: [
+    { id: 'embedding-3', name: 'Embedding-3', provider: 'zhipu', dimensions: 2048, description: '最新' },
+    { id: 'embedding-2', name: 'Embedding-2', provider: 'zhipu', dimensions: 1024 },
+  ],
+  'custom-openai': [],
+};
+
+export const EMBEDDING_PROVIDER_LABELS: Record<string, string> = {
+  gemini: 'Google Gemini',
+  qwen: '通义千问 (阿里云)',
+  openai: 'OpenAI',
+  zhipu: '智谱 GLM',
+  'custom-openai': '自定义 (OpenAI 兼容)',
+};
+
+// ── 索引元数据（用于跟踪索引状态） ──
+export interface RagIndexMeta {
+  embeddingProvider: string;
+  embeddingModel: string;
+  builtAt: number;        // 索引最后构建时间
+  fileCount: number;      // 索引中的文件数
+  chunkCount: number;     // 分块总数
+}
 
 export interface RagChunk {
   fileId: string;
@@ -64,29 +119,76 @@ export function chunkText(text: string, maxChunkSize = 800, overlap = 100): stri
   return chunks.filter(c => c.length > 20);
 }
 
-/** 调用 Gemini gemini-embedding-001 获取向量 */
-export async function getGeminiEmbedding(text: string, apiKey: string, baseUrl?: string): Promise<number[]> {
+/** 调用 Gemini Embedding API
+ *  - taskType=RETRIEVAL_DOCUMENT 对 RAG 场景有更好的召回效果
+ *  - gemini-embedding-exp-03-07 支持最高 3072 维（outputDimensionality 参数）
+ */
+async function getGeminiEmbedding(text: string, apiKey: string, model: string, baseUrl?: string): Promise<number[]> {
   const base = (baseUrl || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
+  const body: Record<string, unknown> = {
+    content: { parts: [{ text }] },
+    taskType: 'RETRIEVAL_DOCUMENT',
+  };
+  // gemini-embedding-exp-03-07 支持高维度，设为 1536 兼顾效果与存储
+  if (model === 'gemini-embedding-exp-03-07') {
+    body.outputDimensionality = 1536;
+  }
   const response = await fetch(
-    `${base}/v1beta/models/gemini-embedding-001:embedContent?key=${encodeURIComponent(apiKey)}`,
+    `${base}/v1beta/models/${encodeURIComponent(model)}:embedContent?key=${encodeURIComponent(apiKey)}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        content: { parts: [{ text }] },
-      }),
+      body: JSON.stringify(body),
     },
   );
-
   if (!response.ok) {
     const errText = await response.text().catch(() => '');
     throw new Error(`Gemini Embedding API 错误 ${response.status}: ${errText.slice(0, 200)}`);
   }
-
   const data = await response.json();
   const values: number[] | undefined = data?.embedding?.values;
   if (!values || values.length === 0) throw new Error('Embedding API 返回了空向量');
   return values;
+}
+
+/** 调用 OpenAI 兼容 Embedding API（适用 OpenAI / 智谱 / 自定义） */
+async function getOpenAIEmbedding(text: string, apiKey: string, model: string, baseUrl: string): Promise<number[]> {
+  const base = baseUrl.replace(/\/+$/, '');
+  const response = await fetch(`${base}/v1/embeddings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify({ input: text, model }),
+  });
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    throw new Error(`Embedding API 错误 ${response.status}: ${errText.slice(0, 200)}`);
+  }
+  const data = await response.json();
+  const values: number[] | undefined = data?.data?.[0]?.embedding;
+  if (!values || values.length === 0) throw new Error('Embedding API 返回了空向量');
+  return values;
+}
+
+/** 根据配置获取 Embedding 向量（统一入口） */
+export async function getEmbedding(text: string, config: EmbeddingConfig): Promise<number[]> {
+  const { provider, model, apiKey, baseUrl } = config;
+  if (provider === 'gemini') {
+    return getGeminiEmbedding(text, apiKey, model, baseUrl);
+  }
+  // qwen：阿里云百炼 DashScope OpenAI 兼容接口
+  if (provider === 'qwen') {
+    const base = baseUrl || 'https://dashscope.aliyuncs.com/compatible-mode';
+    return getOpenAIEmbedding(text, apiKey, model, base);
+  }
+  // OpenAI 兼容（openai / zhipu / custom-openai）
+  const defaultBaseUrls: Record<string, string> = {
+    openai: 'https://api.openai.com',
+    zhipu: 'https://open.bigmodel.cn/api/paas',
+    'custom-openai': '',
+  };
+  const base = baseUrl || defaultBaseUrls[provider] || '';
+  if (!base) throw new Error('请配置 Embedding API 的 Base URL');
+  return getOpenAIEmbedding(text, apiKey, model, base);
 }
 
 /** 从 PDF 文件提取纯文本（优先通过主进程 IPC，绕开 Windows Web Worker 限制） */
@@ -166,6 +268,81 @@ export async function saveRagIndex(index: RagIndex): Promise<void> {
   }
 }
 
+/** 加载索引元数据 */
+export async function loadRagIndexMeta(): Promise<RagIndexMeta | null> {
+  const electronAPI = (window as any).electronAPI;
+  if (electronAPI?.loadAppData) {
+    try {
+      const data = await electronAPI.loadAppData('rag-index-meta');
+      if (data && typeof data === 'object') return data as RagIndexMeta;
+    } catch {}
+  }
+  try {
+    const saved = localStorage.getItem('guyue_rag-index-meta');
+    if (saved) return JSON.parse(saved) as RagIndexMeta;
+  } catch {}
+  return null;
+}
+
+/** 保存索引元数据 */
+export async function saveRagIndexMeta(meta: RagIndexMeta): Promise<void> {
+  const electronAPI = (window as any).electronAPI;
+  if (electronAPI?.saveAppData) {
+    await electronAPI.saveAppData('rag-index-meta', meta);
+  }
+  localStorage.setItem('guyue_rag-index-meta', JSON.stringify(meta));
+}
+
+/**
+ * 检查索引状态：返回需要更新的文件和过期的文件
+ */
+export async function checkIndexStatus(
+  kbFiles: Array<{ id: string; name: string; path: string }>,
+  existingIndex: RagIndex,
+): Promise<{ newFiles: string[]; staleFiles: string[]; removedFiles: string[]; upToDate: boolean }> {
+  const electronAPI = (window as any).electronAPI;
+  const kbFileIdSet = new Set(kbFiles.map(f => f.id));
+  const indexedFileIds = new Set(existingIndex.map(c => c.fileId));
+  
+  const newFiles: string[] = [];
+  const staleFiles: string[] = [];
+  const removedFiles: string[] = [];
+  
+  // 新文件：在 KB 中但未索引
+  for (const f of kbFiles) {
+    if (!indexedFileIds.has(f.id)) newFiles.push(f.name);
+  }
+  
+  // 过期文件：已索引但文件修改时间晚于索引时间
+  if (electronAPI?.getFileMtime) {
+    for (const file of kbFiles) {
+      if (!indexedFileIds.has(file.id)) continue;
+      const chunk = existingIndex.find(c => c.fileId === file.id);
+      if (!chunk?.indexedAt) continue;
+      try {
+        const mtime = await electronAPI.getFileMtime(file.path);
+        if (mtime && mtime > chunk.indexedAt) staleFiles.push(file.name);
+      } catch {}
+    }
+  }
+  
+  // 已删除文件：在索引中但不在 KB 中
+  const removedIds = new Set<string>();
+  for (const c of existingIndex) {
+    if (!kbFileIdSet.has(c.fileId) && !removedIds.has(c.fileId)) {
+      removedIds.add(c.fileId);
+      removedFiles.push(c.fileName);
+    }
+  }
+  
+  return {
+    newFiles,
+    staleFiles,
+    removedFiles,
+    upToDate: newFiles.length === 0 && staleFiles.length === 0 && removedFiles.length === 0,
+  };
+}
+
 /** 从索引中移除指定文件的所有分块 */
 export async function removeFileFromIndex(fileId: string): Promise<void> {
   const index = await loadRagIndex();
@@ -182,17 +359,16 @@ export async function invalidateFileIndex(fileId: string): Promise<void> {
 
 /**
  * 增量构建/更新索引：只为尚未建立索引的文件生成 embedding
- * @param kbFiles       知识库文件列表（{id, name, path}）
- * @param existingIndex 已有索引（会保留 kbFiles 中的条目）
- * @param apiKey        Gemini API Key
- * @param onProgress    进度回调字符串
+ * @param kbFiles          知识库文件列表
+ * @param existingIndex    已有索引
+ * @param embeddingConfig  Embedding 配置（多提供商）
+ * @param onProgress       进度回调字符串
  */
 export async function buildIndex(
   kbFiles: Array<{ id: string; name: string; path: string }>,
   existingIndex: RagIndex,
-  apiKey: string,
+  embeddingConfig: EmbeddingConfig,
   onProgress?: (msg: string) => void,
-  baseUrl?: string,
 ): Promise<RagIndex> {
   const electronAPI = (window as any).electronAPI;
   const kbFileIdSet = new Set(kbFiles.map(f => f.id));
@@ -207,7 +383,7 @@ export async function buildIndex(
     for (const file of kbFiles) {
       if (!indexedFileIds.has(file.id)) continue;
       const chunk = filteredExisting.find(c => c.fileId === file.id);
-      if (!chunk?.indexedAt) continue; // 旧索引没有时间戳，跳过
+      if (!chunk?.indexedAt) continue;
       try {
         const mtime = await electronAPI.getFileMtime(file.path);
         if (mtime && mtime > chunk.indexedAt) {
@@ -235,7 +411,6 @@ export async function buildIndex(
       const ext = file.path.split('.').pop()?.toLowerCase() || '';
 
       if (ext === 'pdf') {
-        // PDF：用 pdfjs 提取文本
         try {
           content = await extractPdfText(file.path);
         } catch (pdfErr) {
@@ -243,7 +418,6 @@ export async function buildIndex(
           continue;
         }
       } else {
-        // 文本文件：直接 UTF-8 读取
         if (electronAPI?.readFile) {
           content = await electronAPI.readFile(file.path);
         }
@@ -261,7 +435,7 @@ export async function buildIndex(
       }
 
       for (let i = 0; i < chunks.length; i++) {
-        const embedding = await getGeminiEmbedding(chunks[i], apiKey, baseUrl);
+        const embedding = await getEmbedding(chunks[i], embeddingConfig);
         newChunks.push({
           fileId: file.id,
           fileName: file.name,
@@ -288,13 +462,12 @@ export async function buildIndex(
 export async function searchIndex(
   query: string,
   index: RagIndex,
-  apiKey: string,
+  embeddingConfig: EmbeddingConfig,
   topK = 5,
-  baseUrl?: string,
 ): Promise<SearchResult[]> {
   if (index.length === 0) return [];
 
-  const qEmbedding = await getGeminiEmbedding(query, apiKey, baseUrl);
+  const qEmbedding = await getEmbedding(query, embeddingConfig);
 
   const scored = index.map(chunk => ({
     fileId: chunk.fileId,

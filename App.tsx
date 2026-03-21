@@ -246,6 +246,7 @@ const App: React.FC = () => {
   const [isMarkdownFullscreen, setIsMarkdownFullscreen] = useState(false);
   const [isTerminalFullscreen, setIsTerminalFullscreen] = useState(false);
   const [isBrowserFullscreen, setIsBrowserFullscreen] = useState(false);
+  const [isLatexFullscreen, setIsLatexFullscreen] = useState(false);
   const [initialTerminalCommand, setInitialTerminalCommand] = useState<string | undefined>(undefined);
   const [initialTerminalTitle, setInitialTerminalTitle] = useState<string | undefined>(undefined);
   const [browserUrl, setBrowserUrl] = useState<string>(() => {
@@ -1879,18 +1880,45 @@ const App: React.FC = () => {
     if (!window.electronAPI?.listDir) return;
 
     try {
-      // Recursively scan vault for .md files (max 5 levels deep)
-      const scanDir = async (dir: string, depth: number = 0): Promise<{name: string; path: string}[]> => {
+      // Supported file extensions and their types
+      const SUPPORTED_EXTENSIONS: Record<string, string> = {
+        '.md': 'MARKDOWN', '.markdown': 'MARKDOWN',
+        '.txt': 'TEXT', '.text': 'TEXT',
+        '.pdf': 'PDF',
+        '.doc': 'WORD', '.docx': 'WORD',
+        '.xls': 'EXCEL', '.xlsx': 'EXCEL',
+        '.ppt': 'PPT', '.pptx': 'PPT',
+        '.png': 'IMAGE', '.jpg': 'IMAGE', '.jpeg': 'IMAGE', '.gif': 'IMAGE', '.webp': 'IMAGE', '.svg': 'IMAGE',
+        '.mp4': 'VIDEO', '.mov': 'VIDEO', '.avi': 'VIDEO', '.mkv': 'VIDEO',
+        '.mp3': 'AUDIO', '.wav': 'AUDIO', '.flac': 'AUDIO', '.m4a': 'AUDIO',
+        '.zip': 'ARCHIVE', '.rar': 'ARCHIVE', '.7z': 'ARCHIVE', '.tar': 'ARCHIVE', '.gz': 'ARCHIVE',
+        '.json': 'CODE', '.ts': 'CODE', '.tsx': 'CODE', '.js': 'CODE', '.jsx': 'CODE',
+        '.py': 'CODE', '.java': 'CODE', '.cpp': 'CODE', '.c': 'CODE', '.go': 'CODE', '.rs': 'CODE',
+        '.html': 'CODE', '.css': 'CODE', '.sh': 'CODE', '.yaml': 'CODE', '.yml': 'CODE',
+        '.csv': 'SPREADSHEET',
+      };
+
+      const getExtension = (name: string) => {
+        const idx = name.lastIndexOf('.');
+        return idx >= 0 ? name.slice(idx).toLowerCase() : '';
+      };
+
+      // Recursively scan vault for supported files (max 5 levels deep)
+      const scanDir = async (dir: string, depth: number = 0): Promise<{name: string; path: string; fileType: string}[]> => {
         if (depth > 5) return [];
         const entries = await window.electronAPI!.listDir(dir);
-        let results: {name: string; path: string}[] = [];
+        let results: {name: string; path: string; fileType: string}[] = [];
         for (const entry of entries) {
           if (entry.name.startsWith('.')) continue; // Skip hidden files/folders
           if (entry.isDirectory) {
             const sub = await scanDir(entry.path, depth + 1);
             results = results.concat(sub);
-          } else if (entry.name.endsWith('.md')) {
-            results.push({ name: entry.name, path: entry.path });
+          } else {
+            const ext = getExtension(entry.name);
+            const fileType = SUPPORTED_EXTENSIONS[ext];
+            if (fileType) {
+              results.push({ name: entry.name, path: entry.path, fileType });
+            }
           }
         }
         return results;
@@ -1898,7 +1926,7 @@ const App: React.FC = () => {
 
       const mdFiles = await scanDir(vaultPath);
       if (mdFiles.length === 0) {
-        alert('Vault 中未找到 Markdown 文件');
+        alert('Vault 中未找到支持的文件（支持：Markdown、文本、PDF、Office、代码、图片等）');
         return;
       }
 
@@ -1907,7 +1935,7 @@ const App: React.FC = () => {
       const newFiles = mdFiles.filter(f => !existingPaths.has(f.path));
 
       if (newFiles.length === 0) {
-        alert('Vault 中的所有笔记已导入');
+        alert('Vault 中的所有文件已导入');
         return;
       }
 
@@ -1917,7 +1945,7 @@ const App: React.FC = () => {
         const relativePath = f.path.replace(vaultPath + '/', '');
         const parts = relativePath.split('/');
         const folder = parts.length > 1 ? parts[parts.length - 2] : 'Vault';
-        return { name: f.name, path: f.path, relativePath, folder };
+        return { name: f.name, path: f.path, relativePath, folder, fileType: f.fileType };
       });
 
       setVaultImportFiles(vaultEntries);
@@ -1935,7 +1963,7 @@ const App: React.FC = () => {
       name: f.name,
       path: f.path,
       size: 0,
-      type: 'MARKDOWN',
+      type: (f.fileType || 'MARKDOWN') as FileRecord['type'],
       importance: 50,
       category: f.folder,
       note: '',
@@ -2167,7 +2195,7 @@ const App: React.FC = () => {
         />
       ) : (
         <div className="fixed inset-0 flex overflow-hidden bg-gray-50">
-          {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && isSidebarVisible && (
+          {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || isLatexFullscreen) && isSidebarVisible && (
             <NavRail 
               currentMode={appMode} 
               onModeChange={setAppMode} 
@@ -2239,7 +2267,7 @@ const App: React.FC = () => {
           onSubModeChange={setTodoSubMode}
           recurringCount={recurringEvents.filter(e => e.isActive).length}
         />
-      ) : appMode === 'latex' && !isRendererFullscreen && !isTerminalFullscreen && isLatexSidebarVisible ? (
+      ) : appMode === 'latex' && !isRendererFullscreen && !isTerminalFullscreen && !isLatexFullscreen && isLatexSidebarVisible ? (
         <Suspense fallback={<div className="w-60 bg-[#F5F5F5] border-r border-gray-200 shrink-0" />}>
           <LatexSidebar
             currentContent={''}
@@ -2741,7 +2769,7 @@ const App: React.FC = () => {
             {appMode === 'latex' && (
               <div className="relative flex h-full w-full overflow-hidden">
                 {/* Floating expand strip — shown when latex sidebar is collapsed */}
-                {!isLatexSidebarVisible && (
+                {!isLatexSidebarVisible && !isLatexFullscreen && (
                   <button
                     onClick={() => setIsLatexSidebarVisible(true)}
                     className="absolute left-0 top-0 h-full w-5 z-10 flex items-center justify-center bg-gray-100 hover:bg-gray-200 border-r border-gray-200 transition-colors group"
@@ -2750,13 +2778,15 @@ const App: React.FC = () => {
                     <span className="w-0.5 h-8 bg-gray-300 group-hover:bg-gray-500 rounded-full transition-colors" />
                   </button>
                 )}
-                <div className={`flex-1 min-w-0 h-full transition-all ${!isLatexSidebarVisible ? 'pl-5' : ''}`}>
+                <div className={`flex-1 min-w-0 h-full transition-all ${!isLatexSidebarVisible && !isLatexFullscreen ? 'pl-5' : ''}`}>
                   <LatexEditor
                     onEditTemplateRef={latexEditTemplateRef}
                     onLoadTemplateAsFileRef={latexLoadTemplateAsFileRef}
                     onOpenFileRef={latexOpenFileRef}
                     isSidebarVisible={isLatexSidebarVisible}
                     onToggleSidebar={() => setIsLatexSidebarVisible(v => !v)}
+                    isFullscreen={isLatexFullscreen}
+                    onToggleFullscreen={() => setIsLatexFullscreen(v => !v)}
                   />
                 </div>
               </div>
