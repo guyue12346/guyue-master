@@ -85,13 +85,14 @@ import { ZENMUX_MODELS, ZENMUX_AGENT_MODELS } from './zenmuxModels';
 export const AVAILABLE_MODELS: Record<string, { id: string; name: string; provider: string; category?: string; description?: string }[]> = {
   zenmux: ZENMUX_MODELS,
   gemini: [
-    // Gemini 2.5 系列（当前最新，2025 年推出）
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini', description: '旗舰·推荐' },
+    // Gemini 3 系列（最新预览版，2026 年）
+    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', provider: 'gemini', description: '旗舰·推荐' },
+    { id: 'gemini-3.1-pro-preview-customtools', name: 'Gemini 3.1 Pro (Custom Tools)', provider: 'gemini', description: '自定义工具优化' },
+    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', provider: 'gemini', description: '强大且快速' },
+    // Gemini 2.5 系列（稳定版）
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini', description: '稳定旗舰' },
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini', description: '性价比' },
     { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: 'gemini', description: '最快最省' },
-    // Gemini 2.0 系列（GA）
-    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'gemini' },
-    { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash-Lite', provider: 'gemini' },
     // Gemini 1.5 系列（稳定）
     { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'gemini' },
     { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: 'gemini' },
@@ -155,10 +156,14 @@ export const AVAILABLE_MODELS: Record<string, { id: string; name: string; provid
 export const AGENT_AVAILABLE_MODELS: Record<string, { id: string; name: string; provider: string; category?: string; description?: string }[]> = {
   zenmux: ZENMUX_AGENT_MODELS,
   gemini: [
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini', description: '旗舰·推荐' },
+    // Gemini 3 系列（最新预览版，支持函数调用，2026 年）
+    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', provider: 'gemini', description: '旗舰·推荐' },
+    { id: 'gemini-3.1-pro-preview-customtools', name: 'Gemini 3.1 Pro (Custom Tools)', provider: 'gemini', description: '自定义工具优化' },
+    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', provider: 'gemini', description: '强大且快速' },
+    // Gemini 2.5 系列（稳定版，支持函数调用）
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini', description: '稳定旗舰' },
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini', description: '性价比' },
     { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: 'gemini', description: '最快最省' },
-    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'gemini' },
   ],
   openai: [
     { id: 'gpt-4.1', name: 'GPT-4.1', provider: 'openai', description: '旗舰模型' },

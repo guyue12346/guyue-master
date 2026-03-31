@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { GraduationCap, Search, ExternalLink, Maximize2, Minimize2, PlayCircle, FileText, Columns, Square, MousePointerClick, MessageSquare, TerminalSquare, ChevronLeft, FolderOpen, Plus, Edit2, Trash2, Download, Upload } from 'lucide-react';
+import { GraduationCap, Search, ExternalLink, Maximize2, Minimize2, PlayCircle, FileText, Columns, Square, MessageSquare, TerminalSquare, ChevronLeft, FolderOpen, Plus, Edit2, Trash2, Download, Upload, GripVertical } from 'lucide-react';
 import { LearningList } from './LearningList';
 import { CS336_DATA, DOCKER_DATA, GIT_DATA, CourseData, Lecture, COURSE_CATEGORIES, CourseCategory, migrateCourseData } from './LearningData';
 import { MarkdownEditor } from './MarkdownEditor';
@@ -218,6 +218,7 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
   // Split View State
   const [layoutMode, setLayoutMode] = useState<'single' | 'split'>('single');
   const [activePane, setActivePane] = useState<'primary' | 'secondary'>('primary');
+  const [splitRatio, setSplitRatio] = useState(0.5); // 0..1 left pane fraction
   
   const [primaryContent, setPrimaryContent] = useState<PaneContent | null>(null);
   const [secondaryContent, setSecondaryContent] = useState<PaneContent | null>(null);
@@ -414,6 +415,33 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
       setSecondaryContent(prev => updatePaneContent(prev));
     }
   };
+
+  // Split pane drag state
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  const isDraggingRef = useRef(false);
+
+  const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMove = (ev: MouseEvent) => {
+      if (!isDraggingRef.current || !splitContainerRef.current) return;
+      const rect = splitContainerRef.current.getBoundingClientRect();
+      const ratio = Math.min(0.85, Math.max(0.15, (ev.clientX - rect.left) / rect.width));
+      setSplitRatio(ratio);
+    };
+    const onUp = () => {
+      isDraggingRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, []);
 
   // View 1: Category Selection
   if (!selectedCategoryId) {
@@ -837,7 +865,7 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
       {/* Left Sidebar: Course Content List */}
       {!isImmersive && (
         <div className="flex flex-col border-r border-gray-200 h-full w-80 flex-shrink-0 transition-all duration-300">
-          <div className="h-12 flex items-center px-3 border-b border-gray-200 bg-gray-50" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+          <div className="h-12 flex items-center justify-between px-3 border-b border-gray-200 bg-gray-50" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
             <button 
               onClick={() => { setSelectedCourseId(null); setSearchQuery(''); }}
               className="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
@@ -846,6 +874,48 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
+            {/* Toolbar - Split Screen Toggle & Terminal */}
+            <div className="flex gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+              {onOpenChat && (
+                <button
+                  onClick={onOpenChat}
+                  className="p-1.5 bg-white shadow-sm rounded-lg text-indigo-600 hover:text-indigo-700 border border-indigo-100 transition-colors"
+                  title="AI 小窗"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                </button>
+              )}
+              <button 
+                onClick={() => {
+                  if (layoutMode === 'single') {
+                    setLayoutMode('split');
+                  } else {
+                    // When returning to single mode, keep the active pane's content
+                    if (activePane === 'secondary' && secondaryContent) {
+                      setPrimaryContent(secondaryContent);
+                    }
+                    setSecondaryContent(null);
+                    setActivePane('primary');
+                    setLayoutMode('single');
+                  }
+                }}
+                className="p-1.5 bg-white shadow-sm rounded-lg text-gray-600 hover:text-blue-600 transition-colors"
+                title={layoutMode === 'single' ? "开启分屏" : "关闭分屏"}
+              >
+                {layoutMode === 'single' ? <Columns className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+              </button>
+              <button 
+                onClick={() => {
+                  const terminalContent: PaneContent = { type: 'terminal', id: `term-${Date.now()}` };
+                  if (activePane === 'primary') setPrimaryContent(terminalContent);
+                  else setSecondaryContent(terminalContent);
+                }}
+                className="p-1.5 bg-white shadow-sm rounded-lg text-gray-600 hover:text-blue-600 transition-colors"
+                title="新建终端"
+              >
+                <TerminalSquare className="w-4 h-4" />
+              </button>
+            </div>
           </div>
           {selectedCourse ? (
             <LearningList 
@@ -868,49 +938,6 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
         </div>
       )}
 
-      {/* Toolbar - Split Screen Toggle (Bottom Left) */}
-      <div className="absolute bottom-4 left-4 z-50 flex gap-2">
-        {onOpenChat && (
-          <button
-            onClick={onOpenChat}
-            className="p-2 bg-white shadow-md rounded-lg text-indigo-600 hover:text-indigo-700 border border-indigo-100 transition-colors"
-            title="AI 小窗"
-          >
-            <MessageSquare className="w-5 h-5" />
-          </button>
-        )}
-        <button 
-          onClick={() => {
-            if (layoutMode === 'single') {
-              setLayoutMode('split');
-            } else {
-              // When returning to single mode, keep the active pane's content
-              if (activePane === 'secondary' && secondaryContent) {
-                setPrimaryContent(secondaryContent);
-              }
-              setSecondaryContent(null);
-              setActivePane('primary');
-              setLayoutMode('single');
-            }
-          }}
-          className="p-2 bg-white shadow-md rounded-lg text-gray-600 hover:text-blue-600 transition-colors"
-          title={layoutMode === 'single' ? "开启分屏" : "关闭分屏"}
-        >
-          {layoutMode === 'single' ? <Columns className="w-5 h-5" /> : <Square className="w-5 h-5" />}
-        </button>
-        <button 
-          onClick={() => {
-            const terminalContent: PaneContent = { type: 'terminal', id: `term-${Date.now()}` };
-            if (activePane === 'primary') setPrimaryContent(terminalContent);
-            else setSecondaryContent(terminalContent);
-          }}
-          className="p-2 bg-white shadow-md rounded-lg text-gray-600 hover:text-blue-600 transition-colors"
-          title="新建终端"
-        >
-          <TerminalSquare className="w-5 h-5" />
-        </button>
-      </div>
-
       {/* Fullscreen Button (Bottom Right) */}
       <div className="absolute bottom-4 right-4 z-50">
         <button 
@@ -923,22 +950,26 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
       </div>
 
       {/* Split View Container */}
-      <div className="flex-1 flex overflow-hidden">
+      <div ref={splitContainerRef} className="flex-1 flex overflow-hidden">
           {/* Primary Pane */}
-          <div className={`${layoutMode === 'split' ? 'w-1/2 border-r border-gray-200' : 'w-full'} h-full relative flex flex-col transition-all duration-300`}>
-             {/* Selection Overlay/Button (Top Right) */}
+          <div className={`${layoutMode === 'split' ? 'border-r border-gray-200' : 'w-full'} h-full relative flex flex-col transition-all duration-300`} style={{ width: layoutMode === 'split' ? `${splitRatio * 100}%` : '100%', flexShrink: 0 }}>
+             {/* Selection Indicator (Top Left) */}
              {layoutMode === 'split' && (
-               <div className={`absolute top-2 right-2 z-40 transition-opacity ${activePane === 'primary' ? 'opacity-100' : 'opacity-50 hover:opacity-100'}`}>
+               <div 
+                 className={`absolute top-2 left-2 z-50 transition-all transform pointer-events-auto ${activePane === 'primary' ? 'opacity-100 scale-100' : 'opacity-50 scale-95'}`}
+                 style={{ transform: activePane === 'primary' ? 'scale(1)' : 'scale(0.95)' }}
+               >
                  <button 
                    onClick={() => setActivePane('primary')}
-                   className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium shadow-sm backdrop-blur-sm border transition-colors
+                   className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-bold shadow-md backdrop-blur-sm border-2 transition-all cursor-pointer
                      ${activePane === 'primary' 
-                       ? 'bg-blue-600 text-white border-blue-600' 
-                       : 'bg-white/80 text-gray-600 border-gray-200 hover:bg-white'}
+                       ? 'bg-blue-600 text-white border-blue-700 shadow-lg shadow-blue-500/30' 
+                       : 'bg-gray-50/90 text-gray-500 border-gray-300 hover:bg-white hover:text-blue-600 hover:border-blue-500'}
                    `}
+                   title={activePane === 'primary' ? '当前选定（左屏）' : '选定左屏（点击切换焦点）'}
+                   type="button"
                  >
-                   <MousePointerClick className="w-3 h-3" />
-                   {activePane === 'primary' ? '当前选定' : '点击选定'}
+                   1
                  </button>
                </div>
              )}
@@ -949,21 +980,40 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
              </div>
           </div>
 
+          {/* Resizable Divider */}
+          {layoutMode === 'split' && (
+            <div
+              onMouseDown={handleDividerMouseDown}
+              className="flex-shrink-0 w-1 relative flex items-center justify-center cursor-col-resize group hover:w-1.5 transition-all z-10"
+              style={{ background: 'transparent' }}
+            >
+              <div className="absolute inset-y-0 -left-1 -right-1" />
+              <div className="h-full w-px bg-transparent group-hover:bg-blue-300 transition-colors" />
+              <div className="absolute top-1/2 -translate-y-1/2 w-4 h-8 rounded-full bg-white border border-gray-200 group-hover:border-blue-300 shadow-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all">
+                <GripVertical className="w-2.5 h-2.5 text-blue-400" />
+              </div>
+            </div>
+          )}
+
           {/* Secondary Pane */}
           {layoutMode === 'split' && (
-            <div className="w-1/2 h-full relative flex flex-col transition-all duration-300">
-               {/* Selection Overlay/Button (Top Right) */}
-               <div className={`absolute top-2 right-2 z-40 transition-opacity ${activePane === 'secondary' ? 'opacity-100' : 'opacity-50 hover:opacity-100'}`}>
+            <div className="h-full relative flex flex-col transition-all duration-300" style={{ flex: 1, minWidth: 0 }}>
+               {/* Selection Indicator (Top Left) */}
+               <div 
+                 className={`absolute top-2 left-2 z-50 transition-all transform pointer-events-auto ${activePane === 'secondary' ? 'opacity-100 scale-100' : 'opacity-50 scale-95'}`}
+                 style={{ transform: activePane === 'secondary' ? 'scale(1)' : 'scale(0.95)' }}
+               >
                  <button 
                    onClick={() => setActivePane('secondary')}
-                   className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium shadow-sm backdrop-blur-sm border transition-colors
+                   className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-bold shadow-md backdrop-blur-sm border-2 transition-all cursor-pointer
                      ${activePane === 'secondary' 
-                       ? 'bg-blue-600 text-white border-blue-600' 
-                       : 'bg-white/80 text-gray-600 border-gray-200 hover:bg-white'}
+                       ? 'bg-blue-600 text-white border-blue-700 shadow-lg shadow-blue-500/30' 
+                       : 'bg-gray-50/90 text-gray-500 border-gray-300 hover:bg-white hover:text-blue-600 hover:border-blue-500'}
                    `}
+                   title={activePane === 'secondary' ? '当前选定（右屏）' : '选定右屏（点击切换焦点）'}
+                   type="button"
                  >
-                   <MousePointerClick className="w-3 h-3" />
-                   {activePane === 'secondary' ? '当前选定' : '点击选定'}
+                   2
                  </button>
                </div>
 

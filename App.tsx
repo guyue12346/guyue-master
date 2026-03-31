@@ -4,7 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { TodoSidebar, TodoSubMode } from './components/TodoSidebar';
 import { SplashScreen } from './components/SplashScreen';
 import { FloatingChatWindow } from './components/FloatingChatWindow';
-import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig, RecurringEvent, RecurringCategory, DEFAULT_RECURRING_CATEGORIES, STORAGE_KEY_RECURRING_CATS, KbTag, KbFileEntry } from './types';
+import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig, RecurringEvent, RecurringCategory, DEFAULT_RECURRING_CATEGORIES, STORAGE_KEY_RECURRING_CATS, KbTag, KbFileEntry, MusicTrack, MusicPlaylist, DEFAULT_MUSIC_PLAYLISTS } from './types';
 import { Plus, Search, Command, Loader2, ChevronRight, Upload, Edit3, Save, List, HelpCircle } from 'lucide-react';
 import type { VaultFileEntry } from './components/VaultImportModal';
 import { removeFileFromIndex } from './utils/ragService';
@@ -32,6 +32,8 @@ const ExcalidrawEditor = React.lazy(() => import('./components/datacenter/Excali
 const RecurringEventManager = React.lazy(() => import('./components/RecurringEventManager').then(m => ({ default: m.RecurringEventManager })));
 const LatexEditor = React.lazy(() => import('./components/LatexEditor').then(m => ({ default: m.LatexEditor })));
 const LatexSidebar = React.lazy(() => import('./components/LatexSidebar').then(m => ({ default: m.LatexSidebar })));
+const MusicPlayer = React.lazy(() => import('./components/MusicPlayer').then(m => ({ default: m.MusicPlayer })));
+const MusicSidebar = React.lazy(() => import('./components/MusicSidebar').then(m => ({ default: m.MusicSidebar })));
 
 // Lazy load modals
 const NoteModal = React.lazy(() => import('./components/NoteModal').then(m => ({ default: m.NoteModal })));
@@ -72,6 +74,8 @@ const STORAGE_KEY_RECURRING = 'linkmaster_recurring_v1';
 const STORAGE_KEY_KB_FILES = 'linkmaster_kb_files_v1';
 const STORAGE_KEY_KB_TAGS = 'guyue_kb_tags_v1';
 const STORAGE_KEY_KB_FILE_MAP = 'guyue_kb_file_tag_map_v1';
+const STORAGE_KEY_MUSIC_TRACKS = 'guyue_music_tracks_v1';
+const STORAGE_KEY_MUSIC_PLAYLISTS = 'guyue_music_playlists_v1';
 
 const DEFAULT_SPLASH_QUOTES = [
   '有善始者实繁，能克终者盖寡',
@@ -264,6 +268,7 @@ const App: React.FC = () => {
   const [floatingChatSource, setFloatingChatSource] = useState<'leetcode' | 'learning' | null>(null);
   const [hasExcalidrawMounted, setHasExcalidrawMounted] = useState(false);
   const [hasDataCenterMounted, setHasDataCenterMounted] = useState(false);
+  const [hasMusicMounted, setHasMusicMounted] = useState(false);
 
   // Prevent body scroll to fix layout shifts on focus
   useEffect(() => {
@@ -299,7 +304,10 @@ const App: React.FC = () => {
     if (appMode === 'datacenter' && !hasDataCenterMounted) {
       setHasDataCenterMounted(true);
     }
-  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasLeetCodeMounted, hasLearningMounted, hasChatMounted, hasExcalidrawMounted, hasDataCenterMounted]);
+    if (appMode === 'music' && !hasMusicMounted) {
+      setHasMusicMounted(true);
+    }
+  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasLeetCodeMounted, hasLearningMounted, hasChatMounted, hasExcalidrawMounted, hasDataCenterMounted, hasMusicMounted]);
 
   useEffect(() => {
     if (appMode === 'chat') {
@@ -489,6 +497,161 @@ const App: React.FC = () => {
   // File Editing State
   const [isEditingFile, setIsEditingFile] = useState(false);
   const [editingFileContent, setEditingFileContent] = useState('');
+
+  // ── Music Player State ──
+  const [musicTracks, setMusicTracks] = useState<MusicTrack[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_MUSIC_TRACKS);
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  const [musicPlaylists, setMusicPlaylists] = useState<MusicPlaylist[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_MUSIC_PLAYLISTS);
+      if (saved) {
+        const parsed = JSON.parse(saved) as MusicPlaylist[];
+        // Migration: remove legacy "favorites" playlist
+        return parsed.filter(p => p.id !== 'favorites');
+      }
+      return DEFAULT_MUSIC_PLAYLISTS;
+    } catch { return DEFAULT_MUSIC_PLAYLISTS; }
+  });
+  const [selectedMusicPlaylist, setSelectedMusicPlaylist] = useState('all');
+  const musicCoverCache = useRef(new Map<string, string>());
+  const [musicCoverVersion, setMusicCoverVersion] = useState(0);
+
+  const saveMusicTracks = useCallback((tracks: MusicTrack[]) => {
+    setMusicTracks(tracks);
+    try { localStorage.setItem(STORAGE_KEY_MUSIC_TRACKS, JSON.stringify(tracks)); } catch {}
+  }, []);
+  const saveMusicPlaylists = useCallback((pls: MusicPlaylist[]) => {
+    setMusicPlaylists(pls);
+    try { localStorage.setItem(STORAGE_KEY_MUSIC_PLAYLISTS, JSON.stringify(pls)); } catch {}
+  }, []);
+
+  const addMusicFilesHelper = useCallback(async (filePaths: string[]) => {
+    const api = (window as any).electronAPI;
+    if (!api?.musicParseMetadata || filePaths.length === 0) return;
+    const existingPaths = new Set(musicTracks.map(t => t.filePath));
+    const newPaths = filePaths.filter(p => !existingPaths.has(p));
+    if (newPaths.length === 0) return;
+    const newTracks: MusicTrack[] = [];
+    for (const fp of newPaths) {
+      const meta = await api.musicParseMetadata(fp);
+      const id = crypto.randomUUID();
+      newTracks.push({
+        id, filePath: fp,
+        title: meta.title, artist: meta.artist, album: meta.album,
+        duration: meta.duration, format: meta.format,
+        sampleRate: meta.sampleRate, bitDepth: meta.bitDepth,
+        bitrate: meta.bitrate, lossless: meta.lossless,
+        composer: meta.composer, lyricist: meta.lyricist,
+        genre: meta.genre, year: meta.year,
+        trackNumber: meta.trackNumber, discNumber: meta.discNumber,
+        addedAt: Date.now(),
+      });
+      if (meta.coverArt) musicCoverCache.current.set(id, meta.coverArt);
+    }
+    const allTracks = [...musicTracks, ...newTracks];
+    saveMusicTracks(allTracks);
+    // Add to current playlist if it's a user playlist
+    const newIds = newTracks.map(t => t.id);
+    if (selectedMusicPlaylist !== 'all') {
+      saveMusicPlaylists(musicPlaylists.map(p =>
+        p.id === selectedMusicPlaylist ? { ...p, trackIds: [...p.trackIds, ...newIds] } : p
+      ));
+    }
+    setMusicCoverVersion(v => v + 1);
+  }, [musicTracks, musicPlaylists, selectedMusicPlaylist, saveMusicTracks, saveMusicPlaylists]);
+
+  const handleMusicAddFiles = useCallback(async () => {
+    const api = (window as any).electronAPI;
+    if (!api?.musicSelectFiles) return;
+    const filePaths: string[] = await api.musicSelectFiles();
+    await addMusicFilesHelper(filePaths);
+  }, [addMusicFilesHelper]);
+
+  const handleMusicAddFolder = useCallback(async () => {
+    const api = (window as any).electronAPI;
+    if (!api?.musicSelectFolder) return;
+    const filePaths: string[] = await api.musicSelectFolder();
+    await addMusicFilesHelper(filePaths);
+  }, [addMusicFilesHelper]);
+
+  const handleMusicCreatePlaylist = useCallback((name: string, icon?: string, color?: string) => {
+    const pl: MusicPlaylist = { id: crypto.randomUUID(), name, icon: icon || 'ListMusic', color, trackIds: [] };
+    saveMusicPlaylists([...musicPlaylists, pl]);
+  }, [musicPlaylists, saveMusicPlaylists]);
+
+  const handleMusicRenamePlaylist = useCallback((id: string, name: string) => {
+    saveMusicPlaylists(musicPlaylists.map(p => p.id === id ? { ...p, name } : p));
+  }, [musicPlaylists, saveMusicPlaylists]);
+
+  const handleMusicDeletePlaylist = useCallback((id: string) => {
+    saveMusicPlaylists(musicPlaylists.filter(p => p.id !== id));
+    if (selectedMusicPlaylist === id) setSelectedMusicPlaylist('all');
+  }, [musicPlaylists, selectedMusicPlaylist, saveMusicPlaylists]);
+
+  const handleMusicUpdatePlaylist = useCallback((id: string, updates: Partial<MusicPlaylist>) => {
+    saveMusicPlaylists(musicPlaylists.map(p => p.id === id ? { ...p, ...updates } : p));
+  }, [musicPlaylists, saveMusicPlaylists]);
+
+  const handleMusicReorderPlaylist = useCallback((id: string, direction: 'up' | 'down') => {
+    const userPls = musicPlaylists.filter(p => !p.isSystem);
+    const sysPls = musicPlaylists.filter(p => p.isSystem);
+    const idx = userPls.findIndex(p => p.id === id);
+    if (idx < 0) return;
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= userPls.length) return;
+    const arr = [...userPls];
+    [arr[idx], arr[swapIdx]] = [arr[swapIdx], arr[idx]];
+    saveMusicPlaylists([...sysPls, ...arr]);
+  }, [musicPlaylists, saveMusicPlaylists]);
+
+  const handleMusicToggleInPlaylist = useCallback((playlistId: string, trackId: string) => {
+    saveMusicPlaylists(musicPlaylists.map(p => {
+      if (p.id !== playlistId) return p;
+      const has = p.trackIds.includes(trackId);
+      return { ...p, trackIds: has ? p.trackIds.filter(id => id !== trackId) : [...p.trackIds, trackId] };
+    }));
+  }, [musicPlaylists, saveMusicPlaylists]);
+
+  const handleMusicUpdateTrack = useCallback((trackId: string, updates: Partial<MusicTrack>) => {
+    saveMusicTracks(musicTracks.map(t => t.id === trackId ? { ...t, ...updates } : t));
+  }, [musicTracks, saveMusicTracks]);
+
+  const handleMusicDeleteTrack = useCallback((trackId: string) => {
+    saveMusicTracks(musicTracks.filter(t => t.id !== trackId));
+    // Remove from all playlists
+    saveMusicPlaylists(musicPlaylists.map(p => ({
+      ...p, trackIds: p.trackIds.filter(id => id !== trackId),
+    })));
+  }, [musicTracks, musicPlaylists, saveMusicTracks, saveMusicPlaylists]);
+
+  const handleMusicLoadCover = useCallback(async (trackId: string, filePath: string) => {
+    if (musicCoverCache.current.has(trackId)) return;
+    // Check for customCover first
+    const track = musicTracks.find(t => t.id === trackId);
+    if (track?.customCover) { musicCoverCache.current.set(trackId, track.customCover); setMusicCoverVersion(v => v + 1); return; }
+    try {
+      const api = (window as any).electronAPI;
+      if (!api?.musicParseMetadata) return;
+      const meta = await api.musicParseMetadata(filePath);
+      if (meta.coverArt) {
+        musicCoverCache.current.set(trackId, meta.coverArt);
+        setMusicCoverVersion(v => v + 1);
+      }
+    } catch { /* ignore */ }
+  }, [musicTracks]);
+
+  const handleMusicSetCover = useCallback((trackId: string, dataUri: string) => {
+    musicCoverCache.current.set(trackId, dataUri);
+    setMusicCoverVersion(v => v + 1);
+  }, []);
+
+  const handleMusicReorderTracks = useCallback((playlistId: string, trackIds: string[]) => {
+    saveMusicPlaylists(musicPlaylists.map(p => p.id === playlistId ? { ...p, trackIds } : p));
+  }, [musicPlaylists, saveMusicPlaylists]);
 
   // LaTeX: ref bridges so LatexSidebar can inject content/files into LatexEditor
   const latexEditTemplateRef = useRef<((template: any) => void) | null>(null);
@@ -2042,6 +2205,18 @@ const App: React.FC = () => {
     setIsFloatingChatOpen(true);
   };
 
+  // Toggle floating chat window (open/close while preserving state)
+  const handleToggleFloatingChat = (source: 'leetcode' | 'learning') => {
+    if (isFloatingChatOpen && floatingChatSource === source) {
+      // If same source is already open, close it
+      setIsFloatingChatOpen(false);
+    } else {
+      // Open or switch source
+      setFloatingChatSource(source);
+      setIsFloatingChatOpen(true);
+    }
+  };
+
   // Markdown Handlers
   const handleAddMarkdownNote = () => {
     const newNote: MarkdownNote = {
@@ -2283,7 +2458,21 @@ const App: React.FC = () => {
             onCollapse={() => setIsLatexSidebarVisible(false)}
           />
         </Suspense>
-      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'latex' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
+      ) : appMode === 'music' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible ? (
+        <Suspense fallback={<div className="w-60 bg-[#F5F5F5] border-r border-gray-200 shrink-0" />}>
+          <MusicSidebar
+            playlists={musicPlaylists}
+            tracks={musicTracks}
+            selectedPlaylist={selectedMusicPlaylist}
+            onSelectPlaylist={setSelectedMusicPlaylist}
+            onCreatePlaylist={handleMusicCreatePlaylist}
+            onRenamePlaylist={handleMusicRenamePlaylist}
+            onDeletePlaylist={handleMusicDeletePlaylist}
+            onUpdatePlaylist={handleMusicUpdatePlaylist}
+            onReorderPlaylist={handleMusicReorderPlaylist}
+          />
+        </Suspense>
+      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
         <Sidebar 
           appMode={appMode}  
           categories={activeCategories} 
@@ -2431,7 +2620,7 @@ const App: React.FC = () => {
       )}
 
       <div className="flex-1 flex flex-col min-w-0 bg-white relative" style={appMode === 'agent' ? { display: 'none' } : undefined}>
-        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'latex' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
+        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'latex' && appMode !== 'music' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
         <div className="h-16 border-b border-gray-200 flex items-center justify-between px-6 bg-white shrink-0">
            <div className="flex items-center gap-4 flex-1 max-w-xl">
               <div className="relative flex-1">
@@ -2500,7 +2689,7 @@ const App: React.FC = () => {
         </div>
         )}
 
-        <div className={`flex-1 ${appMode === 'chat' ? 'overflow-hidden' : appMode === 'latex' ? 'overflow-hidden' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'chat' || appMode === 'excalidraw' || appMode === 'datacenter' || appMode === 'latex' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'p-4' : 'p-6'}`}>
+        <div className={`flex-1 ${appMode === 'chat' ? 'overflow-hidden' : appMode === 'latex' ? 'overflow-hidden' : appMode === 'music' ? 'overflow-hidden' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'chat' || appMode === 'excalidraw' || appMode === 'datacenter' || appMode === 'latex' || appMode === 'music' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'p-4' : 'p-6'}`}>
           <Suspense fallback={
             <div className="flex items-center justify-center h-full text-gray-400 gap-2">
               <Loader2 className="w-6 h-6 animate-spin" />
@@ -2699,7 +2888,7 @@ const App: React.FC = () => {
             {(hasLeetCodeMounted || appMode === 'leetcode') && (
               <div className={appMode === 'leetcode' ? 'h-full' : 'hidden'}>
                 <LeetCodeManager
-                  onOpenChat={() => handleOpenFloatingChat('leetcode')}
+                  onOpenChat={() => handleToggleFloatingChat('leetcode')}
                   onCreateNote={() => {
                     setEditingNote(null);
                     setIsNoteModalOpen(true);
@@ -2710,7 +2899,7 @@ const App: React.FC = () => {
 
             {(hasLearningMounted || appMode === 'learning') && (
               <div className={appMode === 'learning' ? 'h-full' : 'hidden'}>
-                <LearningManager onOpenChat={() => handleOpenFloatingChat('learning')} />
+                <LearningManager onOpenChat={() => handleToggleFloatingChat('learning')} />
               </div>
             )}
 
@@ -2799,6 +2988,26 @@ const App: React.FC = () => {
                 isFullscreen={isMarkdownFullscreen}
                 onToggleFullscreen={() => setIsMarkdownFullscreen(!isMarkdownFullscreen)}
               />
+            )}
+
+            {(hasMusicMounted || appMode === 'music') && (
+              <div className={appMode === 'music' ? 'h-full' : 'hidden'}>
+                <MusicPlayer
+                  tracks={musicTracks}
+                  playlists={musicPlaylists}
+                  selectedPlaylist={selectedMusicPlaylist}
+                  coverCache={musicCoverCache.current}
+                  coverVersion={musicCoverVersion}
+                  onUpdateTrack={handleMusicUpdateTrack}
+                  onDeleteTrack={handleMusicDeleteTrack}
+                  onToggleInPlaylist={handleMusicToggleInPlaylist}
+                  onLoadCover={handleMusicLoadCover}
+                  onSetCover={handleMusicSetCover}
+                  onAddFiles={handleMusicAddFiles}
+                  onAddFolder={handleMusicAddFolder}
+                  onReorderTracksInPlaylist={handleMusicReorderTracks}
+                />
+              </div>
             )}
           </Suspense>
         </div>

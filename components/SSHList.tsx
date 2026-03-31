@@ -1,16 +1,18 @@
 
 import React, { useState } from 'react';
-import { SSHRecord } from '../types';
+import { SSHRecord, Category } from '../types';
 import { Terminal, Copy, Check, Edit2, Trash2, Server } from 'lucide-react';
+import * as LucideIcons from 'lucide-react';
 
 interface SSHListProps {
   records: SSHRecord[];
+  categories?: Category[];
   onDelete: (id: string) => void;
   onEdit: (record: SSHRecord) => void;
   onOpenInTerminal: (command: string, title: string) => void;
 }
 
-export const SSHList: React.FC<SSHListProps> = ({ records, onDelete, onEdit, onOpenInTerminal }) => {
+export const SSHList: React.FC<SSHListProps> = ({ records, categories, onDelete, onEdit, onOpenInTerminal }) => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const handleCopy = (e: React.MouseEvent, command: string, id: string) => {
@@ -51,9 +53,17 @@ export const SSHList: React.FC<SSHListProps> = ({ records, onDelete, onEdit, onO
           {/* Header */}
           <div className="flex justify-between items-start mb-3">
             <div className="flex items-center gap-2.5 overflow-hidden">
-              <div className="p-2 bg-gray-100 rounded-lg text-gray-500">
-                <Server className="w-5 h-5" />
-              </div>
+              {(() => {
+                const catObj = categories?.find(c => c.name === rec.category);
+                const CatIcon = catObj?.icon ? ((LucideIcons as any)[catObj.icon] || Server) : Server;
+                const bgColor = catObj?.color ? catObj.color + '18' : '#f3f4f6';
+                const iconColor = catObj?.color || '#6b7280';
+                return (
+                  <div className="p-2 rounded-lg" style={{ backgroundColor: bgColor }}>
+                    <CatIcon className="w-5 h-5" style={{ color: iconColor }} />
+                  </div>
+                );
+              })()}
               <div className="min-w-0">
                 <h3 className="font-bold text-gray-800 truncate leading-tight">{rec.title}</h3>
                 <div className="flex gap-2 mt-1">

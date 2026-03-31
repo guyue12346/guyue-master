@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import remarkBreaks from 'remark-breaks';
+import remarkGithubBlockquoteAlert from 'remark-github-blockquote-alert';
 import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -403,9 +404,51 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         .bq-gray { border-color: #6b7280 !important; background-color: #f9fafb !important; }
         .bq-cyan { border-color: #06b6d4 !important; background-color: #ecfeff !important; }
         .bq-teal { border-color: #14b8a6 !important; background-color: #f0fdfa !important; }
+
+        /* Box container with 4-sided border */
+        .box-container {
+          padding: 1rem;
+          margin: 1rem 0;
+          border: 1px solid;
+          border-radius: 0.5rem;
+          font-style: normal !important;
+        }
+        .box-container p { font-style: normal !important; margin: 0; }
+        .box-container-title {
+          display: block;
+          font-weight: 600;
+          font-size: 0.9em;
+          margin-bottom: 0.5rem;
+          padding-bottom: 0.5rem;
+          border-bottom: 1px solid;
+        }
+
+        /* Box color variants */
+        .box-red { border-color: #ef4444 !important; background-color: #fef2f2 !important; }
+        .box-red .box-container-title { border-bottom-color: #ef4444 !important; color: #dc2626 !important; }
+        .box-orange { border-color: #f97316 !important; background-color: #fff7ed !important; }
+        .box-orange .box-container-title { border-bottom-color: #f97316 !important; color: #ea580c !important; }
+        .box-yellow { border-color: #eab308 !important; background-color: #fefce8 !important; }
+        .box-yellow .box-container-title { border-bottom-color: #eab308 !important; color: #ca8a04 !important; }
+        .box-green { border-color: #22c55e !important; background-color: #f0fdf4 !important; }
+        .box-green .box-container-title { border-bottom-color: #22c55e !important; color: #16a34a !important; }
+        .box-blue { border-color: #3b82f6 !important; background-color: #eff6ff !important; }
+        .box-blue .box-container-title { border-bottom-color: #3b82f6 !important; color: #1d4ed8 !important; }
+        .box-purple { border-color: #a855f7 !important; background-color: #faf5ff !important; }
+        .box-purple .box-container-title { border-bottom-color: #a855f7 !important; color: #7c3aed !important; }
+        .box-pink { border-color: #ec4899 !important; background-color: #fdf2f8 !important; }
+        .box-pink .box-container-title { border-bottom-color: #ec4899 !important; color: #be185d !important; }
+        .box-gray { border-color: #6b7280 !important; background-color: #f9fafb !important; }
+        .box-gray .box-container-title { border-bottom-color: #6b7280 !important; color: #374151 !important; }
+        .box-cyan { border-color: #06b6d4 !important; background-color: #ecfeff !important; }
+        .box-cyan .box-container-title { border-bottom-color: #06b6d4 !important; color: #0891b2 !important; }
+        .box-teal { border-color: #14b8a6 !important; background-color: #f0fdfa !important; }
+        .box-teal .box-container-title { border-bottom-color: #14b8a6 !important; color: #0d9488 !important; }
+        .box-default { border-color: #d1d5db !important; background-color: #fafafa !important; }
+        .box-default .box-container-title { border-bottom-color: #d1d5db !important; color: #374151 !important; }
       `}</style>
       <ReactMarkdown 
-        remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
+        remarkPlugins={[remarkGfm, remarkMath, remarkBreaks, remarkGithubBlockquoteAlert]}
         rehypePlugins={[rehypeRaw, rehypeKatex]}
         components={{
           blockquote: ({node, children, ...props}) => {
@@ -466,6 +509,25 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
 
                   return (
                     <div className={`blockquote-color bq-${color}`}>
+                      <p>{newPChildren}</p>
+                      {childrenArray.slice(1)}
+                    </div>
+                  );
+                }
+
+                // Match [box|title|color] or [box|title] or [box] - box container
+                const boxMatch = firstText.match(/^\s*\[box(?:\|([^\]]*))?\]\s*/i);
+                if (boxMatch) {
+                  const params = boxMatch[1]?.split('|').map(p => p.trim()) || [];
+                  const title = params[0] || '';
+                  const color = (params[1] || 'default').toLowerCase();
+                  const boxColor = validColors.includes(color) ? color : 'default';
+                  const remainingText = firstText.substring(boxMatch[0].length);
+                  const newPChildren = [remainingText, ...pChildren.slice(1)];
+
+                  return (
+                    <div className={`box-container box-${boxColor}`}>
+                      {title && <span className="box-container-title">{title}</span>}
                       <p>{newPChildren}</p>
                       {childrenArray.slice(1)}
                     </div>
@@ -567,8 +629,10 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
             const isSuibi = className?.includes('language-随笔');
             const isGenericCodeBlock = className?.includes('language-代码块');
             const match = /language-(\w+)/.exec(className || '');
+            // react-markdown v8+ 不再自动传 inline prop，通过有无换行符判断是否为内联代码
+            const isInline = inline || (!className && !String(children).includes('\n'));
             
-            if (!inline && isSuibi) {
+            if (!isInline && isSuibi) {
               return (
                 <div className="my-6 p-6 bg-stone-50 border border-stone-200 rounded-lg shadow-sm">
                   <div className="font-serif text-lg font-medium text-stone-800 mb-4 border-b border-stone-200 pb-2">随笔</div>
@@ -577,7 +641,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
               );
             }
 
-            if (!inline && (match || isGenericCodeBlock)) {
+            if (!isInline && (match || isGenericCodeBlock)) {
               let lang = isGenericCodeBlock ? 'text' : match?.[1]?.toLowerCase();
               if (lang === 'c++') lang = 'cpp';
               if (lang === 'c#') lang = 'csharp';
@@ -607,7 +671,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                 </SyntaxHighlighter>
               );
             }
-            if (inline) {
+            if (isInline) {
               return <code className="bg-gray-100 text-rose-600 border border-gray-200 px-1.5 py-0.5 rounded-md text-[0.82em] font-mono not-prose" {...props}>{children}</code>;
             }
             return (

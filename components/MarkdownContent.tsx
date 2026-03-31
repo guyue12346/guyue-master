@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, Component, ErrorInfo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -9,6 +9,35 @@ import rehypeRaw from 'rehype-raw';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Copy, Check } from 'lucide-react';
+
+class MarkdownErrorBoundary extends Component<
+  { content: string; children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { content: string; children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, _info: ErrorInfo) {
+    console.warn('[MarkdownContent] 渲染错误，降级为纯文本:', error.message);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <p className="whitespace-pre-wrap text-sm text-gray-800 leading-relaxed">
+          {this.props.content}
+        </p>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export const normalizeMarkdownContent = (content: string) => {
   if (!content) return '';
@@ -67,10 +96,11 @@ export const CodeBlock: React.FC<{ language?: string; children: string }> = Reac
 export const MarkdownContent: React.FC<{ content: string; isStreaming?: boolean }> = React.memo(({ content, isStreaming }) => {
   const displayContent = normalizeMarkdownContent(content);
   return (
+    <MarkdownErrorBoundary content={content}>
     <div className="prose-chat">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath, [remarkBreaks], remarkGithubBlockquoteAlert]}
-        rehypePlugins={[rehypeRaw, rehypeKatex]}
+        rehypePlugins={[rehypeRaw, [rehypeKatex, { throwOnError: false, errorColor: '#cc0000' }]]}
         components={{
           code(props: { inline?: boolean; className?: string; children?: React.ReactNode; [key: string]: any }) {
             const { inline, className, children, ...rest } = props;
@@ -192,5 +222,6 @@ export const MarkdownContent: React.FC<{ content: string; isStreaming?: boolean 
         />
       )}
     </div>
+    </MarkdownErrorBoundary>
   );
 });

@@ -121,6 +121,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   latexGetFileCategoryMap: () => ipcRenderer.invoke('latex-get-file-category-map'),
   latexSetFileCategory: (params: { filePath: string; categoryId: string }) =>
     ipcRenderer.invoke('latex-set-file-category', params),
+
+  // Music Player
+  musicSelectFiles: () => ipcRenderer.invoke('music-select-files'),
+  musicSelectFolder: () => ipcRenderer.invoke('music-select-folder'),
+  musicParseMetadata: (filePath: string) => ipcRenderer.invoke('music-parse-metadata', filePath),
+  musicImportLyrics: () => ipcRenderer.invoke('music-import-lyrics'),
+  musicAiLyrics: (opts: { filePath: string; apiKey: string; baseUrl: string; language?: string }) => ipcRenderer.invoke('music-ai-lyrics', opts),
+  musicFileExists: (filePath: string) => ipcRenderer.invoke('music-file-exists', filePath),
+  musicSelectCover: () => ipcRenderer.invoke('music-select-cover'),
+  musicRelinkFile: () => ipcRenderer.invoke('music-relink-file'),
 });
 
 // 类型定义（可选，用于 TypeScript）
@@ -195,4 +205,30 @@ export interface ElectronAPI {
   // 代理设置
   setProxy: (port: number | null) => Promise<{ success: boolean; error?: string }>;
   extractPdfText: (filePath: string) => Promise<string | null>;
+  // Music Player
+  musicSelectFiles: () => Promise<string[]>;
+  musicSelectFolder: () => Promise<string[]>;
+  musicParseMetadata: (filePath: string) => Promise<{
+    title: string;
+    artist: string;
+    album: string;
+    duration: number;
+    format: string;
+    sampleRate?: number;
+    bitDepth?: number;
+    bitrate?: number;
+    lossless?: boolean;
+    coverArt?: string;
+    composer?: string;
+    lyricist?: string;
+    genre?: string;
+    year?: number;
+    trackNumber?: number;
+    discNumber?: number;
+  }>;
+  musicImportLyrics: () => Promise<string | null>;
+  musicAiLyrics: (opts: { filePath: string; apiKey: string; baseUrl: string; provider: string; model?: string; language?: string }) => Promise<{ lrc?: string; text?: string; error?: string }>;
+  musicFileExists: (filePath: string) => Promise<boolean>;
+  musicSelectCover: () => Promise<string | null>;
+  musicRelinkFile: () => Promise<string | null>;
 }

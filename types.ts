@@ -5,6 +5,49 @@ export interface Note {
   createdAt: number;
 }
 
+// ── Music Player Types ──
+export interface MusicTrack {
+  id: string;
+  filePath: string;
+  title: string;
+  artist: string;
+  album: string;
+  duration: number;
+  format: string;
+  sampleRate?: number;
+  bitDepth?: number;
+  bitrate?: number;
+  lossless?: boolean;
+  addedAt: number;
+  // Extended metadata (user-editable)
+  lyricist?: string;
+  composer?: string;
+  singer?: string;
+  band?: string;
+  genre?: string;
+  year?: number;
+  trackNumber?: number;
+  discNumber?: number;
+  comment?: string;
+  lyrics?: string;
+  customCover?: string; // base64 data URI for user-uploaded cover
+}
+
+export interface MusicPlaylist {
+  id: string;
+  name: string;
+  icon: string;
+  color?: string;
+  isSystem?: boolean;
+  trackIds: string[];
+}
+
+export const DEFAULT_MUSIC_PLAYLISTS: MusicPlaylist[] = [
+  { id: 'all', name: '全部音乐', icon: 'Music', isSystem: true, trackIds: [] },
+];
+
+export type MusicRepeatMode = 'off' | 'all' | 'one';
+
 export interface SSHRecord {
   id: string;
   title: string; // Hostname / Alias
@@ -174,6 +217,7 @@ export const DEFAULT_MODULE_CONFIG: ModuleConfig[] = [
   { id: 'browser',      name: '内置浏览器', enabled: true, priority: 12, icon: 'Globe',        shortcut: 'Tab+B' },
   { id: 'image-hosting', name: '图床管理', enabled: true, priority: 13, icon: 'Image',         shortcut: 'Tab+I' },
   { id: 'latex',        name: 'LaTeX编辑器', enabled: true, priority: 14, icon: 'FileType2',    shortcut: 'Tab+X' },
+  { id: 'music',        name: 'Music',      enabled: true, priority: 15, icon: 'Music',         shortcut: 'Tab+M' },
 ];
 
 export interface RecurringCategory {

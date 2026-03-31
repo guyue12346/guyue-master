@@ -2708,3 +2708,299 @@ ipcMain.handle('latex-set-file-category', async (_, params: { filePath: string; 
     return false;
   }
 });
+
+// ── Music Player IPC ───────────────────────────────────────────────────────
+const AUDIO_EXTENSIONS = new Set([
+  '.mp3', '.flac', '.wav', '.aac', '.ogg', '.m4a', '.opus',
+  '.wma', '.aiff', '.aif', '.ape', '.dsf', '.dff', '.wv',
+]);
+
+function isAudioFile(fileName: string): boolean {
+  return AUDIO_EXTENSIONS.has(path.extname(fileName).toLowerCase());
+}
+
+async function scanAudioFiles(dirPath: string): Promise<string[]> {
+  const results: string[] = [];
+  try {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        const sub = await scanAudioFiles(fullPath);
+        results.push(...sub);
+      } else if (isAudioFile(entry.name)) {
+        results.push(fullPath);
+      }
+    }
+  } catch { /* skip inaccessible dirs */ }
+  return results;
+}
+
+ipcMain.handle('music-select-files', async () => {
+  if (!mainWindow) return [];
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: '音频文件', extensions: ['mp3','flac','wav','aac','ogg','m4a','opus','wma','aiff','aif','ape','dsf','wv'] }
+    ]
+  });
+  if (result.canceled) return [];
+  return result.filePaths;
+});
+
+ipcMain.handle('music-select-folder', async () => {
+  if (!mainWindow) return [];
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory']
+  });
+  if (result.canceled || result.filePaths.length === 0) return [];
+  return scanAudioFiles(result.filePaths[0]);
+});
+
+ipcMain.handle('music-parse-metadata', async (_, filePath: string) => {
+  try {
+    const mm = await import('music-metadata');
+    const metadata = await mm.parseFile(filePath);
+    const common = metadata.common;
+    const fmt = metadata.format;
+
+    let coverBase64: string | undefined;
+    if (common.picture && common.picture.length > 0) {
+      const pic = common.picture[0];
+      coverBase64 = `data:${pic.format};base64,${Buffer.from(pic.data).toString('base64')}`;
+    }
+
+    return {
+      title: common.title || path.basename(filePath, path.extname(filePath)),
+      artist: common.artist || '未知艺术家',
+      album: common.album || '未知专辑',
+      duration: fmt.duration || 0,
+      format: (path.extname(filePath).replace('.', '') || 'unknown').toUpperCase(),
+      sampleRate: fmt.sampleRate,
+      bitDepth: fmt.bitsPerSample,
+      bitrate: fmt.bitrate ? Math.round(fmt.bitrate / 1000) : undefined,
+      lossless: fmt.lossless ?? false,
+      coverArt: coverBase64,
+      composer: Array.isArray(common.composer) ? common.composer.join(', ') : common.composer,
+      lyricist: (common as any).lyricist ? (Array.isArray((common as any).lyricist) ? (common as any).lyricist.join(', ') : (common as any).lyricist) : undefined,
+      genre: common.genre ? common.genre.join(', ') : undefined,
+      year: common.year,
+      trackNumber: common.track?.no ?? undefined,
+      discNumber: common.disk?.no ?? undefined,
+    };
+  } catch (error) {
+    console.error('Failed to parse audio metadata:', filePath, error);
+    return {
+      title: path.basename(filePath, path.extname(filePath)),
+      artist: '未知艺术家',
+      album: '未知专辑',
+      duration: 0,
+      format: (path.extname(filePath).replace('.', '') || 'unknown').toUpperCase(),
+      lossless: false,
+    };
+  }
+});
+
+ipcMain.handle('music-import-lyrics', async () => {
+  if (!mainWindow) return null;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    filters: [{ name: '歌词文件', extensions: ['lrc', 'txt'] }]
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  const fsSync = await import('fs');
+  return fsSync.readFileSync(result.filePaths[0], 'utf-8');
+});
+
+// AI lyrics recognition via Whisper API
+ipcMain.handle('music-ai-lyrics', async (_, opts: { filePath: string; apiKey: string; baseUrl: string; provider: string; model?: string; language?: string }) => {
+  const fsSync = await import('fs');
+  const nodePath = await import('path');
+
+  const stat = fsSync.statSync(opts.filePath);
+  const fileName = nodePath.basename(opts.filePath);
+  const ext = nodePath.extname(opts.filePath).replace('.', '').toLowerCase();
+  const mimeMap: Record<string, string> = { mp3: 'audio/mpeg', flac: 'audio/flac', wav: 'audio/wav', aac: 'audio/aac', ogg: 'audio/ogg', m4a: 'audio/mp4', opus: 'audio/opus', aiff: 'audio/aiff', aif: 'audio/aiff', wma: 'audio/x-ms-wma' };
+  const mime = mimeMap[ext] || 'audio/mpeg';
+
+  // Helper: convert Whisper-style segments to LRC
+  const toLrc = (segments: Array<{ start: number; text: string }>) => {
+    return segments.map(seg => {
+      const min = Math.floor(seg.start / 60);
+      const sec = (seg.start % 60).toFixed(2).padStart(5, '0');
+      return `[${min.toString().padStart(2, '0')}:${sec}]${seg.text.trim()}`;
+    }).join('\n');
+  };
+
+  try {
+    // ── Gemini path: multimodal generateContent ──
+    if (opts.provider === 'gemini') {
+      const fileData = fsSync.readFileSync(opts.filePath);
+      const geminiBase = opts.baseUrl.replace(/\/+$/, '').replace(/\/v1beta$/, '').replace(/\/v1$/, '');
+      const model = opts.model || 'gemini-2.5-flash';
+      const MAX_INLINE = 20 * 1024 * 1024;
+
+      let filePart: any;
+
+      if (stat.size > MAX_INLINE) {
+        // Use Gemini File API for large files (supports up to 2GB)
+        // Step 1: Upload file via resumable upload
+        const initUrl = `${geminiBase}/upload/v1beta/files?key=${opts.apiKey}`;
+        const initRes = await fetch(initUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Upload-Protocol': 'resumable',
+            'X-Goog-Upload-Command': 'start',
+            'X-Goog-Upload-Header-Content-Length': String(stat.size),
+            'X-Goog-Upload-Header-Content-Type': mime,
+          },
+          body: JSON.stringify({ file: { display_name: fileName } }),
+        });
+        if (!initRes.ok) {
+          const errText = await initRes.text();
+          return { error: `Gemini 文件上传初始化失败 (${initRes.status}): ${errText.substring(0, 300)}` };
+        }
+        const uploadUrl = initRes.headers.get('X-Goog-Upload-URL') || initRes.headers.get('x-goog-upload-url');
+        if (!uploadUrl) return { error: 'Gemini 文件上传失败：未获取到上传 URL' };
+
+        // Step 2: Upload the actual bytes
+        const uploadRes = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Length': String(stat.size),
+            'X-Goog-Upload-Offset': '0',
+            'X-Goog-Upload-Command': 'upload, finalize',
+          },
+          body: fileData,
+        });
+        if (!uploadRes.ok) {
+          const errText = await uploadRes.text();
+          return { error: `Gemini 文件上传失败 (${uploadRes.status}): ${errText.substring(0, 300)}` };
+        }
+        const uploadData = await uploadRes.json() as any;
+        const fileUri = uploadData.file?.uri;
+        if (!fileUri) return { error: 'Gemini 文件上传失败：未获取到文件 URI' };
+
+        // Step 3: Poll until file is ACTIVE
+        const fileApiName = uploadData.file?.name;
+        if (fileApiName) {
+          for (let i = 0; i < 60; i++) {
+            const statusRes = await fetch(`${geminiBase}/v1beta/${fileApiName}?key=${opts.apiKey}`);
+            if (statusRes.ok) {
+              const statusData = await statusRes.json() as any;
+              if (statusData.state === 'ACTIVE') break;
+              if (statusData.state === 'FAILED') return { error: 'Gemini 文件处理失败' };
+            }
+            await new Promise(r => setTimeout(r, 2000));
+          }
+        }
+
+        filePart = { file_data: { mime_type: mime, file_uri: fileUri } };
+      } else {
+        // Inline base64 for smaller files
+        const b64 = fileData.toString('base64');
+        filePart = { inline_data: { mime_type: mime, data: b64 } };
+      }
+
+      const url = `${geminiBase}/v1beta/models/${model}:generateContent?key=${opts.apiKey}`;
+      const body = JSON.stringify({
+        contents: [{
+          parts: [
+            filePart,
+            { text: '请仔细听这段音频，识别其中的歌词/人声内容。输出标准 LRC 格式，每行格式为 [mm:ss.xx]歌词内容。时间戳必须精确对应音频中该句歌词的起始时间。只输出 LRC 内容，不要输出任何其它解释。' }
+          ]
+        }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 8192 },
+      });
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+      if (!response.ok) {
+        const errText = await response.text();
+        return { error: `Gemini API 请求失败 (${response.status}): ${errText.substring(0, 300)}` };
+      }
+      const data = await response.json() as any;
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      if (!text.trim()) return { error: '未识别到任何歌词内容' };
+      const lrcLines = text.split('\n').filter((l: string) => l.match(/^\[[\d:.\[\]]+\]/)).join('\n');
+      return { lrc: lrcLines || text, text };
+    }
+
+    // ── Whisper path (OpenAI / Zenmux / compatible) ──
+    const MAX_WHISPER = 25 * 1024 * 1024;
+    if (stat.size > MAX_WHISPER) {
+      return { error: `文件过大 (${(stat.size / 1024 / 1024).toFixed(1)}MB)，Whisper API 限制 25MB。建议切换到 Gemini 作为 AI 提供商，支持最大 2GB 文件。` };
+    }
+
+    const fileData = fsSync.readFileSync(opts.filePath);
+    const boundary = '----FormBoundary' + Math.random().toString(36).substring(2);
+    const parts: Buffer[] = [];
+    const addField = (name: string, value: string) => {
+      parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`));
+    };
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: ${mime}\r\n\r\n`));
+    parts.push(fileData);
+    parts.push(Buffer.from('\r\n'));
+    addField('model', 'whisper-1');
+    addField('response_format', 'verbose_json');
+    addField('timestamp_granularities[]', 'segment');
+    if (opts.language) addField('language', opts.language);
+    parts.push(Buffer.from(`--${boundary}--\r\n`));
+
+    const body = Buffer.concat(parts);
+    const url = opts.baseUrl.replace(/\/+$/, '') + '/audio/transcriptions';
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${opts.apiKey}`, 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+      body,
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      return { error: `API 请求失败 (${response.status}): ${errText.substring(0, 300)}` };
+    }
+    const data = await response.json() as any;
+    const segments = data.segments || [];
+    if (segments.length === 0) return { error: '未识别到任何歌词内容' };
+    return { lrc: toLrc(segments), text: data.text || '' };
+  } catch (err: any) {
+    return { error: `请求异常: ${err.message || err}` };
+  }
+});
+
+// Check if a file exists
+ipcMain.handle('music-file-exists', async (_, filePath: string) => {
+  const fsSync = await import('fs');
+  return fsSync.existsSync(filePath);
+});
+
+// Select a cover image and return base64
+ipcMain.handle('music-select-cover', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'] }],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  const fsSync = await import('fs');
+  const nodePath = await import('path');
+  const data = fsSync.readFileSync(result.filePaths[0]);
+  const ext = nodePath.extname(result.filePaths[0]).replace('.', '').toLowerCase();
+  const mimeMap: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', bmp: 'image/bmp', gif: 'image/gif' };
+  const mime = mimeMap[ext] || 'image/jpeg';
+  return `data:${mime};base64,${data.toString('base64')}`;
+});
+
+// Re-link a track file (user picks new location)
+ipcMain.handle('music-relink-file', async () => {
+  const AUDIO_EXTS = ['mp3', 'flac', 'wav', 'aac', 'ogg', 'm4a', 'opus', 'wma', 'aiff', 'aif', 'ape', 'dsf', 'dff', 'wv'];
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [{ name: '音频文件', extensions: AUDIO_EXTS }],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+});

@@ -157,6 +157,32 @@ const SortableResourceItem: React.FC<SortableResourceItemProps> = ({ id, childre
   );
 };
 
+// Sortable Module Item Component for chapter-level drag and drop
+const SortableModuleItem: React.FC<{ id: string; disabled?: boolean; children: React.ReactNode }> = ({ id, disabled, children }) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+  return (
+    <div ref={setNodeRef} style={style} className="border-b border-gray-100 last:border-0 relative group/module">
+      {!disabled && (
+        <button
+          {...attributes}
+          {...listeners}
+          className="absolute left-0 top-0 bottom-0 w-4 flex items-center justify-center cursor-grab active:cursor-grabbing text-gray-200 hover:text-gray-400 opacity-0 group-hover/module:opacity-100 transition-opacity z-10"
+          title="拖拽排序章节"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <GripVertical className="w-3 h-3" />
+        </button>
+      )}
+      {children}
+    </div>
+  );
+};
+
 interface LearningListProps {
   course: CourseData;
   categories: CourseCategory[];
@@ -234,6 +260,33 @@ export const LearningList: React.FC<LearningListProps> = ({
       coordinateGetter: sortableKeyboardCoordinates,
     })
   );
+
+  // Module-level drag end handler
+  const handleModuleDragEnd = (section: 'resources' | 'assignments' | 'personal') => (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    if (section === 'resources') {
+      const oldIndex = course.modules.findIndex(m => m.id === active.id);
+      const newIndex = course.modules.findIndex(m => m.id === over.id);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        onUpdateCourse({ ...course, modules: arrayMove(course.modules, oldIndex, newIndex) });
+      }
+    } else if (section === 'assignments') {
+      const mods = course.assignmentModules || [];
+      const oldIndex = mods.findIndex(m => m.id === active.id);
+      const newIndex = mods.findIndex(m => m.id === over.id);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        onUpdateCourse({ ...course, assignmentModules: arrayMove(mods, oldIndex, newIndex) });
+      }
+    } else {
+      const mods = course.personalModules || [];
+      const oldIndex = mods.findIndex(m => m.id === active.id);
+      const newIndex = mods.findIndex(m => m.id === over.id);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        onUpdateCourse({ ...course, personalModules: arrayMove(mods, oldIndex, newIndex) });
+      }
+    }
+  };
 
   // #3: Unified drag end handler for all sections
   const handleDragEnd = (moduleId: string, section: 'resources' | 'assignments' | 'personal') => (event: DragEndEvent) => {
@@ -1301,22 +1354,22 @@ export const LearningList: React.FC<LearningListProps> = ({
   // #11: 搜索过滤逻辑
   const sq = searchQuery.trim().toLowerCase();
   const filteredModules = useMemo(() => {
-    if (!sq) return sortByTitle(course.modules);
-    return sortByTitle(course.modules).filter(m =>
+    if (!sq) return course.modules;
+    return course.modules.filter(m =>
       m.title.toLowerCase().includes(sq) || m.lectures.some(l => l.title.toLowerCase().includes(sq))
     );
   }, [course.modules, sq]);
   const filteredAssignmentModules = useMemo(() => {
     const mods = course.assignmentModules || [];
-    if (!sq) return sortByTitle(mods);
-    return sortByTitle(mods).filter(m =>
+    if (!sq) return mods;
+    return mods.filter(m =>
       m.title.toLowerCase().includes(sq) || m.items.some(i => i.title.toLowerCase().includes(sq))
     );
   }, [course.assignmentModules, sq]);
   const filteredPersonalModules = useMemo(() => {
     const mods = course.personalModules || [];
-    if (!sq) return sortByTitle(mods);
-    return sortByTitle(mods).filter(m =>
+    if (!sq) return mods;
+    return mods.filter(m =>
       m.title.toLowerCase().includes(sq) || m.items.some(i => i.title.toLowerCase().includes(sq))
     );
   }, [course.personalModules, sq]);
@@ -1459,9 +1512,10 @@ export const LearningList: React.FC<LearningListProps> = ({
           )}
           
           {expandedSections['resources'] && (
-            <div className="">
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleModuleDragEnd('resources')}>
+              <SortableContext items={course.modules.map(m => m.id)} strategy={verticalListSortingStrategy}>
               {filteredModules.map((module) => (
-                <div key={module.id} className="border-b border-gray-100 last:border-0 group/module">
+                <SortableModuleItem key={module.id} id={module.id} disabled={!!sq}>
                   <div className="flex items-center justify-between hover:bg-gray-50 transition-colors pr-2">
                     <button 
                       onClick={() => toggleModule(module.id)}
@@ -1657,9 +1711,10 @@ export const LearningList: React.FC<LearningListProps> = ({
                       </DndContext>
                     </div>
                   )}
-                </div>
+                </SortableModuleItem>
               ))}
-            </div>
+              </SortableContext>
+            </DndContext>
           )}
         </div>
 
@@ -1715,12 +1770,13 @@ export const LearningList: React.FC<LearningListProps> = ({
           )}
           
           {expandedSections['assignments'] && (
-            <div className="">
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleModuleDragEnd('assignments')}>
+              <SortableContext items={(course.assignmentModules || []).map(m => m.id)} strategy={verticalListSortingStrategy}>
               {(course.assignmentModules || []).length === 0 ? (
                 <div className="text-xs text-gray-400 text-center py-4">暂无章节，点击 + 添加</div>
               ) : (
                 filteredAssignmentModules.map((module) => (
-                  <div key={module.id} className="border-b border-gray-100 last:border-0 group/module">
+                  <SortableModuleItem key={module.id} id={module.id} disabled={!!sq}>
                     <div className="flex items-center justify-between hover:bg-gray-50 transition-colors pr-2">
                       <button 
                         onClick={() => setExpandedAssignmentModules(prev => ({ ...prev, [module.id]: !prev[module.id] }))}
@@ -1922,10 +1978,11 @@ export const LearningList: React.FC<LearningListProps> = ({
                         )}
                       </div>
                     )}
-                  </div>
+                  </SortableModuleItem>
                 ))
               )}
-            </div>
+              </SortableContext>
+            </DndContext>
           )}
         </div>
 
@@ -1981,12 +2038,13 @@ export const LearningList: React.FC<LearningListProps> = ({
           )}
           
           {expandedSections['personal'] && (
-            <div className="">
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleModuleDragEnd('personal')}>
+              <SortableContext items={(course.personalModules || []).map(m => m.id)} strategy={verticalListSortingStrategy}>
               {(course.personalModules || []).length === 0 ? (
                 <div className="text-xs text-gray-400 text-center py-4">暂无章节，点击 + 添加</div>
               ) : (
                 filteredPersonalModules.map((module) => (
-                  <div key={module.id} className="border-b border-gray-100 last:border-0 group/module">
+                  <SortableModuleItem key={module.id} id={module.id} disabled={!!sq}>
                     <div className="flex items-center justify-between hover:bg-gray-50 transition-colors pr-2">
                       <button 
                         onClick={() => setExpandedPersonalModules(prev => ({ ...prev, [module.id]: !prev[module.id] }))}
@@ -2181,10 +2239,11 @@ export const LearningList: React.FC<LearningListProps> = ({
                         )}
                       </div>
                     )}
-                  </div>
+                  </SortableModuleItem>
                 ))
               )}
-            </div>
+              </SortableContext>
+            </DndContext>
           )}
         </div>
 

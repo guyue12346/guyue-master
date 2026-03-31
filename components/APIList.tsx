@@ -1,15 +1,17 @@
 
 import React, { useState } from 'react';
-import { APIRecord } from '../types';
+import { APIRecord, Category } from '../types';
 import { Webhook, Copy, Check, Edit2, Trash2, Key, Globe, FileCode } from 'lucide-react';
+import * as LucideIcons from 'lucide-react';
 
 interface APIListProps {
   records: APIRecord[];
+  categories?: Category[];
   onDelete: (id: string) => void;
   onEdit: (record: APIRecord) => void;
 }
 
-export const APIList: React.FC<APIListProps> = ({ records, onDelete, onEdit }) => {
+export const APIList: React.FC<APIListProps> = ({ records, categories, onDelete, onEdit }) => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copyType, setCopyType] = useState<'url' | 'key' | 'usage' | null>(null);
 
@@ -55,9 +57,17 @@ export const APIList: React.FC<APIListProps> = ({ records, onDelete, onEdit }) =
           {/* Header */}
           <div className="flex justify-between items-start mb-3">
             <div className="flex items-center gap-2.5 overflow-hidden">
-              <div className="p-2 bg-purple-50 rounded-lg text-purple-500">
-                <Webhook className="w-5 h-5" />
-              </div>
+              {(() => {
+                const catObj = categories?.find(c => c.name === rec.category);
+                const CatIcon = catObj?.icon ? ((LucideIcons as any)[catObj.icon] || Webhook) : Webhook;
+                const bgColor = catObj?.color ? catObj.color + '18' : '#f5f3ff';
+                const iconColor = catObj?.color || '#a855f7';
+                return (
+                  <div className="p-2 rounded-lg" style={{ backgroundColor: bgColor }}>
+                    <CatIcon className="w-5 h-5" style={{ color: iconColor }} />
+                  </div>
+                );
+              })()}
               <div className="min-w-0">
                 <h3 className="font-bold text-gray-800 truncate leading-tight">{rec.title}</h3>
                 <div className="flex gap-2 mt-1">

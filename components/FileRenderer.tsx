@@ -9,6 +9,7 @@ import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import 'katex/dist/katex.min.css';
 import { FileRecord } from '../types';
 import { FileText, Maximize2, Minimize2, Info, Lightbulb, AlertCircle, AlertTriangle, ShieldAlert, Edit, List, FolderSearch, RefreshCw, Type, Minus, Plus } from 'lucide-react';
+import { EnhancedPdfViewer } from './EnhancedPdfViewer';
 
 type ReadingTheme = 'default' | 'sepia' | 'dark';
 
@@ -215,6 +216,7 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
   }
 
   const isMarkdown = ['md', 'markdown'].includes(file.type.toLowerCase().replace('.', ''));
+  const isPdf = file.type.toLowerCase() === '.pdf';
   const ts = themeStyles[readingSettings.theme];
 
   return (
@@ -311,14 +313,18 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
 
       {/* Content Area */}
       <div className="flex-1 overflow-hidden relative flex">
-        {loading ? (
+        {loading && !isPdf ? (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
           </div>
         ) : (
           <>
             <div className={`flex-1 overflow-hidden relative ${showTOC ? 'mr-64' : ''}`}>
-               {renderFileContent(file, content, readingSettings)}
+               {isPdf ? (
+                 <EnhancedPdfViewer filePath={file.path} />
+               ) : (
+                 renderFileContent(file, content, readingSettings)
+               )}
             </div>
             
             {/* TOC Sidebar with active highlighting */}
@@ -371,14 +377,9 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
 const renderFileContent = (file: FileRecord, content: string, settings?: ReadingSettings) => {
   const ext = file.type.toLowerCase().replace('.', '');
 
+  // PDF 文件已在主组件中处理，这里不再处理
   if (ext === 'pdf') {
-    return (
-      <iframe 
-        src={`file://${file.path}`} 
-        className="w-full h-full border-none"
-        title={file.name}
-      />
-    );
+    return null;
   }
 
   if (['md', 'markdown'].includes(ext)) {

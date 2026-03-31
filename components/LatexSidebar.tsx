@@ -912,7 +912,7 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
           />
         ) : (
           <>
-            <p className={`text-sm truncate font-medium leading-tight ${activeFilePath === f.path ? 'text-blue-700' : 'text-gray-700'}`}>
+            <p className={`text-xs truncate font-medium leading-tight ${activeFilePath === f.path ? 'text-blue-700' : 'text-gray-700'}`}>
               {f.name}
             </p>
             <p className="text-[10px] text-gray-400 leading-tight mt-0.5">

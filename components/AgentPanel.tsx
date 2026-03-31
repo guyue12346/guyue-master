@@ -4618,14 +4618,15 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             <div className="flex-1 min-w-0 flex flex-col bg-white">
               <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
                 {messages.map(message => (
-                  <MessageBubble
-                    key={message.id}
-                    message={message}
-                    onDelete={handleDeleteMessage}
-                    onUndo={handleUndo}
-                    onConfirm={handleConfirmAction}
-                    onCancelConfirm={handleCancelAction}
-                  />
+                  <MessageErrorBoundary key={message.id}>
+                    <MessageBubble
+                      message={message}
+                      onDelete={handleDeleteMessage}
+                      onUndo={handleUndo}
+                      onConfirm={handleConfirmAction}
+                      onCancelConfirm={handleCancelAction}
+                    />
+                  </MessageErrorBoundary>
                 ))}
                 {isProcessing && (
                   <div className="flex items-center gap-2 text-gray-500 text-sm">
@@ -5434,6 +5435,32 @@ const useUserAvatar = () => {
   }, []);
   return avatar;
 };
+
+class MessageErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error?: string }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(error: Error): { hasError: boolean; error: string } {
+    return { hasError: true, error: error.message };
+  }
+  componentDidCatch(error: Error) {
+    console.warn('[MessageBubble] 渲染异常:', error.message);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="text-xs text-red-400 bg-red-50 rounded-xl px-3 py-2 border border-red-100">
+          ⚠️ 消息渲染失败
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const MessageBubble: React.FC<{
   message: AgentMessage;

@@ -1,6 +1,7 @@
 import React, { useState, useMemo, Suspense } from 'react';
 import { APIRecord, Category } from '../../types';
 import { FolderTree, Plus, Search } from 'lucide-react';
+import * as LucideIcons from 'lucide-react';
 import { APIList } from '../APIList';
 import { CategoryManagerModal } from '../CategoryManagerModal';
 
@@ -114,11 +115,12 @@ export const APIManager: React.FC<APIManagerProps> = ({
         </div>
         {/* 第二行：分类筛选 */}
         <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-800/50 px-4 py-3">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">分类与标签</p>
           <div className="flex items-center gap-2 flex-wrap">
             {['全部', ...allCategories].map(catName => {
               const categoryObj = categories.find(c => c.name === catName);
               const color = categoryObj?.color;
+              const iconName = categoryObj?.icon;
+              const CatIcon = iconName ? ((LucideIcons as any)[iconName] || null) : null;
               const isActive = selectedCategory === catName;
               return (
                 <button
@@ -130,7 +132,10 @@ export const APIManager: React.FC<APIManagerProps> = ({
                       : 'bg-gray-100 dark:bg-gray-700/50 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                   }`}
                 >
-                  {color && !isActive && (
+                  {!isActive && CatIcon && color && (
+                    <CatIcon className="w-3 h-3" style={{ color }} />
+                  )}
+                  {!isActive && !CatIcon && color && (
                     <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
                   )}
                   {catName}
@@ -145,6 +150,7 @@ export const APIManager: React.FC<APIManagerProps> = ({
       <div className="flex-1 overflow-auto">
         <APIList
           records={filteredRecords}
+          categories={categories}
           onDelete={onDelete}
           onEdit={handleEdit}
         />
