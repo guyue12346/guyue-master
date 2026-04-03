@@ -7,6 +7,7 @@
 import type {
   QuizQuestion, QuestionType, LLMFunction,
   KnowledgePointMastery, SessionConfig, DEFAULT_SESSION_CONFIG,
+  VectorStoreRole,
 } from './types';
 import { buildQuestionPrompt, buildFollowUpPrompt, buildSessionSummaryPrompt } from './prompts';
 import { calculateQuestionPriorities, createMasteryPoint } from './scheduler';
@@ -58,6 +59,7 @@ interface TextChunk {
   id: string;
   text: string;
   metadata?: Record<string, any>;
+  sourceStoreId?: string;
 }
 
 /** 从向量库获取所有 chunks */
@@ -108,12 +110,14 @@ export async function generateQuestion(
   difficulty: number,
   llmFn: LLMFunction,
   existingQuestions?: string[],
+  sourceRole?: VectorStoreRole,
 ): Promise<QuizQuestion> {
   const prompt = buildQuestionPrompt(
     chunks.map(c => c.text),
     questionType,
     difficulty,
     existingQuestions,
+    sourceRole,
   );
 
   const response = await llmFn(prompt);
@@ -217,6 +221,7 @@ export async function buildSessionPlan(
   difficulty: number = 3,
   topicHint?: string,
   onProgress?: (done: number, total: number, status: string) => void,
+  storeRoles?: Record<string, VectorStoreRole[]>,
 ): Promise<SessionPlan> {
   const total = config.totalQuestions;
   const reviewCount = Math.round(total * config.reviewRatio);
@@ -229,10 +234,25 @@ export async function buildSessionPlan(
   const allPoints = Object.values(mastery);
   const priorities = calculateQuestionPriorities(allPoints);
 
-  // Combine all store chunks
+  // Combine all store chunks, tagging with source store ID
   const allChunks: TextChunk[] = [];
-  for (const store of stores) allChunks.push(...getAllChunks(store));
+  for (const store of stores) {
+    const chunks = getAllChunks(store);
+    const storeId = (store as any).id || (store as any).name || '';
+    for (const chunk of chunks) {
+      chunk.sourceStoreId = storeId;
+    }
+    allChunks.push(...chunks);
+  }
   if (allChunks.length === 0) throw new Error('所选向量库中没有数据');
+
+  // Determine role for a chunk based on storeRoles mapping
+  function getChunkRole(chunk: TextChunk): VectorStoreRole | undefined {
+    if (!storeRoles || !chunk.sourceStoreId) return undefined;
+    const roles = storeRoles[chunk.sourceStoreId];
+    if (roles && roles.length > 0) return roles[0];
+    return undefined;
+  }
 
   const existingTexts: string[] = [];
   const questions: QuizQuestion[] = [];
@@ -244,7 +264,8 @@ export async function buildSessionPlan(
 
   async function gen(chunks: TextChunk[], qType?: QuestionType): Promise<QuizQuestion | null> {
     try {
-      const q = await generateQuestion(chunks, qType || pickType(), difficulty, llmFn, existingTexts);
+      const role = getChunkRole(chunks[0]);
+      const q = await generateQuestion(chunks, qType || pickType(), difficulty, llmFn, existingTexts, role);
       existingTexts.push(q.question);
       await addCachedQuestion(q);
       return q;
@@ -360,9 +381,10 @@ export async function generateSessionSummary(
 export async function updateMasteryAfterAnswer(
   question: QuizQuestion,
   score: number,
+  categoryId?: string,
 ): Promise<void> {
   const { updateMastery } = await import('./scheduler');
-  const mastery = await loadMastery();
+  const mastery = await loadMastery(categoryId);
 
   // 用题目 tags 构建 pointId
   const pointId = question.tags.sort().join('-') || `unknown-${question.id}`;
@@ -375,5 +397,5 @@ export async function updateMasteryAfterAnswer(
     mastery[pointId] = updateMastery(newPoint, score);
   }
 
-  await saveMastery(mastery);
+  await saveMastery(mastery, categoryId);
 }

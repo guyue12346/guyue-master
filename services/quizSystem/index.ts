@@ -9,7 +9,7 @@ export type {
   QuizAttempt, SessionSummary, QuizSession,
   KnowledgePointMastery, QuestionPriority,
   SessionConfig, QuizSettings, QuizStats,
-  LLMFunction, QuizScenario,
+  LLMFunction, QuizScenario, VectorStoreRole,
 } from './types';
 
 export {
@@ -30,6 +30,7 @@ export {
   saveSession, loadSession, loadRecentSessions, saveRecentSessions,
   loadStats, saveStats, recordSessionStats,
   loadSettings, saveSettings,
+  clearLegacyMastery,
 } from './storageService';
 
 // Scorer

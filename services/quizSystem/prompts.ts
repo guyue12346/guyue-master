@@ -2,7 +2,7 @@
  * Quiz System — Prompt 模板
  */
 
-import type { QuestionType, FollowUpStrategy } from './types';
+import type { QuestionType, FollowUpStrategy, VectorStoreRole } from './types';
 
 const QUESTION_TYPE_DESC: Record<QuestionType, string> = {
   concept: '概念解释题 — 要求解释一个核心概念，考察记忆和理解',
@@ -26,23 +26,55 @@ export function buildQuestionPrompt(
   questionType: QuestionType,
   difficulty: number,
   existingQuestions?: string[],
+  sourceRole?: VectorStoreRole,
 ): string {
   const dedup = existingQuestions?.length
     ? `\n\n## 已有题目（请勿重复）\n${existingQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`
     : '';
 
-  return `你是一位专业的技术面试官和出题专家。请根据以下知识内容，生成一道高质量的题目。
+  const chunksContent = chunks.join('\n\n---\n\n');
 
-## 知识内容
+  let roleIntro: string;
+  let contentLabel: string;
+  let roleRequirements: string;
 
-${chunks.join('\n\n---\n\n')}
+  if (sourceRole === 'questions_no_answer') {
+    roleIntro = '你是一位专业的出题专家。以下是一些题目素材（不含答案），请基于这些题目进行再创作。';
+    contentLabel = '原始题目素材';
+    roleRequirements = `1. 首先理解每道题目的考查方向
+2. 为题目生成完整的参考答案
+3. 对题目进行适当的扩展和改动，使其更加完善
+4. 保持题目的核心考查方向不变`;
+  } else if (sourceRole === 'questions_with_answer') {
+    roleIntro = '你是一位专业的出题专家。以下是一些题目及其答案，请基于这些内容进行丰富和扩展。';
+    contentLabel = '原始题目与答案';
+    roleRequirements = `1. 在原题目和答案的基础上，进行丰富、扩展和补充
+2. 可以调整题目角度、增加深度或拓展广度
+3. 确保参考答案覆盖所有关键知识点
+4. 保持与原题相关的知识领域`;
+  } else {
+    roleIntro = '你是一位专业的技术面试官和出题专家。请根据以下知识内容，生成一道高质量的题目。';
+    contentLabel = '知识内容';
+    roleRequirements = `1. **题型**: ${QUESTION_TYPE_DESC[questionType] || QUESTION_TYPE_DESC.concept}
+2. **难度**: ${difficulty}/5（${DIFFICULTY_DESC[difficulty] || DIFFICULTY_DESC[3]}）
+3. **目标**: 考察对核心概念的深度理解，而非死记硬背
+4. **语言**: 中文出题`;
+  }
+
+  // For non-material roles, still include type/difficulty info
+  const extraReqs = sourceRole && sourceRole !== 'material'
+    ? `\n5. **题型**: ${QUESTION_TYPE_DESC[questionType] || QUESTION_TYPE_DESC.concept}\n6. **难度**: ${difficulty}/5（${DIFFICULTY_DESC[difficulty] || DIFFICULTY_DESC[3]}）\n7. **语言**: 中文出题`
+    : '';
+
+  return `${roleIntro}
+
+## ${contentLabel}
+
+${chunksContent}
 
 ## 出题要求
 
-1. **题型**: ${QUESTION_TYPE_DESC[questionType] || QUESTION_TYPE_DESC.concept}
-2. **难度**: ${difficulty}/5（${DIFFICULTY_DESC[difficulty] || DIFFICULTY_DESC[3]}）
-3. **目标**: 考察对核心概念的深度理解，而非死记硬背
-4. **语言**: 中文出题
+${roleRequirements}${extraReqs}
 ${dedup}
 
 ## 输出格式（严格 JSON，不要多余文字）

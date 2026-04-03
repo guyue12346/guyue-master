@@ -53,12 +53,13 @@ import {
   getRetentionRate, getRetentionStatus, calculateQuestionPriorities,
   buildSessionPlan,
   generateSessionSummary, updateMasteryAfterAnswer,
+  clearLegacyMastery,
 } from '../services/quizSystem';
 import type {
   QuizQuestion, QuestionType, AnswerEvaluation,
   QuizSession, QuizAttempt, SessionSummary,
   KnowledgePointMastery, QuizStats, QuizSettings, LLMFunction,
-  QuizScenario,
+  QuizScenario, VectorStoreRole,
 } from '../services/quizSystem';
 
 // ═══════════════════════════════════════════════════════
@@ -510,7 +511,6 @@ export function KnowledgeBase() {
   });
   const [ragCollections, setRagCollections] = useState<RagCollection[]>([]);
   const [quizSettings, setQuizSettings] = useState<QuizSettings>(() => loadSettings());
-  const [showQuizSettings, setShowQuizSettings] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
 
   // ── Per-feature LLM configs ──
@@ -587,16 +587,76 @@ export function KnowledgeBase() {
   const [sessionNameInput, setSessionNameInput] = useState('');
   const [showDashboard, setShowDashboard] = useState(false);
 
+  // ── Quiz Debug ──
+  const [quizDebugData, setQuizDebugData] = useState<any[]>([]);
+  const [showQuizDebug, setShowQuizDebug] = useState(false);
+
   // ── Quiz Categories ──
+  interface QuizCategory {
+    id: string;
+    name: string;
+    icon: string;
+    color: string;
+    createdAt: number;
+  }
+
+  const CATEGORY_COLORS: { key: string; bg: string; text: string; ring: string; solid: string }[] = [
+    { key: 'purple', bg: 'bg-purple-50', text: 'text-purple-700', ring: 'border-purple-200', solid: 'bg-purple-500' },
+    { key: 'blue', bg: 'bg-blue-50', text: 'text-blue-700', ring: 'border-blue-200', solid: 'bg-blue-500' },
+    { key: 'green', bg: 'bg-green-50', text: 'text-green-700', ring: 'border-green-200', solid: 'bg-green-500' },
+    { key: 'rose', bg: 'bg-rose-50', text: 'text-rose-700', ring: 'border-rose-200', solid: 'bg-rose-500' },
+    { key: 'amber', bg: 'bg-amber-50', text: 'text-amber-700', ring: 'border-amber-200', solid: 'bg-amber-500' },
+    { key: 'cyan', bg: 'bg-cyan-50', text: 'text-cyan-700', ring: 'border-cyan-200', solid: 'bg-cyan-500' },
+    { key: 'indigo', bg: 'bg-indigo-50', text: 'text-indigo-700', ring: 'border-indigo-200', solid: 'bg-indigo-500' },
+    { key: 'pink', bg: 'bg-pink-50', text: 'text-pink-700', ring: 'border-pink-200', solid: 'bg-pink-500' },
+  ];
+
+  function getCategoryColorClasses(color: string, isActive: boolean) {
+    const c = CATEGORY_COLORS.find(cc => cc.key === color) || CATEGORY_COLORS[0];
+    return isActive ? `${c.bg} ${c.text} font-medium ${c.ring} border` : 'text-gray-600 hover:bg-gray-50 border border-transparent';
+  }
+
   const QUIZ_CATEGORIES_KEY = 'guyue_quiz_categories';
-  const [quizCategories, setQuizCategories] = useState<{ id: string; name: string; createdAt: number }[]>(() => {
-    try { return JSON.parse(localStorage.getItem(QUIZ_CATEGORIES_KEY) || '[]'); } catch { return []; }
+  const [quizCategories, setQuizCategories] = useState<QuizCategory[]>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(QUIZ_CATEGORIES_KEY) || '[]');
+      return raw.map((c: any) => ({ icon: '📚', color: 'purple', ...c }));
+    } catch { return []; }
   });
   const [activeQuizCategoryId, setActiveQuizCategoryId] = useState<string | null>(() => {
     try { const cats = JSON.parse(localStorage.getItem(QUIZ_CATEGORIES_KEY) || '[]'); return cats.length > 0 ? cats[0].id : null; } catch { return null; }
   });
   const [renamingCategoryId, setRenamingCategoryId] = useState<string | null>(null);
   const [categoryNameInput, setCategoryNameInput] = useState('');
+  const [dragCategoryId, setDragCategoryId] = useState<string | null>(null);
+  const [dragOverCategoryId, setDragOverCategoryId] = useState<string | null>(null);
+
+  // ── Per-category config snapshots ──
+  interface QuizCategoryConfig {
+    quizPrompt: string;
+    quizCount: number;
+    quizTypes: QuestionType[];
+    quizDifficulty: number;
+    selectedScenarioId: string;
+    selectedVectorIds: string[];
+    storeRoles: Record<string, VectorStoreRole[]>;
+  }
+  const QUIZ_CAT_CONFIGS_KEY = 'guyue_quiz_category_configs';
+  const [categoryConfigs, setCategoryConfigs] = useState<Record<string, QuizCategoryConfig>>(() => {
+    try { return JSON.parse(localStorage.getItem(QUIZ_CAT_CONFIGS_KEY) || '{}'); } catch { return {}; }
+  });
+  const categoryConfigsRef = useRef(categoryConfigs);
+  categoryConfigsRef.current = categoryConfigs;
+  const prevCategoryIdRef = useRef<string | null>(activeQuizCategoryId);
+  const currentQuizConfigRef = useRef<QuizCategoryConfig>({
+    quizPrompt: '', quizCount: 5, quizTypes: ['concept', 'comparison', 'scenario'] as QuestionType[],
+    quizDifficulty: 3, selectedScenarioId: 'daily-study', selectedVectorIds: [],
+    storeRoles: {},
+  });
+
+  // ── Store roles state ──
+  const [storeRoles, setStoreRoles] = useState<Record<string, VectorStoreRole[]>>({});
+  const [showRolePicker, setShowRolePicker] = useState<{ role: VectorStoreRole; anchorIdx: number } | null>(null);
 
   // ── Dashboard ──
   const [stats, setStats] = useState<QuizStats | null>(null);
@@ -610,6 +670,60 @@ export function KnowledgeBase() {
   // ══════════════════════════════════════════════════════
   useEffect(() => { localStorage.setItem('guyue_kb_selected_collections', JSON.stringify(selectedIds)); }, [selectedIds]);
   useEffect(() => { localStorage.setItem(QUIZ_CATEGORIES_KEY, JSON.stringify(quizCategories)); }, [quizCategories]);
+  useEffect(() => { localStorage.setItem(QUIZ_CAT_CONFIGS_KEY, JSON.stringify(categoryConfigs)); }, [categoryConfigs]);
+
+  // Keep currentQuizConfigRef in sync with latest quiz settings
+  useEffect(() => {
+    currentQuizConfigRef.current = {
+      quizPrompt, quizCount, quizTypes: [...quizTypes], quizDifficulty, selectedScenarioId, selectedVectorIds: [...selectedIds],
+      storeRoles: { ...storeRoles },
+    };
+  });
+
+  // Save/restore per-category config on category switch
+  useEffect(() => {
+    const prevId = prevCategoryIdRef.current;
+
+    if (prevId) {
+      const snapshot = { ...currentQuizConfigRef.current };
+      setCategoryConfigs(prev => ({ ...prev, [prevId]: snapshot }));
+    }
+
+    if (activeQuizCategoryId) {
+      const config = categoryConfigsRef.current[activeQuizCategoryId];
+      if (config) {
+        setQuizPrompt(config.quizPrompt);
+        setQuizCount(config.quizCount);
+        setQuizTypes(config.quizTypes);
+        setQuizDifficulty(config.quizDifficulty);
+        setSelectedScenarioId(config.selectedScenarioId);
+        setSelectedIds(config.selectedVectorIds);
+        setStoreRoles(config.storeRoles || {});
+      } else {
+        setQuizPrompt('');
+        setQuizCount(5);
+        setQuizTypes(['concept', 'comparison', 'scenario']);
+        setQuizDifficulty(3);
+        setSelectedScenarioId('daily-study');
+        setStoreRoles({});
+      }
+    }
+
+    prevCategoryIdRef.current = activeQuizCategoryId;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeQuizCategoryId]);
+
+  // Save current category config on unmount
+  useEffect(() => {
+    return () => {
+      if (prevCategoryIdRef.current) {
+        const snapshot = { ...currentQuizConfigRef.current };
+        const id = prevCategoryIdRef.current;
+        setCategoryConfigs(prev => ({ ...prev, [id]: snapshot }));
+      }
+    };
+  }, []);
+
   useEffect(() => { saveKbConversations(KB_AI_CONVERSATIONS_KEY, aiConversations); }, [aiConversations]);
   useEffect(() => { saveKbConversations(KB_QA_CONVERSATIONS_KEY, qaConversations); }, [qaConversations]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [streamingContent, aiConversations, activeAiConvId]);
@@ -668,10 +782,20 @@ export function KnowledgeBase() {
   // Load dashboard data when showing dashboard
   useEffect(() => {
     if (showDashboard) {
-      loadStats().then(setStats).catch(() => {});
-      loadMastery().then(setMastery).catch(() => {});
+      loadStats(activeQuizCategoryId || undefined).then(setStats).catch(() => {});
+      loadMastery(activeQuizCategoryId || undefined).then(setMastery).catch(() => {});
     }
-  }, [showDashboard]);
+  }, [showDashboard, activeQuizCategoryId]);
+
+  // One-time migration: clear legacy global mastery/stats
+  useEffect(() => {
+    const migrationKey = 'guyue_quiz_mastery_migrated_v2';
+    if (!localStorage.getItem(migrationKey)) {
+      clearLegacyMastery().then(() => {
+        localStorage.setItem(migrationKey, 'true');
+      }).catch(() => {});
+    }
+  }, []);
 
   // ══════════════════════════════════════════════════════
   // Helpers
@@ -1030,19 +1154,34 @@ export function KnowledgeBase() {
     if (!hasSelection || quizGenerating) return;
     setQuizGenerating(true);
     setQuizProgress('准备中…');
+    const debugLog: any[] = [];
     try {
       const stores: LocalVectorStore[] = [];
       for (const id of selectedIds) { try { stores.push(await loadStore(id)); } catch {} }
       if (stores.length === 0) throw new Error('无法加载向量库');
       const scenario = allScenarios.find(s => s.id === selectedScenarioId);
       const fullPrompt = [scenario?.systemPrompt || '', quizPrompt || ''].filter(Boolean).join('\n\n') || undefined;
+      // Wrap LLM fn for debug capture
+      const baseFn = llmFn();
+      const debugFn: LLMFunction = async (prompt: string, systemPrompt?: string) => {
+        const startTime = Date.now();
+        const response = await baseFn(prompt, systemPrompt);
+        debugLog.push({
+          timestamp: Date.now(), duration: Date.now() - startTime,
+          prompt, response, promptLength: prompt.length, responseLength: response.length,
+          type: 'generation',
+        });
+        return response;
+      };
       const plan = await buildSessionPlan(
-        stores, llmFn(), getEmbeddingConfig(),
+        stores, debugFn, getEmbeddingConfig(),
         { totalQuestions: quizCount, reviewRatio: 0.3, weakPointRatio: 0.3, newKnowledgeRatio: 0.3, randomReviewRatio: 0.1 },
         quizTypes, quizDifficulty, fullPrompt,
         (done, total, status) => setQuizProgress(`${status} (${done}/${total})`),
+        storeRoles,
       );
       if (!plan.questions || plan.questions.length === 0) throw new Error('未能生成任何题目，请检查模型设置');
+      setQuizDebugData(debugLog);
       const session: QuizSession = {
         id: `session-${Date.now()}`, mode: 'practice', collectionIds: [...selectedIds],
         topic: quizPrompt || scenario?.name || undefined, attempts: [], startedAt: Date.now(), status: 'answering',
@@ -1060,7 +1199,7 @@ export function KnowledgeBase() {
       saveRecentSessions(updated);
     } catch (err: any) { alert(`出题失败: ${err?.message || '未知错误'}`); }
     finally { setQuizGenerating(false); setQuizProgress(''); }
-  }, [hasSelection, quizGenerating, selectedIds, loadStore, llmFn, quizCount, quizTypes, quizDifficulty, quizPrompt, selectedScenarioId, allScenarios, recentSessions, activeQuizCategoryId]);
+  }, [hasSelection, quizGenerating, selectedIds, loadStore, llmFn, quizCount, quizTypes, quizDifficulty, quizPrompt, selectedScenarioId, allScenarios, recentSessions, activeQuizCategoryId, storeRoles]);
 
   const handleExitQuiz = useCallback(() => {
     if (!activeQuiz) { setActiveQuiz(null); return; }
@@ -1094,7 +1233,18 @@ export function KnowledgeBase() {
     setRecentSessions(gradingHistory);
     saveRecentSessions(gradingHistory);
     const embCfg = getEmbeddingConfig();
-    const fn = llmFn();
+    const baseFn = llmFn();
+    const gradeDebugLog: any[] = [];
+    const debugFn: LLMFunction = async (prompt: string, systemPrompt?: string) => {
+      const startTime = Date.now();
+      const response = await baseFn(prompt, systemPrompt);
+      gradeDebugLog.push({
+        timestamp: Date.now(), duration: Date.now() - startTime,
+        prompt, response, promptLength: prompt.length, responseLength: response.length,
+        type: 'scoring',
+      });
+      return response;
+    };
     const attempts: QuizAttempt[] = [];
     let totalScore = 0;
     for (let i = 0; i < questions.length; i++) {
@@ -1102,7 +1252,7 @@ export function KnowledgeBase() {
       const q = questions[i];
       const answer = userAnswers[q.id] || '';
       let evaluation: AnswerEvaluation;
-      try { evaluation = await evaluate(q, answer, embCfg, fn); }
+      try { evaluation = await evaluate(q, answer, embCfg, debugFn); }
       catch {
         evaluation = {
           totalScore: 0, dimensions: {
@@ -1115,13 +1265,14 @@ export function KnowledgeBase() {
       }
       attempts.push({ id: `attempt-${i}`, questionId: q.id, question: q, userAnswer: answer, evaluation, timeSpentMs: 0, createdAt: Date.now() });
       totalScore += evaluation.totalScore;
-      try { await updateMasteryAfterAnswer(q, evaluation.totalScore); } catch {}
+      try { await updateMasteryAfterAnswer(q, evaluation.totalScore, activeQuizCategoryId || undefined); } catch {}
     }
+    setQuizDebugData(prev => [...prev, ...gradeDebugLog]);
     let summary: SessionSummary | undefined;
     try {
       const scores = attempts.map(a => a.evaluation.totalScore);
       const tags = attempts.map(a => a.question.tags);
-      const { overallGrade, recommendation } = await generateSessionSummary(scores, tags, fn);
+      const { overallGrade, recommendation } = await generateSessionSummary(scores, tags, debugFn);
       const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
       summary = { totalQuestions: questions.length, avgScore: avg, maxScore: Math.max(...scores), minScore: Math.min(...scores), strongPoints: [], weakPoints: [], overallGrade: overallGrade as any, recommendation };
     } catch {}
@@ -1129,11 +1280,11 @@ export function KnowledgeBase() {
     (completed as any)._questions = questions;
     setActiveQuiz(completed);
     setGradingIndex(-1);
-    try { await recordSessionStats(completed); } catch {}
+    try { await recordSessionStats(completed, activeQuizCategoryId || undefined); } catch {}
     const updatedHist = [completed, ...recentSessions.filter(s => s.id !== completed.id)].slice(0, 50);
     setRecentSessions(updatedHist);
     saveRecentSessions(updatedHist);
-  }, [activeQuiz, userAnswers, llmFn, recentSessions]);
+  }, [activeQuiz, userAnswers, llmFn, recentSessions, activeQuizCategoryId]);
 
   // History management
   const handleRenameSession = useCallback((sessionId: string, newName: string) => {
@@ -1184,7 +1335,7 @@ export function KnowledgeBase() {
   function renderConversationSidebar(conversations: ChatConversation[], activeId: string | null, setActiveId: (id: string) => void, onNew: () => void, onDelete: (id: string) => void, isQa: boolean) {
     const accentColor = isQa ? 'green' : 'purple';
     return (
-      <div className="w-[240px] shrink-0 border-r border-gray-200 bg-white flex flex-col h-full">
+      <div className="w-[220px] shrink-0 border-r border-gray-200 bg-white flex flex-col h-full">
         <div className="h-12 border-b border-gray-100 flex items-center justify-between px-4">
           <div className="flex items-center gap-2">
             {isQa ? <KBAvatar /> : <AIAvatar />}
@@ -1257,52 +1408,89 @@ export function KnowledgeBase() {
   function renderQuizCategorySidebar() {
     return (
       <div className="w-[220px] shrink-0 border-r border-gray-200 bg-white flex flex-col h-full">
-        <div className="px-4 pt-4 pb-3 border-b border-gray-100">
+        <div className="h-12 border-b border-gray-100 flex items-center justify-between px-4">
+          <div className="flex items-center gap-2">
+            <GraduationCap size={16} className="text-purple-500" />
+            <span className="font-semibold text-gray-800 text-xs">智能测验</span>
+          </div>
           <button
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-white text-xs font-medium shadow-sm"
-            style={{ background: 'linear-gradient(135deg, #6d28d9 0%, #9333ea 100%)' }}
+            className="p-1.5 hover:bg-purple-50 rounded-lg text-gray-500 hover:text-purple-600 transition-colors"
+            title="新建分类"
             onClick={() => {
-              const cat = { id: `cat-${Date.now()}`, name: '新分类', createdAt: Date.now() };
+              const cat: QuizCategory = { id: `cat-${Date.now()}`, name: '新分类', icon: '📚', color: 'purple', createdAt: Date.now() };
               setQuizCategories(prev => [cat, ...prev]);
               setActiveQuizCategoryId(cat.id);
               setRenamingCategoryId(cat.id);
               setCategoryNameInput('新分类');
             }}
           >
-            <Plus size={14} /> 新建分类
+            <Plus className="w-4 h-4" />
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
           {quizCategories.length === 0 ? (
-            <div className="text-center text-gray-400 text-xs py-8">暂无分类<br/>点击上方创建</div>
-          ) : quizCategories.map(cat => (
+            <div className="text-center text-gray-400 text-xs py-8"><GraduationCap className="w-6 h-6 mx-auto mb-2 opacity-40" />暂无分类</div>
+          ) : quizCategories.map(cat => {
+            const colorDef = CATEGORY_COLORS.find(c => c.key === cat.color) || CATEGORY_COLORS[0];
+            return (
             <div key={cat.id}
+              draggable
+              onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; setDragCategoryId(cat.id); }}
+              onDragEnd={() => { setDragCategoryId(null); setDragOverCategoryId(null); }}
+              onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverCategoryId(cat.id); }}
+              onDragLeave={() => { if (dragOverCategoryId === cat.id) setDragOverCategoryId(null); }}
+              onDrop={e => {
+                e.preventDefault();
+                if (dragCategoryId && dragCategoryId !== cat.id) {
+                  setQuizCategories(prev => {
+                    const items = [...prev];
+                    const fromIdx = items.findIndex(c => c.id === dragCategoryId);
+                    const toIdx = items.findIndex(c => c.id === cat.id);
+                    if (fromIdx === -1 || toIdx === -1) return prev;
+                    const [moved] = items.splice(fromIdx, 1);
+                    items.splice(toIdx, 0, moved);
+                    return items;
+                  });
+                }
+                setDragCategoryId(null);
+                setDragOverCategoryId(null);
+              }}
               className={`group flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
-                activeQuizCategoryId === cat.id ? 'bg-purple-50 text-purple-700 font-medium border border-purple-200' : 'text-gray-600 hover:bg-gray-50 border border-transparent'
-              }`}
+                getCategoryColorClasses(cat.color, activeQuizCategoryId === cat.id)
+              } ${dragOverCategoryId === cat.id && dragCategoryId !== cat.id ? 'border-t-2 border-t-purple-400' : ''} ${dragCategoryId === cat.id ? 'opacity-40' : ''}`}
               onClick={() => setActiveQuizCategoryId(cat.id)}>
               {renamingCategoryId === cat.id ? (
-                <input
-                  className="flex-1 text-xs bg-white border border-purple-300 rounded px-1.5 py-0.5 outline-none"
-                  value={categoryNameInput}
-                  onChange={e => setCategoryNameInput(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
+                <div className="flex-1 space-y-1.5">
+                  <input
+                    className="w-full text-xs bg-white border border-purple-300 rounded px-1.5 py-0.5 outline-none"
+                    value={categoryNameInput}
+                    onChange={e => setCategoryNameInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        setQuizCategories(prev => prev.map(c => c.id === cat.id ? { ...c, name: categoryNameInput.trim() || '未命名' } : c));
+                        setRenamingCategoryId(null);
+                      }
+                      if (e.key === 'Escape') setRenamingCategoryId(null);
+                    }}
+                    onBlur={() => {
                       setQuizCategories(prev => prev.map(c => c.id === cat.id ? { ...c, name: categoryNameInput.trim() || '未命名' } : c));
                       setRenamingCategoryId(null);
-                    }
-                    if (e.key === 'Escape') setRenamingCategoryId(null);
-                  }}
-                  onBlur={() => {
-                    setQuizCategories(prev => prev.map(c => c.id === cat.id ? { ...c, name: categoryNameInput.trim() || '未命名' } : c));
-                    setRenamingCategoryId(null);
-                  }}
-                  autoFocus
-                  onClick={e => e.stopPropagation()}
-                />
+                    }}
+                    autoFocus
+                    onClick={e => e.stopPropagation()}
+                  />
+                  <div className="flex gap-1">
+                    {CATEGORY_COLORS.map(c => (
+                      <button key={c.key} className={`w-5 h-5 rounded-full border-2 ${c.bg} ${cat.color === c.key ? 'ring-2 ring-offset-1 ring-gray-400' : 'border-transparent hover:border-gray-300'}`}
+                        onClick={e => { e.stopPropagation(); setQuizCategories(prev => prev.map(ct => ct.id === cat.id ? { ...ct, color: c.key } : ct)); }} />
+                    ))}
+                  </div>
+                </div>
               ) : (
                 <>
-                  <GraduationCap size={12} className={activeQuizCategoryId === cat.id ? 'text-purple-500' : 'text-gray-400'} />
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white ${colorDef.solid}`}>
+                    {cat.name.charAt(0)}
+                  </div>
                   <span className="flex-1 text-xs truncate">{cat.name}</span>
                   <span className="text-[10px] text-gray-400">{recentSessions.filter(s => (s as any)._categoryId === cat.id).length}</span>
                   <div className="hidden group-hover:flex items-center gap-0.5">
@@ -1315,6 +1503,7 @@ export function KnowledgeBase() {
                       e.stopPropagation();
                       if (confirm(`删除分类「${cat.name}」？其中的测验历史将保留。`)) {
                         setQuizCategories(prev => prev.filter(c => c.id !== cat.id));
+                        setCategoryConfigs(prev => { const next = { ...prev }; delete next[cat.id]; return next; });
                         if (activeQuizCategoryId === cat.id) {
                           const remaining = quizCategories.filter(c => c.id !== cat.id);
                           setActiveQuizCategoryId(remaining.length > 0 ? remaining[0].id : null);
@@ -1325,7 +1514,8 @@ export function KnowledgeBase() {
                 </>
               )}
             </div>
-          ))}
+          );
+          })}
         </div>
       </div>
     );
@@ -1690,74 +1880,6 @@ export function KnowledgeBase() {
   }
 
   // ══════════════════════════════════════════════════════
-  // Quiz Settings Modal
-  // ══════════════════════════════════════════════════════
-  function renderQuizSettingsModal() {
-    if (!showQuizSettings) return null;
-    const curProvider = quizSettings.llmConfig.provider || 'gemini';
-    const models = MODEL_OPTIONS[curProvider] || [];
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => setShowQuizSettings(false)}>
-        <div className={`${panelCls} w-[460px] p-5 space-y-4 shadow-xl`} onClick={e => e.stopPropagation()}>
-          <div className="flex items-center justify-between">
-            <div className="text-sm font-bold text-gray-800 flex items-center gap-2"><Settings size={16} className="text-gray-500" /> 出题模型设置</div>
-            <button className="p-1 rounded hover:bg-gray-100 text-gray-400" onClick={() => setShowQuizSettings(false)}><X size={14} /></button>
-          </div>
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">服务商</label>
-              <div className="flex flex-wrap gap-1.5">
-                {PROVIDER_OPTIONS.map(p => (
-                  <button key={p.value} className={`px-2.5 py-1 rounded-lg text-xs transition-colors border ${curProvider === p.value ? 'border-blue-400 bg-blue-50 text-blue-700 font-medium' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
-                    onClick={() => { const dm = (MODEL_OPTIONS[p.value] || [])[0]?.value || ''; setQuizSettings(prev => ({ ...prev, llmConfig: { ...prev.llmConfig, provider: p.value as any, baseUrl: p.defaultUrl, model: dm } })); }}>{p.label}</button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">API Key</label>
-              <div className="relative">
-                <input className={inputCls} type={showApiKey ? 'text' : 'password'} value={quizSettings.llmConfig.apiKey}
-                  onChange={e => setQuizSettings(prev => ({ ...prev, llmConfig: { ...prev.llmConfig, apiKey: e.target.value } }))} placeholder="输入 API Key…" />
-                <button className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600" onClick={() => setShowApiKey(!showApiKey)}>
-                  {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">模型</label>
-              {models.length > 0 ? (
-                <div className="space-y-1.5">
-                  <select className={inputCls} value={quizSettings.llmConfig.model}
-                    onChange={e => setQuizSettings(prev => ({ ...prev, llmConfig: { ...prev.llmConfig, model: e.target.value } }))}>
-                    {models.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-                    {!models.find(m => m.value === quizSettings.llmConfig.model) && quizSettings.llmConfig.model && (
-                      <option value={quizSettings.llmConfig.model}>{quizSettings.llmConfig.model} (自定义)</option>
-                    )}
-                  </select>
-                  <input className={`${inputCls} text-[11px]`} value={quizSettings.llmConfig.model}
-                    onChange={e => setQuizSettings(prev => ({ ...prev, llmConfig: { ...prev.llmConfig, model: e.target.value } }))} placeholder="或手动输入模型名…" />
-                </div>
-              ) : (
-                <input className={inputCls} value={quizSettings.llmConfig.model}
-                  onChange={e => setQuizSettings(prev => ({ ...prev, llmConfig: { ...prev.llmConfig, model: e.target.value } }))} placeholder="输入模型名称" />
-              )}
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">API 地址</label>
-              <input className={inputCls} value={quizSettings.llmConfig.baseUrl}
-                onChange={e => setQuizSettings(prev => ({ ...prev, llmConfig: { ...prev.llmConfig, baseUrl: e.target.value } }))} />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 pt-1">
-            <button className={btnSecondary} onClick={() => setShowQuizSettings(false)}>取消</button>
-            <button className={btnPrimary} onClick={() => { saveSettings(quizSettings); setShowQuizSettings(false); }}><Check size={12} /> 保存</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ══════════════════════════════════════════════════════
   // Scenario Editor Modal
   // ══════════════════════════════════════════════════════
   function renderScenarioEditor() {
@@ -1804,8 +1926,6 @@ export function KnowledgeBase() {
               <button className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${showDashboard ? 'bg-white shadow text-green-600' : 'text-gray-500 hover:text-gray-700'}`}
                 onClick={() => setShowDashboard(true)}><BarChart3 size={12} className="inline mr-1" />掌握度</button>
             </div>
-            <button className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-              onClick={() => setShowQuizSettings(true)}><Settings size={12} /> 出题模型</button>
           </div>
 
           {!activeQuizCategoryId ? (
@@ -1822,31 +1942,107 @@ export function KnowledgeBase() {
 
   function renderQuizForm() {
     const categoryRecentSessions = recentSessions.filter(s => (s as any)._categoryId === activeQuizCategoryId);
+
+    const roleConfig: { role: VectorStoreRole; label: string; desc: string; icon: React.ReactNode; colorCls: string }[] = [
+      { role: 'material', label: '资料', desc: '根据资料内容出题', icon: <BookOpen size={12} className="text-blue-500" />, colorCls: 'text-blue-700 bg-blue-50 border-blue-200' },
+      { role: 'questions_no_answer', label: '题库（无答案）', desc: '为题目生成答案并扩展', icon: <FileText size={12} className="text-amber-500" />, colorCls: 'text-amber-700 bg-amber-50 border-amber-200' },
+      { role: 'questions_with_answer', label: '题库（含答案）', desc: '丰富和扩展已有题目', icon: <CheckCircle2 size={12} className="text-green-500" />, colorCls: 'text-green-700 bg-green-50 border-green-200' },
+    ];
+
+    function getStoresForRole(role: VectorStoreRole): string[] {
+      return Object.entries(storeRoles).filter(([, roles]) => roles.includes(role)).map(([id]) => id);
+    }
+
+    function addStoreToRole(storeId: string, role: VectorStoreRole) {
+      setStoreRoles(prev => {
+        const existing = prev[storeId] || [];
+        if (existing.includes(role)) return prev;
+        const updated = { ...prev, [storeId]: [...existing, role] };
+        // Derive selectedIds from all stores with any role
+        const allIds = Object.keys(updated);
+        setSelectedIds(allIds);
+        return updated;
+      });
+      setShowRolePicker(null);
+    }
+
+    function removeStoreFromRole(storeId: string, role: VectorStoreRole) {
+      setStoreRoles(prev => {
+        const existing = prev[storeId] || [];
+        const newRoles = existing.filter(r => r !== role);
+        const updated = { ...prev };
+        if (newRoles.length === 0) {
+          delete updated[storeId];
+        } else {
+          updated[storeId] = newRoles;
+        }
+        const allIds = Object.keys(updated);
+        setSelectedIds(allIds);
+        return updated;
+      });
+    }
+
     return (
       <>
         <div className={`${panelCls} p-5 space-y-4`}>
           <div className="text-sm font-bold text-gray-800 flex items-center gap-2">
             <GraduationCap size={16} className="text-purple-500" /> 生成测验
           </div>
-          {/* Vector Store Selection */}
+          {/* Vector Store Roles */}
           <div>
-            <label className="text-xs text-gray-500 mb-1.5 block">选择向量库</label>
+            <label className="text-xs text-gray-500 mb-2 block">向量库数据源</label>
             {ragCollections.length === 0 ? (
               <div className="text-xs text-gray-400 bg-gray-50 rounded-lg p-3 text-center">暂无向量库，请先在 RAG Lab 中构建</div>
             ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {ragCollections.map(col => {
-                  const selected = selectedIds.includes(col.id);
+              <div className="space-y-3">
+                {roleConfig.map((rc, roleIdx) => {
+                  const assignedStoreIds = getStoresForRole(rc.role);
+                  const isPickerOpen = showRolePicker?.role === rc.role && showRolePicker?.anchorIdx === roleIdx;
                   return (
-                    <button key={col.id}
-                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-colors border ${
-                        selected ? 'border-blue-400 bg-blue-50 text-blue-700 font-medium' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
-                      }`}
-                      onClick={() => toggleCollection(col.id)}>
-                      <Database size={11} className={selected ? 'text-blue-500' : 'text-gray-400'} />
-                      {col.name}
-                      <span className="text-[10px] text-gray-400">{col.vectorCount}</span>
-                    </button>
+                    <div key={rc.role} className="border border-gray-200 rounded-lg p-3">
+                      <div className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-1.5">
+                        {rc.icon} {rc.label}
+                        <span className="text-[10px] text-gray-400 font-normal">— {rc.desc}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 min-h-[28px]">
+                        {assignedStoreIds.map(sid => {
+                          const col = ragCollections.find(c => c.id === sid);
+                          if (!col) return null;
+                          return (
+                            <span key={sid} className="flex items-center gap-1 px-2 py-1 rounded-md text-xs bg-gray-100 text-gray-700">
+                              <Database size={10} className="text-gray-400" />
+                              {col.name}
+                              <span className="text-[10px] text-gray-400">{col.vectorCount}</span>
+                              <button className="ml-0.5 text-gray-400 hover:text-red-500" onClick={() => removeStoreFromRole(sid, rc.role)}>
+                                <X size={10} />
+                              </button>
+                            </span>
+                          );
+                        })}
+                        <button
+                          className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-gray-400 border border-dashed border-gray-300 hover:bg-gray-50 transition-colors"
+                          onClick={() => setShowRolePicker(isPickerOpen ? null : { role: rc.role, anchorIdx: roleIdx })}
+                        >
+                          <Plus size={10} /> 添加
+                        </button>
+                      </div>
+                      {isPickerOpen && (
+                        <div className="mt-2 border border-gray-200 rounded-lg bg-white shadow-sm max-h-32 overflow-y-auto">
+                          {ragCollections.filter(c => !assignedStoreIds.includes(c.id)).length === 0 ? (
+                            <div className="text-xs text-gray-400 p-2 text-center">所有向量库已添加</div>
+                          ) : ragCollections.filter(c => !assignedStoreIds.includes(c.id)).map(col => (
+                            <button key={col.id}
+                              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 transition-colors text-left"
+                              onClick={() => addStoreToRole(col.id, rc.role)}
+                            >
+                              <Database size={11} className="text-gray-400" />
+                              <span className="flex-1">{col.name}</span>
+                              <span className="text-[10px] text-gray-400">{col.vectorCount} 条</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
               </div>
@@ -2001,6 +2197,12 @@ export function KnowledgeBase() {
                   <Award size={12} className="inline mr-1" />{activeQuiz.summary.overallGrade} · 均分{Math.round(activeQuiz.summary.avgScore)}
                 </div>
               )}
+              {quizDebugData.length > 0 && (
+                <button className={`p-1.5 rounded-lg text-xs transition-colors ${showQuizDebug ? 'bg-amber-100 text-amber-700' : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'}`}
+                  onClick={() => setShowQuizDebug(!showQuizDebug)} title="调试数据">
+                  <Bug size={14} />
+                </button>
+              )}
             </div>
           </div>
           {/* Question card */}
@@ -2080,6 +2282,38 @@ export function KnowledgeBase() {
               </div>
               {activeQuiz.summary.recommendation && <div className="text-xs text-gray-600 bg-blue-50 rounded-lg p-3">📝 {activeQuiz.summary.recommendation}</div>}
               <button className={`${btnSecondary} w-full justify-center mt-2`} onClick={() => setActiveQuiz(null)}><RotateCcw size={14} /> 重新出题</button>
+            </div>
+          )}
+          {/* Debug Panel */}
+          {showQuizDebug && quizDebugData.length > 0 && (
+            <div className={`${panelCls} p-4 space-y-3`}>
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-bold text-gray-800 flex items-center gap-2"><Bug size={16} className="text-amber-500" /> 调试数据 ({quizDebugData.length} 次 LLM 调用)</div>
+                <button className="p-1 rounded hover:bg-gray-100 text-gray-400" onClick={() => setShowQuizDebug(false)}><X size={14} /></button>
+              </div>
+              <div className="space-y-2">
+                {quizDebugData.map((entry, i) => (
+                  <details key={i} className="border border-gray-100 rounded-lg overflow-hidden">
+                    <summary className="flex items-center gap-2 px-3 py-2 text-xs cursor-pointer hover:bg-gray-50">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${entry.type === 'generation' ? 'bg-blue-100 text-blue-700' : entry.type === 'scoring' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}`}>
+                        {entry.type === 'generation' ? '出题' : entry.type === 'scoring' ? '评分' : '其他'}
+                      </span>
+                      <span className="text-gray-500">#{i + 1}</span>
+                      <span className="text-gray-400 ml-auto">{entry.duration}ms · ~{Math.round(entry.promptLength / 4)} tok → ~{Math.round(entry.responseLength / 4)} tok</span>
+                    </summary>
+                    <div className="border-t border-gray-100 p-3 space-y-2">
+                      <div>
+                        <div className="text-[10px] text-gray-500 font-medium mb-1">Prompt ({entry.promptLength} chars)</div>
+                        <pre className="text-[11px] text-gray-600 bg-gray-50 rounded p-2 max-h-40 overflow-auto whitespace-pre-wrap break-words">{entry.prompt}</pre>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-gray-500 font-medium mb-1">Response ({entry.responseLength} chars)</div>
+                        <pre className="text-[11px] text-gray-600 bg-gray-50 rounded p-2 max-h-40 overflow-auto whitespace-pre-wrap break-words">{entry.response}</pre>
+                      </div>
+                    </div>
+                  </details>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -2177,7 +2411,6 @@ export function KnowledgeBase() {
   // ═══════════════════════════════════════════════════════
   return (
     <div className="h-full flex bg-white text-gray-800">
-      {renderQuizSettingsModal()}
       {renderScenarioEditor()}
       {renderSystemPromptPanel()}
 

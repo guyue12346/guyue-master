@@ -11,6 +11,8 @@
 /** 题目类型（布鲁姆分类法覆盖） */
 export type QuestionType = 'concept' | 'comparison' | 'scenario' | 'coding' | 'follow_up';
 
+export type VectorStoreRole = 'material' | 'questions_no_answer' | 'questions_with_answer';
+
 /** 掌握等级 */
 export type MasteryLevel = 'not_mastered' | 'partially' | 'mastered' | 'expert';
 
