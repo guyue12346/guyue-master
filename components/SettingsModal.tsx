@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { X, FileDown, FolderOpen, ExternalLink, ToggleLeft, ToggleRight, ChevronDown, Globe, Package, Plus, Trash2, GripVertical, Command, User, Camera, ArrowUpRight } from 'lucide-react';
-import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, ModuleConfig, AVAILABLE_ICONS, PluginMetadata } from '../types';
+import { X, FileDown, FolderOpen, ExternalLink, ToggleLeft, ToggleRight, ChevronDown, Globe, Package, Plus, Trash2, GripVertical, Command, User, Camera, ArrowUpRight, Key, Pencil, Eye, EyeOff, Check } from 'lucide-react';
+import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, ModuleConfig, AVAILABLE_ICONS, PluginMetadata, ApiProfile, ApiProviderType } from '../types';
 import * as LucideIcons from 'lucide-react';
+import { loadProfiles, saveProfiles, addProfile, updateProfile, deleteProfile, API_PROVIDER_LABELS, migrateOldApiKeys } from '../utils/apiProfileService';
 
 const DEFAULT_SPLASH_QUOTE = '有善始者实繁，能克终者盖寡';
 
@@ -79,6 +80,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const iconSelectorRef = useRef<HTMLDivElement>(null);
 
+  // API Profile Management
+  const [apiProfiles, setApiProfiles] = useState<ApiProfile[]>([]);
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  const [newProfile, setNewProfile] = useState<{ name: string; provider: ApiProviderType; apiKey: string; baseUrl: string }>({
+    name: '', provider: 'openai', apiKey: '', baseUrl: '',
+  });
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [visibleKeys, setVisibleKeys] = useState<Set<string>>(new Set());
+
   // Sort modules by priority for display
   const sortedModules = useMemo(() => sortByPriority(localModules), [localModules]);
 
@@ -121,6 +131,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     // Load avatar & name
     setUserAvatar(localStorage.getItem('guyue_user_avatar') || '');
     setUserName(localStorage.getItem('guyue_user_name') || 'Guyue');
+
+    // Load API Profiles (migrate old keys on first run)
+    migrateOldApiKeys();
+    setApiProfiles(loadProfiles());
 
     // Load plugins
     if (window.electronAPI) {
@@ -455,6 +469,220 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
           
+          {/* Section: API Key Management */}
+          <div className="space-y-4">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2 flex items-center gap-1.5">
+              <Key className="w-3.5 h-3.5" /> API 密钥管理
+            </h3>
+
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 space-y-3">
+              <p className="text-xs text-gray-400">
+                统一管理所有 API 密钥。各功能模块（AI 助手、知识库、向量库等）将从此处选择已保存的配置。
+              </p>
+
+              {/* Existing profiles list */}
+              {apiProfiles.length > 0 && (
+                <div className="space-y-2">
+                  {apiProfiles.map(profile => {
+                    const isEditing = editingProfileId === profile.id;
+                    const isKeyVisible = visibleKeys.has(profile.id);
+
+                    if (isEditing) {
+                      return (
+                        <div key={profile.id} className="bg-white rounded-lg border border-blue-200 p-3 space-y-2">
+                          <div className="grid grid-cols-2 gap-2">
+                            <input
+                              className="px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 bg-white"
+                              placeholder="配置名称"
+                              value={newProfile.name}
+                              onChange={e => setNewProfile(p => ({ ...p, name: e.target.value }))}
+                            />
+                            <select
+                              className="px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20"
+                              value={newProfile.provider}
+                              onChange={e => setNewProfile(p => ({ ...p, provider: e.target.value as ApiProviderType }))}
+                            >
+                              {Object.entries(API_PROVIDER_LABELS).map(([k, v]) => (
+                                <option key={k} value={k}>{v}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <input
+                            className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-mono"
+                            placeholder="API Key"
+                            type="password"
+                            value={newProfile.apiKey}
+                            onChange={e => setNewProfile(p => ({ ...p, apiKey: e.target.value }))}
+                          />
+                          <input
+                            className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-mono"
+                            placeholder="Base URL（可选）"
+                            value={newProfile.baseUrl}
+                            onChange={e => setNewProfile(p => ({ ...p, baseUrl: e.target.value }))}
+                          />
+                          <div className="flex gap-2 justify-end">
+                            <button
+                              onClick={() => { setEditingProfileId(null); }}
+                              className="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg hover:border-gray-300 transition-colors"
+                            >
+                              取消
+                            </button>
+                            <button
+                              onClick={() => {
+                                const result = updateProfile(profile.id, {
+                                  name: newProfile.name, provider: newProfile.provider,
+                                  apiKey: newProfile.apiKey, baseUrl: newProfile.baseUrl || undefined,
+                                });
+                                if (result) {
+                                  setApiProfiles(loadProfiles());
+                                  setEditingProfileId(null);
+                                }
+                              }}
+                              className="px-3 py-1.5 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors"
+                            >
+                              <Check className="w-3 h-3 inline mr-1" />保存
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div key={profile.id} className="bg-white rounded-lg border border-gray-200 p-3 flex items-center justify-between hover:border-gray-300 transition-colors">
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center shrink-0">
+                            <Key className="w-3.5 h-3.5 text-blue-500" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-gray-800 truncate">{profile.name}</div>
+                            <div className="flex items-center gap-2 text-[10px] text-gray-400">
+                              <span className="px-1.5 py-0.5 bg-gray-100 rounded">{API_PROVIDER_LABELS[profile.provider] || profile.provider}</span>
+                              <span className="font-mono">
+                                {isKeyVisible ? profile.apiKey : `${profile.apiKey.slice(0, 6)}${'•'.repeat(Math.min(20, Math.max(0, profile.apiKey.length - 6)))}`}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            onClick={() => setVisibleKeys(prev => {
+                              const next = new Set(prev);
+                              if (next.has(profile.id)) next.delete(profile.id); else next.add(profile.id);
+                              return next;
+                            })}
+                            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                            title={isKeyVisible ? '隐藏密钥' : '显示密钥'}
+                          >
+                            {isKeyVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setEditingProfileId(profile.id);
+                              setNewProfile({ name: profile.name, provider: profile.provider, apiKey: profile.apiKey, baseUrl: profile.baseUrl || '' });
+                            }}
+                            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                            title="编辑"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (confirm(`确认删除「${profile.name}」？`)) {
+                                deleteProfile(profile.id);
+                                setApiProfiles(loadProfiles());
+                              }
+                            }}
+                            className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+                            title="删除"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Add new profile form */}
+              {showAddForm ? (
+                <div className="bg-white rounded-lg border border-green-200 p-3 space-y-2">
+                  <div className="text-xs font-medium text-gray-600 mb-1">添加新配置</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      className="px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 bg-white"
+                      placeholder="配置名称（如：我的 Gemini）"
+                      value={newProfile.name}
+                      onChange={e => setNewProfile(p => ({ ...p, name: e.target.value }))}
+                    />
+                    <select
+                      className="px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20"
+                      value={newProfile.provider}
+                      onChange={e => setNewProfile(p => ({ ...p, provider: e.target.value as ApiProviderType }))}
+                    >
+                      {Object.entries(API_PROVIDER_LABELS).map(([k, v]) => (
+                        <option key={k} value={k}>{v}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <input
+                    className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-mono"
+                    placeholder="API Key（如 sk-...）"
+                    type="password"
+                    value={newProfile.apiKey}
+                    onChange={e => setNewProfile(p => ({ ...p, apiKey: e.target.value }))}
+                  />
+                  <input
+                    className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 bg-white font-mono"
+                    placeholder="Base URL（可选，留空使用默认）"
+                    value={newProfile.baseUrl}
+                    onChange={e => setNewProfile(p => ({ ...p, baseUrl: e.target.value }))}
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      onClick={() => {
+                        setShowAddForm(false);
+                        setNewProfile({ name: '', provider: 'openai', apiKey: '', baseUrl: '' });
+                      }}
+                      className="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg hover:border-gray-300 transition-colors"
+                    >
+                      取消
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!newProfile.name.trim() || !newProfile.apiKey.trim()) return;
+                        addProfile({
+                          name: newProfile.name.trim(),
+                          provider: newProfile.provider,
+                          apiKey: newProfile.apiKey.trim(),
+                          baseUrl: newProfile.baseUrl.trim() || undefined,
+                        });
+                        setApiProfiles(loadProfiles());
+                        setShowAddForm(false);
+                        setNewProfile({ name: '', provider: 'openai', apiKey: '', baseUrl: '' });
+                      }}
+                      disabled={!newProfile.name.trim() || !newProfile.apiKey.trim()}
+                      className="px-3 py-1.5 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Plus className="w-3 h-3 inline mr-1" />添加
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => {
+                    setShowAddForm(true);
+                    setEditingProfileId(null);
+                    setNewProfile({ name: '', provider: 'openai', apiKey: '', baseUrl: '' });
+                  }}
+                  className="w-full px-4 py-2.5 text-sm text-gray-500 border border-dashed border-gray-300 rounded-lg hover:border-blue-400 hover:text-blue-500 hover:bg-blue-50/50 transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Plus className="w-4 h-4" /> 添加 API 配置
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Section: Module Management */}
           <div className="space-y-4">
             <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">

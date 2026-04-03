@@ -442,6 +442,17 @@ ipcMain.handle('list-dir', async (_, dirPath) => {
   }
 });
 
+// IPC: 获取文件状态信息
+ipcMain.handle('get-file-stats', async (_, filePath) => {
+  try {
+    const stats = await fs.stat(filePath);
+    return { size: stats.size, mtime: stats.mtimeMs };
+  } catch (error) {
+    console.error('Failed to get file stats:', error);
+    return null;
+  }
+});
+
 // IPC: 获取用户信息
 ipcMain.handle('get-user-info', () => {
   return {
@@ -2736,6 +2747,30 @@ async function scanAudioFiles(dirPath: string): Promise<string[]> {
   return results;
 }
 
+// ── RAG Lab IPC ──
+ipcMain.handle('rag-select-files', async () => {
+  if (!mainWindow) return [];
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: '文档', extensions: ['pdf', 'md', 'markdown', 'mdx', 'txt', 'html', 'htm', 'json', 'yaml', 'yml', 'xml', 'csv', 'log', 'toml', 'ini', 'conf'] },
+      { name: '代码', extensions: ['ts', 'tsx', 'js', 'jsx', 'py', 'java', 'go', 'rs', 'c', 'cpp', 'h', 'cs', 'rb', 'php', 'swift', 'kt', 'scala', 'sql', 'sh', 'lua', 'dart', 'vue', 'svelte', 'css', 'scss', 'less'] },
+      { name: '所有文件', extensions: ['*'] },
+    ],
+  });
+  if (result.canceled) return [];
+  return result.filePaths;
+});
+
+ipcMain.handle('rag-select-folder', async () => {
+  if (!mainWindow) return null;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+});
+
 ipcMain.handle('music-select-files', async () => {
   if (!mainWindow) return [];
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -2908,7 +2943,7 @@ ipcMain.handle('music-ai-lyrics', async (_, opts: { filePath: string; apiKey: st
         contents: [{
           parts: [
             filePart,
-            { text: '请仔细听这段音频，识别其中的歌词/人声内容。输出标准 LRC 格式，每行格式为 [mm:ss.xx]歌词内容。时间戳必须精确对应音频中该句歌词的起始时间。只输出 LRC 内容，不要输出任何其它解释。' }
+            { text: '请仔细听这段音频，识别其中的歌词/人声内容。输出标准 LRC 格式，每行格式为 [mm:ss.xx]歌词内容。时间戳必须精确对应音频中该句歌词的起始时间。所有中文歌词必须使用简体中文，不要输出繁体中文。英文歌词保留英文原文。只输出 LRC 内容，不要输出任何其它解释。' }
           ]
         }],
         generationConfig: { temperature: 0.1, maxOutputTokens: 8192 },
@@ -2948,7 +2983,8 @@ ipcMain.handle('music-ai-lyrics', async (_, opts: { filePath: string; apiKey: st
     addField('model', 'whisper-1');
     addField('response_format', 'verbose_json');
     addField('timestamp_granularities[]', 'segment');
-    if (opts.language) addField('language', opts.language);
+    addField('language', opts.language || 'zh');
+    addField('prompt', '请使用简体中文输出歌词，不要使用繁体中文。');
     parts.push(Buffer.from(`--${boundary}--\r\n`));
 
     const body = Buffer.concat(parts);

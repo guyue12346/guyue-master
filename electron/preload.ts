@@ -131,6 +131,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   musicFileExists: (filePath: string) => ipcRenderer.invoke('music-file-exists', filePath),
   musicSelectCover: () => ipcRenderer.invoke('music-select-cover'),
   musicRelinkFile: () => ipcRenderer.invoke('music-relink-file'),
+
+  // RAG Lab
+  ragSelectFiles: () => ipcRenderer.invoke('rag-select-files'),
+  ragSelectFolder: () => ipcRenderer.invoke('rag-select-folder'),
+  getFileStats: (filePath: string) => ipcRenderer.invoke('get-file-stats', filePath),
 });
 
 // 类型定义（可选，用于 TypeScript）
@@ -231,4 +236,8 @@ export interface ElectronAPI {
   musicFileExists: (filePath: string) => Promise<boolean>;
   musicSelectCover: () => Promise<string | null>;
   musicRelinkFile: () => Promise<string | null>;
+  // RAG Lab
+  ragSelectFiles: () => Promise<string[]>;
+  ragSelectFolder: () => Promise<string | null>;
+  getFileStats: (filePath: string) => Promise<{ size: number; mtime: number } | null>;
 }

@@ -17,6 +17,21 @@ import { AgentSettingsModal } from './AgentSettingsModal';
 import { AgentHelpModal } from './AgentHelpModal';
 import { MarkdownContent } from './MarkdownContent';
 import { buildIndex, loadRagIndex, saveRagIndex, searchIndex } from '../utils/ragService';
+import { loadProfiles } from '../utils/apiProfileService';
+
+/** 从统一 API Profiles 或 legacy localStorage 获取嵌入密钥 */
+function getEmbeddingKeyFromProfiles(): { apiKey: string; baseUrl?: string } {
+  try {
+    const profiles = loadProfiles();
+    const embProviders = ['openai', 'gemini', 'zhipu', 'qwen', 'ollama', 'cohere', 'voyage', 'jina'];
+    const profile = profiles.find(p => embProviders.includes(p.provider) && p.apiKey);
+    if (profile) return { apiKey: profile.apiKey, baseUrl: profile.baseUrl || undefined };
+  } catch {}
+  // Fallback to legacy keys
+  const apiKey = localStorage.getItem('guyue_rag_embedding_key') || '';
+  const baseUrl = localStorage.getItem('guyue_rag_embedding_base_url')?.trim() || undefined;
+  return { apiKey, baseUrl };
+}
 
 /* ─── 类型定义 ─── */
 
@@ -2731,11 +2746,10 @@ const TOOL_REGISTRY: ToolRegistration[] = [
       },
     },
     execute: async (args, ctx) => {
-      const embeddingApiKey = localStorage.getItem('guyue_rag_embedding_key') || '';
+      const { apiKey: embeddingApiKey, baseUrl: embeddingBaseUrl } = getEmbeddingKeyFromProfiles();
       if (!embeddingApiKey) {
-        return { success: false, error: '未配置知识库 Embedding API Key。请在 Agent 右侧栏点击知识库图标并配置 Gemini API Key。' };
+        return { success: false, error: '未配置知识库 Embedding API Key。请在全局设置中添加 API 配置，或在 Agent 右侧栏点击知识库图标并配置 Gemini API Key。' };
       }
-      const embeddingBaseUrl = localStorage.getItem('guyue_rag_embedding_base_url')?.trim() || undefined;
       const kbFileIds = ctx.knowledgeBaseFileIds;
       if (kbFileIds.size === 0) {
         return { success: false, error: '知识库中没有文件。请先在文件管理模块中悬停文件、点击绿色脑图标将文件加入知识库。' };
@@ -2784,11 +2798,10 @@ const TOOL_REGISTRY: ToolRegistration[] = [
       },
     },
     execute: async (args, ctx) => {
-      const embeddingApiKey = localStorage.getItem('guyue_rag_embedding_key') || '';
+      const { apiKey: embeddingApiKey, baseUrl: embeddingBaseUrl } = getEmbeddingKeyFromProfiles();
       if (!embeddingApiKey) {
-        return { success: false, error: '未配置知识库 Embedding API Key。请点击右侧知识库图标进行配置。' };
+        return { success: false, error: '未配置知识库 Embedding API Key。请在全局设置中添加 API 配置。' };
       }
-      const embeddingBaseUrl = localStorage.getItem('guyue_rag_embedding_base_url')?.trim() || undefined;
       const kbFileIds = ctx.knowledgeBaseFileIds;
       if (kbFileIds.size === 0) {
         return { success: false, error: '知识库中没有文件，请先在文件管理模块添加文件。' };

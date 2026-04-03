@@ -97,7 +97,9 @@ export const FloatingChatWindow: React.FC<FloatingChatWindowProps> = ({
   const [size, setSize] = useState(initialSize);
   const [position, setPosition] = useState(() => loadStoredPosition(initialSize));
   const [isDragging, setIsDragging] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
+  const resizeRef = useRef<{ edge: string; startX: number; startY: number; startW: number; startH: number; startPosX: number; startPosY: number } | null>(null);
   const [isSizeEditorOpen, setIsSizeEditorOpen] = useState(false);
   const [sizeDraft, setSizeDraft] = useState(() => ({
     width: initialSize.width.toString(),
@@ -172,6 +174,40 @@ export const FloatingChatWindow: React.FC<FloatingChatWindowProps> = ({
     };
   }, [handleWindowResize]);
 
+  // Mouse resize from edges/corners
+  const startResize = useCallback((e: React.MouseEvent, edge: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsResizing(true);
+    resizeRef.current = { edge, startX: e.clientX, startY: e.clientY, startW: size.width, startH: size.height, startPosX: position.x, startPosY: position.y };
+    document.body.style.userSelect = 'none';
+
+    const onMove = (ev: MouseEvent) => {
+      const r = resizeRef.current;
+      if (!r) return;
+      const dx = ev.clientX - r.startX;
+      const dy = ev.clientY - r.startY;
+      let nextW = r.startW, nextH = r.startH, nextX = r.startPosX, nextY = r.startPosY;
+
+      if (r.edge.includes('r')) nextW = clamp(r.startW + dx, MIN_WIDTH, MAX_WIDTH);
+      if (r.edge.includes('b')) nextH = clamp(r.startH + dy, MIN_HEIGHT, MAX_HEIGHT);
+      if (r.edge.includes('l')) { nextW = clamp(r.startW - dx, MIN_WIDTH, MAX_WIDTH); nextX = r.startPosX + (r.startW - nextW); }
+      if (r.edge.includes('t')) { nextH = clamp(r.startH - dy, MIN_HEIGHT, MAX_HEIGHT); nextY = r.startPosY + (r.startH - nextH); }
+
+      setSize({ width: nextW, height: nextH });
+      setPosition(clampPositionToViewport({ x: nextX, y: nextY }, { width: nextW, height: nextH }));
+    };
+    const onUp = () => {
+      setIsResizing(false);
+      resizeRef.current = null;
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [size, position]);
+
   const handleSizeDraftChange = (dimension: 'width' | 'height', value: string) => {
     setSizeDraft(prev => ({
       ...prev,
@@ -214,8 +250,8 @@ export const FloatingChatWindow: React.FC<FloatingChatWindowProps> = ({
   return (
     <div className="fixed inset-0 z-[120] pointer-events-none">
       <div
-        className={`absolute pointer-events-auto bg-white/95 backdrop-blur-xl border border-gray-200 shadow-2xl rounded-3xl flex flex-col overflow-hidden transition-shadow relative ${
-          isDragging ? 'cursor-grabbing ring-2 ring-blue-100' : 'cursor-default'
+        className={`absolute pointer-events-auto bg-white/95 backdrop-blur-xl border border-gray-200 shadow-2xl rounded-3xl flex flex-col transition-shadow relative ${
+          isDragging ? 'cursor-grabbing ring-2 ring-blue-100' : isResizing ? 'ring-2 ring-blue-100' : 'cursor-default'
         }`}
         style={{
           width: size.width,
@@ -255,7 +291,7 @@ export const FloatingChatWindow: React.FC<FloatingChatWindowProps> = ({
           </div>
         </div>
 
-        <div className="flex-1 min-h-0 bg-white">
+        <div className="flex-1 min-h-0 bg-white overflow-hidden rounded-b-3xl">
           {children}
         </div>
 
@@ -316,6 +352,18 @@ export const FloatingChatWindow: React.FC<FloatingChatWindowProps> = ({
             </div>
           </div>
         )}
+
+        {/* Resize handles */}
+        {/* Edges */}
+        <div onMouseDown={e => startResize(e, 't')} className="absolute top-0 left-3 right-3 h-1.5 cursor-ns-resize z-20" />
+        <div onMouseDown={e => startResize(e, 'b')} className="absolute bottom-0 left-3 right-3 h-1.5 cursor-ns-resize z-20" />
+        <div onMouseDown={e => startResize(e, 'l')} className="absolute left-0 top-3 bottom-3 w-1.5 cursor-ew-resize z-20" />
+        <div onMouseDown={e => startResize(e, 'r')} className="absolute right-0 top-3 bottom-3 w-1.5 cursor-ew-resize z-20" />
+        {/* Corners */}
+        <div onMouseDown={e => startResize(e, 'tl')} className="absolute top-0 left-0 w-3 h-3 cursor-nwse-resize z-30" />
+        <div onMouseDown={e => startResize(e, 'tr')} className="absolute top-0 right-0 w-3 h-3 cursor-nesw-resize z-30" />
+        <div onMouseDown={e => startResize(e, 'bl')} className="absolute bottom-0 left-0 w-3 h-3 cursor-nesw-resize z-30" />
+        <div onMouseDown={e => startResize(e, 'br')} className="absolute bottom-0 right-0 w-3 h-3 cursor-nwse-resize z-30" />
       </div>
     </div>
   );

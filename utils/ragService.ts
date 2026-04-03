@@ -26,9 +26,8 @@ export interface EmbeddingModelDef {
 
 export const EMBEDDING_MODELS: Record<string, EmbeddingModelDef[]> = {
   gemini: [
-    { id: 'gemini-embedding-exp-03-07', name: 'Gemini Embedding Exp 03-07', provider: 'gemini', dimensions: 3072, description: '最新·推荐' },
-    { id: 'text-embedding-004', name: 'Text Embedding 004', provider: 'gemini', dimensions: 768, description: '稳定版' },
-    { id: 'gemini-embedding-001', name: 'Gemini Embedding 001', provider: 'gemini', dimensions: 768, description: '旧版' },
+    { id: 'gemini-embedding-001', name: 'Gemini Embedding 001', provider: 'gemini', dimensions: 768, description: '稳定·推荐' },
+    { id: 'gemini-embedding-2-preview', name: 'Gemini Embedding 2', provider: 'gemini', dimensions: 768, description: '多模态·预览' },
   ],
   qwen: [
     { id: 'text-embedding-v3', name: 'text-embedding-v3', provider: 'qwen', dimensions: 1024, description: '最新·推荐' },
@@ -129,26 +128,33 @@ async function getGeminiEmbedding(text: string, apiKey: string, model: string, b
     content: { parts: [{ text }] },
     taskType: 'RETRIEVAL_DOCUMENT',
   };
-  // gemini-embedding-exp-03-07 支持高维度，设为 1536 兼顾效果与存储
-  if (model === 'gemini-embedding-exp-03-07') {
-    body.outputDimensionality = 1536;
+  if (model.startsWith('gemini-embedding')) {
+    body.outputDimensionality = 768;
   }
-  const response = await fetch(
-    `${base}/v1beta/models/${encodeURIComponent(model)}:embedContent?key=${encodeURIComponent(apiKey)}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    },
-  );
-  if (!response.ok) {
-    const errText = await response.text().catch(() => '');
-    throw new Error(`Gemini Embedding API 错误 ${response.status}: ${errText.slice(0, 200)}`);
+  // 先尝试 v1beta，失败则尝试 v1
+  const versions = ['v1beta', 'v1'];
+  let lastError = '';
+  for (const ver of versions) {
+    const response = await fetch(
+      `${base}/${ver}/models/${encodeURIComponent(model)}:embedContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    );
+    if (response.ok) {
+      const data = await response.json();
+      const values: number[] | undefined = data?.embedding?.values;
+      if (!values || values.length === 0) throw new Error('Embedding API 返回了空向量');
+      return values;
+    }
+    lastError = await response.text().catch(() => `HTTP ${response.status}`);
+    if (response.status !== 404) {
+      throw new Error(`Gemini Embedding API 错误 ${response.status}: ${lastError.slice(0, 200)}`);
+    }
   }
-  const data = await response.json();
-  const values: number[] | undefined = data?.embedding?.values;
-  if (!values || values.length === 0) throw new Error('Embedding API 返回了空向量');
-  return values;
+  throw new Error(`Gemini Embedding API 404: 模型 ${model} 不可用。${lastError.slice(0, 200)}`);
 }
 
 /** 调用 OpenAI 兼容 Embedding API（适用 OpenAI / 智谱 / 自定义） */

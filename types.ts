@@ -5,6 +5,23 @@ export interface Note {
   createdAt: number;
 }
 
+// ── API Profile Types (统一密钥管理) ──
+
+export type ApiProviderType =
+  | 'openai' | 'gemini' | 'anthropic' | 'deepseek'
+  | 'zhipu' | 'qwen' | 'moonshot' | 'minimax'
+  | 'ollama' | 'zenmux' | 'custom';
+
+export interface ApiProfile {
+  id: string;
+  name: string;            // 用户自定义名称，如 "我的 Gemini"
+  provider: ApiProviderType;
+  apiKey: string;
+  baseUrl?: string;        // 自定义 endpoint
+  createdAt: number;
+  updatedAt: number;
+}
+
 // ── Music Player Types ──
 export interface MusicTrack {
   id: string;
@@ -20,11 +37,12 @@ export interface MusicTrack {
   lossless?: boolean;
   addedAt: number;
   // Extended metadata (user-editable)
-  lyricist?: string;
-  composer?: string;
-  singer?: string;
-  band?: string;
-  genre?: string;
+  lyricist?: string;    // 作词
+  composer?: string;    // 作曲
+  arranger?: string;    // 编曲
+  producer?: string;    // 制作人
+  band?: string;        // 乐队/组合
+  genre?: string;       // 流派
   year?: number;
   trackNumber?: number;
   discNumber?: number;
@@ -218,6 +236,9 @@ export const DEFAULT_MODULE_CONFIG: ModuleConfig[] = [
   { id: 'image-hosting', name: '图床管理', enabled: true, priority: 13, icon: 'Image',         shortcut: 'Tab+I' },
   { id: 'latex',        name: 'LaTeX编辑器', enabled: true, priority: 14, icon: 'FileType2',    shortcut: 'Tab+X' },
   { id: 'music',        name: 'Music',      enabled: true, priority: 15, icon: 'Music',         shortcut: 'Tab+M' },
+  { id: 'rag',          name: 'RAG Lab',    enabled: true, priority: 16, icon: 'Database',      shortcut: 'Tab+R' },
+  { id: 'knowledge-base', name: '知识库',  enabled: true, priority: 17, icon: 'Library',       shortcut: 'Tab+J' },
+  { id: 'workflow',       name: '工作流引擎', enabled: true, priority: 18, icon: 'Workflow',      shortcut: 'Tab+W' },
 ];
 
 export interface RecurringCategory {

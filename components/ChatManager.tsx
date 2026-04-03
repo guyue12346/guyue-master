@@ -1798,9 +1798,15 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
 
       let contextBlock = '';
       if (results.length > 0) {
-        const snippets = results.map((r, i) =>
-          `### 片段 ${i + 1}（来源：${r.fileName}，相关度：${Math.round(r.score * 100)}%）\n${r.text}`
-        ).join('\n\n');
+        const snippets = results.map((r, i) => {
+          const m = (r as any).metadata || {};
+          const parts: string[] = [r.fileName || m.fileName || '未知'];
+          if (m.pageNumber != null) parts.push(`第${m.pageNumber}页`);
+          if (m.sectionTitle) parts.push(`「${m.sectionTitle}」`);
+          if (m.lineStart != null) parts.push(`行${m.lineStart}-${m.lineEnd ?? m.lineStart}`);
+          if (m.codeLanguage) parts.push(`(${m.codeLanguage})`);
+          return `### 片段 ${i + 1}（来源：${parts.join(' ')}，相关度：${Math.round(r.score * 100)}%）\n${r.text}`;
+        }).join('\n\n');
         contextBlock = `\n\n## 知识库检索结果\n以下是与用户问题最相关的内容片段：\n\n${snippets}`;
       } else {
         contextBlock = '\n\n## 知识库检索结果\n未检索到与用户问题相关的内容。';
@@ -1809,7 +1815,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
       const fileListBlock = kbFiles.length > 0
         ? '\n\n## 知识库文件列表\n' + kbFiles.map((f, i) => `${i + 1}. ${f.name}`).join('\n')
         : '';
-      const kbSystemPrompt = `你是「知识库助手」，专注于基于用户本地文件回答问题。\n\n## 规则\n1. 优先根据下方「知识库检索结果」中的内容回答，可以结合你自身知识进行补充和解释。\n2. 如果检索结果中没有相关内容，诚实告知用户知识库中未找到，但你仍可以用自身知识尝试回答，需标注哪些是来自知识库、哪些是你的通用知识。\n3. 回答末尾标注引用来源，格式：📄 来源：文件名。\n4. 当前知识库共有 ${kbSize} 个文件（${kbFiles.length} 个有效），你**始终知道所有文件的名字**，见「知识库文件列表」。${fileListBlock}${contextBlock}`;
+      const kbSystemPrompt = `你是「知识库助手」，专注于基于用户本地文件回答问题。\n\n## 规则\n1. 优先根据下方「知识库检索结果」中的内容回答，可以结合你自身知识进行补充和解释。\n2. 如果检索结果中没有相关内容，诚实告知用户知识库中未找到，但你仍可以用自身知识尝试回答，需标注哪些是来自知识库、哪些是你的通用知识。\n3. 回答末尾标注引用来源，包括文件名、页码和章节信息。\n4. 当前知识库共有 ${kbSize} 个文件（${kbFiles.length} 个有效），你**始终知道所有文件的名字**，见「知识库文件列表」。${fileListBlock}${contextBlock}`;
 
       setKbConversations(prev => prev.map(c => c.id === kbConv!.id
         ? { ...c, messages: c.messages.map(m => m.id === assistantId ? { ...m, content: '正在生成回答...' } : m) }

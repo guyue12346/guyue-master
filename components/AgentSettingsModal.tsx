@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { X, CheckCircle2, AlertCircle, Trash2, Sparkles, ChevronDown, ChevronRight, Plus, Pencil } from 'lucide-react';
+import { X, CheckCircle2, AlertCircle, Trash2, Sparkles, ChevronDown, ChevronRight, Plus, Pencil, Download } from 'lucide-react';
 import { AGENT_AVAILABLE_MODELS, ChatConfig } from '../services/chatService';
+import { loadProfiles } from '../utils/apiProfileService';
+import type { ApiProfile } from '../types';
 
 interface ModuleInfo {
   id: string;
@@ -79,6 +81,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   const [activeModuleTab, setActiveModuleTab] = useState<string | null>(null);
   const [savedApiConfigs, setSavedApiConfigs] = useState<SavedAgentApiConfig[]>([]);
   const [selectedApiConfigId, setSelectedApiConfigId] = useState<string>('');
+  const [globalApiProfiles, setGlobalApiProfiles] = useState<ApiProfile[]>([]);
 
   // 新增表单状态
   const [formLabel, setFormLabel] = useState('');
@@ -93,6 +96,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
     if (!isOpen) return;
     const saved = loadSavedApiConfigs();
     setSavedApiConfigs(saved);
+    setGlobalApiProfiles(loadProfiles());
     const matched = saved.find(item => (
       item.provider === config.provider &&
       item.apiKey === config.apiKey &&
@@ -198,6 +202,29 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
           {/* ── API 配置列表 ── */}
           <div className="px-5 pt-4 pb-2">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">API 配置</p>
+            {/* 从全局配置快速导入 */}
+            {globalApiProfiles.length > 0 && (
+              <div className="mb-3">
+                <select
+                  className="w-full rounded-lg border border-dashed border-blue-200 bg-blue-50/50 px-3 py-2 text-xs text-gray-600 outline-none focus:border-blue-400"
+                  value=""
+                  onChange={e => {
+                    const profile = globalApiProfiles.find(p => p.id === e.target.value);
+                    if (!profile) return;
+                    const provider = profile.provider;
+                    if (!(provider in AGENT_AVAILABLE_MODELS)) return;
+                    const typedProvider = provider as ChatConfig['provider'];
+                    const nextModel = AGENT_AVAILABLE_MODELS[typedProvider]?.[0]?.id || '';
+                    onChangeConfig({ ...config, provider: typedProvider, model: nextModel, apiKey: profile.apiKey, baseUrl: profile.baseUrl || '' });
+                  }}
+                >
+                  <option value="">⬇ 从全局设置导入配置…</option>
+                  {globalApiProfiles.map(p => (
+                    <option key={p.id} value={p.id}>{p.name} ({p.provider})</option>
+                  ))}
+                </select>
+              </div>
+            )}
             {savedApiConfigs.length === 0 ? (
               <div className="rounded-xl border border-dashed border-gray-200 py-6 text-center text-sm text-gray-400">
                 暂无配置，在下方添加第一条

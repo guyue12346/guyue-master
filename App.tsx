@@ -34,6 +34,9 @@ const LatexEditor = React.lazy(() => import('./components/LatexEditor').then(m =
 const LatexSidebar = React.lazy(() => import('./components/LatexSidebar').then(m => ({ default: m.LatexSidebar })));
 const MusicPlayer = React.lazy(() => import('./components/MusicPlayer').then(m => ({ default: m.MusicPlayer })));
 const MusicSidebar = React.lazy(() => import('./components/MusicSidebar').then(m => ({ default: m.MusicSidebar })));
+const RagTestBench = React.lazy(() => import('./components/RagTestBench').then(m => ({ default: m.RagTestBench })));
+const KnowledgeBase = React.lazy(() => import('./components/KnowledgeBase').then(m => ({ default: m.KnowledgeBase })));
+const WorkflowEngine = React.lazy(() => import('./components/WorkflowEngine').then(m => ({ default: m.WorkflowEngine })));
 
 // Lazy load modals
 const NoteModal = React.lazy(() => import('./components/NoteModal').then(m => ({ default: m.NoteModal })));
@@ -76,6 +79,9 @@ const STORAGE_KEY_KB_TAGS = 'guyue_kb_tags_v1';
 const STORAGE_KEY_KB_FILE_MAP = 'guyue_kb_file_tag_map_v1';
 const STORAGE_KEY_MUSIC_TRACKS = 'guyue_music_tracks_v1';
 const STORAGE_KEY_MUSIC_PLAYLISTS = 'guyue_music_playlists_v1';
+const STORAGE_KEY_APP_MODE = 'guyue_app_mode';
+const STORAGE_KEY_TODO_SUBMODE = 'guyue_todo_submode';
+const STORAGE_KEY_MODE_SNAPSHOTS = 'guyue_mode_snapshots';
 
 const DEFAULT_SPLASH_QUOTES = [
   '有善始者实繁，能克终者盖寡',
@@ -191,8 +197,18 @@ const App: React.FC = () => {
   // Performance: Cache for loaded data to prevent re-parsing
   const [dataCache] = useState(() => new Map<string, any>());
 
-  const [appMode, setAppMode] = useState<AppMode>('todo');
-  const [todoSubMode, setTodoSubMode] = useState<TodoSubMode>('tasks');
+  const [appMode, setAppMode] = useState<AppMode>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_APP_MODE);
+      return saved ? JSON.parse(saved) : 'todo';
+    } catch { return 'todo'; }
+  });
+  const [todoSubMode, setTodoSubMode] = useState<TodoSubMode>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_TODO_SUBMODE);
+      return saved ? JSON.parse(saved) : 'tasks';
+    } catch { return 'tasks'; }
+  });
   const [moduleConfig, setModuleConfig] = useState<ModuleConfig[]>(() => {
     if (typeof window === 'undefined') {
       return DEFAULT_MODULE_CONFIG;
@@ -269,6 +285,9 @@ const App: React.FC = () => {
   const [hasExcalidrawMounted, setHasExcalidrawMounted] = useState(false);
   const [hasDataCenterMounted, setHasDataCenterMounted] = useState(false);
   const [hasMusicMounted, setHasMusicMounted] = useState(false);
+  const [hasRagMounted, setHasRagMounted] = useState(false);
+  const [hasKbMounted, setHasKbMounted] = useState(false);
+  const [hasWorkflowMounted, setHasWorkflowMounted] = useState(false);
 
   // Prevent body scroll to fix layout shifts on focus
   useEffect(() => {
@@ -307,7 +326,16 @@ const App: React.FC = () => {
     if (appMode === 'music' && !hasMusicMounted) {
       setHasMusicMounted(true);
     }
-  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasLeetCodeMounted, hasLearningMounted, hasChatMounted, hasExcalidrawMounted, hasDataCenterMounted, hasMusicMounted]);
+    if (appMode === 'rag' && !hasRagMounted) {
+      setHasRagMounted(true);
+    }
+    if (appMode === 'knowledge-base' && !hasKbMounted) {
+      setHasKbMounted(true);
+    }
+    if (appMode === 'workflow' && !hasWorkflowMounted) {
+      setHasWorkflowMounted(true);
+    }
+  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasLeetCodeMounted, hasLearningMounted, hasChatMounted, hasExcalidrawMounted, hasDataCenterMounted, hasMusicMounted, hasRagMounted, hasKbMounted, hasWorkflowMounted]);
 
   useEffect(() => {
     if (appMode === 'chat') {
@@ -315,6 +343,25 @@ const App: React.FC = () => {
       setFloatingChatSource(null);
     }
   }, [appMode]);
+
+  // Persist appMode & todoSubMode to localStorage
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY_APP_MODE, JSON.stringify(appMode)); } catch {}
+  }, [appMode]);
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY_TODO_SUBMODE, JSON.stringify(todoSubMode)); } catch {}
+  }, [todoSubMode]);
+
+  // Per-mode category snapshots: remember selectedCategory for each mode
+  const modeSnapshotsRef = useRef<Record<string, string>>({});
+  // Initialize ref from localStorage (run once)
+  const [modeSnapshotsLoaded] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_MODE_SNAPSHOTS);
+      if (saved) modeSnapshotsRef.current = JSON.parse(saved);
+    } catch {}
+    return true;
+  });
   
   // Categories now managed per app mode
   const [categoriesMap, setCategoriesMap] = useState<Record<string, Category[]>>({
@@ -328,6 +375,8 @@ const App: React.FC = () => {
   });
   
   const [selectedCategory, setSelectedCategory] = useState<string>('全部');
+  const selectedCategoryRef = useRef(selectedCategory);
+  selectedCategoryRef.current = selectedCategory;
   const [searchQuery, setSearchQuery] = useState('');
   
   // Modals
@@ -1269,11 +1318,22 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Reset selection and search when mode changes
+  // Save/restore per-mode UI state when switching modes
+  const prevAppModeRef = useRef<AppMode>(appMode);
   useEffect(() => {
-    setSelectedCategory('全部');
+    const prevMode = prevAppModeRef.current;
+    prevAppModeRef.current = appMode;
+
+    // Save previous mode's category
+    if (prevMode !== appMode) {
+      modeSnapshotsRef.current = { ...modeSnapshotsRef.current, [prevMode]: selectedCategoryRef.current };
+      try { localStorage.setItem(STORAGE_KEY_MODE_SNAPSHOTS, JSON.stringify(modeSnapshotsRef.current)); } catch {}
+    }
+
+    // Restore target mode's category (or default '全部')
+    setSelectedCategory(modeSnapshotsRef.current[appMode] || '全部');
     setSearchQuery('');
-    setIsEditingFile(false); // Reset editing state
+    setIsEditingFile(false);
     if (appMode !== 'terminal') {
       setInitialTerminalCommand(undefined);
       setInitialTerminalTitle(undefined);
@@ -2472,7 +2532,7 @@ const App: React.FC = () => {
             onReorderPlaylist={handleMusicReorderPlaylist}
           />
         </Suspense>
-      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
+      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
         <Sidebar 
           appMode={appMode}  
           categories={activeCategories} 
@@ -2619,8 +2679,8 @@ const App: React.FC = () => {
         </Suspense>
       )}
 
-      <div className="flex-1 flex flex-col min-w-0 bg-white relative" style={appMode === 'agent' ? { display: 'none' } : undefined}>
-        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'latex' && appMode !== 'music' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
+      <div className={`flex-1 flex flex-col min-w-0 relative bg-white`} style={appMode === 'agent' ? { display: 'none' } : undefined}>
+        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
         <div className="h-16 border-b border-gray-200 flex items-center justify-between px-6 bg-white shrink-0">
            <div className="flex items-center gap-4 flex-1 max-w-xl">
               <div className="relative flex-1">
@@ -2689,7 +2749,7 @@ const App: React.FC = () => {
         </div>
         )}
 
-        <div className={`flex-1 ${appMode === 'chat' ? 'overflow-hidden' : appMode === 'latex' ? 'overflow-hidden' : appMode === 'music' ? 'overflow-hidden' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'chat' || appMode === 'excalidraw' || appMode === 'datacenter' || appMode === 'latex' || appMode === 'music' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'p-4' : 'p-6'}`}>
+        <div className={`flex-1 ${appMode === 'chat' ? 'overflow-hidden' : appMode === 'latex' ? 'overflow-hidden' : appMode === 'music' ? 'overflow-hidden' : appMode === 'rag' ? 'overflow-hidden' : appMode === 'knowledge-base' ? 'overflow-hidden' : appMode === 'workflow' ? 'overflow-hidden' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'chat' || appMode === 'excalidraw' || appMode === 'datacenter' || appMode === 'latex' || appMode === 'music' || appMode === 'rag' || appMode === 'knowledge-base' || appMode === 'workflow' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'p-4' : 'p-6'}`}>
           <Suspense fallback={
             <div className="flex items-center justify-center h-full text-gray-400 gap-2">
               <Loader2 className="w-6 h-6 animate-spin" />
@@ -3007,6 +3067,22 @@ const App: React.FC = () => {
                   onAddFolder={handleMusicAddFolder}
                   onReorderTracksInPlaylist={handleMusicReorderTracks}
                 />
+              </div>
+            )}
+
+            {(hasRagMounted || appMode === 'rag') && (
+              <div className={appMode === 'rag' ? 'h-full' : 'hidden'}>
+                <RagTestBench />
+              </div>
+            )}
+            {(hasKbMounted || appMode === 'knowledge-base') && (
+              <div className={appMode === 'knowledge-base' ? 'h-full' : 'hidden'}>
+                <KnowledgeBase />
+              </div>
+            )}
+            {(hasWorkflowMounted || appMode === 'workflow') && (
+              <div className={appMode === 'workflow' ? 'h-full' : 'hidden'}>
+                <WorkflowEngine />
               </div>
             )}
           </Suspense>

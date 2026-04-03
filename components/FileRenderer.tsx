@@ -216,7 +216,7 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
   }
 
   const isMarkdown = ['md', 'markdown'].includes(file.type.toLowerCase().replace('.', ''));
-  const isPdf = file.type.toLowerCase() === '.pdf';
+  const isPdf = file.type.toLowerCase().replace('.', '') === 'pdf';
   const ts = themeStyles[readingSettings.theme];
 
   return (

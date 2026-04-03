@@ -6,7 +6,7 @@ import {
   Repeat, Repeat1, Shuffle, Trash2, FileAudio, Music,
   FolderOpen, Plus, ListMusic, Edit3, Check, X, ChevronDown, ChevronUp,
   FileText, MoreHorizontal, Disc3, Maximize2, Minimize2,
-  Settings, Mic2, Save, RotateCcw, AlertTriangle
+  Settings, Mic2, Save, RotateCcw, AlertTriangle, ListOrdered
 } from 'lucide-react';
 
 // ── helpers ──
@@ -330,7 +330,7 @@ const LyricsModal: React.FC<{
   );
 };
 
-// ── Fullscreen Lyrics View (NetEase-style) ──
+// ── Fullscreen Lyrics View (NetEase Cloud Music style) ──
 const FullscreenLyrics: React.FC<{
   track: MusicTrack;
   cover?: string;
@@ -345,7 +345,9 @@ const FullscreenLyrics: React.FC<{
   onSeek: (time: number) => void;
   onClose: () => void;
 }> = ({ track, cover, lyrics, plainLyrics, progress, duration, isPlaying, onTogglePlay, onPrev, onNext, onSeek, onClose }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const lyricsContainerRef = useRef<HTMLDivElement>(null);
+  const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
+
   const currentIdx = useMemo(() => {
     if (!lyrics) return -1;
     for (let i = lyrics.length - 1; i >= 0; i--) {
@@ -355,67 +357,109 @@ const FullscreenLyrics: React.FC<{
   }, [lyrics, progress]);
 
   useEffect(() => {
-    if (currentIdx >= 0 && containerRef.current) {
-      const el = containerRef.current.children[currentIdx] as HTMLElement;
-      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (currentIdx >= 0 && lyricsContainerRef.current && lineRefs.current[currentIdx]) {
+      const container = lyricsContainerRef.current;
+      const el = lineRefs.current[currentIdx]!;
+      const containerHeight = container.clientHeight;
+      const targetScroll = el.offsetTop - containerHeight / 2 + el.offsetHeight / 2;
+      container.scrollTo({ top: targetScroll, behavior: 'smooth' });
     }
   }, [currentIdx]);
 
   return (
-    <div className="fixed inset-0 z-50 bg-gradient-to-b from-gray-900 via-gray-900 to-black flex flex-col items-center">
+    <div className="fixed inset-0 z-50 overflow-hidden select-none">
+      {/* Full-bleed blurred background */}
+      {cover ? (
+        <img src={cover} className="absolute inset-[-20%] w-[140%] h-[140%] object-cover blur-[100px] saturate-150 brightness-[0.22] scale-110" />
+      ) : (
+        <div className="absolute inset-0 bg-gradient-to-br from-[#0f0c29] via-[#302b63] to-[#24243e]" />
+      )}
+
       {/* Close */}
-      <button onClick={onClose} className="absolute top-6 right-6 p-2 text-white/50 hover:text-white rounded-full hover:bg-white/10 transition z-10" title="退出全屏">
+      <button onClick={onClose} className="absolute top-5 right-5 z-20 p-2.5 text-white/30 hover:text-white/80 rounded-full hover:bg-white/5 transition" title="退出">
         <Minimize2 className="w-5 h-5" />
       </button>
 
-      {/* Main content */}
-      <div className="flex-1 flex items-center gap-16 px-16 max-w-6xl w-full min-h-0 pt-12">
-        {/* Left: cover + info */}
-        <div className="flex flex-col items-center gap-6 w-80 shrink-0">
-          <div className={`w-64 h-64 rounded-2xl overflow-hidden shadow-2xl shadow-purple-900/30 ${isPlaying ? 'animate-pulse' : ''}`} style={{ animationDuration: '4s' }}>
-            {cover ? <img src={cover} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-gradient-to-br from-purple-700 to-purple-900 flex items-center justify-center"><Music className="w-20 h-20 text-white/30" /></div>}
+      {/* Layout */}
+      <div className="relative z-10 h-full flex flex-col">
+        {/* Main: cover + lyrics */}
+        <div className="flex-1 flex items-center gap-14 px-14 lg:px-24 min-h-0">
+          {/* Left: vinyl cover + info */}
+          <div className="flex flex-col items-center gap-5 w-72 shrink-0">
+            <div
+              className="w-56 h-56 rounded-full overflow-hidden shadow-[0_0_80px_rgba(0,0,0,0.5)] ring-[6px] ring-white/[0.06]"
+              style={{ animation: 'spin 25s linear infinite', animationPlayState: isPlaying ? 'running' : 'paused' }}
+            >
+              {cover ? (
+                <img src={cover} className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full bg-gradient-to-br from-purple-900/80 to-gray-900 flex items-center justify-center">
+                  <Music className="w-16 h-16 text-white/15" />
+                </div>
+              )}
+            </div>
+            <div className="text-center space-y-1 w-full mt-1">
+              <h2 className="text-xl font-bold text-white/90 truncate">{track.title}</h2>
+              <p className="text-sm text-white/40 truncate">{track.artist}{track.album !== '未知专辑' ? ` · ${track.album}` : ''}</p>
+              {track.lossless && (
+                <span className="inline-block text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] text-white/30 mt-1">
+                  {qualityLabel(track)}
+                </span>
+              )}
+            </div>
           </div>
-          <div className="text-center space-y-1 w-full">
-            <h2 className="text-xl font-bold text-white truncate">{track.title}</h2>
-            <p className="text-sm text-white/50">{track.artist}{track.album !== '未知专辑' ? ` — ${track.album}` : ''}</p>
-            <span className={`inline-block text-xs px-2 py-0.5 rounded-full mt-1 ${track.lossless ? 'bg-amber-500/20 text-amber-300' : 'bg-white/10 text-white/40'}`}>{qualityLabel(track)}</span>
+
+          {/* Right: lyrics */}
+          <div className="flex-1 h-full relative min-w-0 overflow-hidden" style={{ maskImage: 'linear-gradient(to bottom, transparent 0%, black 12%, black 88%, transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 12%, black 88%, transparent 100%)' }}>
+            <div ref={lyricsContainerRef} className="h-full overflow-y-auto py-[40vh]" style={{ scrollbarWidth: 'none' }}>
+              {lyrics && lyrics.length > 0 ? (
+                lyrics.map((line, i) => {
+                  const dist = currentIdx >= 0 ? Math.abs(i - currentIdx) : 999;
+                  const isCurrent = i === currentIdx;
+                  const opacity = isCurrent ? 1 : dist === 1 ? 0.45 : dist === 2 ? 0.25 : 0.12;
+                  return (
+                    <div
+                      key={i}
+                      ref={el => { lineRefs.current[i] = el; }}
+                      onClick={() => onSeek(line.time)}
+                      className="cursor-pointer py-[14px] px-2 origin-left"
+                      style={{ opacity, transform: `scale(${isCurrent ? 1 : 0.95})`, transition: 'all 0.6s cubic-bezier(0.4, 0, 0.2, 1)' }}
+                    >
+                      <span
+                        className={isCurrent ? 'text-[24px] font-bold text-white leading-snug' : 'text-[18px] font-medium text-white/80 leading-snug hover:text-white'}
+                        style={isCurrent ? { textShadow: '0 0 40px rgba(255,255,255,0.15)' } : undefined}
+                      >
+                        {line.text || '♪ ♪ ♪'}
+                      </span>
+                    </div>
+                  );
+                })
+              ) : plainLyrics ? (
+                <pre className="text-white/30 whitespace-pre-wrap font-sans text-lg leading-loose px-2">{plainLyrics}</pre>
+              ) : (
+                <div className="flex items-center justify-center h-full text-white/15 text-lg">暂无歌词</div>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Right: lyrics scroll */}
-        <div className="flex-1 h-[60vh] overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 mask-gradient" ref={containerRef}>
-          {lyrics && lyrics.length > 0 ? (
-            lyrics.map((line, i) => (
-              <div key={i} onClick={() => onSeek(line.time)} className={`py-2.5 px-4 cursor-pointer rounded-lg transition-all duration-300 ${i === currentIdx ? 'text-white text-xl font-semibold scale-105 bg-white/5' : 'text-white/30 text-base hover:text-white/50'}`}>
-                {line.text || '♪'}
-              </div>
-            ))
-          ) : plainLyrics ? (
-            <pre className="text-white/40 whitespace-pre-wrap font-sans text-base leading-loose px-4">{plainLyrics}</pre>
-          ) : (
-            <div className="flex items-center justify-center h-full text-white/20 text-lg">暂无歌词</div>
-          )}
-        </div>
-      </div>
-
-      {/* Bottom: mini controls */}
-      <div className="w-full pb-8 px-16 space-y-3">
-        {/* Progress */}
-        <div className="flex items-center gap-3 max-w-3xl mx-auto">
-          <span className="text-xs text-white/40 tabular-nums w-10 text-right">{fmt(progress)}</span>
-          <div className="flex-1 h-1 bg-white/10 rounded-full cursor-pointer relative group" onClick={e => { const r = e.currentTarget.getBoundingClientRect(); onSeek((e.clientX - r.left) / r.width * duration); }}>
-            <div className="h-full bg-purple-400 rounded-full transition-all" style={{ width: `${duration ? (progress / duration) * 100 : 0}%` }} />
-            <div className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white shadow opacity-0 group-hover:opacity-100 transition" style={{ left: `calc(${duration ? (progress / duration) * 100 : 0}% - 6px)` }} />
+        {/* Bottom: progress + controls — no hard edge, just floats at bottom */}
+        <div className="pb-8 pt-4 px-14 lg:px-24 space-y-3">
+          <div className="flex items-center gap-3 max-w-3xl mx-auto">
+            <span className="text-xs text-white/30 tabular-nums w-10 text-right">{fmt(progress)}</span>
+            <div className="flex-1 h-[3px] bg-white/[0.08] rounded-full cursor-pointer relative group" onClick={e => { const r = e.currentTarget.getBoundingClientRect(); onSeek((e.clientX - r.left) / r.width * duration); }}>
+              <div className="h-full bg-white/40 rounded-full transition-all" style={{ width: `${duration ? (progress / duration) * 100 : 0}%` }} />
+              <div className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white shadow-lg opacity-0 group-hover:opacity-100 transition" style={{ left: `calc(${duration ? (progress / duration) * 100 : 0}% - 6px)` }} />
+            </div>
+            <span className="text-xs text-white/30 tabular-nums w-10">{fmt(duration)}</span>
           </div>
-          <span className="text-xs text-white/40 tabular-nums w-10">{fmt(duration)}</span>
-        </div>
-        {/* Controls */}
-        <div className="flex items-center justify-center gap-6">
-          <button onClick={onPrev} className="p-2 text-white/60 hover:text-white transition"><SkipBack className="w-5 h-5" /></button>
-          <button onClick={onTogglePlay} className="w-12 h-12 flex items-center justify-center rounded-full bg-white text-gray-900 hover:scale-105 transition-transform shadow-lg">
-            {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6 ml-0.5" />}
-          </button>
-          <button onClick={onNext} className="p-2 text-white/60 hover:text-white transition"><SkipForward className="w-5 h-5" /></button>
+          <div className="flex items-center justify-center gap-8">
+            <button onClick={onPrev} className="p-2 text-white/30 hover:text-white/70 transition"><SkipBack className="w-5 h-5" /></button>
+            <button onClick={onTogglePlay} className="w-14 h-14 flex items-center justify-center rounded-full bg-white/[0.08] text-white/80 hover:bg-white/[0.12] hover:scale-105 transition-all">
+              {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6 ml-0.5" />}
+            </button>
+            <button onClick={onNext} className="p-2 text-white/30 hover:text-white/70 transition"><SkipForward className="w-5 h-5" /></button>
+          </div>
         </div>
       </div>
     </div>
@@ -442,13 +486,13 @@ const TrackDetailModal: React.FC<{
 
   useEffect(() => { setEditing(false); setDraft({}); }, [track.id]);
 
-  const startEdit = () => { setEditing(true); setDraft({ title: track.title, artist: track.artist, album: track.album, lyricist: track.lyricist || '', composer: track.composer || '', singer: track.singer || '', band: track.band || '', genre: track.genre || '', year: track.year, comment: track.comment || '' }); };
+  const startEdit = () => { setEditing(true); setDraft({ title: track.title, artist: track.artist, album: track.album, lyricist: track.lyricist || '', composer: track.composer || '', arranger: track.arranger || '', producer: track.producer || '', band: track.band || '', genre: track.genre || '', year: track.year, comment: track.comment || '' }); };
   const saveEdit = () => { onUpdate(draft); setEditing(false); };
   const cancelEdit = () => { setEditing(false); setDraft({}); };
   const userPlaylists = playlists.filter(p => !p.isSystem);
 
-  const Field = ({ label, field }: { label: string; field: keyof MusicTrack }) => (
-    <div className="flex items-center gap-3 text-sm">
+  const renderField = (label: string, field: keyof MusicTrack) => (
+    <div key={field} className="flex items-center gap-3 text-sm">
       <span className="text-gray-400 w-14 shrink-0 text-right">{label}</span>
       {editing ? <input className="flex-1 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1 text-gray-800 focus:outline-none focus:ring-1 focus:ring-purple-400" value={(draft as any)[field] ?? ''} onChange={e => setDraft(d => ({ ...d, [field]: e.target.value }))} /> : <span className="text-gray-700 truncate">{(track as any)[field] || '—'}</span>}
     </div>
@@ -502,15 +546,16 @@ const TrackDetailModal: React.FC<{
 
             {/* Info fields */}
             <div className="flex-1 space-y-2.5 min-w-0">
-              <Field label="标题" field="title" />
-              <Field label="歌手" field="artist" />
-              <Field label="专辑" field="album" />
-              <Field label="作词" field="lyricist" />
-              <Field label="作曲" field="composer" />
-              <Field label="演唱" field="singer" />
-              <Field label="乐队" field="band" />
-              <Field label="流派" field="genre" />
-              <Field label="备注" field="comment" />
+              {renderField('标题', 'title')}
+              {renderField('艺术家', 'artist')}
+              {renderField('专辑', 'album')}
+              {renderField('作词', 'lyricist')}
+              {renderField('作曲', 'composer')}
+              {renderField('编曲', 'arranger')}
+              {renderField('制作人', 'producer')}
+              {renderField('乐队', 'band')}
+              {renderField('流派', 'genre')}
+              {renderField('备注', 'comment')}
             </div>
           </div>
 
@@ -650,6 +695,10 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   const [showFullscreenLyrics, setShowFullscreenLyrics] = useState(false);
   const [lyricsModalTrackId, setLyricsModalTrackId] = useState<string | null>(null);
   const [missingFiles, setMissingFiles] = useState<Set<string>>(new Set());
+  const [dragTrackId, setDragTrackId] = useState<string | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const [userQueue, setUserQueue] = useState<string[]>([]);
+  const [showQueue, setShowQueue] = useState(false);
 
   const howlRef = useRef<Howl | null>(null);
   const progressTimer = useRef<number>(0);
@@ -674,6 +723,11 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   // Derived
   const playlistTracks = useMemo(() => {
     if (selectedPlaylist === 'all') return tracks;
+    if (selectedPlaylist === '__artists__') return tracks;
+    if (selectedPlaylist.startsWith('__artist__:')) {
+      const artist = selectedPlaylist.substring('__artist__:'.length);
+      return tracks.filter(t => t.artist === artist);
+    }
     const pl = playlists.find(p => p.id === selectedPlaylist);
     if (!pl) return tracks;
     if (!pl.isSystem) {
@@ -776,6 +830,13 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   };
 
   const playNext = () => {
+    // If there are tracks in the user queue, play the first one and remove it
+    if (userQueue.length > 0) {
+      const nextId = userQueue[0];
+      const nextTrack = tracks.find(t => t.id === nextId);
+      setUserQueue(q => q.slice(1));
+      if (nextTrack) { playTrack(nextTrack); return; }
+    }
     const q = playQueue; const idx = q.findIndex(t => t.id === currentTrackId);
     if (idx < q.length - 1) playTrack(q[idx + 1]);
     else if (q.length > 0) playTrack(q[0]);
@@ -841,11 +902,43 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
     onReorderTracksInPlaylist(pl.id, ids);
   };
 
+  const handleDragDrop = (fromTrackId: string, toIdx: number) => {
+    const pl = playlists.find(p => p.id === selectedPlaylist);
+    if (!pl || pl.isSystem) return;
+    const ids = [...pl.trackIds];
+    const fromIdx = ids.indexOf(fromTrackId);
+    if (fromIdx < 0 || fromIdx === toIdx) return;
+    ids.splice(fromIdx, 1);
+    ids.splice(toIdx, 0, fromTrackId);
+    onReorderTracksInPlaylist(pl.id, ids);
+  };
+
+  // ── Play Queue ──
+  const addToQueue = (trackId: string) => {
+    setUserQueue(q => q.includes(trackId) ? q : [...q, trackId]);
+  };
+  const removeFromQueue = (trackId: string) => {
+    setUserQueue(q => q.filter(id => id !== trackId));
+  };
+  const moveInQueue = (trackId: string, dir: 'up' | 'down') => {
+    setUserQueue(q => {
+      const ids = [...q];
+      const idx = ids.indexOf(trackId);
+      if (idx < 0) return q;
+      const swap = dir === 'up' ? idx - 1 : idx + 1;
+      if (swap < 0 || swap >= ids.length) return q;
+      [ids[idx], ids[swap]] = [ids[swap], ids[idx]];
+      return ids;
+    });
+  };
+  const clearQueue = () => setUserQueue([]);
+  const queueTracks = useMemo(() => userQueue.map(id => tracks.find(t => t.id === id)).filter(Boolean) as MusicTrack[], [userQueue, tracks]);
+
   const playPlaylist = () => {
     if (filteredTracks.length > 0) playTrack(filteredTracks[0]);
   };
 
-  const isUserPlaylist = !playlists.find(p => p.id === selectedPlaylist)?.isSystem && selectedPlaylist !== 'all';
+  const isUserPlaylist = !playlists.find(p => p.id === selectedPlaylist)?.isSystem && selectedPlaylist !== 'all' && !selectedPlaylist.startsWith('__artist') ;
 
   // Keyboard
   useEffect(() => {
@@ -890,12 +983,12 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold text-gray-800">{playlists.find(p => p.id === selectedPlaylist)?.name || '全部音乐'}</h2>
+                  <h2 className="text-lg font-semibold text-gray-800">{selectedPlaylist.startsWith('__artist__:') ? selectedPlaylist.substring('__artist__:'.length) : selectedPlaylist === '__artists__' ? '全部艺术家' : playlists.find(p => p.id === selectedPlaylist)?.name || '全部音乐'}</h2>
                   <span className="text-xs text-gray-400">{filteredTracks.length} 首曲目</span>
                 </div>
                 {filteredTracks.length > 0 && (
-                  <button onClick={playPlaylist} className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-500 text-white rounded-lg hover:bg-purple-600 text-xs font-medium transition-colors" title="播放全部">
-                    <Play className="w-3.5 h-3.5" />播放
+                  <button onClick={playPlaylist} className="p-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors" title="播放全部">
+                    <Play className="w-4 h-4" />
                   </button>
                 )}
               </div>
@@ -903,8 +996,8 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
                 <div className="relative w-48">
                   <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="搜索曲目..." className="w-full pl-3 pr-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-purple-400 focus:border-purple-400" />
                 </div>
-                <button onClick={onAddFiles} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors" title="添加文件"><Plus className="w-3.5 h-3.5" />添加</button>
-                <button onClick={onAddFolder} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors" title="扫描文件夹"><FolderOpen className="w-3.5 h-3.5" />扫描</button>
+                <button onClick={onAddFiles} className="p-2 text-gray-500 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors" title="添加文件"><Plus className="w-4 h-4" /></button>
+                <button onClick={onAddFolder} className="p-2 text-gray-500 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors" title="扫描文件夹"><FolderOpen className="w-4 h-4" /></button>
               </div>
             </div>
           </div>
@@ -920,8 +1013,17 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
               const active = track.id === currentTrackId;
               const cover = getCover(track);
               const isMissing = missingFiles.has(track.id);
+              const isDragging = dragTrackId === track.id;
+              const isDragOver = dragOverIdx === i && dragTrackId !== track.id;
               return (
-                <div key={track.id} className={`group grid ${isUserPlaylist ? 'grid-cols-[40px_1fr_160px_120px_80px_100px]' : 'grid-cols-[40px_1fr_160px_120px_80px_72px]'} items-center px-5 py-2 cursor-pointer transition-colors ${isMissing ? 'opacity-50' : ''} ${active ? 'bg-purple-50/70' : 'hover:bg-gray-50'}`}
+                <div key={track.id}
+                  draggable={isUserPlaylist}
+                  onDragStart={e => { if (!isUserPlaylist) return; setDragTrackId(track.id); e.dataTransfer.effectAllowed = 'move'; }}
+                  onDragOver={e => { if (!isUserPlaylist || !dragTrackId) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverIdx(i); }}
+                  onDragLeave={() => { if (dragOverIdx === i) setDragOverIdx(null); }}
+                  onDrop={e => { e.preventDefault(); if (dragTrackId && isUserPlaylist) handleDragDrop(dragTrackId, i); setDragTrackId(null); setDragOverIdx(null); }}
+                  onDragEnd={() => { setDragTrackId(null); setDragOverIdx(null); }}
+                  className={`group grid ${isUserPlaylist ? 'grid-cols-[40px_1fr_160px_120px_80px_100px]' : 'grid-cols-[40px_1fr_160px_120px_80px_72px]'} items-center px-5 py-2 cursor-pointer transition-colors ${isDragging ? 'opacity-30' : ''} ${isDragOver ? 'border-t-2 border-purple-400' : ''} ${isMissing ? 'opacity-50' : ''} ${active ? 'bg-purple-50/70' : 'hover:bg-gray-50'}`}
                   onDoubleClick={() => !isMissing && playTrack(track)}>
                   <div className="flex items-center justify-center">
                     {isMissing ? <span title="文件不存在"><AlertTriangle className="w-3.5 h-3.5 text-red-400" /></span> : active && isPlaying ? <Disc3 className="w-4 h-4 text-purple-500 animate-spin" style={{ animationDuration: '3s' }} /> : <span className={`text-xs ${active ? 'text-purple-500 font-medium' : 'text-gray-400'}`}>{i + 1}</span>}
@@ -950,6 +1052,9 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
                     <button ref={addToPlTrackId === track.id ? addToPlBtnRef : undefined}
                       onClick={e => { e.stopPropagation(); addToPlBtnRef.current = e.currentTarget as HTMLButtonElement; setAddToPlTrackId(addToPlTrackId === track.id ? null : track.id); }}
                       className="p-1 text-gray-400 hover:text-purple-500" title="添加到歌单"><Plus className="w-3.5 h-3.5" /></button>
+                    <button onClick={e => { e.stopPropagation(); addToQueue(track.id); }} className="p-1 text-gray-400 hover:text-blue-500" title="加入播放队列">
+                      <ListOrdered className="w-3.5 h-3.5" />
+                    </button>
                     <button onClick={e => { e.stopPropagation(); setDetailTrackId(track.id); }} className="p-1 text-gray-400 hover:text-purple-500" title="详情">
                       <MoreHorizontal className="w-3.5 h-3.5" />
                     </button>
@@ -986,49 +1091,92 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
             <div className="h-full bg-gradient-to-r from-purple-400 to-purple-500 transition-all" style={{ width: `${duration ? (progress / duration) * 100 : 0}%` }} />
             <div className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-purple-500 shadow-md opacity-0 group-hover:opacity-100 transition-opacity" style={{ left: `calc(${duration ? (progress / duration) * 100 : 0}% - 6px)` }} />
           </div>
-          <div className="flex items-center h-[72px] px-5">
+          <div className="flex items-center h-[72px] px-4 gap-3">
             {/* Left: current track info */}
-            <div className="flex items-center gap-3 w-64 shrink-0">
+            <div className="flex items-center gap-3 min-w-0 w-56 shrink-0">
               <div className="w-12 h-12 rounded-lg overflow-hidden bg-gray-100 shrink-0 flex items-center justify-center shadow-sm cursor-pointer" onClick={() => setShowFullscreenLyrics(true)} title="查看歌词">
                 {curCover ? <img src={curCover} className="w-full h-full object-cover" /> : <Music className="w-5 h-5 text-gray-300" />}
               </div>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium text-gray-800 truncate">{currentTrack.title}</div>
                 <div className="text-xs text-gray-400 truncate">{currentTrack.artist}</div>
               </div>
             </div>
 
             {/* Center: controls */}
-            <div className="flex-1 flex flex-col items-center gap-1">
-              <div className="flex items-center gap-4">
-                <button onClick={() => setIsShuffled(!isShuffled)} className={`p-1.5 rounded-full transition-colors ${isShuffled ? 'text-purple-500 bg-purple-50' : 'text-gray-400 hover:text-gray-600'}`} title="随机"><Shuffle className="w-4 h-4" /></button>
-                <button onClick={playPrev} className="p-1.5 text-gray-600 hover:text-gray-800 rounded-full hover:bg-gray-100"><SkipBack className="w-5 h-5" /></button>
+            <div className="flex-1 flex flex-col items-center justify-center gap-1 min-w-0">
+              <div className="flex items-center gap-3">
+                <button onClick={() => setIsShuffled(!isShuffled)} className={`p-1 rounded-full transition-colors ${isShuffled ? 'text-purple-500 bg-purple-50' : 'text-gray-400 hover:text-gray-600'}`} title="随机"><Shuffle className="w-4 h-4" /></button>
+                <button onClick={playPrev} className="p-1 text-gray-600 hover:text-gray-800 rounded-full hover:bg-gray-100"><SkipBack className="w-5 h-5" /></button>
                 <button onClick={togglePlay} className="w-10 h-10 flex items-center justify-center rounded-full bg-purple-500 text-white hover:bg-purple-600 shadow-md transition-all hover:scale-105">
                   {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 ml-0.5" />}
                 </button>
-                <button onClick={playNext} className="p-1.5 text-gray-600 hover:text-gray-800 rounded-full hover:bg-gray-100"><SkipForward className="w-5 h-5" /></button>
-                <button onClick={() => setRepeatMode(repeatMode === 'off' ? 'all' : repeatMode === 'all' ? 'one' : 'off')} className={`p-1.5 rounded-full transition-colors ${repeatMode !== 'off' ? 'text-purple-500 bg-purple-50' : 'text-gray-400 hover:text-gray-600'}`} title={repeatMode === 'one' ? '单曲循环' : repeatMode === 'all' ? '列表循环' : '不循环'}>
+                <button onClick={playNext} className="p-1 text-gray-600 hover:text-gray-800 rounded-full hover:bg-gray-100"><SkipForward className="w-5 h-5" /></button>
+                <button onClick={() => setRepeatMode(repeatMode === 'off' ? 'all' : repeatMode === 'all' ? 'one' : 'off')} className={`p-1 rounded-full transition-colors ${repeatMode !== 'off' ? 'text-purple-500 bg-purple-50' : 'text-gray-400 hover:text-gray-600'}`} title={repeatMode === 'one' ? '单曲循环' : repeatMode === 'all' ? '列表循环' : '不循环'}>
                   {repeatMode === 'one' ? <Repeat1 className="w-4 h-4" /> : <Repeat className="w-4 h-4" />}
                 </button>
               </div>
               <div className="flex items-center gap-2 text-[11px] text-gray-400 tabular-nums">
                 <span>{fmt(progress)}</span><span>/</span><span>{fmt(duration)}</span>
-                {currentTrack.lossless && <span className="ml-2 px-1.5 py-px rounded bg-amber-50 text-amber-600 text-[10px]">{currentTrack.format} {currentTrack.sampleRate ? `${(currentTrack.sampleRate / 1000).toFixed(1)}kHz` : ''}</span>}
+                {currentTrack.lossless && <span className="ml-1 px-1.5 py-px rounded bg-amber-50 text-amber-600 text-[10px]">{currentTrack.format} {currentTrack.sampleRate ? `${(currentTrack.sampleRate / 1000).toFixed(1)}kHz` : ''}</span>}
               </div>
             </div>
 
-            {/* Right: fullscreen lyrics + spectrum + volume */}
-            <div className="flex items-center gap-3 w-64 justify-end shrink-0">
-              {currentTrack.lyrics && (
-                <button onClick={() => setShowFullscreenLyrics(true)} className="p-1.5 text-gray-400 hover:text-purple-500 rounded-full hover:bg-purple-50" title="全屏歌词"><Maximize2 className="w-4 h-4" /></button>
-              )}
+            {/* Right: spectrum + volume + fullscreen */}
+            <div className="flex items-center gap-2 w-56 justify-end shrink-0">
               <SpectrumVisualizer analyser={analyserRef.current} isPlaying={isPlaying} height={28} />
-              <button onClick={() => { setIsMuted(!isMuted); if (howlRef.current) howlRef.current.volume(isMuted ? volume : 0); }} className="p-1 text-gray-400 hover:text-gray-600">
-                {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : volume < 0.5 ? <Volume1 className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+              <div className="flex items-center gap-1.5">
+                <button onClick={() => { setIsMuted(!isMuted); if (howlRef.current) howlRef.current.volume(isMuted ? volume : 0); }} className="p-1 text-gray-400 hover:text-gray-600 shrink-0">
+                  {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : volume < 0.5 ? <Volume1 className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                </button>
+                <input type="range" min={0} max={1} step={0.01} value={isMuted ? 0 : volume} onChange={handleVolume} className="w-16 h-1 accent-purple-500" />
+              </div>
+              {currentTrack.lyrics && (
+                <button onClick={() => setShowFullscreenLyrics(true)} className="p-1.5 text-gray-400 hover:text-purple-500 rounded-full hover:bg-purple-50 shrink-0" title="全屏歌词"><Maximize2 className="w-4 h-4" /></button>
+              )}
+              <button onClick={() => setShowQueue(!showQueue)} className={`p-1.5 rounded-full shrink-0 relative ${showQueue ? 'text-purple-500 bg-purple-50' : 'text-gray-400 hover:text-purple-500 hover:bg-purple-50'}`} title="播放队列">
+                <ListOrdered className="w-4 h-4" />
+                {userQueue.length > 0 && <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-purple-500 text-white text-[9px] flex items-center justify-center">{userQueue.length}</span>}
               </button>
-              <input type="range" min={0} max={1} step={0.01} value={isMuted ? 0 : volume} onChange={handleVolume} className="w-20 h-1 accent-purple-500" />
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Play Queue Panel */}
+      {showQueue && (
+        <div className="absolute right-0 bottom-16 w-80 max-h-96 bg-white border border-gray-200 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+            <div className="flex items-center gap-2">
+              <ListOrdered className="w-4 h-4 text-purple-500" />
+              <span className="text-sm font-medium text-gray-700">播放队列</span>
+              <span className="text-xs text-gray-400">{userQueue.length} 首</span>
+            </div>
+            {userQueue.length > 0 && (
+              <button onClick={clearQueue} className="text-xs text-gray-400 hover:text-red-500 transition-colors">清空</button>
+            )}
+          </div>
+          {queueTracks.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center py-12 text-gray-300 text-sm">队列为空</div>
+          ) : (
+            <div className="flex-1 overflow-y-auto">
+              {queueTracks.map((track, idx) => (
+                <div key={track.id} className="flex items-center gap-2 px-4 py-2 hover:bg-gray-50 group">
+                  <span className="text-[11px] text-gray-300 w-5 text-right shrink-0">{idx + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-gray-700 truncate">{track.title || track.filePath.split('/').pop()}</div>
+                    <div className="text-[11px] text-gray-400 truncate">{track.artist || '未知艺术家'}</div>
+                  </div>
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => moveInQueue(track.id, 'up')} className="p-0.5 text-gray-400 hover:text-purple-500" title="上移"><ChevronUp className="w-3 h-3" /></button>
+                    <button onClick={() => moveInQueue(track.id, 'down')} className="p-0.5 text-gray-400 hover:text-purple-500" title="下移"><ChevronDown className="w-3 h-3" /></button>
+                    <button onClick={() => { playTrack(track); removeFromQueue(track.id); }} className="p-0.5 text-gray-400 hover:text-green-500" title="播放"><Play className="w-3 h-3" /></button>
+                    <button onClick={() => removeFromQueue(track.id)} className="p-0.5 text-gray-400 hover:text-red-500" title="移除"><X className="w-3 h-3" /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

@@ -3,7 +3,7 @@ import { PromptRecord, SkillPack } from '../types';
 import {
   Sparkles, Copy, Check, Edit2, Trash2, ChevronDown, ChevronUp,
   User, Link2, Upload, X, AlertCircle, CheckCircle2, Loader2,
-  Globe, FileText, Zap,
+  Globe, FileText, Zap, Search,
 } from 'lucide-react';
 
 // ===== 内置快速导入源 =====
@@ -460,6 +460,7 @@ const ImportModal: React.FC<{
 // ===== Main Component =====
 export const PromptList: React.FC<SkillListProps> = ({ prompts, onDelete, onDeleteMany, onEdit, onImport, isImportOpen: externalImportOpen, onImportOpenChange }) => {
   const [internalImportOpen, setInternalImportOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const isImportOpen = externalImportOpen !== undefined ? externalImportOpen : internalImportOpen;
   const setIsImportOpen = (v: boolean) => {
     setInternalImportOpen(v);
@@ -481,10 +482,37 @@ export const PromptList: React.FC<SkillListProps> = ({ prompts, onDelete, onDele
     );
   }
 
+  const q = searchQuery.toLowerCase();
+  const filteredPrompts = q
+    ? prompts.filter(s =>
+        s.title.toLowerCase().includes(q) ||
+        s.content.toLowerCase().includes(q) ||
+        s.tags?.some(t => t.toLowerCase().includes(q))
+      )
+    : prompts;
+
   return (
     <>
+      <div className="relative mb-4">
+        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          placeholder="搜索 Skills（标题、标签、内容）…"
+          className="w-full rounded-xl border border-gray-200 bg-white pl-9 pr-8 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition-all"
+        />
+        {searchQuery && (
+          <button onClick={() => setSearchQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
+            <X size={15} />
+          </button>
+        )}
+      </div>
+      {searchQuery && (
+        <p className="text-xs text-gray-500 mb-3">找到 {filteredPrompts.length} 个匹配</p>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {prompts.map(skill => (
+        {filteredPrompts.map(skill => (
           <SkillCard key={skill.id} skill={skill} onEdit={() => onEdit(skill)} onDelete={() => onDelete(skill.id)} />
         ))}
       </div>

@@ -3,7 +3,8 @@ import { MusicPlaylist, MusicTrack } from '../types';
 import {
   Music, ListMusic, Plus, Check, X, ChevronUp, ChevronDown,
   MoreHorizontal, Pencil, Trash2, Palette, Disc3, Headphones,
-  Radio, Star, Mic2, AudioLines, Guitar, Piano, Drum, Library
+  Radio, Star, Mic2, AudioLines, Guitar, Piano, Drum, Library,
+  Users, ChevronRight, ChevronLeft
 } from 'lucide-react';
 
 // Icon options for playlists
@@ -115,6 +116,45 @@ export const MusicSidebar: React.FC<MusicSidebarProps> = ({
             </button>
           );
         })}
+
+        {/* Artists section */}
+        {(() => {
+          const isArtistsView = selectedPlaylist === '__artists__';
+          const isArtistDetail = selectedPlaylist.startsWith('__artist__:');
+          const artistCounts = new Map<string, number>();
+          tracks.forEach(t => {
+            const a = t.artist?.trim();
+            if (a && a !== '未知艺术家') artistCounts.set(a, (artistCounts.get(a) || 0) + 1);
+          });
+          const sortedArtists = [...artistCounts.entries()].sort((a, b) => b[1] - a[1]);
+          const totalArtists = sortedArtists.length;
+
+          return (
+            <>
+              <button onClick={() => onSelectPlaylist(isArtistsView || isArtistDetail ? 'all' : '__artists__')}
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left transition-all mb-1 ${isArtistsView || isArtistDetail ? 'bg-white text-gray-800 shadow-sm font-medium' : 'text-gray-600 hover:bg-white/60'}`}>
+                <Users className={`w-4 h-4 shrink-0 ${isArtistsView || isArtistDetail ? 'text-purple-500' : 'text-gray-400'}`} />
+                <span className="flex-1 text-sm truncate">艺术家</span>
+                <span className="text-[11px] text-gray-400 tabular-nums">{totalArtists}</span>
+              </button>
+              {/* Artist list when expanded */}
+              {(isArtistsView || isArtistDetail) && (
+                <div className="ml-2 mb-1 space-y-0.5 max-h-48 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+                  {sortedArtists.map(([artist, count]) => {
+                    const active = selectedPlaylist === `__artist__:${artist}`;
+                    return (
+                      <button key={artist} onClick={() => onSelectPlaylist(`__artist__:${artist}`)}
+                        className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left transition-all ${active ? 'bg-purple-50 text-purple-700 font-medium' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'}`}>
+                        <span className="flex-1 text-xs truncate">{artist}</span>
+                        <span className="text-[10px] text-gray-400 tabular-nums">{count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          );
+        })()}
 
         {/* Section divider */}
         <div className="flex items-center justify-between px-2 py-2 mt-2">

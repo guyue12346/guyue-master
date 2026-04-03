@@ -419,21 +419,30 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
   // Split pane drag state
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
+  const [isDraggingSplit, setIsDraggingSplit] = useState(false);
+  const rafRef = useRef<number>(0);
 
   const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     isDraggingRef.current = true;
+    setIsDraggingSplit(true);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
 
     const onMove = (ev: MouseEvent) => {
       if (!isDraggingRef.current || !splitContainerRef.current) return;
-      const rect = splitContainerRef.current.getBoundingClientRect();
-      const ratio = Math.min(0.85, Math.max(0.15, (ev.clientX - rect.left) / rect.width));
-      setSplitRatio(ratio);
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(() => {
+        if (!splitContainerRef.current) return;
+        const rect = splitContainerRef.current.getBoundingClientRect();
+        const ratio = Math.min(0.85, Math.max(0.15, (ev.clientX - rect.left) / rect.width));
+        setSplitRatio(ratio);
+      });
     };
     const onUp = () => {
       isDraggingRef.current = false;
+      setIsDraggingSplit(false);
+      cancelAnimationFrame(rafRef.current);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       window.removeEventListener('mousemove', onMove);
@@ -952,7 +961,7 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
       {/* Split View Container */}
       <div ref={splitContainerRef} className="flex-1 flex overflow-hidden">
           {/* Primary Pane */}
-          <div className={`${layoutMode === 'split' ? 'border-r border-gray-200' : 'w-full'} h-full relative flex flex-col transition-all duration-300`} style={{ width: layoutMode === 'split' ? `${splitRatio * 100}%` : '100%', flexShrink: 0 }}>
+          <div className={`${layoutMode === 'split' ? 'border-r border-gray-200' : 'w-full'} h-full relative flex flex-col ${isDraggingSplit ? '' : 'transition-[width] duration-200'}`} style={{ width: layoutMode === 'split' ? `${splitRatio * 100}%` : '100%', flexShrink: 0 }}>
              {/* Selection Indicator (Top Left) */}
              {layoutMode === 'split' && (
                <div 
@@ -984,12 +993,12 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
           {layoutMode === 'split' && (
             <div
               onMouseDown={handleDividerMouseDown}
-              className="flex-shrink-0 w-1 relative flex items-center justify-center cursor-col-resize group hover:w-1.5 transition-all z-10"
-              style={{ background: 'transparent' }}
+              className={`flex-shrink-0 w-[5px] relative flex items-center justify-center cursor-col-resize group z-10 ${isDraggingSplit ? 'bg-blue-400/30' : 'hover:bg-blue-200/40'} transition-colors`}
             >
-              <div className="absolute inset-y-0 -left-1 -right-1" />
-              <div className="h-full w-px bg-transparent group-hover:bg-blue-300 transition-colors" />
-              <div className="absolute top-1/2 -translate-y-1/2 w-4 h-8 rounded-full bg-white border border-gray-200 group-hover:border-blue-300 shadow-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all">
+              {/* Wider invisible hit area */}
+              <div className="absolute inset-y-0 -left-2 -right-2" />
+              <div className={`h-full w-px ${isDraggingSplit ? 'bg-blue-400' : 'bg-gray-200 group-hover:bg-blue-300'} transition-colors`} />
+              <div className={`absolute top-1/2 -translate-y-1/2 w-4 h-8 rounded-full bg-white border shadow-sm flex items-center justify-center transition-all ${isDraggingSplit ? 'opacity-100 border-blue-400' : 'opacity-0 group-hover:opacity-100 border-gray-200 group-hover:border-blue-300'}`}>
                 <GripVertical className="w-2.5 h-2.5 text-blue-400" />
               </div>
             </div>
@@ -997,7 +1006,7 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
 
           {/* Secondary Pane */}
           {layoutMode === 'split' && (
-            <div className="h-full relative flex flex-col transition-all duration-300" style={{ flex: 1, minWidth: 0 }}>
+            <div className={`h-full relative flex flex-col ${isDraggingSplit ? '' : 'transition-[flex] duration-200'}`} style={{ flex: 1, minWidth: 0 }}>
                {/* Selection Indicator (Top Left) */}
                <div 
                  className={`absolute top-2 left-2 z-50 transition-all transform pointer-events-auto ${activePane === 'secondary' ? 'opacity-100 scale-100' : 'opacity-50 scale-95'}`}
