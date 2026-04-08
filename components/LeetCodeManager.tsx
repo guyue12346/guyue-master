@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { LeetCodeList } from './LeetCodeList';
 import { LeetCodeListModal } from './LeetCodeListModal';
-import { ArrowLeft, ArrowRight, RotateCw, MessageSquare, Columns, Square, TerminalSquare, StickyNote } from 'lucide-react';
+import { ArrowLeft, ArrowRight, RotateCw, Columns, Square, TerminalSquare, StickyNote, Bot } from 'lucide-react';
 import { LeetCodeList as ILeetCodeList, parseLeetCodeMarkdown } from '../utils/leetcodeParser';
 import { LEETCODE_DATA } from './LeetCodeData';
 import { LUOGU_9391_DATA } from './Luogu9391Data';
@@ -9,8 +9,8 @@ import { LEETCODE_HOT100_DATA } from './LeetCodeHot100Data';
 import { Terminal as TerminalComponent } from './Terminal';
 
 interface LeetCodeManagerProps {
-  onOpenChat?: () => void;
   onCreateNote?: () => void;
+  onOpenChat?: () => void;
 }
 
 const STORAGE_KEY_LISTS = 'leetcode_lists';
@@ -18,7 +18,7 @@ const STORAGE_KEY_PROGRESS = 'leetcode_progress';
 const STORAGE_KEY_ACTIVE_LIST = 'leetcode_active_list';
 const STORAGE_KEY_EXPANDED_CATEGORIES = 'leetcode_expanded_categories';
 
-export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onOpenChat, onCreateNote }) => {
+export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onCreateNote, onOpenChat }) => {
   // addressBarUrl tracks the URL shown in the toolbar
   const [addressBarUrl, setAddressBarUrl] = useState('https://leetcode.cn/problemset/all/');
   // initialUrl is used for the webview src to prevent React from reloading the webview on state changes
@@ -350,10 +350,10 @@ export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onOpenChat, on
             {onOpenChat && (
               <button
                 onClick={onOpenChat}
-                className="p-1.5 rounded-md hover:bg-indigo-50 text-indigo-500 hover:text-indigo-600 transition-colors border border-indigo-100"
-                title="AI 小窗"
+                className="p-1.5 rounded-md hover:bg-purple-50 text-purple-500 hover:text-purple-600 transition-colors"
+                title="AI 助手"
               >
-                <MessageSquare className="w-4 h-4" />
+                <Bot className="w-4 h-4" />
               </button>
             )}
           </div>

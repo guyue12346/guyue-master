@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { GraduationCap, Search, ExternalLink, Maximize2, Minimize2, PlayCircle, FileText, Columns, Square, MessageSquare, TerminalSquare, ChevronLeft, FolderOpen, Plus, Edit2, Trash2, Download, Upload, GripVertical } from 'lucide-react';
+import { GraduationCap, Search, ExternalLink, Maximize2, Minimize2, PlayCircle, FileText, Columns, Square, TerminalSquare, ChevronLeft, FolderOpen, Plus, Edit2, Trash2, Download, Upload, GripVertical, Bot } from 'lucide-react';
 import { LearningList } from './LearningList';
 import { CS336_DATA, DOCKER_DATA, GIT_DATA, CourseData, Lecture, COURSE_CATEGORIES, CourseCategory, migrateCourseData } from './LearningData';
 import { MarkdownEditor } from './MarkdownEditor';
@@ -486,6 +486,16 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
                   className="w-full pl-10 pr-4 py-2 bg-gray-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all"
                 />
               </div>
+              {onOpenChat && (
+                <button
+                  onClick={onOpenChat}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors"
+                  title="AI 助手"
+                >
+                  <Bot className="w-4 h-4" />
+                  AI 助手
+                </button>
+              )}
               <button
                 onClick={() => {
                   setEditingCategory(undefined);
@@ -885,15 +895,6 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
             </button>
             {/* Toolbar - Split Screen Toggle & Terminal */}
             <div className="flex gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-              {onOpenChat && (
-                <button
-                  onClick={onOpenChat}
-                  className="p-1.5 bg-white shadow-sm rounded-lg text-indigo-600 hover:text-indigo-700 border border-indigo-100 transition-colors"
-                  title="AI 小窗"
-                >
-                  <MessageSquare className="w-4 h-4" />
-                </button>
-              )}
               <button 
                 onClick={() => {
                   if (layoutMode === 'single') {

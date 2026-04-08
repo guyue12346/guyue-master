@@ -3,11 +3,10 @@ import { NavRail } from './components/NavRail';
 import { Sidebar } from './components/Sidebar';
 import { TodoSidebar, TodoSubMode } from './components/TodoSidebar';
 import { SplashScreen } from './components/SplashScreen';
-import { FloatingChatWindow } from './components/FloatingChatWindow';
-import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig, RecurringEvent, RecurringCategory, DEFAULT_RECURRING_CATEGORIES, STORAGE_KEY_RECURRING_CATS, KbTag, KbFileEntry, MusicTrack, MusicPlaylist, DEFAULT_MUSIC_PLAYLISTS } from './types';
+import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig, RecurringEvent, RecurringCategory, DEFAULT_RECURRING_CATEGORIES, STORAGE_KEY_RECURRING_CATS, MusicTrack, MusicPlaylist, DEFAULT_MUSIC_PLAYLISTS } from './types';
 import { Plus, Search, Command, Loader2, ChevronRight, Upload, Edit3, Save, List, HelpCircle } from 'lucide-react';
 import type { VaultFileEntry } from './components/VaultImportModal';
-import { removeFileFromIndex } from './utils/ragService';
+import { FloatingChatWindow } from './components/FloatingChatWindow';
 
 // Lazy load components to improve initial load performance
 const NoteList = React.lazy(() => import('./components/NoteList').then(m => ({ default: m.NoteList })));
@@ -24,7 +23,6 @@ const WebBrowser = React.lazy(() => import('./components/WebBrowser').then(m => 
 const LeetCodeManager = React.lazy(() => import('./components/LeetCodeManager').then(m => ({ default: m.LeetCodeManager })));
 const LearningManager = React.lazy(() => import('./components/LearningManager').then(m => ({ default: m.LearningManager })));
 const ImageHosting = React.lazy(() => import('./components/ImageHosting').then(m => ({ default: m.ImageHosting })));
-const ChatManager = React.lazy(() => import('./components/ChatManager').then(m => ({ default: m.ChatManager })));
 const PluginContainer = React.lazy(() => import('./components/PluginContainer').then(m => ({ default: m.PluginContainer })));
 const HeatmapContainer = React.lazy(() => import('./components/HeatmapContainer').then(m => ({ default: m.HeatmapContainer })));
 const DataCenterManager = React.lazy(() => import('./components/datacenter/DataCenterManager').then(m => ({ default: m.DataCenterManager })));
@@ -74,9 +72,6 @@ const STORAGE_KEY_EMAIL_CONFIG = 'linkmaster_email_config';
 const STORAGE_KEY_AGENT_SHORTCUT = 'linkmaster_agent_shortcut';
 const STORAGE_KEY_LAST_EMAIL_CHECK = 'linkmaster_last_email_check';
 const STORAGE_KEY_RECURRING = 'linkmaster_recurring_v1';
-const STORAGE_KEY_KB_FILES = 'linkmaster_kb_files_v1';
-const STORAGE_KEY_KB_TAGS = 'guyue_kb_tags_v1';
-const STORAGE_KEY_KB_FILE_MAP = 'guyue_kb_file_tag_map_v1';
 const STORAGE_KEY_MUSIC_TRACKS = 'guyue_music_tracks_v1';
 const STORAGE_KEY_MUSIC_PLAYLISTS = 'guyue_music_playlists_v1';
 const STORAGE_KEY_APP_MODE = 'guyue_app_mode';
@@ -279,9 +274,6 @@ const App: React.FC = () => {
   const [hasBrowserMounted, setHasBrowserMounted] = useState(false);
   const [hasLeetCodeMounted, setHasLeetCodeMounted] = useState(false);
   const [hasLearningMounted, setHasLearningMounted] = useState(false);
-  const [hasChatMounted, setHasChatMounted] = useState(false);
-  const [isFloatingChatOpen, setIsFloatingChatOpen] = useState(false);
-  const [floatingChatSource, setFloatingChatSource] = useState<'leetcode' | 'learning' | null>(null);
   const [hasExcalidrawMounted, setHasExcalidrawMounted] = useState(false);
   const [hasDataCenterMounted, setHasDataCenterMounted] = useState(false);
   const [hasMusicMounted, setHasMusicMounted] = useState(false);
@@ -314,9 +306,6 @@ const App: React.FC = () => {
     if (appMode === 'learning' && !hasLearningMounted) {
       setHasLearningMounted(true);
     }
-    if (appMode === 'chat' && !hasChatMounted) {
-      setHasChatMounted(true);
-    }
     if (appMode === 'excalidraw' && !hasExcalidrawMounted) {
       setHasExcalidrawMounted(true);
     }
@@ -335,14 +324,7 @@ const App: React.FC = () => {
     if (appMode === 'workflow' && !hasWorkflowMounted) {
       setHasWorkflowMounted(true);
     }
-  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasLeetCodeMounted, hasLearningMounted, hasChatMounted, hasExcalidrawMounted, hasDataCenterMounted, hasMusicMounted, hasRagMounted, hasKbMounted, hasWorkflowMounted]);
-
-  useEffect(() => {
-    if (appMode === 'chat') {
-      setIsFloatingChatOpen(false);
-      setFloatingChatSource(null);
-    }
-  }, [appMode]);
+  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasLeetCodeMounted, hasLearningMounted, hasExcalidrawMounted, hasDataCenterMounted, hasMusicMounted, hasRagMounted, hasKbMounted, hasWorkflowMounted]);
 
   // Persist appMode & todoSubMode to localStorage
   useEffect(() => {
@@ -391,6 +373,17 @@ const App: React.FC = () => {
   const [initialCategoryEditId, setInitialCategoryEditId] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isFloatingChatOpen, setIsFloatingChatOpen] = useState(false);
+  const [floatingChatSource, setFloatingChatSource] = useState<'leetcode' | 'learning' | null>(null);
+
+  const handleToggleFloatingChat = useCallback((source: 'leetcode' | 'learning') => {
+    if (isFloatingChatOpen && floatingChatSource === source) {
+      setIsFloatingChatOpen(false);
+    } else {
+      setFloatingChatSource(source);
+      setIsFloatingChatOpen(true);
+    }
+  }, [isFloatingChatOpen, floatingChatSource]);
 
   const [vaultImportFiles, setVaultImportFiles] = useState<VaultFileEntry[] | null>(null);
   
@@ -472,76 +465,6 @@ const App: React.FC = () => {
       return { ...prev, [moduleKey]: [...current, newCat] };
     });
   }, []);
-
-  // Knowledge Base Tags
-  const [kbTags, setKbTags] = useState<KbTag[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_KB_TAGS);
-      if (saved) return JSON.parse(saved) as KbTag[];
-    } catch {}
-    return [];
-  });
-
-  // Knowledge Base File→Tag mapping
-  const [kbFileEntries, setKbFileEntries] = useState<KbFileEntry[]>(() => {
-    try {
-      // Migrate from old Set-based storage
-      const oldSaved = localStorage.getItem(STORAGE_KEY_KB_FILES);
-      const newSaved = localStorage.getItem(STORAGE_KEY_KB_FILE_MAP);
-      if (newSaved) return JSON.parse(newSaved) as KbFileEntry[];
-      if (oldSaved) {
-        const ids = JSON.parse(oldSaved) as string[];
-        return ids.map(fileId => ({ fileId, tagIds: [] }));
-      }
-    } catch {}
-    return [];
-  });
-
-  // Derived: Set of all KB file IDs (for backward compat with existing components)
-  const knowledgeBaseFileIds = useMemo(
-    () => new Set(kbFileEntries.map(e => e.fileId)),
-    [kbFileEntries]
-  );
-
-  // 自动清理孤立的 KB 条目：若对应文件记录已被删除，同步移除 KB 条目和 RAG 索引
-  useEffect(() => {
-    if (kbFileEntries.length === 0 || fileRecords.length === 0) return;
-    const fileIdSet = new Set(fileRecords.map(f => f.id));
-    const orphans = kbFileEntries.filter(e => !fileIdSet.has(e.fileId));
-    if (orphans.length === 0) return;
-    // 移除孤立条目
-    setKbFileEntries(prev => {
-      const next = prev.filter(e => fileIdSet.has(e.fileId));
-      localStorage.setItem(STORAGE_KEY_KB_FILE_MAP, JSON.stringify(next));
-      return next;
-    });
-    // 同步清理这些孤立文件的 RAG 向量索引
-    orphans.forEach(e => removeFileFromIndex(e.fileId).catch(() => {}));
-  }, [fileRecords]); // 只依赖 fileRecords，避免循环触发
-
-  const handleSaveKbTags = (newTags: KbTag[]) => {
-    setKbTags(newTags);
-    localStorage.setItem(STORAGE_KEY_KB_TAGS, JSON.stringify(newTags));
-  };
-
-  const handleToggleKnowledgeBase = (fileId: string, tagIds?: string[]) => {
-    setKbFileEntries(prev => {
-      const exists = prev.find(e => e.fileId === fileId);
-      let next: KbFileEntry[];
-      if (exists) {
-        // If tagIds supplied, update tags; otherwise remove
-        if (tagIds !== undefined) {
-          next = prev.map(e => e.fileId === fileId ? { ...e, tagIds } : e);
-        } else {
-          next = prev.filter(e => e.fileId !== fileId);
-        }
-      } else {
-        next = [...prev, { fileId, tagIds: tagIds ?? [] }];
-      }
-      localStorage.setItem(STORAGE_KEY_KB_FILE_MAP, JSON.stringify(next));
-      return next;
-    });
-  };
 
   // File Editing State
   const [isEditingFile, setIsEditingFile] = useState(false);
@@ -2068,11 +1991,6 @@ const App: React.FC = () => {
         }
       }
       setFileRecords(prev => prev.filter(f => f.id !== id));
-      // 同步清理知识库条目和RAG索引
-      if (knowledgeBaseFileIds.has(id)) {
-        handleToggleKnowledgeBase(id); // 从 kbFileEntries 中移除
-        removeFileFromIndex(id).catch(() => {}); // 清理向量索引
-      }
     }
   };
 
@@ -2260,23 +2178,6 @@ const App: React.FC = () => {
     setAppMode('browser');
   };
 
-  const handleOpenFloatingChat = (source: 'leetcode' | 'learning') => {
-    setFloatingChatSource(source);
-    setIsFloatingChatOpen(true);
-  };
-
-  // Toggle floating chat window (open/close while preserving state)
-  const handleToggleFloatingChat = (source: 'leetcode' | 'learning') => {
-    if (isFloatingChatOpen && floatingChatSource === source) {
-      // If same source is already open, close it
-      setIsFloatingChatOpen(false);
-    } else {
-      // Open or switch source
-      setFloatingChatSource(source);
-      setIsFloatingChatOpen(true);
-    }
-  };
-
   // Markdown Handlers
   const handleAddMarkdownNote = () => {
     const newNote: MarkdownNote = {
@@ -2438,6 +2339,7 @@ const App: React.FC = () => {
               onOpenAgent={() => setAppMode('agent')}
               isAgentOpen={appMode === 'agent'}
               moduleConfig={moduleConfig}
+              onReorderModules={setModuleConfig}
             />
           )}
 
@@ -2477,7 +2379,6 @@ const App: React.FC = () => {
                 setFileModalMode('note');
                 setIsFileModalOpen(true);
               }}
-              onCreateNoteInFolder={handleCreateNoteInFolder}
               onDelete={(id) => handleDeleteFile(id)}
               onEdit={(file) => {
                 setEditingFile(file);
@@ -2488,11 +2389,6 @@ const App: React.FC = () => {
               onDeleteCategory={handleDeleteCategory}
               onImportFromVault={handleImportFromVault}
               onHelp={() => setIsHelpOpen(true)}
-              knowledgeBaseFileIds={knowledgeBaseFileIds}
-              kbTags={kbTags}
-              kbFileEntries={kbFileEntries}
-              onToggleKnowledgeBase={handleToggleKnowledgeBase}
-              onSaveKbTags={handleSaveKbTags}
             />
           </Suspense>
         )
@@ -2532,7 +2428,7 @@ const App: React.FC = () => {
             onReorderPlaylist={handleMusicReorderPlaylist}
           />
         </Suspense>
-      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'chat' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
+      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
         <Sidebar 
           appMode={appMode}  
           categories={activeCategories} 
@@ -2674,13 +2570,12 @@ const App: React.FC = () => {
             ].filter((v, i, a) => a.indexOf(v) === i)}
             onAddCategory={handleAddCategory}
             onOpenSettings={() => setIsSettingsOpen(true)}
-            knowledgeBaseFileIds={knowledgeBaseFileIds}
           />
         </Suspense>
       )}
 
       <div className={`flex-1 flex flex-col min-w-0 relative bg-white`} style={appMode === 'agent' ? { display: 'none' } : undefined}>
-        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'chat' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
+        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
         <div className="h-16 border-b border-gray-200 flex items-center justify-between px-6 bg-white shrink-0">
            <div className="flex items-center gap-4 flex-1 max-w-xl">
               <div className="relative flex-1">
@@ -2749,7 +2644,7 @@ const App: React.FC = () => {
         </div>
         )}
 
-        <div className={`flex-1 ${appMode === 'chat' ? 'overflow-hidden' : appMode === 'latex' ? 'overflow-hidden' : appMode === 'music' ? 'overflow-hidden' : appMode === 'rag' ? 'overflow-hidden' : appMode === 'knowledge-base' ? 'overflow-hidden' : appMode === 'workflow' ? 'overflow-hidden' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'chat' || appMode === 'excalidraw' || appMode === 'datacenter' || appMode === 'latex' || appMode === 'music' || appMode === 'rag' || appMode === 'knowledge-base' || appMode === 'workflow' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'p-4' : 'p-6'}`}>
+        <div className={`flex-1 ${appMode === 'latex' ? 'overflow-hidden' : appMode === 'music' ? 'overflow-hidden' : appMode === 'rag' ? 'overflow-hidden' : appMode === 'knowledge-base' ? 'overflow-hidden' : appMode === 'workflow' ? 'overflow-hidden' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'excalidraw' || appMode === 'datacenter' || appMode === 'latex' || appMode === 'music' || appMode === 'rag' || appMode === 'knowledge-base' || appMode === 'workflow' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'p-4' : 'p-6'}`}>
           <Suspense fallback={
             <div className="flex items-center justify-center h-full text-gray-400 gap-2">
               <Loader2 className="w-6 h-6 animate-spin" />
@@ -2948,11 +2843,11 @@ const App: React.FC = () => {
             {(hasLeetCodeMounted || appMode === 'leetcode') && (
               <div className={appMode === 'leetcode' ? 'h-full' : 'hidden'}>
                 <LeetCodeManager
-                  onOpenChat={() => handleToggleFloatingChat('leetcode')}
                   onCreateNote={() => {
                     setEditingNote(null);
                     setIsNoteModalOpen(true);
                   }}
+                  onOpenChat={() => handleToggleFloatingChat('leetcode')}
                 />
               </div>
             )}
@@ -2960,19 +2855,6 @@ const App: React.FC = () => {
             {(hasLearningMounted || appMode === 'learning') && (
               <div className={appMode === 'learning' ? 'h-full' : 'hidden'}>
                 <LearningManager onOpenChat={() => handleToggleFloatingChat('learning')} />
-              </div>
-            )}
-
-            {(hasChatMounted || appMode === 'chat') && (
-              <div className={appMode === 'chat' ? 'h-full' : 'hidden'}>
-                <ChatManager
-                  knowledgeBaseFileIds={knowledgeBaseFileIds}
-                  kbTags={kbTags}
-                  kbFileEntries={kbFileEntries}
-                  onSaveKbTags={handleSaveKbTags}
-                  onToggleKnowledgeBase={handleToggleKnowledgeBase}
-                  fileRecords={fileRecords}
-                />
               </div>
             )}
 
@@ -3088,26 +2970,6 @@ const App: React.FC = () => {
           </Suspense>
         </div>
       </div>
-
-      <FloatingChatWindow
-        isOpen={isFloatingChatOpen}
-        onClose={() => {
-          setIsFloatingChatOpen(false);
-          setFloatingChatSource(null);
-        }}
-        title={floatingChatSource === 'leetcode' ? '刷题 AI 小窗' : '学习 AI 小窗'}
-      >
-        <Suspense
-          fallback={
-            <div className="flex items-center justify-center h-full text-gray-400 gap-2">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span>加载 AI 助手...</span>
-            </div>
-          }
-        >
-          <ChatManager compact />
-        </Suspense>
-      </FloatingChatWindow>
 
       {/* Modals */}
       <Suspense fallback={null}>
@@ -3247,6 +3109,17 @@ const App: React.FC = () => {
           onUpdateModules={setModuleConfig}
         />
       </Suspense>
+
+      {/* Floating AI Chat Window */}
+      <FloatingChatWindow
+        isOpen={isFloatingChatOpen}
+        onClose={() => { setIsFloatingChatOpen(false); setFloatingChatSource(null); }}
+        title={floatingChatSource === 'leetcode' ? '刷题 AI 助手' : '学习 AI 助手'}
+      >
+        <Suspense fallback={<div className="flex items-center justify-center h-full text-gray-400 gap-2"><Loader2 className="w-5 h-5 animate-spin" /><span>加载中...</span></div>}>
+          <KnowledgeBase compact />
+        </Suspense>
+      </FloatingChatWindow>
 
       {/* Help Modal */}
       <HelpModal

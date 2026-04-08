@@ -78,6 +78,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [exportProgress, setExportProgress] = useState<number>(0);
   const [exportStep, setExportStep] = useState<string>('');
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [sidebarTheme, setSidebarTheme] = useState<string>(() => localStorage.getItem('guyue_sidebar_theme') || 'default');
+  const [mdEngine, setMdEngine] = useState<string>(() => localStorage.getItem('guyue_md_engine') || 'default');
   const iconSelectorRef = useRef<HTMLDivElement>(null);
 
   // API Profile Management
@@ -392,10 +394,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       <div className="absolute inset-0 bg-black/20 backdrop-blur-sm transition-opacity" onClick={onClose} />
 
       {/* Modal Content */}
-      <div className="relative bg-white/90 backdrop-blur-2xl rounded-2xl shadow-2xl w-full max-w-2xl border border-white/50 overflow-hidden transform transition-all scale-100">
+      <div className="relative bg-white/90 backdrop-blur-2xl rounded-2xl shadow-2xl w-full max-w-2xl border border-white/50 overflow-clip transform transition-all scale-100">
         
         {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-white/50">
+        <div className="relative z-10 px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-white/50">
           <h2 className="text-lg font-semibold text-gray-800">设置</h2>
           <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-200/50 transition-colors">
             <X className="w-5 h-5 text-gray-500" />
@@ -465,6 +467,70 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   )}
                   <span className="text-xs text-gray-400">支持 JPG、PNG，最大 2MB</span>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section: Appearance */}
+          <div className="space-y-4">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
+              外观设置
+            </h3>
+            <div>
+              <label className="text-xs font-medium text-gray-500 mb-2 block">侧边栏风格</label>
+              <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
+                {([
+                  { key: 'default', label: '默认', desc: '圆角深色', preview: { bg: '#1E1E1E', item: 'rounded-xl', accent: 'bg-blue-600' } },
+                  { key: 'vscode', label: 'VSCode', desc: '扁平紧凑', preview: { bg: '#252526', item: 'rounded-none', accent: 'border-l-2 border-white' } },
+                  { key: 'minimal', label: '极简', desc: '明亮简洁', preview: { bg: '#F3F4F6', item: 'rounded-lg', accent: 'bg-white shadow' } },
+                  { key: 'glass', label: '毛玻璃', desc: '透明模糊', preview: { bg: 'rgba(255,255,255,0.2)', item: 'rounded-lg', accent: 'bg-white/30' } },
+                  { key: 'candy', label: '彩虹糖', desc: '缤纷渐变', preview: { bg: '#ec4899', item: 'rounded-2xl', accent: 'bg-white/25' } },
+                ] as const).map(t => {
+                  const isActive = sidebarTheme === t.key;
+                  const isGradient = t.key === 'candy';
+                  return (
+                    <button key={t.key}
+                      onClick={() => { setSidebarTheme(t.key); localStorage.setItem('guyue_sidebar_theme', t.key); window.dispatchEvent(new Event('sidebar-theme-change')); }}
+                      className={`p-3 rounded-xl border-2 transition-all text-left ${isActive ? 'border-blue-500 bg-blue-50/50' : 'border-gray-200 hover:border-gray-300'}`}
+                    >
+                      <div className="flex gap-1.5 mb-2">
+                        <div
+                          className="w-6 h-16 rounded-md flex flex-col items-center justify-center gap-1"
+                          style={isGradient ? { background: 'linear-gradient(to bottom, #ec4899, #8b5cf6, #4f46e5)' } : { background: t.preview.bg }}
+                        >
+                          <div className={`w-3 h-3 ${t.preview.item} ${t.key === 'minimal' ? 'bg-gray-400' : t.key === 'glass' || t.key === 'candy' ? 'bg-white/40' : 'bg-gray-600'}`} />
+                          <div className={`w-3 h-3 ${t.preview.item} ${t.key === 'minimal' ? 'bg-blue-500' : t.key === 'vscode' ? 'bg-gray-400 border-l-2 border-white' : t.key === 'glass' ? 'bg-white/60' : t.key === 'candy' ? 'bg-white/50 ring-1 ring-white/60' : 'bg-blue-500'}`} />
+                          <div className={`w-3 h-3 ${t.preview.item} ${t.key === 'minimal' ? 'bg-gray-400' : t.key === 'glass' || t.key === 'candy' ? 'bg-white/40' : 'bg-gray-600'}`} />
+                        </div>
+                      </div>
+                      <div className="text-xs font-medium text-gray-800">{t.label}</div>
+                      <div className="text-[10px] text-gray-400">{t.desc}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500 mb-2 block">Markdown 渲染风格</label>
+              <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
+                {([
+                  { key: 'default', label: '默认', desc: '柔和圆角' },
+                  { key: 'github', label: 'GitHub', desc: '经典技术' },
+                  { key: 'notion', label: 'Notion', desc: '简洁优雅' },
+                  { key: 'academic', label: '学术', desc: '论文风格' },
+                  { key: 'terminal', label: '终端', desc: '黑客风格' },
+                ] as const).map(e => {
+                  const isActive = mdEngine === e.key;
+                  return (
+                    <button key={e.key}
+                      onClick={() => { setMdEngine(e.key); localStorage.setItem('guyue_md_engine', e.key); window.dispatchEvent(new Event('md-engine-change')); }}
+                      className={`px-3 py-2 rounded-xl border-2 transition-all text-left ${isActive ? 'border-blue-500 bg-blue-50/50' : 'border-gray-200 hover:border-gray-300'}`}
+                    >
+                      <div className="text-xs font-medium text-gray-800">{e.label}</div>
+                      <div className="text-[10px] text-gray-400">{e.desc}</div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
