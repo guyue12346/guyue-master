@@ -132,7 +132,7 @@ interface AgentPanelProps {
   promptCategories: string[];
   markdownCategories: string[];
   onAddCategory: (moduleKey: string, name: string) => void;
-  knowledgeBaseFileIds: Set<string>;
+  knowledgeBaseFileIds?: Set<string>;
 }
 
 interface AgentPromptOptions {
@@ -1050,7 +1050,7 @@ interface ToolExecutionContext {
   markdownCategories: string[];
   onAddCategory: (moduleKey: string, name: string) => void;
   // Knowledge Base
-  knowledgeBaseFileIds: Set<string>;
+  knowledgeBaseFileIds?: Set<string>;
   // LaTeX
   latexFileReadPermissions: string[];  // 已授权可读的文件分类 ID 列表
   latexFileWritePermissions: string[]; // 已授权可写的文件分类 ID 列表
@@ -3327,7 +3327,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   promptCategories,
   markdownCategories,
   onAddCategory,
-  knowledgeBaseFileIds,
+  knowledgeBaseFileIds = new Set<string>(),
 }) => {
   const [messages, setMessages] = useState<AgentMessage[]>(() => {
     const saved = loadAgentHistory();
@@ -4614,7 +4614,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
   return (
     <div
-      className="flex-1 flex flex-col h-full w-full bg-white overflow-hidden"
+      className="flex-1 flex flex-col h-full w-full overflow-hidden" style={{ background: 'var(--t-bg-main)' }}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
@@ -4628,7 +4628,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             </div>
           )}
           <div className="flex-1 min-h-0 flex">
-            <div className="flex-1 min-w-0 flex flex-col bg-white">
+            <div className="flex-1 min-w-0 flex flex-col" style={{ background: 'var(--t-bg-main)' }}>
               <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
                 {messages.map(message => (
                   <MessageErrorBoundary key={message.id}>
@@ -4650,7 +4650,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                 <div ref={messagesEndRef} />
               </div>
 
-              <div className="shrink-0 px-5 py-4 border-t border-gray-200 bg-white space-y-3">
+              <div className="shrink-0 px-5 py-4 border-t space-y-3" style={{ borderColor: 'var(--t-border)', background: 'var(--t-bg-main)' }}>
                 {selectedModule ? (
                   <div className="flex items-center gap-2">
                     <div className="text-xs rounded-full px-2.5 py-1 bg-blue-50 text-blue-600 border border-blue-100 flex items-center gap-1">
@@ -4660,7 +4660,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                   </div>
                 ) : null}
 
-                <div className="rounded-[24px] border px-4 py-3 transition-colors border-gray-200 bg-gray-50 focus-within:border-blue-400 focus-within:ring-4 focus-within:ring-blue-100">
+                <div className="rounded-[24px] border px-4 py-3 transition-colors focus-within:border-blue-400 focus-within:ring-4 focus-within:ring-blue-100" style={{ borderColor: 'var(--t-input-border)', background: 'var(--t-input-bg)' }}>
                   {pendingAttachments.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-2">
                       {pendingAttachments.map((att, idx) => (
@@ -4697,7 +4697,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                       onChange={(event) => setInputValue(event.target.value)}
                       onKeyDown={handleKeyDown}
                       placeholder={config.apiKey ? '描述你想完成的任务...' : '请先在设置中配置 API Key'}
-                      className="flex-1 bg-transparent text-gray-800 placeholder-gray-400 outline-none text-[15px]"
+                      className="flex-1 bg-transparent placeholder-gray-400 outline-none text-[15px]" style={{ color: 'var(--t-text)' }}
                       disabled={isProcessing || !config.apiKey}
                     />
                     {isProcessing ? (
@@ -4738,7 +4738,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                       {showModuleSelector && (
                         <>
                           <div className="fixed inset-0 z-40" onClick={() => setShowModuleSelector(false)} />
-                          <div className="absolute bottom-full right-0 mb-2 z-50 w-48 bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden py-1.5">
+                          <div className="absolute bottom-full right-0 mb-2 z-50 w-48 rounded-2xl shadow-xl border overflow-hidden py-1.5" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
                             <div className="px-3 py-1.5 flex items-center justify-between">
                               <p className="text-[11px] font-semibold text-gray-500">功能模块</p>
                               {selectedModule && (
@@ -4774,7 +4774,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                   </div>
                 </div>
 
-                <p className="text-xs text-gray-400 text-center">
+                <p className="text-xs text-center" style={{ color: 'var(--t-text-muted)' }}>
                   {config.apiKey
                     ? `✨ ${config.provider} · ${currentModels.find(model => model.id === config.model)?.name || config.model} · ${supportsNativeTools ? '原生 Function Calling' : '兼容模式'}`
                     : '⚙️ 点击右上角设置完成模型配置'}
@@ -4785,8 +4785,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
             {/* 调试内容面板 */}
             {!isDebugCollapsed && (
-              <div className="shrink-0 w-[310px] border-l border-gray-200 bg-slate-50/80 flex flex-col min-h-0 overflow-hidden">
-                <div className="shrink-0 border-b border-gray-200 bg-white/80 flex items-center justify-between px-3" style={{ minHeight: '48px' }}>
+              <div className="shrink-0 w-[310px] border-l flex flex-col min-h-0 overflow-hidden" style={{ borderColor: 'var(--t-border)', background: 'var(--t-bg-secondary)' }}>
+                <div className="shrink-0 border-b flex items-center justify-between px-3" style={{ minHeight: '48px', borderColor: 'var(--t-border)', background: 'var(--t-header-bg)' }}>
                   <div className="flex items-center gap-1.5">
                     <Bug className="w-3.5 h-3.5 text-slate-500" />
                     <p className="text-xs font-semibold text-slate-600">调试</p>
@@ -4891,7 +4891,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             )}
 
             {/* 右侧竖向图标栏 */}
-            <div className="shrink-0 w-10 border-l border-gray-200 bg-white/80 flex flex-col items-center py-2 gap-0.5">
+            <div className="shrink-0 w-10 border-l flex flex-col items-center py-2 gap-0.5" style={{ borderColor: 'var(--t-border)', background: 'var(--t-header-bg)' }}>
               {/* ── 设置组 ── */}
               {/* 帮助 */}
               <button
@@ -4926,9 +4926,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                 {showEmailSettings && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setShowEmailSettings(false)} />
-                    <div className="absolute right-full top-0 mr-2 z-50 w-80 bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+                    <div className="absolute right-full top-0 mr-2 z-50 w-80 rounded-2xl shadow-xl border overflow-hidden" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
                       <div className="px-4 pt-3.5 pb-2.5 border-b border-gray-100 flex items-center justify-between">
-                        <p className="text-xs font-semibold text-gray-800">邮件设置</p>
+                        <p className="text-xs font-semibold" style={{ color: 'var(--t-text)' }}>邮件设置</p>
                         <button
                           onClick={() => setEmailConfig(prev => ({ ...prev, enabled: !prev.enabled }))}
                           className={`transition-colors ${emailConfig.enabled ? 'text-blue-600' : 'text-gray-400'}`}
@@ -5119,9 +5119,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                 {showPermissions && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setShowPermissions(false)} />
-                    <div className="absolute right-full top-0 mr-2 z-50 w-72 bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+                    <div className="absolute right-full top-0 mr-2 z-50 w-72 rounded-2xl shadow-xl border overflow-hidden" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
                       <div className="px-4 pt-3.5 pb-2 border-b border-gray-100 flex items-center justify-between">
-                        <p className="text-xs font-semibold text-gray-800">Agent 数据权限</p>
+                        <p className="text-xs font-semibold" style={{ color: 'var(--t-text)' }}>Agent 数据权限</p>
                         <button
                           onClick={() => {
                             const allOn = Object.values(dataPermissions).every(p => p.read && p.write);
@@ -5192,9 +5192,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                 {showFilePermissions && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setShowFilePermissions(false)} />
-                    <div className="absolute right-full top-0 mr-2 z-50 w-64 bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+                    <div className="absolute right-full top-0 mr-2 z-50 w-64 rounded-2xl shadow-xl border overflow-hidden" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
                       <div className="px-4 pt-3.5 pb-2 border-b border-gray-100 flex items-center justify-between">
-                        <p className="text-xs font-semibold text-gray-800">Agent 文件权限</p>
+                        <p className="text-xs font-semibold" style={{ color: 'var(--t-text)' }}>Agent 文件权限</p>
                         <button
                           onClick={() => {
                             if (filePermissions.length === fileCategories.length) {
@@ -5253,11 +5253,11 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                 {showLatexPermissions && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setShowLatexPermissions(false)} />
-                    <div className="absolute right-full top-0 mr-2 z-50 w-72 bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+                    <div className="absolute right-full top-0 mr-2 z-50 w-72 rounded-2xl shadow-xl border overflow-hidden" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
                       {/* 文件分类 */}
                       <div className="px-4 pt-3.5 pb-2 border-b border-gray-100">
                         <div className="flex items-center justify-between mb-1">
-                          <p className="text-xs font-semibold text-gray-800">LaTeX 文件权限</p>
+                          <p className="text-xs font-semibold" style={{ color: 'var(--t-text)' }}>LaTeX 文件权限</p>
                         </div>
                         <div className="flex items-center gap-3 text-[10px] text-gray-400">
                           <span className="flex items-center gap-1"><Eye className="w-3 h-3" />读取</span>
@@ -5344,7 +5344,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                       </div>
                       {/* 模板分类 */}
                       <div className="px-4 pt-3 pb-2 border-t border-b border-gray-100 flex items-center justify-between">
-                        <p className="text-xs font-semibold text-gray-800">LaTeX 模板权限</p>
+                        <p className="text-xs font-semibold" style={{ color: 'var(--t-text)' }}>LaTeX 模板权限</p>
                         <button
                           onClick={() => {
                             setLatexTemplatePermissions(prev => prev.length === latexTemplateCategories.length ? [] : [...latexTemplateCategories]);
@@ -5493,8 +5493,8 @@ const MessageBubble: React.FC<{
       <div className={`max-w-[80%] px-4 py-3.5 ${
         isUser 
           ? 'bg-gradient-to-br from-violet-500 via-purple-600 to-indigo-600 text-white rounded-2xl rounded-tr-sm shadow-[0_4px_24px_rgba(139,92,246,0.45)]' 
-          : 'bg-gray-100 text-gray-800 rounded-3xl shadow-sm'
-      }`}>
+          : 'rounded-3xl shadow-sm'
+      }`} style={!isUser ? { background: 'var(--t-bg-secondary)', color: 'var(--t-text)' } : undefined}>
         <div className="flex items-center gap-2 flex-wrap mb-2">
           {message.action && (() => {
             const actionLabels: Record<string, { icon: typeof ListTodo; label: string }> = {
@@ -5620,7 +5620,7 @@ const MessageBubble: React.FC<{
         )}
 
         <div className={`flex items-center justify-between mt-2`}>
-          <div className={`text-xs ${isUser ? 'text-blue-100' : 'text-gray-400'}`}>
+          <div className={`text-xs ${isUser ? 'text-blue-100' : ''}`} style={!isUser ? { color: 'var(--t-text-muted)' } : undefined}>
             {new Date(message.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
           </div>
           <div className="flex items-center gap-1">

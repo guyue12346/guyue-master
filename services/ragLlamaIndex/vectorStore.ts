@@ -492,12 +492,33 @@ export class LocalVectorStore {
 
   get searchAlgorithm(): SearchAlgorithm { return this._searchAlgorithm; }
 
-  /** 从现有数据重建 HNSW 索引 */
+  /** 从现有数据重建 HNSW 索引（同步，小数据集用） */
   rebuildHnswIndex(): void {
     this.hnswIndex = new HnswIndex(this._hnswConfig);
     for (const entry of this.entries.values()) {
       this.hnswIndex.insert(entry.id, entry.embedding);
     }
+  }
+
+  /** 从现有数据异步重建 HNSW 索引，每 batchSize 个向量 yield 一次，避免阻塞 UI */
+  async rebuildHnswIndexAsync(
+    config?: HnswConfig,
+    onProgress?: (done: number, total: number) => void,
+    batchSize = 100,
+  ): Promise<void> {
+    if (config) this._hnswConfig = config;
+    this.hnswIndex = new HnswIndex(this._hnswConfig);
+    const entries = Array.from(this.entries.values());
+    const total = entries.length;
+    for (let i = 0; i < total; i++) {
+      this.hnswIndex.insert(entries[i].id, entries[i].embedding);
+      if ((i + 1) % batchSize === 0) {
+        onProgress?.(i + 1, total);
+        // yield to the event loop so UI can update
+        await new Promise<void>(r => setTimeout(r, 0));
+      }
+    }
+    onProgress?.(total, total);
   }
 
   // ── 分块策略（Chunking Config） ──

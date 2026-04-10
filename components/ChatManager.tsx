@@ -282,7 +282,7 @@ const MessageBubble: React.FC<{
         ) : (
           // AI bubble
           <div className="max-w-[92%] w-full">
-            <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white border border-gray-100 shadow-sm">
+            <div className="px-4 py-3 rounded-2xl rounded-tl-sm border shadow-sm" style={{ background: 'var(--t-msg-ai-bg)', borderColor: 'var(--t-msg-ai-border)' }}>
               {isStreaming && !message.content ? (
                 <div className="flex items-center gap-1.5 h-5">
                   <span className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{ animationDelay: '0ms' }} />
@@ -457,9 +457,9 @@ const SettingsPanel: React.FC<{
   const models = AVAILABLE_MODELS[localConfig.provider] || [];
 
   return (
-    <div className="absolute inset-0 bg-white z-50 flex flex-col">
-      <div className="h-14 border-b border-gray-200 flex items-center justify-between px-4 shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
-        <h3 className="font-semibold text-gray-800">Chat 设置</h3>
+    <div className="absolute inset-0 z-50 flex flex-col" style={{ background: 'var(--t-bg-main)' }}>
+      <div className="h-14 border-b flex items-center justify-between px-4 shrink-0" style={{ borderColor: 'var(--t-border)', WebkitAppRegion: 'drag' } as React.CSSProperties}>
+        <h3 className="font-semibold" style={{ color: 'var(--t-text)' }}>Chat 设置</h3>
         <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <X className="w-5 h-5 text-gray-500" />
         </button>
@@ -468,7 +468,7 @@ const SettingsPanel: React.FC<{
       <div className="flex-1 overflow-y-auto min-h-0">
         {/* ── API 配置列表 ── */}
         <div className="px-5 pt-4 pb-2">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">API 配置</p>
+          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--t-text-muted)' }}>API 配置</p>
           {savedApiConfigs.length === 0 ? (
             <div className="rounded-xl border border-dashed border-gray-200 py-5 text-center text-sm text-gray-400">
               暂无配置，在下方添加第一条
@@ -478,15 +478,15 @@ const SettingsPanel: React.FC<{
               {savedApiConfigs.map(item => {
                 const isActive = selectedApiConfigId === item.id;
                 return (
-                  <div key={item.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${isActive ? 'border-blue-300 bg-blue-50' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
+                  <div key={item.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${isActive ? 'border-blue-300' : ''}`} style={isActive ? { background: 'var(--t-accent-bg)' } : { background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
                     <button onClick={() => applyConfig(item)} className="shrink-0" title="设为当前使用">
                       <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${isActive ? 'border-blue-500' : 'border-gray-300 hover:border-blue-400'}`}>
                         {isActive && <div className="w-2 h-2 rounded-full bg-blue-500" />}
                       </div>
                     </button>
                     <button className="flex-1 text-left min-w-0" onClick={() => applyConfig(item)}>
-                      <p className={`text-sm font-medium truncate ${isActive ? 'text-blue-800' : 'text-gray-800'}`}>{item.label}</p>
-                      <p className="text-xs text-gray-400 mt-0.5 truncate">{PROVIDER_LABELS[item.provider] || item.provider} · {maskApiKey(item.apiKey)}</p>
+                      <p className={`text-sm font-medium truncate ${isActive ? 'text-blue-800' : ''}`} style={!isActive ? { color: 'var(--t-text)' } : {}}>{item.label}</p>
+                      <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--t-text-muted)' }}>{PROVIDER_LABELS[item.provider] || item.provider} · {maskApiKey(item.apiKey)}</p>
                     </button>
                     <div className="flex items-center gap-1 shrink-0">
                       <button onClick={() => startEdit(item)} className="w-7 h-7 rounded-lg hover:bg-gray-200 text-gray-400 hover:text-gray-700 flex items-center justify-center" title="编辑">
@@ -532,31 +532,31 @@ const SettingsPanel: React.FC<{
 
         {/* ── 添加 / 编辑表单 ── */}
         <div className="px-5 pt-1 pb-4">
-          <div className="rounded-xl border border-gray-200 overflow-hidden">
-            <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{isEditing ? '编辑配置' : '添加新配置'}</p>
+          <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--t-border)' }}>
+            <div className="px-4 py-2.5 border-b flex items-center justify-between" style={{ background: 'var(--t-bg-secondary)', borderColor: 'var(--t-border-light)' }}>
+              <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--t-text-muted)' }}>{isEditing ? '编辑配置' : '添加新配置'}</p>
               {isEditing && <button onClick={cancelEdit} className="text-xs text-gray-400 hover:text-gray-600">取消</button>}
             </div>
             <div className="p-4 space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">名称 <span className="text-red-400">*</span></label>
+                  <label className="block text-xs mb-1" style={{ color: 'var(--t-text-muted)' }}>名称 <span className="text-red-400">*</span></label>
                   <input type="text" value={formLabel} onChange={e => setFormLabel(e.target.value)} placeholder="例如：主力 API" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100" />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1 flex items-center">提供商 <span className="text-red-400">*</span><ProviderHint hints={PROVIDER_MODEL_HINTS[formProvider] || []} /></label>
+                  <label className="block text-xs mb-1 flex items-center" style={{ color: 'var(--t-text-muted)' }}>提供商 <span className="text-red-400">*</span><ProviderHint hints={PROVIDER_MODEL_HINTS[formProvider] || []} /></label>
                   <select value={formProvider} onChange={e => setFormProvider(e.target.value as ChatConfig['provider'])} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 bg-white">
                     {Object.entries(PROVIDER_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </div>
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">API Key <span className="text-red-400">*</span></label>
+                <label className="block text-xs mb-1" style={{ color: 'var(--t-text-muted)' }}>API Key <span className="text-red-400">*</span></label>
                 <input type="password" value={formApiKey} onChange={e => setFormApiKey(e.target.value)} placeholder="输入 API Key" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100" />
               </div>
               {formNeedsBaseUrl && (
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Base URL</label>
+                  <label className="block text-xs mb-1" style={{ color: 'var(--t-text-muted)' }}>Base URL</label>
                   <input type="text" value={formBaseUrl} onChange={e => setFormBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100" />
                 </div>
               )}
@@ -574,21 +574,21 @@ const SettingsPanel: React.FC<{
         </div>
 
         {/* ── 高级设置（Temperature + 系统提示词） ── */}
-        <div className="px-5 pb-4 border-t border-gray-100 pt-4 space-y-4">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">高级设置</p>
+        <div className="px-5 pb-4 border-t pt-4 space-y-4" style={{ borderColor: 'var(--t-border-light)' }}>
+          <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--t-text-muted)' }}>高级设置</p>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Temperature: {localConfig.temperature?.toFixed(1)}</label>
+            <label className="block text-sm font-medium mb-2" style={{ color: 'var(--t-text)' }}>Temperature: {localConfig.temperature?.toFixed(1)}</label>
             <input type="range" min="0" max="2" step="0.1" value={localConfig.temperature || 0.7} onChange={e => setLocalConfig({ ...localConfig, temperature: parseFloat(e.target.value) })} className="w-full" />
             <div className="flex justify-between text-xs text-gray-400 mt-1"><span>精确</span><span>创意</span></div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">系统提示词</label>
+            <label className="block text-sm font-medium mb-2" style={{ color: 'var(--t-text)' }}>系统提示词</label>
             <textarea value={localConfig.systemPrompt || ''} onChange={e => setLocalConfig({ ...localConfig, systemPrompt: e.target.value })} placeholder="设定 AI 的角色和行为..." rows={3} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 resize-none" />
           </div>
         </div>
       </div>
 
-      <div className="p-4 border-t border-gray-200 shrink-0">
+      <div className="p-4 border-t shrink-0" style={{ borderColor: 'var(--t-border)' }}>
         <button onClick={handleSave} className="w-full py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors">应用并保存</button>
       </div>
     </div>
@@ -775,15 +775,15 @@ const KbSettingsPanel: React.FC<{
     const isActive = activeEmbId === p.id;
     const compat = getEmbProfileIndexCompat(p);
     return (
-      <div key={p.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${isActive ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
+      <div key={p.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${isActive ? 'border-green-300 bg-green-50' : ''}`} style={!isActive ? { background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' } : {}}>
         <button onClick={() => selectEmbProfile(p)} className="shrink-0" title="设为当前使用">
           <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${isActive ? 'border-green-500' : 'border-gray-300 hover:border-green-400'}`}>
             {isActive && <div className="w-2 h-2 rounded-full bg-green-500" />}
           </div>
         </button>
         <button className="flex-1 text-left min-w-0" onClick={() => selectEmbProfile(p)}>
-          <p className={`text-sm font-medium truncate ${isActive ? 'text-green-800' : 'text-gray-800'}`}>{p.label}</p>
-          <p className="text-xs text-gray-400 mt-0.5 truncate">
+          <p className={`text-sm font-medium truncate ${isActive ? 'text-green-800' : ''}`} style={!isActive ? { color: 'var(--t-text)' } : {}}>{p.label}</p>
+          <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--t-text-muted)' }}>
             {EMBEDDING_PROVIDER_LABELS[p.provider] || p.provider} / {p.model} · {maskApiKey(p.apiKey)}
           </p>
         </button>
@@ -801,15 +801,15 @@ const KbSettingsPanel: React.FC<{
   const renderChatProfileCard = (p: SavedKbChatProfile) => {
     const isActive = activeChatId === p.id;
     return (
-      <div key={p.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${isActive ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
+      <div key={p.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${isActive ? 'border-green-300 bg-green-50' : ''}`} style={!isActive ? { background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' } : {}}>
         <button onClick={() => selectChatProfile(p)} className="shrink-0" title="设为当前使用">
           <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${isActive ? 'border-green-500' : 'border-gray-300 hover:border-green-400'}`}>
             {isActive && <div className="w-2 h-2 rounded-full bg-green-500" />}
           </div>
         </button>
         <button className="flex-1 text-left min-w-0" onClick={() => selectChatProfile(p)}>
-          <p className={`text-sm font-medium truncate ${isActive ? 'text-green-800' : 'text-gray-800'}`}>{p.label}</p>
-          <p className="text-xs text-gray-400 mt-0.5 truncate">
+          <p className={`text-sm font-medium truncate ${isActive ? 'text-green-800' : ''}`} style={!isActive ? { color: 'var(--t-text)' } : {}}>{p.label}</p>
+          <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--t-text-muted)' }}>
             {PROVIDER_LABELS[p.provider] || p.provider} / {p.model} · {maskApiKey(p.apiKey)}
           </p>
         </button>
@@ -822,13 +822,13 @@ const KbSettingsPanel: React.FC<{
   };
 
   return (
-    <div className="absolute inset-0 bg-white z-50 flex flex-col">
-      <div className="h-14 border-b border-gray-200 flex items-center justify-between px-4 shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+    <div className="absolute inset-0 z-50 flex flex-col" style={{ background: 'var(--t-bg-main)' }}>
+      <div className="h-14 border-b flex items-center justify-between px-4 shrink-0" style={{ borderColor: 'var(--t-border)', WebkitAppRegion: 'drag' } as React.CSSProperties}>
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-green-100 flex items-center justify-center">
             <Database className="w-4 h-4 text-green-600" />
           </div>
-          <h3 className="font-semibold text-gray-800">知识库设置</h3>
+          <h3 className="font-semibold" style={{ color: 'var(--t-text)' }}>知识库设置</h3>
         </div>
         <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <X className="w-5 h-5 text-gray-500" />
@@ -839,7 +839,7 @@ const KbSettingsPanel: React.FC<{
 
         {/* ══ Embedding 模型配置列表 ══ */}
         <div className="px-5 pt-4 pb-2">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Embedding 模型（向量化）</p>
+          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--t-text-muted)' }}>Embedding 模型（向量化）</p>
           {embProfiles.length === 0 ? (
             <div className="rounded-xl border border-dashed border-gray-200 py-5 text-center text-sm text-gray-400">暂无配置，在下方添加</div>
           ) : (
@@ -849,26 +849,26 @@ const KbSettingsPanel: React.FC<{
 
         {/* Embedding 添加/编辑表单 */}
         <div className="px-5 pt-1 pb-3">
-          <div className="rounded-xl border border-gray-200 overflow-hidden">
-            <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{embEditingId ? '编辑 Embedding 配置' : '添加 Embedding 配置'}</p>
+          <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--t-border)' }}>
+            <div className="px-4 py-2.5 border-b flex items-center justify-between" style={{ background: 'var(--t-bg-secondary)', borderColor: 'var(--t-border-light)' }}>
+              <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--t-text-muted)' }}>{embEditingId ? '编辑 Embedding 配置' : '添加 Embedding 配置'}</p>
               {embEditingId && <button onClick={cancelEditEmb} className="text-xs text-gray-400 hover:text-gray-600">取消</button>}
             </div>
             <div className="p-4 space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">名称 <span className="text-red-400">*</span></label>
+                  <label className="block text-xs mb-1" style={{ color: 'var(--t-text-muted)' }}>名称 <span className="text-red-400">*</span></label>
                   <input type="text" value={embFormLabel} onChange={e => setEmbFormLabel(e.target.value)} placeholder="例如：Gemini 主力" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1 flex items-center">提供商 <span className="text-red-400">*</span><ProviderHint hints={EMBEDDING_PROVIDER_HINTS[embFormProvider] || []} /></label>
+                  <label className="block text-xs mb-1 flex items-center" style={{ color: 'var(--t-text-muted)' }}>提供商 <span className="text-red-400">*</span><ProviderHint hints={EMBEDDING_PROVIDER_HINTS[embFormProvider] || []} /></label>
                   <select value={embFormProvider} onChange={e => { const p = e.target.value; setEmbFormProvider(p); const ms = EMBEDDING_MODELS[p] || []; setEmbFormModel(ms[0]?.id || ''); setEmbFormCustomModel(''); }} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100 bg-white">
                     {Object.entries(EMBEDDING_PROVIDER_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </div>
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">模型</label>
+                <label className="block text-xs mb-1" style={{ color: 'var(--t-text-muted)' }}>模型</label>
                 {embFormModels.length > 0 ? (
                   <select value={embFormModel} onChange={e => setEmbFormModel(e.target.value)} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100 bg-white">
                     {embFormModels.map(m => <option key={m.id} value={m.id}>{m.name}{m.dimensions ? ` (${m.dimensions}维)` : ''}</option>)}
@@ -878,11 +878,11 @@ const KbSettingsPanel: React.FC<{
                 )}
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">API Key <span className="text-red-400">*</span></label>
+                <label className="block text-xs mb-1" style={{ color: 'var(--t-text-muted)' }}>API Key <span className="text-red-400">*</span></label>
                 <input type="password" value={embFormApiKey} onChange={e => setEmbFormApiKey(e.target.value)} placeholder="输入 API Key" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Base URL</label>
+                <label className="block text-xs mb-1" style={{ color: 'var(--t-text-muted)' }}>Base URL</label>
                 <input type="text" value={embFormBaseUrl} onChange={e => setEmbFormBaseUrl(e.target.value)} placeholder="留空使用官方地址" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
               </div>
               <div className="pt-1">
@@ -899,9 +899,9 @@ const KbSettingsPanel: React.FC<{
         </div>
 
         {/* ══ 向量索引状态（基于当前选中的 Embedding 配置） ══ */}
-        <div className="px-5 pt-1 pb-3 border-t border-gray-100">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2 pt-3">向量索引状态</p>
-          <div className="rounded-xl border border-gray-200 p-3.5 space-y-2">
+        <div className="px-5 pt-1 pb-3 border-t" style={{ borderColor: 'var(--t-border-light)' }}>
+          <p className="text-xs font-semibold uppercase tracking-wide mb-2 pt-3" style={{ color: 'var(--t-text-muted)' }}>向量索引状态</p>
+          <div className="rounded-xl border p-3.5 space-y-2" style={{ borderColor: 'var(--t-border)' }}>
             {!activeEmbProfile ? (
               <div className="flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 text-gray-400" />
@@ -986,8 +986,8 @@ const KbSettingsPanel: React.FC<{
         </div>
 
         {/* ══ KB 对话模型配置列表 ══ */}
-        <div className="px-5 pt-1 pb-2 border-t border-gray-100">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1 pt-3">对话模型（知识库问答）</p>
+        <div className="px-5 pt-1 pb-2 border-t" style={{ borderColor: 'var(--t-border-light)' }}>
+          <p className="text-xs font-semibold uppercase tracking-wide mb-1 pt-3" style={{ color: 'var(--t-text-muted)' }}>对话模型（知识库问答）</p>
           <p className="text-[11px] text-gray-400 mb-2">用于理解检索结果并生成回答。不配置则使用 AI Chat 当前配置。</p>
           {chatProfiles.length === 0 ? (
             <div className="rounded-xl border border-dashed border-gray-200 py-5 text-center text-sm text-gray-400">暂无配置，在下方添加</div>
@@ -1025,30 +1025,30 @@ const KbSettingsPanel: React.FC<{
 
         {/* Chat 添加/编辑表单 */}
         <div className="px-5 pt-1 pb-5">
-          <div className="rounded-xl border border-gray-200 overflow-hidden">
-            <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{chatEditingId ? '编辑对话配置' : '添加对话配置'}</p>
+          <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--t-border)' }}>
+            <div className="px-4 py-2.5 border-b flex items-center justify-between" style={{ background: 'var(--t-bg-secondary)', borderColor: 'var(--t-border-light)' }}>
+              <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--t-text-muted)' }}>{chatEditingId ? '编辑对话配置' : '添加对话配置'}</p>
               {chatEditingId && <button onClick={cancelEditChat} className="text-xs text-gray-400 hover:text-gray-600">取消</button>}
             </div>
             <div className="p-4 space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">名称 <span className="text-red-400">*</span></label>
+                  <label className="block text-xs mb-1" style={{ color: 'var(--t-text-muted)' }}>名称 <span className="text-red-400">*</span></label>
                   <input type="text" value={chatFormLabel} onChange={e => setChatFormLabel(e.target.value)} placeholder="例如：Claude 知识库" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1 flex items-center">提供商 <span className="text-red-400">*</span><ProviderHint hints={PROVIDER_MODEL_HINTS[chatFormProvider] || []} /></label>
+                  <label className="block text-xs mb-1 flex items-center" style={{ color: 'var(--t-text-muted)' }}>提供商 <span className="text-red-400">*</span><ProviderHint hints={PROVIDER_MODEL_HINTS[chatFormProvider] || []} /></label>
                   <select value={chatFormProvider} onChange={e => setChatFormProvider(e.target.value)} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100 bg-white">
                     {Object.entries(PROVIDER_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </div>
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">API Key <span className="text-red-400">*</span></label>
+                <label className="block text-xs mb-1" style={{ color: 'var(--t-text-muted)' }}>API Key <span className="text-red-400">*</span></label>
                 <input type="password" value={chatFormApiKey} onChange={e => setChatFormApiKey(e.target.value)} placeholder="输入 API Key" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Base URL</label>
+                <label className="block text-xs mb-1" style={{ color: 'var(--t-text-muted)' }}>Base URL</label>
                 <input type="text" value={chatFormBaseUrl} onChange={e => setChatFormBaseUrl(e.target.value)} placeholder="留空使用默认地址" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400 focus:ring-1 focus:ring-green-100" />
               </div>
               <div className="pt-1">
@@ -1066,7 +1066,7 @@ const KbSettingsPanel: React.FC<{
 
       </div>
 
-      <div className="p-4 border-t border-gray-200 shrink-0">
+      <div className="p-4 border-t shrink-0" style={{ borderColor: 'var(--t-border)' }}>
         <button onClick={handleSave} className="w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium transition-colors">应用并保存</button>
       </div>
     </div>
@@ -1106,15 +1106,15 @@ const SystemPromptPanel: React.FC<{
   const isUsingCustom = hasCustomPrompt && conversation!.systemPrompt !== '';
 
   return (
-    <div className="absolute inset-0 bg-white z-50 flex flex-col">
+    <div className="absolute inset-0 z-50 flex flex-col" style={{ background: 'var(--t-bg-main)' }}>
       {/* Header */}
-      <div className="h-14 border-b border-gray-200 flex items-center justify-between px-4" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+      <div className="h-14 border-b flex items-center justify-between px-4" style={{ borderColor: 'var(--t-border)', WebkitAppRegion: 'drag' } as React.CSSProperties}>
         <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <div className="w-7 h-7 rounded-lg bg-purple-100 flex items-center justify-center">
             <Wand2 className="w-4 h-4 text-purple-600" />
           </div>
           <div>
-            <h3 className="font-semibold text-gray-800 text-sm leading-tight">本轮对话定制预设词</h3>
+            <h3 className="font-semibold text-sm leading-tight" style={{ color: 'var(--t-text)' }}>本轮对话定制预设词</h3>
             <p className="text-[10px] text-gray-400 leading-tight">
               {isUsingCustom ? '🟣 已启用自定义预设' : hasCustomPrompt ? '⚪ 已清除预设（无系统提示）' : '🔵 使用全局默认'}
             </p>
@@ -1133,7 +1133,7 @@ const SystemPromptPanel: React.FC<{
         {/* Prompt editor */}
         <div>
           <div className="flex items-center justify-between mb-1.5">
-            <label className="text-sm font-medium text-gray-700">预设词内容</label>
+            <label className="text-sm font-medium" style={{ color: 'var(--t-text)' }}>预设词内容</label>
             {globalPrompt && (
               <button
                 onClick={() => setPromptText(globalPrompt)}
@@ -1155,7 +1155,7 @@ const SystemPromptPanel: React.FC<{
 
         {/* Skills picker */}
         <div>
-          <label className="text-sm font-medium text-gray-700 mb-2 block">从 Skills 库选择</label>
+          <label className="text-sm font-medium mb-2 block" style={{ color: 'var(--t-text)' }}>从 Skills 库选择</label>
           {skills.length === 0 ? (
             <div className="text-center py-6 text-gray-300 text-sm border border-dashed border-gray-200 rounded-xl">
               <Wand2 className="w-6 h-6 mx-auto mb-1.5 opacity-40" />
@@ -1212,7 +1212,7 @@ const SystemPromptPanel: React.FC<{
       </div>
 
       {/* Actions */}
-      <div className="p-4 border-t border-gray-100 flex gap-2.5">
+      <div className="p-4 border-t flex gap-2.5" style={{ borderColor: 'var(--t-border-light)' }}>
         <button
           onClick={() => { onApply('__RESET__'); onClose(); }}
           className="px-4 py-2 border border-gray-200 text-gray-500 rounded-xl hover:bg-gray-50 text-sm transition-colors"
@@ -1882,7 +1882,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
           <Zap className="w-3.5 h-3.5 text-white" />
         </div>
       </div>
-      <h2 className="text-2xl font-bold text-gray-800 mb-2">开始对话</h2>
+      <h2 className="text-2xl font-bold mb-2" style={{ color: 'var(--t-text)' }}>开始对话</h2>
       <p className="text-gray-400 text-center max-w-sm mb-8 text-sm leading-relaxed">
         选择一个建议快速开始，或者用自己的语言就可以。
       </p>
@@ -1896,7 +1896,8 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
           <button
             key={label}
             onClick={() => setInputValue(label)}
-            className="flex items-center gap-2 px-3 py-3 bg-white hover:bg-gray-50 border border-gray-200 hover:border-purple-300 hover:shadow-sm rounded-xl text-sm text-gray-700 transition-all group text-left"
+            className="flex items-center gap-2 px-3 py-3 hover:bg-gray-50 border hover:border-purple-300 hover:shadow-sm rounded-xl text-sm transition-all group text-left"
+            style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)', color: 'var(--t-text)' }}
           >
             <span className="text-lg group-hover:scale-110 transition-transform">{icon}</span>
             <span className="font-medium">{label}</span>
@@ -1907,17 +1908,17 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
   );
 
   return (
-    <div className="flex h-full bg-gray-50/80 relative">
+    <div className="flex h-full relative" style={{ background: 'var(--t-bg)' }}>
       {/* ======================== Sidebar ======================== */}
       {showSidebar && (
-        <div className={`w-72 bg-white border-r flex flex-col shadow-sm ${isKbMode ? 'border-green-100' : 'border-gray-100'}`}>
+        <div className={`w-72 border-r flex flex-col shadow-sm`} style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
           {isKbMode ? (
             <>
               {/* KB Sidebar Header */}
-              <div className="h-14 border-b border-green-100 flex items-center justify-between px-4" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+              <div className="h-14 border-b flex items-center justify-between px-4" style={{ borderColor: 'var(--t-border-light)', WebkitAppRegion: 'drag' } as React.CSSProperties}>
                 <div className="flex items-center gap-2.5" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
                   <KBAvatar size="sm" />
-                  <span className="font-semibold text-gray-800 text-sm">知识库对话</span>
+                  <span className="font-semibold text-sm" style={{ color: 'var(--t-text)' }}>知识库对话</span>
                 </div>
                 <button
                   onClick={handleNewKbConversation}
@@ -1948,9 +1949,10 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                           w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left group transition-all
                           ${isActive
                             ? 'bg-green-50 text-green-700 shadow-sm'
-                            : 'hover:bg-gray-50 text-gray-700'
+                            : 'hover:bg-gray-50'
                           }
                         `}
+                        style={!isActive ? { color: 'var(--t-text)' } : {}}
                       >
                         <div className="flex-1 min-w-0">
                           {isRenaming ? (
@@ -1995,7 +1997,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
               </div>
 
               {/* KB Sidebar Footer */}
-              <div className="p-3 border-t border-green-100 relative">
+              <div className="p-3 border-t relative" style={{ borderColor: 'var(--t-border-light)' }}>
                 
                 {/* 标签管理 */}
                 <button
@@ -2218,10 +2220,10 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
           ) : (
             <>
               {/* Chat Sidebar Header */}
-              <div className="h-14 border-b border-gray-100 flex items-center justify-between px-4" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+              <div className="h-14 border-b flex items-center justify-between px-4" style={{ borderColor: 'var(--t-border-light)', WebkitAppRegion: 'drag' } as React.CSSProperties}>
                 <div className="flex items-center gap-2.5" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
                   <AIAvatar size="sm" />
-                  <span className="font-semibold text-gray-800 text-sm">AI 助手</span>
+                  <span className="font-semibold text-sm" style={{ color: 'var(--t-text)' }}>AI 助手</span>
                 </div>
                 <button
                   onClick={handleNewConversation}
@@ -2256,9 +2258,10 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                           w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left group transition-all
                           ${isActive
                             ? 'bg-purple-50 text-purple-700 shadow-sm'
-                            : 'hover:bg-gray-50 text-gray-700'
+                            : 'hover:bg-gray-50'
                           }
                         `}
+                        style={!isActive ? { color: 'var(--t-text)' } : {}}
                       >
                         <div className="flex-1 min-w-0">
                           {isRenaming ? (
@@ -2303,7 +2306,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
               </div>
 
               {/* Sidebar Footer */}
-              <div className="p-3 border-t border-gray-100">
+              <div className="p-3 border-t" style={{ borderColor: 'var(--t-border-light)' }}>
                 <button
                   onClick={() => setShowSettings(true)}
                   className="w-full flex items-center gap-2.5 px-3 py-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition-colors text-sm"
@@ -2320,7 +2323,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
       {/* ======================== Main Chat Area ======================== */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Chat Header */}
-        <div className="h-14 border-b border-gray-100 flex items-center justify-between px-4 bg-white/90 backdrop-blur-sm" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+        <div className="h-14 border-b flex items-center justify-between px-4 backdrop-blur-sm" style={{ background: 'var(--t-header-bg)', borderColor: 'var(--t-border-light)', WebkitAppRegion: 'drag' } as React.CSSProperties}>
           <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             <button
               onClick={() => setShowSidebar(!showSidebar)}
@@ -2331,7 +2334,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
             </button>
             <div className="h-5 w-px bg-gray-200 mx-1" />
             {isKbMode ? <KBAvatar size="sm" /> : <AIAvatar size="sm" />}
-            <span className="font-semibold text-gray-800 text-sm">
+            <span className="font-semibold text-sm" style={{ color: 'var(--t-text)' }}>
               {isKbMode ? (activeKbConversation?.title || '知识库助手') : (activeConversation?.title || 'AI 助手')}
             </span>
           </div>
@@ -2504,7 +2507,7 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                     {isStreaming && !streamingContent && (
                       <div className="flex gap-3">
                         <AIAvatar />
-                        <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white border border-gray-100 shadow-sm">
+                        <div className="px-4 py-3 rounded-2xl rounded-tl-sm border shadow-sm" style={{ background: 'var(--t-msg-ai-bg)', borderColor: 'var(--t-msg-ai-border)' }}>
                           <div className="flex items-center gap-1.5">
                             <span className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{ animationDelay: '0ms' }} />
                             <span className="w-2 h-2 rounded-full bg-purple-500 animate-bounce" style={{ animationDelay: '160ms' }} />
@@ -2543,12 +2546,12 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
               )}
 
               {/* Input Area */}
-              <div className={`p-4 border-t border-gray-100 ${isKbMode ? 'bg-green-50/30' : 'bg-white'}`}>
+              <div className={`p-4 border-t ${isKbMode ? 'bg-green-50/30' : ''}`} style={!isKbMode ? { background: 'var(--t-bg-card)', borderColor: 'var(--t-border-light)' } : { borderColor: 'var(--t-border-light)' }}>
                 <div className={`flex items-end gap-2 border rounded-2xl px-4 py-3 transition-all shadow-sm ${
                   isKbMode
                     ? 'bg-white border-green-200 hover:border-green-300 focus-within:border-green-400 focus-within:ring-2 focus-within:ring-green-100'
-                    : 'bg-gray-50 border-gray-200 hover:border-purple-300 focus-within:border-purple-400 focus-within:ring-2 focus-within:ring-purple-100'
-                }`}>
+                    : 'hover:border-purple-300 focus-within:border-purple-400 focus-within:ring-2 focus-within:ring-purple-100'
+                }`} style={!isKbMode ? { background: 'var(--t-input-bg)', borderColor: 'var(--t-input-border)' } : {}}>
                   <textarea
                     ref={textareaRef}
                     value={inputValue}
@@ -2568,8 +2571,8 @@ export const ChatManager: React.FC<ChatManagerProps> = ({ compact = false, knowl
                     onKeyDown={handleKeyPress}
                     placeholder={isKbMode ? '向知识库提问...' : '输入消息，按 Enter 发送...'}
                     rows={1}
-                    className="flex-1 bg-transparent border-none outline-none resize-none text-sm text-gray-800 placeholder-gray-400 overflow-y-auto"
-                    style={{ height: '36px', maxHeight: '120px', minHeight: '36px' }}
+                    className="flex-1 bg-transparent border-none outline-none resize-none text-sm placeholder-gray-400 overflow-y-auto"
+                    style={{ height: '36px', maxHeight: '120px', minHeight: '36px', color: 'var(--t-text)' }}
                     disabled={isStreaming || isKbProcessing}
                   />
                   {isStreaming ? (

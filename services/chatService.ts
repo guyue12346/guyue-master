@@ -26,6 +26,7 @@ export interface ChatConversation {
   messages: ChatMessage[];
   model: string;
   systemPrompt?: string;
+  turnPrompt?: string;
   createdAt: number;
   updatedAt: number;
 }

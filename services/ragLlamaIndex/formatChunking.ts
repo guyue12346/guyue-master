@@ -199,6 +199,16 @@ export function splitMarkdownByHeading(
         ? `${section.parentChain}\n${section.content}`
         : section.content;
 
+      // 过滤低信息量块：去除标题行和 Markdown 语法后，实质内容不足 30 字符则跳过
+      const bodyText = section.content
+        .replace(/^#{1,6}[^\n]*\n?/, '')          // 去掉标题行
+        .replace(/!\[[^\]]*\]\([^)]*\)/g, '')     // 去掉图片
+        .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')  // 链接只保留文字
+        .replace(/[`*_~<>]/g, '')                  // 去掉格式符
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (bodyText.length < 30 && section.title) continue;
+
       // 如果超出 chunkSize，进一步拆分
       const chunks = fallbackSplit(fullText, chunkSize, chunkOverlap);
       for (const chunk of chunks) {

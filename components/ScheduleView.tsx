@@ -180,7 +180,7 @@ function recurringToEvents(recurringEvents: RecurringEvent[], days: Date[]): Cal
         results.push({ recurring: re, start: d, end: d, isAllDay: true });
       } else {
         const startMin = re.startTime ?? 9 * 60;
-        const dur = re.duration ?? 60;
+        const dur = re.duration && re.duration > 0 ? re.duration : 30; // 时间点事件默认10分钟
         const start = new Date(day);
         start.setHours(0, 0, 0, 0);
         start.setMinutes(startMin);
@@ -374,7 +374,7 @@ const MonthView: React.FC<{
   return (
     <div className="select-none">
       {/* Day-of-week headers */}
-      <div className="grid grid-cols-7 border-b border-gray-100">
+      <div className="grid grid-cols-7 border-b" style={{ borderColor: 'var(--t-border-light)' }}>
         {WEEK_DAYS.map((d, i) => (
           <div key={i} className={`text-center text-[11px] font-semibold py-2 ${i >= 5 ? 'text-gray-400' : 'text-gray-500'}`}>{d}</div>
         ))}
@@ -382,7 +382,7 @@ const MonthView: React.FC<{
 
       {/* Grid rows */}
       {grid.map((week, wi) => (
-        <div key={wi} className="grid grid-cols-7 border-b border-gray-50 last:border-b-0">
+        <div key={wi} className="grid grid-cols-7 border-b last:border-b-0" style={{ borderColor: 'var(--t-border-light)' }}>
           {week.map((cell, di) => {
             const dayEvents = eventsForDate(events, cell.date);
             const isToday = isSameDay(cell.date, today);
@@ -391,9 +391,8 @@ const MonthView: React.FC<{
             return (
               <div
                 key={di}
-                className={`min-h-[80px] border-r border-gray-50 last:border-r-0 p-1 cursor-pointer transition-colors hover:bg-gray-50/50
-                  ${!cell.isCurrentMonth ? 'bg-gray-50/30' : ''}
-                `}
+                className={`min-h-[80px] border-r last:border-r-0 p-1 cursor-pointer transition-colors`}
+                style={{ borderColor: 'var(--t-border-light)', ...(!cell.isCurrentMonth ? { background: 'var(--t-bg-secondary)' } : {}) }}
                 onClick={() => onClickDay(cell.date)}
               >
                 <div className="flex items-center gap-0.5">
@@ -505,7 +504,7 @@ const TimeGrid: React.FC<{
   return (
     <div className="h-full flex flex-col">
       {/* Day headers */}
-      <div className="flex border-b border-gray-100 sticky top-0 bg-white z-20">
+      <div className="flex border-b sticky top-0 z-20" style={{ borderColor: 'var(--t-border-light)', background: 'var(--t-bg-main)' }}>
         <div className="w-12 shrink-0" />
         <div className="flex-1 grid" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }}>
           {days.map((day, i) => {
@@ -513,13 +512,13 @@ const TimeGrid: React.FC<{
             const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
             const hasEvt = dayHasEvents[i];
             return (
-              <div key={i} className="text-center py-2 border-l border-gray-50 first:border-l-0 relative">
-                <div className={`text-[10px] font-medium ${isToday ? 'text-blue-600' : 'text-gray-400'}`}>
+              <div key={i} className="text-center py-2 border-l first:border-l-0 relative" style={{ borderColor: 'var(--t-border-light)' }}>
+                <div className={`text-[10px] font-medium ${isToday ? 'text-blue-600' : ''}`} style={!isToday ? { color: 'var(--t-text-muted)' } : undefined}>
                   周{dayNames[day.getDay()]}
                 </div>
                 <div className={`text-lg font-bold leading-tight mt-0.5 w-8 h-8 mx-auto flex items-center justify-center rounded-full relative
-                  ${isToday ? 'bg-blue-600 text-white' : 'text-gray-800'}
-                `}>
+                  ${isToday ? 'bg-blue-600 text-white' : ''}
+                `} style={!isToday ? { color: 'var(--t-text)' } : undefined}>
                   {day.getDate()}
                   {/* Dot marker for days with events */}
                   {hasEvt && !isToday && (
@@ -534,13 +533,13 @@ const TimeGrid: React.FC<{
 
       {/* All-day events row (if any) */}
       {hasAnyAllDay && (
-        <div className="flex border-b border-gray-100 bg-gray-50/50">
+        <div className="flex border-b" style={{ borderColor: 'var(--t-border-light)', background: 'var(--t-bg-secondary)' }}>
           <div className="w-12 shrink-0 flex items-center justify-end pr-2">
-            <span className="text-[9px] text-gray-400 font-medium">全天</span>
+            <span className="text-[9px] font-medium" style={{ color: 'var(--t-text-muted)' }}>全天</span>
           </div>
           <div className="flex-1 grid py-1 gap-0.5" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }}>
             {allDayEvents.map((dayEvts, di) => (
-              <div key={di} className="px-0.5 space-y-0.5 border-l border-gray-100 first:border-l-0">
+              <div key={di} className="px-0.5 space-y-0.5 border-l first:border-l-0" style={{ borderColor: 'var(--t-border-light)' }}>
                 {dayEvts.map(ev => {
                   const colors = getCalendarEventColors(ev);
                   const customColor = (ev.todo?.color || ev.recurring?.color) && !ev.todo?.isCompleted;
@@ -577,7 +576,7 @@ const TimeGrid: React.FC<{
               const isCompressed = compressNight && h < 6;
               if (isCompressed && h !== 0 && h !== 6) return null; // Skip labels 1–5 in compressed mode
               return (
-                <div key={h} className={`absolute right-2 text-[10px] font-medium -translate-y-1/2 ${isCompressed ? 'text-gray-300' : 'text-gray-400'}`} style={{ top }}>
+                <div key={h} className="absolute right-2 text-[10px] font-medium -translate-y-1/2" style={{ top, color: 'var(--t-text-muted)', ...(isCompressed ? { opacity: 0.6 } : {}) }}>
                   {h === 0 ? '' : `${String(h).padStart(2, '0')}:00`}
                 </div>
               );
@@ -591,7 +590,7 @@ const TimeGrid: React.FC<{
               const top = minutesToPx(h * 60, compressNight);
               const isCompressed = compressNight && h < 6;
               return (
-                <div key={h} className={`absolute left-0 right-0 ${isCompressed ? 'border-t border-gray-50' : 'border-t border-gray-100'}`} style={{ top }} />
+                <div key={h} className="absolute left-0 right-0 border-t" style={{ top, borderColor: 'var(--t-border-light)', ...(isCompressed ? { opacity: 0.5 } : {}) }} />
               );
             })}
             {/* Half-hour grid lines (skip in compressed zone) */}
@@ -599,7 +598,7 @@ const TimeGrid: React.FC<{
               if (compressNight && h < 6) return null;
               const top = minutesToPx(h * 60 + 30, compressNight);
               return (
-                <div key={`h${h}`} className="absolute left-0 right-0 border-t border-gray-50" style={{ top }} />
+                <div key={`h${h}`} className="absolute left-0 right-0 border-t" style={{ top, borderColor: 'var(--t-border-light)', opacity: 0.5 }} />
               );
             })}
 
@@ -607,7 +606,7 @@ const TimeGrid: React.FC<{
             {compressNight && (
               <div className="absolute left-0 right-0 flex items-center justify-center pointer-events-none z-10"
                 style={{ top: 0, height: 6 * COMPRESSED_HOUR_HEIGHT }}>
-                <span className="text-[9px] text-gray-300 font-medium bg-white/80 px-2 rounded">0:00 — 6:00</span>
+                <span className="text-[9px] font-medium px-2 rounded" style={{ color: 'var(--t-text-muted)', background: 'var(--t-bg-main)', opacity: 0.8 }}>0:00 — 6:00</span>
               </div>
             )}
 
@@ -634,7 +633,7 @@ const TimeGrid: React.FC<{
               const colIsPast = isBeforeDay(colDay, today);
               const colIsToday = isSameDay(colDay, today);
               return (
-                <div key={colIdx} className="relative border-l border-gray-100 first:border-l-0">
+                <div key={colIdx} className="relative border-l first:border-l-0" style={{ borderColor: 'var(--t-border-light)' }}>
                   {/* Past-time dim overlay: full column for past days, partial for today */}
                   {dimPast && colIsPast && (
                     <div className="absolute inset-0 bg-black/[0.04] pointer-events-none z-[5]" />
@@ -851,10 +850,10 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* ─── Header ─── */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 bg-white/80 shrink-0">
+      <div className="flex items-center justify-between px-4 py-2.5 border-b shrink-0" style={{ borderColor: 'var(--t-border-light)', background: 'var(--t-header-bg)' }}>
         <div className="flex items-center gap-2">
-          <h3 className="text-lg font-bold text-gray-800">日程表</h3>
-          <span className="text-xs text-gray-400">({todoEvents.length} 待办事件{recurringEvents.filter(r=>r.isActive).length > 0 ? `, ${recurringEvents.filter(r=>r.isActive).length} 重复` : ''})</span>
+          <h3 className="text-lg font-bold" style={{ color: 'var(--t-text)' }}>日程表</h3>
+          <span className="text-xs" style={{ color: 'var(--t-text-muted)' }}>({todoEvents.length} 待办事件{recurringEvents.filter(r=>r.isActive).length > 0 ? `, ${recurringEvents.filter(r=>r.isActive).length} 重复` : ''})</span>
         </div>
 
         <div className="flex items-center gap-2">
@@ -901,7 +900,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
                 <Settings2 className="w-3.5 h-3.5" />
               </button>
               {showSettings && (
-                <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 p-3 z-30 w-52">
+                <div className="absolute right-0 top-full mt-1 rounded-lg shadow-lg border p-3 z-30 w-52" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
                   <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-700 hover:text-gray-900">
                     <input
                       type="checkbox"

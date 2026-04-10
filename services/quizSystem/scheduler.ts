@@ -1,11 +1,11 @@
 /**
  * Quiz System — 自适应调度引擎
  *
- * SM-2 间隔重复 + 艾宾浩斯遗忘曲线 + 知识点掌握度模型
+ * SM-2 间隔重复 + 艾宾浩斯遗忘曲线 + 标签掌握度模型
  */
 
 import type {
-  KnowledgePointMastery, MasteryLevel, QuestionType, QuestionPriority,
+  TagMastery, MasteryLevel, QuestionType, QuestionPriority,
 } from './types';
 
 // ═══════════════════════════════════════════════════════
@@ -14,7 +14,7 @@ import type {
 
 /** 分数映射到 SM-2 质量等级 (0-5) */
 export function mapScoreToQuality(score: number): number {
-  if (score >= 91) return 5;
+  if (score >= 90) return 5;
   if (score >= 71) return 4;
   if (score >= 41) return 3;
   if (score >= 21) return 2;
@@ -22,11 +22,11 @@ export function mapScoreToQuality(score: number): number {
   return 0;
 }
 
-/** 每次答题后更新掌握度 */
+/** 每次答题后更新标签掌握度 */
 export function updateMastery(
-  point: KnowledgePointMastery,
+  point: TagMastery,
   score: number,
-): KnowledgePointMastery {
+): TagMastery {
   const updated = { ...point };
   const quality = mapScoreToQuality(score);
 
@@ -72,7 +72,7 @@ export function updateMastery(
 }
 
 /** 计算掌握等级 */
-export function calculateMasteryLevel(point: KnowledgePointMastery): MasteryLevel {
+export function calculateMasteryLevel(point: TagMastery): MasteryLevel {
   const { avgScore, repetitions, recentScores, totalAttempts } = point;
 
   if (totalAttempts === 0) return 'not_mastered';
@@ -93,7 +93,7 @@ export function calculateMasteryLevel(point: KnowledgePointMastery): MasteryLeve
 // ═══════════════════════════════════════════════════════
 
 /** 计算记忆保持率 R = e^(-t/S) */
-export function getRetentionRate(point: KnowledgePointMastery): number {
+export function getRetentionRate(point: TagMastery): number {
   if (point.totalAttempts === 0) return 0;
 
   const now = Date.now();
@@ -117,7 +117,7 @@ export function getRetentionStatus(rate: number): { label: string; emoji: string
 // ═══════════════════════════════════════════════════════
 
 /** 根据掌握度建议题型 */
-export function suggestQuestionType(point: KnowledgePointMastery): QuestionType {
+export function suggestQuestionType(point: TagMastery): QuestionType {
   switch (point.masteryLevel) {
     case 'not_mastered': return 'concept';
     case 'partially': return 'comparison';
@@ -128,7 +128,7 @@ export function suggestQuestionType(point: KnowledgePointMastery): QuestionType 
 }
 
 /** 根据历史得分建议难度 */
-export function suggestDifficulty(point: KnowledgePointMastery): number {
+export function suggestDifficulty(point: TagMastery): number {
   if (point.totalAttempts === 0) return 1;
   const avg = point.avgScore;
   if (avg >= 90) return Math.min(5, 4);
@@ -137,13 +137,13 @@ export function suggestDifficulty(point: KnowledgePointMastery): number {
   return 1;
 }
 
-/** 计算所有知识点的出题优先级 */
+/** 计算所有标签的出题优先级 */
 export function calculateQuestionPriorities(
-  allPoints: KnowledgePointMastery[],
+  allTags: TagMastery[],
 ): QuestionPriority[] {
   const now = Date.now();
 
-  return allPoints.map(point => {
+  return allTags.map(point => {
     let priority = 0;
     const reasons: string[] = [];
 
@@ -186,7 +186,7 @@ export function calculateQuestionPriorities(
     }
 
     return {
-      pointId: point.pointId,
+      tag: point.tag,
       priority,
       reason: reasons.join('；'),
       retentionRate: retention,
@@ -197,27 +197,19 @@ export function calculateQuestionPriorities(
 }
 
 // ═══════════════════════════════════════════════════════
-// 创建新知识点
+// 创建新标签掌握度
 // ═══════════════════════════════════════════════════════
 
-export function createMasteryPoint(
-  pointId: string,
-  label: string,
-  tags: string[],
-  sourceChunkIds: string[],
-): KnowledgePointMastery {
+export function createTagMastery(tag: string): TagMastery {
   const now = Date.now();
   return {
-    pointId,
-    label,
-    tags,
-    sourceChunkIds,
+    tag,
     easeFactor: 2.5,
     interval: 0,
     repetitions: 0,
     createdAt: now,
     lastReviewAt: now,
-    nextReviewAt: now, // 立即可出题
+    nextReviewAt: now,
     totalAttempts: 0,
     correctCount: 0,
     avgScore: 0,

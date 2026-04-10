@@ -346,10 +346,10 @@ const KbLlmConfigButton: React.FC<{
         <Settings size={13} />
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1.5 z-50 w-72 bg-white/95 backdrop-blur-xl rounded-xl shadow-lg shadow-black/8 border border-gray-200/80 overflow-hidden">
+        <div className="absolute right-0 top-full mt-1.5 z-50 w-72 backdrop-blur-xl rounded-xl shadow-lg shadow-black/8 border overflow-hidden" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
           {/* Header */}
-          <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
-            <span className="text-[11px] font-semibold text-gray-500 tracking-wide uppercase">{label} · API</span>
+          <div className="px-3 py-2 border-b flex items-center justify-between" style={{ borderColor: 'var(--t-border-light)' }}>
+            <span className="text-[11px] font-semibold tracking-wide uppercase" style={{ color: 'var(--t-text-muted)' }}>{label} · API</span>
             {isConfigured && (
               <button onClick={handleClear} className="text-[10px] text-red-400 hover:text-red-600 transition-colors">清除</button>
             )}
@@ -364,38 +364,39 @@ const KbLlmConfigButton: React.FC<{
                   <button key={p.id}
                     onClick={() => handleSelect(p.id)}
                     className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${
-                      active ? 'bg-blue-50' : 'hover:bg-gray-50'
+                      active ? 'bg-blue-50' : 'theme-hover'
                     }`}
                   >
                     <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold ${
-                      active ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-400'
-                    }`}>
+                      active ? 'bg-blue-500 text-white' : ''
+                    }`} style={!active ? { background: 'var(--t-bg-hover)', color: 'var(--t-text-muted)' } : undefined}>
                       {active ? '✓' : p.name[0]?.toUpperCase() || '?'}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className={`text-xs truncate ${active ? 'text-blue-700 font-medium' : 'text-gray-700'}`}>{p.name}</div>
-                      <div className="text-[10px] text-gray-400">{providerLabel}</div>
+                      <div className={`text-xs truncate ${active ? 'text-blue-700 font-medium' : ''}`} style={!active ? { color: 'var(--t-text-secondary)' } : undefined}>{p.name}</div>
+                      <div className="text-[10px]" style={{ color: 'var(--t-text-muted)' }}>{providerLabel}</div>
                     </div>
                     <div className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                      active ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-400'
-                    }`}>{p.apiKey ? '••••' + p.apiKey.slice(-4) : '未配置'}</div>
+                      active ? 'bg-blue-100 text-blue-600' : ''
+                    }`} style={!active ? { background: 'var(--t-bg-hover)', color: 'var(--t-text-muted)' } : undefined}>{p.apiKey ? '••••' + p.apiKey.slice(-4) : '未配置'}</div>
                   </button>
                 );
               })}
             </div>
           ) : (
             <div className="px-3 py-4 text-center">
-              <div className="text-xs text-gray-400">尚无 API 配置</div>
+              <div className="text-xs" style={{ color: 'var(--t-text-muted)' }}>尚无 API 配置</div>
               <div className="text-[10px] text-gray-300 mt-0.5">请在左下角「设置」中添加 API Key</div>
             </div>
           )}
           {/* Model selector (only if profile selected) */}
           {selectedProfile && (
-            <div className="px-3 py-2 border-t border-gray-100 bg-gray-50/50">
-              <label className="block text-[10px] font-medium text-gray-400 mb-1">模型</label>
+            <div className="px-3 py-2 border-t" style={{ borderColor: 'var(--t-border-light)', background: 'var(--t-bg-secondary)' }}>
+              <label className="block text-[10px] font-medium mb-1" style={{ color: 'var(--t-text-muted)' }}>模型</label>
               {models.length > 0 ? (
                 <select
-                  className="w-full text-xs bg-white border border-gray-200 rounded-lg px-2 py-1.5 focus:border-blue-400 focus:outline-none transition-colors"
+                  className="w-full text-xs border rounded-lg px-2 py-1.5 focus:border-blue-400 focus:outline-none transition-colors"
+                  style={{ background: 'var(--t-input-bg)', borderColor: 'var(--t-input-border)', color: 'var(--t-text)' }}
                   value={model}
                   onChange={e => handleModelChange(e.target.value)}
                 >
@@ -403,7 +404,8 @@ const KbLlmConfigButton: React.FC<{
                 </select>
               ) : (
                 <input
-                  className="w-full text-xs bg-white border border-gray-200 rounded-lg px-2 py-1.5 focus:border-blue-400 focus:outline-none transition-colors"
+                  className="w-full text-xs border rounded-lg px-2 py-1.5 focus:border-blue-400 focus:outline-none transition-colors"
+                  style={{ background: 'var(--t-input-bg)', borderColor: 'var(--t-input-border)', color: 'var(--t-text)' }}
                   value={model}
                   onChange={e => handleModelChange(e.target.value)}
                   placeholder="输入模型名称"
@@ -477,7 +479,7 @@ const MessageBubble: React.FC<{
           </div>
         ) : (
           <div className="max-w-[92%] w-full">
-            <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white border border-gray-100 shadow-sm">
+            <div className="px-4 py-3 rounded-2xl rounded-tl-sm border shadow-sm" style={{ background: 'var(--t-msg-ai-bg)', borderColor: 'var(--t-msg-ai-border)' }}>
               {isStreaming && !message.content ? (
                 <div className="flex items-center gap-1.5 h-5">
                   <span className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{ animationDelay: '0ms' }} />
@@ -1663,10 +1665,13 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
   // ══════════════════════════════════════════════════════
   // Styles
   // ══════════════════════════════════════════════════════
-  const panelCls = 'bg-white border border-gray-200 rounded-xl';
-  const inputCls = 'w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-800 focus:border-blue-400 focus:outline-none transition-colors';
+  const panelCls = 'border rounded-xl';
+  const panelStyle: React.CSSProperties = { background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' };
+  const inputCls = 'w-full border rounded-lg px-3 py-1.5 text-sm focus:border-blue-400 focus:outline-none transition-colors';
+  const inputStyle: React.CSSProperties = { background: 'var(--t-input-bg)', borderColor: 'var(--t-input-border)', color: 'var(--t-text)' };
   const btnPrimary = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors';
-  const btnSecondary = 'flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs text-gray-600 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 transition-colors';
+  const btnSecondary = 'flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs hover:opacity-80 disabled:opacity-50 transition-colors';
+  const btnSecondaryStyle: React.CSSProperties = { color: 'var(--t-text-secondary)', background: 'var(--t-bg-hover)' };
 
   // ══════════════════════════════════════════════════════
   // Left Sidebar: Conversation List
@@ -1674,25 +1679,26 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
   function renderConversationSidebar(conversations: ChatConversation[], activeId: string | null, setActiveId: (id: string) => void, onNew: () => void, onDelete: (id: string) => void, isQa: boolean) {
     const accentColor = isQa ? 'green' : 'purple';
     return (
-      <div className="w-[220px] shrink-0 border-r border-gray-200 bg-white flex flex-col h-full">
-        <div className="h-12 border-b border-gray-100 flex items-center justify-between px-4">
+      <div className="w-[220px] shrink-0 border-r flex flex-col h-full" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
+        <div className="h-12 border-b flex items-center justify-between px-4" style={{ borderColor: 'var(--t-border-light)' }}>
           <div className="flex items-center gap-2">
             {isQa ? <KBAvatar /> : <AIAvatar />}
-            <span className="font-semibold text-gray-800 text-xs">{isQa ? '知识库对话' : 'AI 对话'}</span>
+            <span className="font-semibold text-xs" style={{ color: 'var(--t-text)' }}>{isQa ? '知识库对话' : 'AI 对话'}</span>
           </div>
-          <button onClick={onNew} className={`p-1.5 hover:bg-${accentColor}-50 rounded-lg text-gray-500 hover:text-${accentColor}-600 transition-colors`} title="新建对话">
+          <button onClick={onNew} className={`p-1.5 hover:bg-${accentColor}-50 rounded-lg hover:text-${accentColor}-600 transition-colors`} style={{ color: 'var(--t-text-muted)' }} title="新建对话">
             <Plus className="w-4 h-4" />
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
           {conversations.length === 0 ? (
-            <div className="text-center text-gray-400 text-xs py-8">{isQa ? <Brain className="w-6 h-6 mx-auto mb-2 opacity-40" /> : <Sparkles className="w-6 h-6 mx-auto mb-2 opacity-40" />}暂无对话</div>
+            <div className="text-center text-xs py-8" style={{ color: 'var(--t-text-muted)' }}>{isQa ? <Brain className="w-6 h-6 mx-auto mb-2 opacity-40" /> : <Sparkles className="w-6 h-6 mx-auto mb-2 opacity-40" />}暂无对话</div>
           ) : conversations.map(conv => {
             const isActive = activeId === conv.id;
             const isRenaming = renamingConvId === conv.id;
             return (
               <button key={conv.id} onClick={() => setActiveId(conv.id)}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left group transition-all ${isActive ? `bg-${accentColor}-50 text-${accentColor}-700 shadow-sm` : 'hover:bg-gray-50 text-gray-700'}`}>
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left group transition-all ${isActive ? `bg-${accentColor}-50 text-${accentColor}-700 shadow-sm` : 'theme-hover'}`}
+                style={!isActive ? { color: 'var(--t-text-secondary)' } : undefined}>
                 <div className="flex-1 min-w-0">
                   {isRenaming ? (
                     <input autoFocus value={renameValue} onChange={e => setRenameValue(e.target.value)}
@@ -1707,7 +1713,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
                 {!isRenaming && (
                   <>
                     <button onClick={e => { e.stopPropagation(); handleStartRename(conv.id, conv.title); }}
-                      className="p-0.5 opacity-0 group-hover:opacity-100 hover:bg-gray-100 rounded transition-all flex-shrink-0"><Pencil className="w-3 h-3" /></button>
+                      className="p-0.5 opacity-0 group-hover:opacity-100 rounded transition-all flex-shrink-0 theme-hover"><Pencil className="w-3 h-3" /></button>
                     <button onClick={e => { e.stopPropagation(); onDelete(conv.id); }}
                       className="p-0.5 opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-500 rounded transition-all flex-shrink-0"><Trash2 className="w-3 h-3" /></button>
                   </>
@@ -1718,11 +1724,11 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
         </div>
         {/* QA mode: show selected vector stores indicator */}
         {isQa && (
-          <div className="p-3 border-t border-gray-100">
-            <div className="text-[10px] text-gray-500 mb-2 flex items-center gap-1"><Database className="w-3 h-3" /> 向量库</div>
+          <div className="p-3 border-t" style={{ borderColor: 'var(--t-border-light)' }}>
+            <div className="text-[10px] mb-2 flex items-center gap-1" style={{ color: 'var(--t-text-muted)' }}><Database className="w-3 h-3" /> 向量库</div>
             <div className="flex flex-wrap gap-1.5">
               {ragCollections.length === 0 ? (
-                <span className="text-[10px] text-gray-400">暂无向量库</span>
+                <span className="text-[10px]" style={{ color: 'var(--t-text-muted)' }}>暂无向量库</span>
               ) : ragCollections.map(c => {
                 const selected = selectedIds.includes(c.id);
                 return (
@@ -1730,8 +1736,8 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
                     className={`text-xs px-2.5 py-1 rounded-full border transition-all cursor-pointer ${
                       selected
                         ? 'bg-green-50 text-green-700 border-green-300 font-medium shadow-sm'
-                        : 'bg-white text-gray-500 border-gray-200 hover:border-green-300 hover:text-green-600'
-                    }`}>{c.name}</button>
+                        : 'border-gray-200 hover:border-green-300 hover:text-green-600'
+                    }`} style={!selected ? { background: 'var(--t-bg-card)', color: 'var(--t-text-muted)', borderColor: 'var(--t-border)' } : undefined}>{c.name}</button>
                 );
               })}
             </div>
@@ -1746,14 +1752,15 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
   // ══════════════════════════════════════════════════════
   function renderQuizCategorySidebar() {
     return (
-      <div className="w-[220px] shrink-0 border-r border-gray-200 bg-white flex flex-col h-full">
-        <div className="h-12 border-b border-gray-100 flex items-center justify-between px-4">
+      <div className="w-[220px] shrink-0 border-r flex flex-col h-full" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
+        <div className="h-12 border-b flex items-center justify-between px-4" style={{ borderColor: 'var(--t-border-light)' }}>
           <div className="flex items-center gap-2">
             <GraduationCap size={16} className="text-purple-500" />
-            <span className="font-semibold text-gray-800 text-xs">智能测验</span>
+            <span className="font-semibold text-xs" style={{ color: 'var(--t-text)' }}>智能测验</span>
           </div>
           <button
-            className="p-1.5 hover:bg-purple-50 rounded-lg text-gray-500 hover:text-purple-600 transition-colors"
+            className="p-1.5 hover:bg-purple-50 rounded-lg hover:text-purple-600 transition-colors"
+            style={{ color: 'var(--t-text-muted)' }}
             title="新建分类"
             onClick={() => {
               const cat: QuizCategory = { id: `cat-${Date.now()}`, name: '新分类', icon: 'GraduationCap', color: '#8b5cf6', createdAt: Date.now() };
@@ -1768,7 +1775,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
         </div>
         <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
           {quizCategories.length === 0 ? (
-            <div className="text-center text-gray-400 text-xs py-8"><GraduationCap className="w-6 h-6 mx-auto mb-2 opacity-40" />暂无分类</div>
+            <div className="text-center text-xs py-8" style={{ color: 'var(--t-text-muted)' }}><GraduationCap className="w-6 h-6 mx-auto mb-2 opacity-40" />暂无分类</div>
           ) : quizCategories.map(cat => {
             return (
             <div key={cat.id}
@@ -1796,9 +1803,9 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
               className={`group flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
                 activeQuizCategoryId === cat.id
                   ? 'font-medium border shadow-sm'
-                  : 'text-gray-600 hover:bg-gray-50 border border-transparent'
+                  : 'theme-hover border border-transparent'
               } ${dragOverCategoryId === cat.id && dragCategoryId !== cat.id ? 'border-t-2 border-t-purple-400' : ''} ${dragCategoryId === cat.id ? 'opacity-40' : ''}`}
-              style={activeQuizCategoryId === cat.id ? { backgroundColor: cat.color + '15', color: cat.color, borderColor: cat.color + '40' } : undefined}
+              style={activeQuizCategoryId !== cat.id ? { color: 'var(--t-text-secondary)' } : { backgroundColor: cat.color + '15', color: cat.color, borderColor: cat.color + '40' }}
               onClick={() => setActiveQuizCategoryId(cat.id)}>
               {renamingCategoryId === cat.id ? (
                 <div className="flex-1 space-y-1.5" onClick={e => e.stopPropagation()}>
@@ -1934,14 +1941,15 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
 
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => setShowSystemPromptPanel(false)}>
-        <div className="bg-white rounded-2xl shadow-xl w-[520px] max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
-          <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-            <h3 className="font-semibold text-gray-800 text-sm flex items-center gap-2"><FileText size={16} className="text-purple-500" /> 系统提示词</h3>
-            <button onClick={() => setShowSystemPromptPanel(false)} className="p-1 hover:bg-gray-100 rounded-lg"><X size={16} /></button>
+        <div className="rounded-2xl shadow-xl w-[520px] max-h-[80vh] flex flex-col" style={{ background: 'var(--t-bg-card)' }} onClick={e => e.stopPropagation()}>
+          <div className="p-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--t-border-light)' }}>
+            <h3 className="font-semibold text-sm flex items-center gap-2" style={{ color: 'var(--t-text)' }}><FileText size={16} className="text-purple-500" /> 系统提示词</h3>
+            <button onClick={() => setShowSystemPromptPanel(false)} className="p-1 rounded-lg theme-hover"><X size={16} /></button>
           </div>
           <div className="p-4 flex-1 overflow-y-auto space-y-3">
             <textarea
-              className={`${inputCls} h-32 resize-none font-mono text-xs`}
+              className={`${inputCls} h-32 resize-none font-mono text-xs`} style={inputStyle}
+              style={inputStyle}
               value={currentPrompt}
               onChange={e => {
                 const val = e.target.value;
@@ -1957,7 +1965,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
               placeholder="设定 AI 的角色和行为…"
             />
             <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500 flex items-center gap-1"><Thermometer size={12} /> Temperature</label>
+              <label className="text-xs flex items-center gap-1" style={{ color: 'var(--t-text-muted)' }}><Thermometer size={12} /> Temperature</label>
               <input type="range" min="0" max="2" step="0.1" value={chatConfig.temperature || 0.7}
                 onChange={e => {
                   const t = parseFloat(e.target.value);
@@ -1967,7 +1975,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
                   chatServiceRef.current = new ChatService(newCfg);
                 }}
                 className="flex-1 accent-purple-500" />
-              <span className="text-xs text-gray-600 w-8 text-right">{chatConfig.temperature?.toFixed(1) || '0.7'}</span>
+              <span className="text-xs w-8 text-right" style={{ color: 'var(--t-text-secondary)' }}>{chatConfig.temperature?.toFixed(1) || '0.7'}</span>
             </div>
             {conv && conv.systemPrompt !== undefined && (
               <button className="text-xs text-gray-500 hover:text-gray-700 underline"
@@ -1985,8 +1993,8 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
                   )
                 : skills;
               return (
-              <div className="border-t border-gray-100 pt-3">
-                <div className="text-xs font-medium text-gray-600 mb-2 flex items-center gap-1"><Sparkles size={12} /> 预设技能</div>
+              <div className="border-t pt-3" style={{ borderColor: 'var(--t-border-light)' }}>
+                <div className="text-xs font-medium mb-2 flex items-center gap-1" style={{ color: 'var(--t-text-secondary)' }}><Sparkles size={12} /> 预设技能</div>
                 {skills.length > 4 && (
                   <div className="relative mb-2">
                     <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
@@ -1995,7 +2003,8 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
                       value={skillSearchQuery}
                       onChange={e => setSkillSearchQuery(e.target.value)}
                       placeholder="搜索技能…"
-                      className="w-full rounded-lg border border-gray-200 bg-white pl-7 pr-6 py-1 text-xs text-gray-800 placeholder-gray-400 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition-all"
+                      className="w-full rounded-lg border pl-7 pr-6 py-1 text-xs placeholder-gray-400 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition-all"
+                      style={{ background: 'var(--t-input-bg)', borderColor: 'var(--t-input-border)', color: 'var(--t-text)' }}
                     />
                     {skillSearchQuery && (
                       <button onClick={() => setSkillSearchQuery('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
@@ -2032,16 +2041,17 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
             })()}
           </div>
           {/* 本轮提示词 — per conversation, AI and QA independent */}
-          <div className="px-4 pb-3 border-t border-gray-100 pt-3">
-            <label className="text-xs font-medium text-gray-700 mb-1 block flex items-center gap-1.5">
+          <div className="px-4 pb-3 border-t pt-3" style={{ borderColor: 'var(--t-border-light)' }}>
+            <label className="text-xs font-medium mb-1 block flex items-center gap-1.5" style={{ color: 'var(--t-text-secondary)' }}>
               <MessageSquarePlus size={12} className="text-purple-500" />
               本轮提示词
               {(mode === 'ai' ? aiTurnPrompt : qaTurnPrompt).trim() && <span className="ml-1 w-1.5 h-1.5 rounded-full bg-purple-400 inline-block" />}
             </label>
-            <p className="text-[11px] text-gray-400 mb-2">仅对当前对话生效，附加到每条消息的补充指令；新建对话时自动清空</p>
+            <p className="text-[11px] mb-2" style={{ color: 'var(--t-text-muted)' }}>仅对当前对话生效，附加到每条消息的补充指令；新建对话时自动清空</p>
             <div className="relative">
               <textarea
-                className={`${inputCls} h-16 resize-none text-xs`}
+                className={`${inputCls} h-16 resize-none text-xs`} style={inputStyle}
+                style={inputStyle}
                 value={mode === 'ai' ? aiTurnPrompt : qaTurnPrompt}
                 onChange={e => mode === 'ai' ? setAiTurnPrompt(e.target.value) : setQaTurnPrompt(e.target.value)}
                 placeholder="例如：请用英文回答、请给出代码示例、请保持简洁…"
@@ -2053,7 +2063,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
               )}
             </div>
           </div>
-          <div className="p-3 border-t border-gray-100 flex justify-end">
+          <div className="p-3 border-t flex justify-end" style={{ borderColor: 'var(--t-border-light)' }}>
             <button className={btnPrimary} onClick={() => setShowSystemPromptPanel(false)}>完成</button>
           </div>
         </div>
@@ -2083,12 +2093,12 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
           {isEmpty && (
             <div className="flex-1 flex items-center justify-center h-full">
-              <div className="text-center text-gray-400 space-y-3">
+              <div className="text-center space-y-3" style={{ color: 'var(--t-text-muted)' }}>
                 <div className="w-16 h-16 rounded-2xl mx-auto flex items-center justify-center shadow-sm" style={{ background: 'linear-gradient(135deg, #6d28d9 0%, #9333ea 40%, #db2777 100%)' }}>
                   <Sparkles className="w-8 h-8 text-white" />
                 </div>
-                <div className="text-sm font-medium text-gray-600">AI 助手</div>
-                <div className="text-xs text-gray-400">输入消息开始对话，支持 Markdown 渲染</div>
+                <div className="text-sm font-medium" style={{ color: 'var(--t-text-secondary)' }}>AI 助手</div>
+                <div className="text-xs">输入消息开始对话，支持 Markdown 渲染</div>
               </div>
             </div>
           )}
@@ -2100,7 +2110,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
           ))}
           {isStreaming && streamingContent && <MessageBubble message={{ id: 'streaming', role: 'assistant', content: streamingContent, timestamp: Date.now() }} isStreaming />}
           {isStreaming && !streamingContent && (
-            <div className="flex gap-3"><AIAvatar /><div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white border border-gray-100 shadow-sm"><div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{ animationDelay: '0ms' }} /><span className="w-2 h-2 rounded-full bg-purple-500 animate-bounce" style={{ animationDelay: '160ms' }} /><span className="w-2 h-2 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: '320ms' }} /></div></div></div>
+            <div className="flex gap-3"><AIAvatar /><div className="px-4 py-3 rounded-2xl rounded-tl-sm border shadow-sm" style={{ background: 'var(--t-msg-ai-bg)', borderColor: 'var(--t-msg-ai-border)' }}><div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{ animationDelay: '0ms' }} /><span className="w-2 h-2 rounded-full bg-purple-500 animate-bounce" style={{ animationDelay: '160ms' }} /><span className="w-2 h-2 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: '320ms' }} /></div></div></div>
           )}
           <div ref={messagesEndRef} />
         </div>
@@ -2133,13 +2143,13 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
             </div>
           </div>
         )}
-        <div className="p-4 border-t border-gray-100 bg-white">
-          <div className="flex items-end gap-2 border rounded-2xl px-4 py-3 bg-gray-50 border-gray-200 hover:border-purple-300 focus-within:border-purple-400 focus-within:ring-2 focus-within:ring-purple-100 transition-all shadow-sm">
+        <div className="p-4 border-t" style={{ borderColor: 'var(--t-border-light)', background: 'var(--t-bg-main)' }}>
+          <div className="flex items-end gap-2 border rounded-2xl px-4 py-3 hover:border-purple-300 focus-within:border-purple-400 focus-within:ring-2 focus-within:ring-purple-100 transition-all shadow-sm" style={{ background: 'var(--t-input-bg)', borderColor: 'var(--t-input-border)' }}>
             <textarea ref={textareaRef} value={inputValue}
               onChange={e => { setInputValue(e.target.value); requestAnimationFrame(() => { if (textareaRef.current) { textareaRef.current.style.height = 'auto'; const sh = textareaRef.current.scrollHeight; textareaRef.current.style.height = `${Math.max(36, Math.min(sh, 120))}px`; } }); }}
               onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSendAi(); } }}
               placeholder="输入消息，按 ⌘+Enter 发送..."
-              rows={1} className="flex-1 bg-transparent border-none outline-none resize-none text-sm text-gray-800 placeholder-gray-400 overflow-y-auto" style={{ height: '36px', maxHeight: '120px', minHeight: '36px' }} disabled={isStreaming} />
+              rows={1} className="flex-1 bg-transparent border-none outline-none resize-none text-sm placeholder-gray-400 overflow-y-auto" style={{ height: '36px', maxHeight: '120px', minHeight: '36px', color: 'var(--t-text)' }} disabled={isStreaming} />
             <button onClick={() => fileInputRef.current?.click()}
               className="flex-shrink-0 p-2 text-gray-400 hover:text-purple-500 rounded-xl hover:bg-purple-50 transition-colors" title="上传文件">
               <Paperclip className="w-4 h-4" />
@@ -2173,12 +2183,12 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
           {isEmpty && (
             <div className="flex-1 flex items-center justify-center h-full">
-              <div className="text-center text-gray-400 space-y-3">
+              <div className="text-center space-y-3" style={{ color: 'var(--t-text-muted)' }}>
                 <div className="w-16 h-16 rounded-2xl mx-auto flex items-center justify-center shadow-sm bg-gradient-to-br from-emerald-500 to-teal-600">
                   <Brain className="w-8 h-8 text-white" />
                 </div>
-                <div className="text-sm font-medium text-gray-600">知识库问答</div>
-                <div className="text-xs text-gray-400">
+                <div className="text-sm font-medium" style={{ color: 'var(--t-text-secondary)' }}>知识库问答</div>
+                <div className="text-xs">
                   {hasSelection ? '基于已选向量库进行知识检索问答' : '请先在左下角选择向量库'}
                 </div>
               </div>
@@ -2204,13 +2214,13 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
             <button onClick={() => setShowSystemPromptPanel(true)} className="underline hover:text-green-900">编辑</button>
           </div>
         )}
-        <div className="p-4 border-t border-gray-100 bg-green-50/30">
+        <div className="p-4 border-t bg-green-50/30" style={{ borderColor: 'var(--t-border-light)' }}>
           <div className="flex items-end gap-2 border rounded-2xl px-4 py-3 bg-white border-green-200 hover:border-green-300 focus-within:border-green-400 focus-within:ring-2 focus-within:ring-green-100 transition-all shadow-sm">
             <textarea ref={qaTextareaRef} value={qaInput}
               onChange={e => { setQaInput(e.target.value); requestAnimationFrame(() => { if (qaTextareaRef.current) { qaTextareaRef.current.style.height = 'auto'; const sh = qaTextareaRef.current.scrollHeight; qaTextareaRef.current.style.height = `${Math.max(36, Math.min(sh, 120))}px`; } }); }}
               onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSendQa(); } }}
               placeholder={hasSelection ? '向知识库提问...' : '请先选择向量库...'}
-              rows={1} className="flex-1 bg-transparent border-none outline-none resize-none text-sm text-gray-800 placeholder-gray-400 overflow-y-auto" style={{ height: '36px', maxHeight: '120px', minHeight: '36px' }} disabled={qaProcessing || !hasSelection} />
+              rows={1} className="flex-1 bg-transparent border-none outline-none resize-none text-sm placeholder-gray-400 overflow-y-auto" style={{ height: '36px', maxHeight: '120px', minHeight: '36px', color: 'var(--t-text)' }} disabled={qaProcessing || !hasSelection} />
             <button onClick={handleSendQa} disabled={!qaInput.trim() || qaProcessing || !hasSelection}
               className={`flex-shrink-0 p-2 rounded-xl transition-all shadow-sm ${qaInput.trim() && !qaProcessing && hasSelection ? 'text-white hover:opacity-90 active:scale-95' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
               style={qaInput.trim() && !qaProcessing && hasSelection ? { background: 'linear-gradient(135deg, #16a34a 0%, #059669 100%)' } : {}} title="发送">
@@ -2232,17 +2242,17 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
     const [prompt, setPrompt] = [editingScenario?.systemPrompt || '', (v: string) => setEditingScenario(prev => prev ? { ...prev, systemPrompt: v } : { id: `scenario-${Date.now()}`, name: '', systemPrompt: v, isBuiltin: false })];
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => { setShowScenarioEditor(false); setEditingScenario(null); }}>
-        <div className={`${panelCls} w-[460px] p-5 space-y-4 shadow-xl`} onClick={e => e.stopPropagation()}>
+        <div className={`${panelCls} w-[460px] p-5 space-y-4 shadow-xl`} style={panelStyle} onClick={e => e.stopPropagation()}>
           <div className="flex items-center justify-between">
-            <div className="text-sm font-bold text-gray-800 flex items-center gap-2"><Theater size={16} className="text-purple-500" /> {isNew ? '新建场景' : '编辑场景'}</div>
-            <button className="p-1 rounded hover:bg-gray-100 text-gray-400" onClick={() => { setShowScenarioEditor(false); setEditingScenario(null); }}><X size={14} /></button>
+            <div className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--t-text)' }}><Theater size={16} className="text-purple-500" /> {isNew ? '新建场景' : '编辑场景'}</div>
+            <button className="p-1 rounded theme-hover" style={{ color: 'var(--t-text-muted)' }} onClick={() => { setShowScenarioEditor(false); setEditingScenario(null); }}><X size={14} /></button>
           </div>
           <div className="space-y-3">
-            <div><label className="text-xs text-gray-500 mb-1 block">场景名称</label><input className={inputCls} value={name} onChange={e => setName(e.target.value)} placeholder="例如：期末复习" /></div>
-            <div><label className="text-xs text-gray-500 mb-1 block">提示词（系统角色设定）</label><textarea className={`${inputCls} h-32 resize-none`} value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="描述 AI 出题的风格…" /></div>
+            <div><label className="text-xs mb-1 block" style={{ color: 'var(--t-text-muted)' }}>场景名称</label><input className={inputCls} style={inputStyle} value={name} onChange={e => setName(e.target.value)} placeholder="例如：期末复习" /></div>
+            <div><label className="text-xs mb-1 block" style={{ color: 'var(--t-text-muted)' }}>提示词（系统角色设定）</label><textarea className={`${inputCls} h-32 resize-none`} style={inputStyle} value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="描述 AI 出题的风格…" /></div>
           </div>
           <div className="flex justify-end gap-2 pt-1">
-            <button className={btnSecondary} onClick={() => { setShowScenarioEditor(false); setEditingScenario(null); }}>取消</button>
+            <button className={btnSecondary} style={btnSecondaryStyle} onClick={() => { setShowScenarioEditor(false); setEditingScenario(null); }}>取消</button>
             <button className={btnPrimary} disabled={!name.trim() || !prompt.trim()} onClick={() => {
               const sc: QuizScenario = editingScenario?.id ? editingScenario : { id: `scenario-${Date.now()}`, name: name.trim(), systemPrompt: prompt.trim(), isBuiltin: false };
               sc.name = name.trim(); sc.systemPrompt = prompt.trim();
@@ -2263,10 +2273,12 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
         <div className="max-w-xl mx-auto space-y-4">
           {/* Dashboard / Quiz toggle */}
           <div className="flex items-center justify-between">
-            <div className="flex bg-gray-100 rounded-lg p-0.5">
-              <button className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${!showDashboard ? 'bg-white shadow text-purple-600' : 'text-gray-500 hover:text-gray-700'}`}
+            <div className="flex rounded-lg p-0.5" style={{ background: 'var(--t-bg-hover)' }}>
+              <button className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${!showDashboard ? 'shadow text-purple-600' : ''}`}
+                style={!showDashboard ? { background: 'var(--t-bg-card)' } : { color: 'var(--t-text-muted)' }}
                 onClick={() => setShowDashboard(false)}><GraduationCap size={12} className="inline mr-1" />出题</button>
-              <button className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${showDashboard ? 'bg-white shadow text-green-600' : 'text-gray-500 hover:text-gray-700'}`}
+              <button className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${showDashboard ? 'shadow text-green-600' : ''}`}
+                style={showDashboard ? { background: 'var(--t-bg-card)' } : { color: 'var(--t-text-muted)' }}
                 onClick={() => setShowDashboard(true)}><BarChart3 size={12} className="inline mr-1" />掌握度</button>
             </div>
           </div>
@@ -2327,8 +2339,8 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
 
     return (
       <>
-        <div className={`${panelCls} p-5 space-y-4`}>
-          <div className="text-sm font-bold text-gray-800 flex items-center gap-2">
+        <div className={`${panelCls} p-5 space-y-4`} style={panelStyle}>
+          <div className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--t-text)' }}>
             <GraduationCap size={16} className="text-purple-500" /> 生成测验
           </div>
           {/* Vector Store Roles */}
@@ -2342,8 +2354,8 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
                   const assignedStoreIds = getStoresForRole(rc.role);
                   const isPickerOpen = showRolePicker?.role === rc.role && showRolePicker?.anchorIdx === roleIdx;
                   return (
-                    <div key={rc.role} className="border border-gray-200 rounded-lg p-3">
-                      <div className="text-xs font-medium text-gray-700 mb-2 flex items-center gap-1.5">
+                    <div key={rc.role} className="border rounded-lg p-3" style={{ borderColor: 'var(--t-border)' }}>
+                      <div className="text-xs font-medium mb-2 flex items-center gap-1.5" style={{ color: 'var(--t-text-secondary)' }}>
                         {rc.icon} {rc.label}
                         <span className="text-[10px] text-gray-400 font-normal">— {rc.desc}</span>
                       </div>
@@ -2370,7 +2382,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
                         </button>
                       </div>
                       {isPickerOpen && (
-                        <div className="mt-2 border border-gray-200 rounded-lg bg-white shadow-sm max-h-32 overflow-y-auto">
+                        <div className="mt-2 border rounded-lg shadow-sm max-h-32 overflow-y-auto" style={{ borderColor: 'var(--t-border)', background: 'var(--t-bg-card)' }}>
                           {ragCollections.filter(c => !assignedStoreIds.includes(c.id)).length === 0 ? (
                             <div className="text-xs text-gray-400 p-2 text-center">所有向量库已添加</div>
                           ) : ragCollections.filter(c => !assignedStoreIds.includes(c.id)).map(col => (
@@ -2414,13 +2426,13 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
           {/* Direction */}
           <div>
             <label className="text-xs text-gray-500 mb-1 block">出题方向（可选）</label>
-            <textarea className={`${inputCls} h-16 resize-none`} placeholder="例如：重点考查第三章的概念定义和应用场景…" value={quizPrompt} onChange={e => setQuizPrompt(e.target.value)} />
+            <textarea className={`${inputCls} h-16 resize-none`} style={inputStyle} placeholder="例如：重点考查第三章的概念定义和应用场景…" value={quizPrompt} onChange={e => setQuizPrompt(e.target.value)} />
           </div>
           {/* Config */}
           <div className="flex gap-4 flex-wrap">
             <div>
               <label className="text-xs text-gray-500 mb-1 block">题数</label>
-              <input className={`${inputCls} w-16`} type="number" min={1} max={20} value={quizCount}
+              <input className={`${inputCls} w-16`} style={inputStyle} type="number" min={1} max={20} value={quizCount}
                 onChange={e => setQuizCount(Math.max(1, Math.min(20, parseInt(e.target.value) || 5)))} />
             </div>
             <div>
@@ -2454,8 +2466,8 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
         </div>
         {/* History */}
         {categoryRecentSessions.length > 0 && (
-          <div className={`${panelCls} p-4`}>
-            <div className="text-sm font-bold text-gray-800 flex items-center gap-2 mb-3"><Clock size={16} className="text-gray-400" /> 测验历史</div>
+          <div className={`${panelCls} p-4`} style={panelStyle}>
+            <div className="text-sm font-bold flex items-center gap-2 mb-3" style={{ color: 'var(--t-text)' }}><Clock size={16} className="text-gray-400" /> 测验历史</div>
             <div className="space-y-2">
               {categoryRecentSessions.slice(0, 20).map(session => {
                 const isAnswering = session.status === 'answering';
@@ -2484,7 +2496,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
                     }}>
                       {editingSessionName === session.id ? (
                         <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                          <input className={`${inputCls} text-xs py-0.5`} value={sessionNameInput} onChange={e => setSessionNameInput(e.target.value)}
+                          <input className={`${inputCls} text-xs py-0.5`} style={inputStyle} value={sessionNameInput} onChange={e => setSessionNameInput(e.target.value)}
                             onKeyDown={e => { if (e.key === 'Enter') handleRenameSession(session.id, sessionNameInput); if (e.key === 'Escape') setEditingSessionName(null); }} autoFocus />
                           <button className="p-0.5 rounded hover:bg-gray-200" onClick={() => handleRenameSession(session.id, sessionNameInput)}><Check size={12} className="text-green-600" /></button>
                           <button className="p-0.5 rounded hover:bg-gray-200" onClick={() => setEditingSessionName(null)}><X size={12} className="text-gray-400" /></button>
@@ -2521,9 +2533,9 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
   function renderQuizDebugPanel() {
     if (!showQuizDebug || quizDebugData.length === 0) return null;
     return (
-      <div className={`${panelCls} p-4 space-y-3`}>
+      <div className={`${panelCls} p-4 space-y-3`} style={panelStyle}>
         <div className="flex items-center justify-between">
-          <div className="text-sm font-bold text-gray-800 flex items-center gap-2"><Bug size={16} className="text-amber-500" /> 调试数据 ({quizDebugData.length} 条)</div>
+          <div className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--t-text)' }}><Bug size={16} className="text-amber-500" /> 调试数据 ({quizDebugData.length} 条)</div>
           <button className="p-1 rounded hover:bg-gray-100 text-gray-400" onClick={() => setShowQuizDebug(false)}><X size={14} /></button>
         </div>
         <div className="space-y-2">
@@ -2609,7 +2621,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
       <div className="flex-1 overflow-y-auto p-4">
         <div className="max-w-2xl mx-auto space-y-4">
           <div className="flex items-center justify-between">
-            <button className={btnSecondary} onClick={handleExitQuiz}><ChevronRight size={12} className="rotate-180" /> 返回</button>
+            <button className={btnSecondary} style={btnSecondaryStyle} onClick={handleExitQuiz}><ChevronRight size={12} className="rotate-180" /> 返回</button>
             <div className="flex items-center gap-2">
               <div className="flex gap-1">
                 {questions.map((_, i) => {
@@ -2638,7 +2650,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
             </div>
           </div>
           {/* Question card */}
-          <div className={`${panelCls} p-5 space-y-4 ${isCompleted && ev ? ev.totalScore >= 70 ? 'border-green-200' : ev.totalScore >= 40 ? 'border-yellow-200' : 'border-red-200' : ''}`}>
+          <div className={`${panelCls} p-5 space-y-4 ${isCompleted && ev ? ev.totalScore >= 70 ? 'border-green-200' : ev.totalScore >= 40 ? 'border-yellow-200' : 'border-red-200' : ''}`} style={{ background: 'var(--t-bg-card)', ...(!isCompleted || !ev ? { borderColor: 'var(--t-border)' } : {}) }}>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">{QUESTION_TYPE_INFO[q.type]?.label || q.type}</span>
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">难度 {q.difficulty}/5</span>
@@ -2647,7 +2659,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
             </div>
             <div className="text-sm text-gray-800 leading-relaxed font-medium">{q.question}</div>
             {!isCompleted && !isGrading && (
-              <textarea className={`${inputCls} h-32 resize-none`} placeholder="请输入你的回答…" value={userAnswers[q.id] || ''}
+              <textarea className={`${inputCls} h-32 resize-none`} style={inputStyle} placeholder="请输入你的回答…" value={userAnswers[q.id] || ''}
                 onChange={e => setUserAnswers(prev => ({ ...prev, [q.id]: e.target.value }))} />
             )}
             {isGrading && gradingIndex === currentQIndex && (
@@ -2693,19 +2705,19 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
           </div>
           {/* Navigation */}
           <div className="flex items-center justify-between">
-            <button className={btnSecondary} onClick={() => setCurrentQIndex(Math.max(0, currentQIndex - 1))} disabled={currentQIndex === 0}>上一题</button>
+            <button className={btnSecondary} style={btnSecondaryStyle} onClick={() => setCurrentQIndex(Math.max(0, currentQIndex - 1))} disabled={currentQIndex === 0}>上一题</button>
             <div className="text-xs text-gray-400">{currentQIndex + 1} / {questions.length}</div>
             {!isCompleted && !isGrading && currentQIndex === questions.length - 1 ? (
               <button className={`${btnPrimary} bg-purple-500 hover:bg-purple-600`} onClick={handleGradeQuiz}
                 disabled={Object.keys(userAnswers).filter(k => userAnswers[k]?.trim()).length === 0}><CheckCircle2 size={14} /> 提交评分</button>
             ) : (
-              <button className={btnSecondary} onClick={() => setCurrentQIndex(Math.min(questions.length - 1, currentQIndex + 1))} disabled={currentQIndex >= questions.length - 1}>下一题 <ArrowRight size={12} /></button>
+              <button className={btnSecondary} style={btnSecondaryStyle} onClick={() => setCurrentQIndex(Math.min(questions.length - 1, currentQIndex + 1))} disabled={currentQIndex >= questions.length - 1}>下一题 <ArrowRight size={12} /></button>
             )}
           </div>
           {/* Session Summary */}
           {isCompleted && activeQuiz.summary && currentQIndex === questions.length - 1 && (
-            <div className={`${panelCls} p-4 space-y-2`}>
-              <div className="text-sm font-bold text-gray-800 flex items-center gap-2"><BarChart3 size={16} className="text-blue-500" /> 练习报告</div>
+            <div className={`${panelCls} p-4 space-y-2`} style={panelStyle}>
+              <div className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--t-text)' }}><BarChart3 size={16} className="text-blue-500" /> 练习报告</div>
               <div className="grid grid-cols-4 gap-2 text-center">
                 <div className="bg-gray-50 rounded-lg p-2"><div className="text-lg font-bold text-gray-800">{activeQuiz.summary.overallGrade}</div><div className="text-[10px] text-gray-400">等级</div></div>
                 <div className="bg-gray-50 rounded-lg p-2"><div className="text-lg font-bold text-gray-800">{Math.round(activeQuiz.summary.avgScore)}</div><div className="text-[10px] text-gray-400">均分</div></div>
@@ -2713,7 +2725,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
                 <div className="bg-gray-50 rounded-lg p-2"><div className="text-lg font-bold text-red-600">{activeQuiz.summary.minScore}</div><div className="text-[10px] text-gray-400">最低</div></div>
               </div>
               {activeQuiz.summary.recommendation && <div className="text-xs text-gray-600 bg-blue-50 rounded-lg p-3">📝 {activeQuiz.summary.recommendation}</div>}
-              <button className={`${btnSecondary} w-full justify-center mt-2`} onClick={() => setActiveQuiz(null)}><RotateCcw size={14} /> 重新出题</button>
+              <button className={`${btnSecondary} w-full justify-center mt-2`} style={btnSecondaryStyle} onClick={() => setActiveQuiz(null)}><RotateCcw size={14} /> 重新出题</button>
             </div>
           )}
           {renderQuizDebugPanel()}
@@ -2734,7 +2746,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
         <div className="max-w-2xl mx-auto space-y-4">
           {/* Header */}
           <div className="flex items-center justify-between">
-            <button className={btnSecondary} onClick={handleExitQuiz}><ChevronRight size={12} className="rotate-180" /> 返回</button>
+            <button className={btnSecondary} style={btnSecondaryStyle} onClick={handleExitQuiz}><ChevronRight size={12} className="rotate-180" /> 返回</button>
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-500">
                 {isCompleted ? `面试结束 · ${interviewHistory.length} 题` : `面试进行中 · 第 ${interviewTotalNew}/${interviewMaxQuestions} 题`}
@@ -2758,7 +2770,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
                   <div className="w-7 h-7 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0 mt-0.5">
                     <GraduationCap size={14} className="text-purple-600" />
                   </div>
-                  <div className={`flex-1 ${panelCls} p-3 space-y-2`}>
+                  <div className={`flex-1 ${panelCls} p-3 space-y-2`} style={panelStyle}>
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">
                         {entry.isFollowUp ? '追问' : QUESTION_TYPE_INFO[entry.question.type]?.label || entry.question.type}
@@ -2845,7 +2857,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
                   <div className="w-7 h-7 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0 mt-0.5">
                     <GraduationCap size={14} className="text-purple-600" />
                   </div>
-                  <div className={`flex-1 ${panelCls} p-3 space-y-2 border-purple-200`}>
+                  <div className={`flex-1 ${panelCls} p-3 space-y-2 border-purple-200`} style={{ background: 'var(--t-bg-card)' }}>
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">
                         {interviewCurrentQ.type === 'follow_up' ? '追问' : QUESTION_TYPE_INFO[interviewCurrentQ.type]?.label || interviewCurrentQ.type}
@@ -2864,7 +2876,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
                 ) : (
                   <div className="ml-10 space-y-2">
                     <textarea
-                      className={`${inputCls} h-28 resize-none`}
+                      className={`${inputCls} h-28 resize-none`} style={inputStyle}
                       placeholder="请输入你的回答…"
                       value={interviewAnswer}
                       onChange={e => setInterviewAnswer(e.target.value)}
@@ -2893,8 +2905,8 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
 
           {/* Completed summary */}
           {isCompleted && activeQuiz.summary && (
-            <div className={`${panelCls} p-4 space-y-3`}>
-              <div className="text-sm font-bold text-gray-800 flex items-center gap-2">
+            <div className={`${panelCls} p-4 space-y-3`} style={panelStyle}>
+              <div className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--t-text)' }}>
                 <BarChart3 size={16} className="text-blue-500" /> 面试报告
               </div>
               <div className="grid grid-cols-4 gap-2 text-center">
@@ -2906,7 +2918,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
               {activeQuiz.summary.recommendation && (
                 <div className="text-xs text-gray-600 bg-blue-50 rounded-lg p-3">📝 {activeQuiz.summary.recommendation}</div>
               )}
-              <button className={`${btnSecondary} w-full justify-center mt-2`} onClick={() => { setActiveQuiz(null); setInterviewHistory([]); setInterviewCurrentQ(null); }}>
+              <button className={`${btnSecondary} w-full justify-center mt-2`} style={btnSecondaryStyle} onClick={() => { setActiveQuiz(null); setInterviewHistory([]); setInterviewCurrentQ(null); }}>
                 <RotateCcw size={14} /> 重新出题
               </button>
             </div>
@@ -3003,7 +3015,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
               { label: '均分', value: Math.round(stats.avgScore), icon: <Award size={14} /> },
               { label: '连续天数', value: stats.streakDays, icon: <Sparkles size={14} /> },
             ].map(s => (
-              <div key={s.label} className={`${panelCls} p-3 text-center`}>
+              <div key={s.label} className={`${panelCls} p-3 text-center`} style={panelStyle}>
                 <div className="text-gray-400 mb-1">{s.icon}</div>
                 <div className="text-xl font-bold text-gray-800">{s.value}</div>
                 <div className="text-[10px] text-gray-400">{s.label}</div>
@@ -3014,8 +3026,8 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
 
         {/* ── Mastery distribution: donut + legend ── */}
         {points.length > 0 && (
-          <div className={`${panelCls} p-4`}>
-            <div className="text-sm font-bold text-gray-800 flex items-center gap-2 mb-3">
+          <div className={`${panelCls} p-4`} style={panelStyle}>
+            <div className="text-sm font-bold flex items-center gap-2 mb-3" style={{ color: 'var(--t-text)' }}>
               <Brain size={16} className="text-purple-500" /> 标签掌握度分布
             </div>
             <div className="flex items-center gap-6">
@@ -3042,8 +3054,8 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
 
         {/* ── Score distribution bar chart ── */}
         {points.length > 0 && (
-          <div className={`${panelCls} p-4`}>
-            <div className="text-sm font-bold text-gray-800 flex items-center gap-2 mb-3">
+          <div className={`${panelCls} p-4`} style={panelStyle}>
+            <div className="text-sm font-bold flex items-center gap-2 mb-3" style={{ color: 'var(--t-text)' }}>
               <BarChart3 size={16} className="text-blue-500" /> 分数分布
             </div>
             <div className="flex items-end gap-1 h-20">
@@ -3064,8 +3076,8 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
 
         {/* ── Session score trend ── */}
         {trendPoints.length >= 2 && (
-          <div className={`${panelCls} p-4`}>
-            <div className="text-sm font-bold text-gray-800 flex items-center gap-2 mb-3">
+          <div className={`${panelCls} p-4`} style={panelStyle}>
+            <div className="text-sm font-bold flex items-center gap-2 mb-3" style={{ color: 'var(--t-text)' }}>
               <Sparkles size={16} className="text-amber-500" /> 成绩趋势
             </div>
             <svg viewBox="0 0 200 60" className="w-full h-16">
@@ -3109,8 +3121,8 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
 
         {/* ── Priority tags list ── */}
         {priorities.length > 0 && (
-          <div className={`${panelCls} p-4`}>
-            <div className="text-sm font-bold text-gray-800 flex items-center gap-2 mb-3">
+          <div className={`${panelCls} p-4`} style={panelStyle}>
+            <div className="text-sm font-bold flex items-center gap-2 mb-3" style={{ color: 'var(--t-text)' }}>
               <Target size={16} className="text-orange-500" /> 重点关注标签
             </div>
             {priorities.slice(0, 10).map(p => {
@@ -3141,8 +3153,8 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
 
         {/* ── Tag stats (by attempts) ── */}
         {stats && Object.keys(stats.byTag).length > 0 && (
-          <div className={`${panelCls} p-4`}>
-            <div className="text-sm font-bold text-gray-800 flex items-center gap-2 mb-3">
+          <div className={`${panelCls} p-4`} style={panelStyle}>
+            <div className="text-sm font-bold flex items-center gap-2 mb-3" style={{ color: 'var(--t-text)' }}>
               <BarChart3 size={16} className="text-teal-500" /> 标签练习统计
             </div>
             <div className="space-y-2">
@@ -3172,7 +3184,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
   function EmptyState({ icon, text, sub }: { icon: React.ReactNode; text: string; sub?: string }) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <div className="text-center text-gray-400 space-y-2">
+        <div className="text-center space-y-2" style={{ color: 'var(--t-text-muted)' }}>
           <div className="flex justify-center">{icon}</div>
           <div className="text-sm">{text}</div>
           {sub && <div className="text-xs">{sub}</div>}
@@ -3185,7 +3197,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
   // Main Layout
   // ═══════════════════════════════════════════════════════
   return (
-    <div className="h-full flex bg-white text-gray-800">
+    <div className="h-full flex" style={{ background: 'var(--t-bg-main)', color: 'var(--t-text)' }}>
       {renderScenarioEditor()}
       {renderSystemPromptPanel()}
 
@@ -3198,20 +3210,21 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
         {!compact && (
-        <div className="flex items-center justify-between px-5 py-2.5 border-b border-gray-200 shrink-0">
+        <div className="flex items-center justify-between px-5 py-2.5 border-b shrink-0" style={{ borderColor: 'var(--t-border)', background: 'var(--t-header-bg)' }}>
           <div className="flex items-center gap-3">
             {/* Sidebar toggle */}
             <button
               onClick={() => setKbSidebarVisible(v => !v)}
-              className="p-1 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+              className="p-1 rounded-lg transition-colors theme-hover"
+              style={{ color: 'var(--t-text-muted)' }}
               title={kbSidebarVisible ? '隐藏侧边栏' : '显示侧边栏'}
             >
               {kbSidebarVisible ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
             </button>
-            <div className="flex items-center gap-2 text-sm font-bold text-gray-800">
+            <div className="flex items-center gap-2 text-sm font-bold" style={{ color: 'var(--t-text)' }}>
               <Library size={18} className="text-blue-500" /> 知识库
             </div>
-            <div className="flex bg-gray-100 rounded-lg p-0.5 ml-2">
+            <div className="flex rounded-lg p-0.5 ml-2" style={{ background: 'var(--t-bg-hover)' }}>
               {([
                 { key: 'ai' as const, label: 'AI 助手', icon: <Sparkles size={12} />, color: 'purple' },
                 { key: 'qa' as const, label: '知识库问答', icon: <Brain size={12} />, color: 'green' },
@@ -3219,8 +3232,9 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
               ]).map(tab => (
                 <button key={tab.key}
                   className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs transition-colors ${
-                    mode === tab.key ? `bg-white shadow text-${tab.color}-600 font-medium` : 'text-gray-500 hover:text-gray-700'
+                    mode === tab.key ? `shadow text-${tab.color}-600 font-medium` : ''
                   }`}
+                  style={mode === tab.key ? { background: 'var(--t-bg-card)' } : { color: 'var(--t-text-muted)' }}
                   onClick={() => { setMode(tab.key); if (tab.key !== 'quiz') setActiveQuiz(null); }}>
                   {tab.icon} {tab.label}
                 </button>
@@ -3233,7 +3247,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
               const cfg = mode === 'ai' ? (aiLlmConfig || chatConfig) : mode === 'qa' ? (qaLlmConfig || chatConfig) : quizLlmConfig;
               const modelName = cfg?.model;
               return modelName ? (
-                <span className="text-[10px] text-gray-400 bg-gray-50 border border-gray-200 rounded-md px-1.5 py-0.5 font-mono truncate max-w-[160px]" title={modelName}>
+                <span className="text-[10px] border rounded-md px-1.5 py-0.5 font-mono truncate max-w-[160px]" style={{ color: 'var(--t-text-muted)', background: 'var(--t-bg-hover)', borderColor: 'var(--t-border)' }} title={modelName}>
                   {modelName}
                 </span>
               ) : null;

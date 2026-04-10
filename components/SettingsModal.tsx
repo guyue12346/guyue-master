@@ -391,25 +391,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/20 backdrop-blur-sm transition-opacity" onClick={onClose} />
+      <div className="absolute inset-0 z-[1] bg-black/20 backdrop-blur-sm transition-opacity" onClick={onClose} />
 
       {/* Modal Content */}
-      <div className="relative bg-white/90 backdrop-blur-2xl rounded-2xl shadow-2xl w-full max-w-2xl border border-white/50 overflow-clip transform transition-all scale-100">
+      <div className="relative z-[2] flex flex-col bg-white rounded-2xl shadow-2xl w-full max-w-2xl border border-gray-200 max-h-[90vh] overflow-hidden">
         
         {/* Header */}
-        <div className="relative z-10 px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-white/50">
+        <div className="shrink-0 px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-white">
           <h2 className="text-lg font-semibold text-gray-800">设置</h2>
-          <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-200/50 transition-colors">
+          <button onClick={onClose} className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 transition-colors cursor-pointer">
             <X className="w-5 h-5 text-gray-500" />
           </button>
         </div>
 
         {/* Scrollable Content */}
-        <div className="p-6 space-y-8 max-h-[80vh] overflow-y-auto">
+        <div className="flex-1 min-h-0 p-6 space-y-8 overflow-y-auto">
 
           {/* Section: User Profile */}
           <div className="space-y-4">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               个人资料
             </h3>
             <div className="flex items-center gap-6">
@@ -439,7 +439,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
               <div className="flex-1 space-y-3">
                 <div>
-                  <label className="text-xs font-medium text-gray-500 mb-1 block">昵称</label>
+                  <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--t-text-muted)' }}>昵称</label>
                   <input
                     type="text"
                     value={userName}
@@ -465,7 +465,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       移除头像
                     </button>
                   )}
-                  <span className="text-xs text-gray-400">支持 JPG、PNG，最大 2MB</span>
+                  <span className="text-xs" style={{ color: 'var(--t-text-muted)' }}>支持 JPG、PNG，最大 2MB</span>
                 </div>
               </div>
             </div>
@@ -473,18 +473,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Section: Appearance */}
           <div className="space-y-4">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               外观设置
             </h3>
             <div>
-              <label className="text-xs font-medium text-gray-500 mb-2 block">侧边栏风格</label>
+              <label className="text-xs font-medium text-gray-500 mb-2 block">主题风格</label>
               <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
                 {([
-                  { key: 'default', label: '默认', desc: '圆角深色', preview: { bg: '#1E1E1E', item: 'rounded-xl', accent: 'bg-blue-600' } },
-                  { key: 'vscode', label: 'VSCode', desc: '扁平紧凑', preview: { bg: '#252526', item: 'rounded-none', accent: 'border-l-2 border-white' } },
-                  { key: 'minimal', label: '极简', desc: '明亮简洁', preview: { bg: '#F3F4F6', item: 'rounded-lg', accent: 'bg-white shadow' } },
-                  { key: 'glass', label: '毛玻璃', desc: '透明模糊', preview: { bg: 'rgba(255,255,255,0.2)', item: 'rounded-lg', accent: 'bg-white/30' } },
-                  { key: 'candy', label: '彩虹糖', desc: '缤纷渐变', preview: { bg: '#ec4899', item: 'rounded-2xl', accent: 'bg-white/25' } },
+                  { key: 'default', label: '默认', desc: '蓝色强调', preview: { bg: '#1E1E1E', item: 'rounded-xl', accent: 'bg-blue-600' } },
+                  { key: 'vscode', label: 'VSCode', desc: '天蓝强调', preview: { bg: '#252526', item: 'rounded-none', accent: 'border-l-2 border-white' } },
+                  { key: 'minimal', label: '极简', desc: '清爽蓝调', preview: { bg: '#F3F4F6', item: 'rounded-lg', accent: 'bg-white shadow' } },
+                  { key: 'glass', label: '毛玻璃', desc: '冰蓝青绿', preview: { bg: 'rgba(15,23,42,0.85)', item: 'rounded-lg', accent: 'bg-cyan-400/30' } },
+                  { key: 'candy', label: '彩虹糖', desc: '粉紫梦幻', preview: { bg: '#ec4899', item: 'rounded-2xl', accent: 'bg-white/25' } },
                 ] as const).map(t => {
                   const isActive = sidebarTheme === t.key;
                   const isGradient = t.key === 'candy';
@@ -498,9 +498,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           className="w-6 h-16 rounded-md flex flex-col items-center justify-center gap-1"
                           style={isGradient ? { background: 'linear-gradient(to bottom, #ec4899, #8b5cf6, #4f46e5)' } : { background: t.preview.bg }}
                         >
-                          <div className={`w-3 h-3 ${t.preview.item} ${t.key === 'minimal' ? 'bg-gray-400' : t.key === 'glass' || t.key === 'candy' ? 'bg-white/40' : 'bg-gray-600'}`} />
-                          <div className={`w-3 h-3 ${t.preview.item} ${t.key === 'minimal' ? 'bg-blue-500' : t.key === 'vscode' ? 'bg-gray-400 border-l-2 border-white' : t.key === 'glass' ? 'bg-white/60' : t.key === 'candy' ? 'bg-white/50 ring-1 ring-white/60' : 'bg-blue-500'}`} />
-                          <div className={`w-3 h-3 ${t.preview.item} ${t.key === 'minimal' ? 'bg-gray-400' : t.key === 'glass' || t.key === 'candy' ? 'bg-white/40' : 'bg-gray-600'}`} />
+                          <div className={`w-3 h-3 ${t.preview.item} ${t.key === 'minimal' ? 'bg-gray-400' : t.key === 'glass' ? 'bg-gray-500' : t.key === 'candy' ? 'bg-white/40' : 'bg-gray-600'}`} />
+                          <div className={`w-3 h-3 ${t.preview.item} ${t.key === 'minimal' ? 'bg-blue-500' : t.key === 'vscode' ? 'bg-gray-400 border-l-2 border-white' : t.key === 'glass' ? 'bg-cyan-400/50' : t.key === 'candy' ? 'bg-white/50 ring-1 ring-white/60' : 'bg-blue-500'}`} />
+                          <div className={`w-3 h-3 ${t.preview.item} ${t.key === 'minimal' ? 'bg-gray-400' : t.key === 'glass' ? 'bg-gray-500' : t.key === 'candy' ? 'bg-white/40' : 'bg-gray-600'}`} />
                         </div>
                       </div>
                       <div className="text-xs font-medium text-gray-800">{t.label}</div>
@@ -511,7 +511,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-500 mb-2 block">Markdown 渲染风格</label>
+              <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--t-text-muted)' }}>Markdown 渲染风格</label>
               <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
                 {([
                   { key: 'default', label: '默认', desc: '柔和圆角' },
@@ -524,10 +524,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   return (
                     <button key={e.key}
                       onClick={() => { setMdEngine(e.key); localStorage.setItem('guyue_md_engine', e.key); window.dispatchEvent(new Event('md-engine-change')); }}
-                      className={`px-3 py-2 rounded-xl border-2 transition-all text-left ${isActive ? 'border-blue-500 bg-blue-50/50' : 'border-gray-200 hover:border-gray-300'}`}
+                      className={`px-3 py-2 rounded-xl border-2 transition-all text-left ${isActive ? 'border-blue-500' : 'hover:border-gray-300'}`} style={isActive ? { background: 'var(--t-accent-bg)' } : { borderColor: 'var(--t-border)' }}
                     >
-                      <div className="text-xs font-medium text-gray-800">{e.label}</div>
-                      <div className="text-[10px] text-gray-400">{e.desc}</div>
+                      <div className="text-xs font-medium" style={{ color: 'var(--t-text)' }}>{e.label}</div>
+                      <div className="text-[10px]" style={{ color: 'var(--t-text-muted)' }}>{e.desc}</div>
                     </button>
                   );
                 })}
@@ -537,12 +537,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           
           {/* Section: API Key Management */}
           <div className="space-y-4">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2 flex items-center gap-1.5">
+            <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2 flex items-center gap-1.5" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               <Key className="w-3.5 h-3.5" /> API 密钥管理
             </h3>
 
-            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 space-y-3">
-              <p className="text-xs text-gray-400">
+            <div className="rounded-xl p-4 border space-y-3" style={{ background: 'var(--t-bg-secondary)', borderColor: 'var(--t-border-light)' }}>
+              <p className="text-xs" style={{ color: 'var(--t-text-muted)' }}>
                 统一管理所有 API 密钥。各功能模块（AI 助手、知识库、向量库等）将从此处选择已保存的配置。
               </p>
 
@@ -614,13 +614,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     }
 
                     return (
-                      <div key={profile.id} className="bg-white rounded-lg border border-gray-200 p-3 flex items-center justify-between hover:border-gray-300 transition-colors">
+                      <div key={profile.id} className="rounded-lg border p-3 flex items-center justify-between hover:border-gray-300 transition-colors" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
                         <div className="flex items-center gap-3 min-w-0 flex-1">
                           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center shrink-0">
                             <Key className="w-3.5 h-3.5 text-blue-500" />
                           </div>
                           <div className="min-w-0">
-                            <div className="text-sm font-medium text-gray-800 truncate">{profile.name}</div>
+                            <div className="text-sm font-medium truncate" style={{ color: 'var(--t-text)' }}>{profile.name}</div>
                             <div className="flex items-center gap-2 text-[10px] text-gray-400">
                               <span className="px-1.5 py-0.5 bg-gray-100 rounded">{API_PROVIDER_LABELS[profile.provider] || profile.provider}</span>
                               <span className="font-mono">
@@ -751,17 +751,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Section: Module Management */}
           <div className="space-y-4">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               功能模块管理
             </h3>
             
-            <p className="text-xs text-gray-400">
+            <p className="text-xs" style={{ color: 'var(--t-text-muted)' }}>
               拖动右侧的手柄即可调整模块顺序，顺序越靠前会在主界面中优先显示。
             </p>
 
-            <div className="rounded-xl border border-gray-200">
+            <div className="rounded-xl border" style={{ borderColor: 'var(--t-border)' }}>
               <table className="w-full text-sm text-left">
-                <thead className="bg-gray-50 text-gray-500 font-medium border-b border-gray-200">
+                <thead className="font-medium border-b" style={{ background: 'var(--t-bg-secondary)', color: 'var(--t-text-muted)', borderColor: 'var(--t-border)' }}>
                   <tr>
                     <th className="px-4 py-3 w-16 text-center">启用</th>
                     <th className="px-4 py-3">模块名称</th>
@@ -770,7 +770,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <th className="px-4 py-3 w-24 text-center">顺序</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100 bg-white">
+                <tbody className="divide-y" style={{ background: 'var(--t-bg-card)', '--tw-divide-color': 'var(--t-border-light)' } as React.CSSProperties}>
                   {sortedModules.map(module => (
                     <tr
                       key={module.id}
@@ -786,7 +786,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           {module.enabled ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
                         </button>
                       </td>
-                      <td className="px-4 py-3 font-medium text-gray-700">
+                      <td className="px-4 py-3 font-medium" style={{ color: 'var(--t-text)' }}>
                         {module.name}
                       </td>
                       <td className="px-4 py-3 text-center">
@@ -843,7 +843,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       </td>
                       <td className="px-4 py-3 text-center">
                         <div className={`flex items-center justify-center gap-2 ${!module.enabled ? 'opacity-40' : ''}`}>
-                          <span className="text-xs text-gray-400">
+                          <span className="text-xs" style={{ color: 'var(--t-text-muted)' }}>
                             #{sortedModules.findIndex(m => m.id === module.id) + 1}
                           </span>
                           <div
@@ -870,8 +870,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Section: Plugin Extensions */}
           <div className="space-y-4">
-            <div className="flex items-center justify-between border-b border-gray-100 pb-2">
-              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+            <div className="flex items-center justify-between border-b pb-2" style={{ borderColor: 'var(--t-border-light)' }}>
+              <h3 className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--t-text-muted)' }}>
                 插件扩展
               </h3>
               <button
@@ -884,15 +884,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
             
             {plugins.length === 0 ? (
-              <div className="text-center py-8 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+              <div className="text-center py-8 rounded-xl border border-dashed" style={{ background: 'var(--t-bg-secondary)', borderColor: 'var(--t-border)' }}>
                 <Package className="w-8 h-8 text-gray-300 mx-auto mb-2" />
                 <p className="text-sm text-gray-500">暂无已安装的插件</p>
-                <p className="text-xs text-gray-400 mt-1">点击右上角"安装插件"导入功能模块</p>
+                <p className="text-xs mt-1" style={{ color: 'var(--t-text-muted)' }}>点击右上角"安装插件"导入功能模块</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-3">
                 {plugins.map(plugin => (
-                  <div key={plugin.id} className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-xl hover:border-blue-200 transition-colors">
+                  <div key={plugin.id} className="flex items-center gap-3 p-3 border rounded-xl hover:border-blue-200 transition-colors" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
                     <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600">
                       {plugin.icon ? (
                         <img src={plugin.icon} alt={plugin.name} className="w-6 h-6" />
@@ -902,7 +902,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <h4 className="text-sm font-medium text-gray-900 truncate">{plugin.name}</h4>
+                        <h4 className="text-sm font-medium truncate" style={{ color: 'var(--t-text)' }}>{plugin.name}</h4>
                         <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded-full">v{plugin.version}</span>
                       </div>
                       <p className="text-xs text-gray-500 truncate">{plugin.description || '无描述'}</p>
@@ -934,15 +934,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Section: Splash Screen Settings */}
           <div className="space-y-4">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               开屏动画设置
             </h3>
             
-            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 space-y-4">
+            <div className="rounded-xl p-4 border space-y-4" style={{ background: 'var(--t-bg-secondary)', borderColor: 'var(--t-border-light)' }}>
               <div className="flex items-center justify-between">
                 <div className="flex flex-col gap-1">
-                  <label className="text-sm font-medium text-gray-700">开屏动画</label>
-                  <p className="text-xs text-gray-400">开启或关闭应用启动时的开屏动画</p>
+                  <label className="text-sm font-medium" style={{ color: 'var(--t-text)' }}>开屏动画</label>
+                  <p className="text-xs" style={{ color: 'var(--t-text-muted)' }}>开启或关闭应用启动时的开屏动画</p>
                 </div>
                 <button 
                   onClick={() => {
@@ -957,7 +957,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
               
               <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium text-gray-700">开屏文案</label>
+                <label className="text-sm font-medium" style={{ color: 'var(--t-text)' }}>开屏文案</label>
                 <textarea
                   value={splashQuotesInput}
                   onChange={(e) => handleSplashQuotesChange(e.target.value)}
@@ -966,20 +966,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   className="px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 bg-white resize-none"
                   disabled={!splashEnabled}
                 />
-                <p className="text-xs text-gray-400">支持多行输入，每行一句。应用启动时会从列表中随机展示一句（重启生效）。</p>
+                <p className="text-xs" style={{ color: 'var(--t-text-muted)' }}>支持多行输入，每行一句。应用启动时会从列表中随机展示一句（重启生效）。</p>
               </div>
             </div>
           </div>
 
           {/* Section: Proxy Settings */}
           <div className="space-y-4">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               网络代理（AI 请求）
             </h3>
-            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 space-y-3">
+            <div className="rounded-xl p-4 border space-y-3" style={{ background: 'var(--t-bg-secondary)', borderColor: 'var(--t-border-light)' }}>
               <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-gray-700">本地 HTTP 代理端口</label>
-                <p className="text-xs text-gray-400">填入本地代理软件的 HTTP 端口（如 Clash 的 7897），所有 AI 对话和知识库请求将通过该端口发出。留空则直连。</p>
+                <label className="text-sm font-medium" style={{ color: 'var(--t-text)' }}>本地 HTTP 代理端口</label>
+                <p className="text-xs" style={{ color: 'var(--t-text-muted)' }}>填入本地代理软件的 HTTP 端口（如 Clash 的 7897），所有 AI 对话和知识库请求将通过该端口发出。留空则直连。</p>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-sm text-gray-500 whitespace-nowrap">127.0.0.1 :</span>
@@ -1027,15 +1027,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Section: Agent Shortcut */}
           <div className="space-y-4">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               AI 助手快捷键
             </h3>
             
-            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+            <div className="rounded-xl p-4 border" style={{ background: 'var(--t-bg-secondary)', borderColor: 'var(--t-border-light)' }}>
               <div className="flex items-center justify-between">
                 <div className="flex flex-col gap-1">
-                  <label className="text-sm font-medium text-gray-700">唤起快捷键</label>
-                  <p className="text-xs text-gray-400">连按两下开启 / 关闭 AI 助手</p>
+                  <label className="text-sm font-medium" style={{ color: 'var(--t-text)' }}>唤起快捷键</label>
+                  <p className="text-xs" style={{ color: 'var(--t-text-muted)' }}>连按两下开启 / 关闭 AI 助手</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <select
@@ -1053,7 +1053,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <option value="Alt">⌥ Option</option>
                     <option value="Shift">⇧ Shift</option>
                   </select>
-                  <span className="text-xs text-gray-400">× 2</span>
+                  <span className="text-xs" style={{ color: 'var(--t-text-muted)' }}>× 2</span>
                 </div>
               </div>
             </div>
@@ -1061,13 +1061,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Section: Browser Settings */}
           <div className="space-y-4">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               浏览器设置
             </h3>
             
-            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+            <div className="rounded-xl p-4 border" style={{ background: 'var(--t-bg-secondary)', borderColor: 'var(--t-border-light)' }}>
               <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium text-gray-700">起始默认页面</label>
+                <label className="text-sm font-medium" style={{ color: 'var(--t-text)' }}>起始默认页面</label>
                 <div className="flex items-center gap-2">
                   <Globe className="w-4 h-4 text-gray-400" />
                   <input 
@@ -1081,22 +1081,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 bg-white"
                   />
                 </div>
-                <p className="text-xs text-gray-400">设置内置浏览器启动时默认打开的网页地址</p>
+                <p className="text-xs" style={{ color: 'var(--t-text-muted)' }}>设置内置浏览器启动时默认打开的网页地址</p>
               </div>
             </div>
           </div>
 
           {/* Section: File Archive */}
           <div className="space-y-4">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               文件管理设置
             </h3>
             
-            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+            <div className="rounded-xl p-4 border" style={{ background: 'var(--t-bg-secondary)', borderColor: 'var(--t-border-light)' }}>
               <div className="flex items-center justify-between mb-2">
                 <div>
-                  <h4 className="text-sm font-medium text-gray-700">本地归档根目录</h4>
-                  <p className="text-xs text-gray-400 mt-1">文件管理和学习模块的资源文件都将保存到此目录</p>
+                  <h4 className="text-sm font-medium" style={{ color: 'var(--t-text)' }}>本地归档根目录</h4>
+                  <p className="text-xs mt-1" style={{ color: 'var(--t-text-muted)' }}>文件管理和学习模块的资源文件都将保存到此目录</p>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <button 
@@ -1128,11 +1128,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
 
             {/* Obsidian Vault Path */}
-            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+            <div className="rounded-xl p-4 border" style={{ background: 'var(--t-bg-secondary)', borderColor: 'var(--t-border-light)' }}>
               <div className="flex items-center justify-between mb-2">
                 <div>
-                  <h4 className="text-sm font-medium text-gray-700">Obsidian Vault 路径</h4>
-                  <p className="text-xs text-gray-400 mt-1">配置后可在文件管理中快速导入 Vault 中的笔记</p>
+                  <h4 className="text-sm font-medium" style={{ color: 'var(--t-text)' }}>Obsidian Vault 路径</h4>
+                  <p className="text-xs mt-1" style={{ color: 'var(--t-text-muted)' }}>配置后可在文件管理中快速导入 Vault 中的笔记</p>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <button 
@@ -1166,15 +1166,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Section: Data Management */}
           <div className="space-y-4">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 pb-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               数据管理
             </h3>
             
             {/* App Data Location */}
-            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 flex items-center justify-between">
+            <div className="rounded-xl p-4 border flex items-center justify-between" style={{ background: 'var(--t-bg-secondary)', borderColor: 'var(--t-border-light)' }}>
               <div>
-                <h4 className="text-sm font-medium text-gray-700">应用数据位置</h4>
-                <p className="text-xs text-gray-400 mt-1">存储数据库文件和配置信息</p>
+                <h4 className="text-sm font-medium" style={{ color: 'var(--t-text)' }}>应用数据位置</h4>
+                <p className="text-xs mt-1" style={{ color: 'var(--t-text-muted)' }}>存储数据库文件和配置信息</p>
               </div>
               <button 
                 onClick={async () => {
@@ -1192,11 +1192,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </button>
             </div>
 
-            <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 space-y-3">
+            <div className="rounded-xl p-4 border space-y-3" style={{ background: 'var(--t-bg-secondary)', borderColor: 'var(--t-border-light)' }}>
               <div className="flex items-center justify-between">
                 <div>
-                  <h4 className="text-sm font-medium text-gray-700">导出数据</h4>
-                  <p className="text-xs text-gray-400 mt-1">导出全量数据为 JSON 备份（笔记、待办、学习、LeetCode 等全部模块）</p>
+                  <h4 className="text-sm font-medium" style={{ color: 'var(--t-text)' }}>导出数据</h4>
+                  <p className="text-xs mt-1" style={{ color: 'var(--t-text-muted)' }}>导出全量数据为 JSON 备份（笔记、待办、学习、LeetCode 等全部模块）</p>
                 </div>
                 <button
                   type="button"

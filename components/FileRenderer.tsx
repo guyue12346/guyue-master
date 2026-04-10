@@ -10,6 +10,7 @@ import 'katex/dist/katex.min.css';
 import { FileRecord } from '../types';
 import { FileText, Maximize2, Minimize2, Info, Lightbulb, AlertCircle, AlertTriangle, ShieldAlert, Edit, List, FolderSearch, RefreshCw, Type, Minus, Plus } from 'lucide-react';
 import { EnhancedPdfViewer } from './EnhancedPdfViewer';
+import { CodeBlock } from './MarkdownContent';
 
 type ReadingTheme = 'default' | 'sepia' | 'dark';
 
@@ -757,43 +758,11 @@ const renderFileContent = (file: FileRecord, content: string, settings?: Reading
                 }
 
                 if (!isInline && (match || isGenericCodeBlock)) {
-                  // Normalize language: C++ -> cpp, etc.
                   let lang = isGenericCodeBlock ? 'text' : match?.[1]?.toLowerCase();
                   if (lang === 'c++') lang = 'cpp';
                   if (lang === 'c#') lang = 'csharp';
 
-                  return (
-                    <SyntaxHighlighter
-                      {...props}
-                      style={oneLight}
-                      language={lang}
-                      PreTag="div"
-                      className="not-prose"
-                      customStyle={{
-                        backgroundColor: '#f5f5f7', // macOS style gray
-                        borderRadius: '0.5rem',
-                        padding: '1rem',
-                        margin: '1rem 0',
-                        fontSize: '0.9em',
-                        border: '1px solid #e5e7eb'
-                      }}
-                      codeTagProps={{
-                        className: 'not-prose',
-                        style: {
-                          fontFamily: 'Menlo, Monaco, Consolas, "Courier New", monospace'
-                        }
-                      }}
-                      showLineNumbers={true}
-                      lineNumberStyle={{
-                        minWidth: '2.5em',
-                        paddingRight: '1em',
-                        color: '#9ca3af', // gray-400
-                        textAlign: 'right'
-                      }}
-                    >
-                      {String(children).replace(/\n$/, '')}
-                    </SyntaxHighlighter>
-                  );
+                  return <CodeBlock language={lang}>{String(children).replace(/\n$/, '')}</CodeBlock>;
                 }
 
                 if (isInline) {

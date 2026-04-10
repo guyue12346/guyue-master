@@ -466,11 +466,11 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
       .sort((a, b) => (a.priority || 50) - (b.priority || 50));
 
     return (
-      <div className="flex flex-col h-full bg-white p-6">
+      <div className="flex flex-col h-full p-6" style={{ background: 'var(--t-bg-main)' }}>
         <div className="max-w-5xl mx-auto w-full">
           <div className="flex items-center justify-between mb-8">
             <div>
-              <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+              <h1 className="text-2xl font-bold flex items-center gap-3" style={{ color: 'var(--t-text)' }}>
                 <GraduationCap className="w-8 h-8 text-blue-600" />
                 学习空间
               </h1>
@@ -483,7 +483,7 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="搜索..."
-                  className="w-full pl-10 pr-4 py-2 bg-gray-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all"
+                  className="w-full pl-10 pr-4 py-2 border-none rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 transition-all" style={{ background: 'var(--t-input-bg)', color: 'var(--t-text)' }}
                 />
               </div>
               {onOpenChat && (
@@ -519,8 +519,8 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
                 <div key={cat.id} className="relative group">
                   <button
                     onClick={() => setSelectedCategoryId(cat.id)}
-                    className={`w-full h-full flex flex-col text-left bg-white border rounded-xl p-6 hover:shadow-lg transition-all duration-300`}
-                    style={{ borderColor: colors.borderColor }}
+                    className="w-full h-full flex flex-col text-left border rounded-xl p-6 hover:shadow-lg transition-all duration-300"
+                    style={{ borderColor: colors.borderColor, background: 'var(--t-bg-card)' }}
                   >
                     <div 
                       className={`w-14 h-14 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}
@@ -528,9 +528,9 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
                     >
                       <IconComponent className="w-7 h-7" style={{ color: colors.textColor }} />
                     </div>
-                    <h3 className="text-lg font-bold text-gray-800 mb-2">{cat.name}</h3>
-                    <p className="text-sm text-gray-500 line-clamp-2 flex-1">{cat.description}</p>
-                    <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-400">
+                    <h3 className="text-lg font-bold mb-2" style={{ color: 'var(--t-text)' }}>{cat.name}</h3>
+                    <p className="text-sm line-clamp-2 flex-1" style={{ color: 'var(--t-text-muted)' }}>{cat.description}</p>
+                    <div className="mt-4 pt-4 border-t text-xs" style={{ borderColor: 'var(--t-border-light)', color: 'var(--t-text-muted)' }}>
                       {courseCount} 门课程
                     </div>
                   </button>
@@ -542,13 +542,13 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
                         setEditingCategory(cat);
                         setIsCategoryModalOpen(true);
                       }}
-                      className="p-2 bg-white/80 backdrop-blur rounded-lg hover:bg-blue-50 text-gray-500 hover:text-blue-600 border border-gray-200 shadow-sm"
+                      className="p-2 backdrop-blur rounded-lg hover:bg-blue-50 text-gray-500 hover:text-blue-600 border shadow-sm" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
                     <button
                       onClick={(e) => handleDeleteCategory(cat.id, e)}
-                      className="p-2 bg-white/80 backdrop-blur rounded-lg hover:bg-red-50 text-gray-500 hover:text-red-600 border border-gray-200 shadow-sm"
+                      className="p-2 backdrop-blur rounded-lg hover:bg-red-50 text-gray-500 hover:text-red-600 border shadow-sm" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -589,7 +589,7 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
     const IconComponent = getCategoryIcon(selectedCategory?.icon || 'BookOpen');
 
     return (
-      <div className="flex flex-col h-full bg-white p-6">
+      <div className="flex flex-col h-full p-6" style={{ background: 'var(--t-bg-main)' }}>
         <div className="max-w-5xl mx-auto w-full">
           <div className="flex items-center justify-between mb-8">
             <div>
@@ -601,13 +601,13 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
                   <ChevronLeft className="w-5 h-5" />
                 </button>
               </div>
-              <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
+              <h1 className="text-2xl font-bold flex items-center gap-3" style={{ color: 'var(--t-text)' }}>
                 <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: colors.bgColor }}>
                   <IconComponent className="w-5 h-5" style={{ color: colors.textColor }} />
                 </div>
                 {selectedCategory?.name}
               </h1>
-              <p className="text-gray-500 mt-1">{selectedCategory?.description}</p>
+              <p className="mt-1" style={{ color: 'var(--t-text-muted)' }}>{selectedCategory?.description}</p>
             </div>
             <div className="flex items-center gap-4">
               <div className="relative w-64">
@@ -617,7 +617,7 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="搜索课程..."
-                  className="w-full pl-10 pr-4 py-2 bg-gray-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all"
+                  className="w-full pl-10 pr-4 py-2 border-none rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 transition-all" style={{ background: 'var(--t-input-bg)', color: 'var(--t-text)' }}
                 />
               </div>
               <button
@@ -662,8 +662,8 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
                   onClick={() => setSelectedCourseId(course.id)}
                 >
                   <div
-                    className="w-full flex flex-col text-left bg-white border rounded-xl p-6 hover:shadow-lg transition-all duration-300 h-full"
-                    style={{ borderColor: colors.borderColor }}
+                    className="w-full flex flex-col text-left border rounded-xl p-6 hover:shadow-lg transition-all duration-300 h-full"
+                    style={{ borderColor: colors.borderColor, background: 'var(--t-bg-card)' }}
                   >
                     <div 
                       className="w-12 h-12 rounded-lg flex items-center justify-center mb-4 group-hover:scale-105 transition-transform"
@@ -671,8 +671,8 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
                     >
                       {React.createElement(getCategoryIcon(course.icon || 'GraduationCap'), { className: 'w-6 h-6', style: { color: colors.textColor } })}
                     </div>
-                    <h3 className="text-lg font-bold text-gray-800 mb-2 group-hover:text-gray-900 transition-colors">{course.title}</h3>
-                    <p className="text-sm text-gray-500 line-clamp-2 flex-1">{course.description}</p>
+                    <h3 className="text-lg font-bold mb-2 transition-colors" style={{ color: 'var(--t-text)' }}>{course.title}</h3>
+                    <p className="text-sm line-clamp-2 flex-1" style={{ color: 'var(--t-text-muted)' }}>{course.description}</p>
                       {/* #10: Progress bar */}
                       {total > 0 && (
                         <div className="mt-3">
@@ -681,7 +681,7 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
                           </div>
                         </div>
                       )}
-                    <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between text-xs text-gray-400 w-full">
+                    <div className="mt-3 pt-3 border-t flex items-center justify-between text-xs w-full" style={{ borderColor: 'var(--t-border-light)', color: 'var(--t-text-muted)' }}>
                       <span>{course.modules.length} 个模块</span>
                       <span>{(course.assignmentModules || []).reduce((s, m) => s + m.items.length, 0)} 个练习</span>
                     </div>
@@ -690,7 +690,7 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
                   <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
                       onClick={(e) => handleExportCourse(course.id, e)}
-                      className="p-2 bg-white/80 backdrop-blur rounded-lg hover:bg-green-50 text-gray-500 hover:text-green-600 border border-gray-200 shadow-sm"
+                      className="p-2 backdrop-blur rounded-lg hover:bg-green-50 text-gray-500 hover:text-green-600 border shadow-sm" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}
                       title="导出课程包"
                     >
                       <Download className="w-4 h-4" />
@@ -701,13 +701,13 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
                         setEditingCourse(course);
                         setIsCourseModalOpen(true);
                       }}
-                      className="p-2 bg-white/80 backdrop-blur rounded-lg hover:bg-blue-50 text-gray-500 hover:text-blue-600 border border-gray-200 shadow-sm"
+                      className="p-2 backdrop-blur rounded-lg hover:bg-blue-50 text-gray-500 hover:text-blue-600 border shadow-sm" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
                     <button
                       onClick={(e) => handleDeleteCourse(course.id, e)}
-                      className="p-2 bg-white/80 backdrop-blur rounded-lg hover:bg-red-50 text-gray-500 hover:text-red-600 border border-gray-200 shadow-sm"
+                      className="p-2 backdrop-blur rounded-lg hover:bg-red-50 text-gray-500 hover:text-red-600 border shadow-sm" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -880,11 +880,11 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
   };
 
   return (
-    <div className="flex h-full bg-white overflow-hidden relative">
+    <div className="flex h-full overflow-hidden relative" style={{ background: 'var(--t-bg-main)' }}>
       {/* Left Sidebar: Course Content List */}
       {!isImmersive && (
-        <div className="flex flex-col border-r border-gray-200 h-full w-80 flex-shrink-0 transition-all duration-300">
-          <div className="h-12 flex items-center justify-between px-3 border-b border-gray-200 bg-gray-50" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+        <div className="flex flex-col border-r h-full w-80 flex-shrink-0 transition-all duration-300" style={{ borderColor: 'var(--t-border)' }}>
+          <div className="h-12 flex items-center justify-between px-3 border-b" style={{ WebkitAppRegion: 'drag', borderColor: 'var(--t-border)', background: 'var(--t-header-bg)' } as React.CSSProperties}>
             <button 
               onClick={() => { setSelectedCourseId(null); setSearchQuery(''); }}
               className="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-all"
@@ -962,7 +962,7 @@ export const LearningManager: React.FC<LearningManagerProps> = ({ onOpenChat }) 
       {/* Split View Container */}
       <div ref={splitContainerRef} className="flex-1 flex overflow-hidden">
           {/* Primary Pane */}
-          <div className={`${layoutMode === 'split' ? 'border-r border-gray-200' : 'w-full'} h-full relative flex flex-col ${isDraggingSplit ? '' : 'transition-[width] duration-200'}`} style={{ width: layoutMode === 'split' ? `${splitRatio * 100}%` : '100%', flexShrink: 0 }}>
+          <div className={`${layoutMode === 'split' ? 'border-r' : 'w-full'} h-full relative flex flex-col ${isDraggingSplit ? '' : 'transition-[width] duration-200'}`} style={{ width: layoutMode === 'split' ? `${splitRatio * 100}%` : '100%', flexShrink: 0, ...(layoutMode === 'split' ? { borderColor: 'var(--t-border)' } : {}) }}>
              {/* Selection Indicator (Top Left) */}
              {layoutMode === 'split' && (
                <div 

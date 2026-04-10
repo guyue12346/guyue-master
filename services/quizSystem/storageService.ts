@@ -8,7 +8,7 @@
  */
 
 import type {
-  KnowledgePointMastery, QuizQuestion, QuizSession,
+  TagMastery, KnowledgePointMastery, QuizQuestion, QuizSession,
   QuizStats, QuizSettings, SessionConfig, DEFAULT_SESSION_CONFIG,
 } from './types';
 
@@ -28,35 +28,95 @@ async function getQuizRoot(): Promise<string> {
 }
 
 // ═══════════════════════════════════════════════════════
-// Mastery Store (温数据)
+// Mastery Store (温数据) — TagMastery
 // ═══════════════════════════════════════════════════════
 
 const MASTERY_KEY = 'quiz-mastery';
 
-export async function loadMastery(): Promise<Record<string, KnowledgePointMastery>> {
+/** 从旧 KnowledgePointMastery 迁移到 TagMastery */
+function migrateToTagMastery(raw: Record<string, any>): Record<string, TagMastery> {
+  const result: Record<string, TagMastery> = {};
+  for (const [key, val] of Object.entries(raw)) {
+    if (val && typeof val === 'object') {
+      // 新格式：已有 tag 字段
+      if ('tag' in val && typeof val.tag === 'string') {
+        result[key] = val as TagMastery;
+        continue;
+      }
+      // 旧格式：KnowledgePointMastery — 拆分 tags 为独立 TagMastery
+      if ('pointId' in val && 'tags' in val && Array.isArray(val.tags)) {
+        const old = val as KnowledgePointMastery;
+        for (const tag of old.tags) {
+          if (result[tag]) {
+            // 合并：取更好的数据
+            const existing = result[tag];
+            existing.totalAttempts += old.totalAttempts;
+            existing.correctCount += old.correctCount;
+            existing.recentScores = [...existing.recentScores, ...old.recentScores].slice(-5);
+            existing.avgScore = existing.recentScores.length > 0
+              ? existing.recentScores.reduce((a, b) => a + b, 0) / existing.recentScores.length
+              : 0;
+          } else {
+            result[tag] = {
+              tag,
+              easeFactor: old.easeFactor,
+              interval: old.interval,
+              repetitions: old.repetitions,
+              createdAt: old.createdAt,
+              lastReviewAt: old.lastReviewAt,
+              nextReviewAt: old.nextReviewAt,
+              totalAttempts: old.totalAttempts,
+              correctCount: old.correctCount,
+              avgScore: old.avgScore,
+              recentScores: [...old.recentScores],
+              masteryLevel: old.masteryLevel,
+            };
+          }
+        }
+      }
+    }
+  }
+  return result;
+}
+
+export async function loadMastery(categoryId?: string): Promise<Record<string, TagMastery>> {
+  const key = categoryId ? `quiz-mastery-${categoryId}` : MASTERY_KEY;
   try {
-    const data = await eApi().loadAppData(MASTERY_KEY);
-    if (data?.points) return data.points;
+    const data = await eApi().loadAppData(key);
+    if (data?.points) {
+      const raw = data.points as Record<string, any>;
+      // Check if migration needed (first entry has pointId → old format)
+      const firstVal = Object.values(raw)[0];
+      if (firstVal && 'pointId' in firstVal) {
+        const migrated = migrateToTagMastery(raw);
+        // Save migrated data
+        await saveMastery(migrated, categoryId);
+        return migrated;
+      }
+      return raw as Record<string, TagMastery>;
+    }
   } catch {}
   return {};
 }
 
-export async function saveMastery(points: Record<string, KnowledgePointMastery>): Promise<void> {
-  await eApi().saveAppData(MASTERY_KEY, {
-    version: 1,
+export async function saveMastery(points: Record<string, TagMastery>, categoryId?: string): Promise<void> {
+  const key = categoryId ? `quiz-mastery-${categoryId}` : MASTERY_KEY;
+  await eApi().saveAppData(key, {
+    version: 2,
     updatedAt: Date.now(),
     points,
   });
 }
 
 export async function updateMasteryPoint(
-  pointId: string,
-  updater: (p: KnowledgePointMastery) => KnowledgePointMastery,
+  tag: string,
+  updater: (p: TagMastery) => TagMastery,
+  categoryId?: string,
 ): Promise<void> {
-  const all = await loadMastery();
-  if (all[pointId]) {
-    all[pointId] = updater(all[pointId]);
-    await saveMastery(all);
+  const all = await loadMastery(categoryId);
+  if (all[tag]) {
+    all[tag] = updater(all[tag]);
+    await saveMastery(all, categoryId);
   }
 }
 
@@ -164,21 +224,23 @@ const EMPTY_STATS: QuizStats = {
   byTag: {},
 };
 
-export async function loadStats(): Promise<QuizStats> {
+export async function loadStats(categoryId?: string): Promise<QuizStats> {
+  const key = categoryId ? `quiz-stats-${categoryId}` : STATS_KEY;
   try {
-    const data = await eApi().loadAppData(STATS_KEY);
+    const data = await eApi().loadAppData(key);
     if (data) return { ...EMPTY_STATS, ...data };
   } catch {}
   return { ...EMPTY_STATS };
 }
 
-export async function saveStats(stats: QuizStats): Promise<void> {
-  await eApi().saveAppData(STATS_KEY, stats);
+export async function saveStats(stats: QuizStats, categoryId?: string): Promise<void> {
+  const key = categoryId ? `quiz-stats-${categoryId}` : STATS_KEY;
+  await eApi().saveAppData(key, stats);
 }
 
 /** 记录一次 session 完成后的统计更新 */
-export async function recordSessionStats(session: QuizSession): Promise<void> {
-  const stats = await loadStats();
+export async function recordSessionStats(session: QuizSession, categoryId?: string): Promise<void> {
+  const stats = await loadStats(categoryId);
   const now = Date.now();
   const dateKey = new Date(now).toISOString().slice(0, 10);
 
@@ -224,7 +286,15 @@ export async function recordSessionStats(session: QuizSession): Promise<void> {
     stats.streakDays = 1;
   }
 
-  await saveStats(stats);
+  await saveStats(stats, categoryId);
+}
+
+/** Clear legacy global mastery/stats data (one-time migration) */
+export async function clearLegacyMastery(): Promise<void> {
+  try {
+    await eApi().saveAppData(MASTERY_KEY, { version: 1, updatedAt: Date.now(), points: {} });
+    await eApi().saveAppData(STATS_KEY, { ...EMPTY_STATS });
+  } catch {}
 }
 
 // ═══════════════════════════════════════════════════════

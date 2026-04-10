@@ -1,8 +1,83 @@
 /**
- * Quiz System — Prompt 模板
+ * Quiz System — 动态 Prompt 生成
+ *
+ * Prompt 结构：
+ * ① 角色定位（场景 + 用户自定义）
+ * ② 数据源（按向量库分组的向量块 + 元信息 + 标签关联）
+ * ③ 考生画像
+ * ④ 阶段专属要求（复习/薄弱/新知识/随机 各有不同策略和示例）
+ * ⑤ 通用出题规则
+ * ⑥ 输出格式
  */
 
-import type { QuestionType, FollowUpStrategy, VectorStoreRole } from './types';
+import type { QuestionType, FollowUpStrategy, VectorStoreRole, TagMastery } from './types';
+
+// ═══════════════════════════════════════════════════════
+// 数据接口
+// ═══════════════════════════════════════════════════════
+
+/** 向量块（含完整元信息和标签关联） */
+export interface PromptChunk {
+  text: string;
+  chunkId?: string;
+  role?: VectorStoreRole;
+  storeName?: string;
+  /** 向量块的元数据 */
+  metadata?: {
+    fileName?: string;
+    pageNumber?: number;
+    chunkIndex?: number;
+    [key: string]: any;
+  };
+  /** 与该块内容关联的标签掌握情况 */
+  relatedTags?: {
+    tag: string;
+    masteryLevel: string;
+    avgScore: number;
+    totalAttempts: number;
+    lastReviewAt?: number;
+  }[];
+}
+
+/** 向量库级别的上下文信息 */
+export interface StorePromptContext {
+  name: string;
+  role?: VectorStoreRole;
+  summary?: string;
+  topicVocabulary?: string[];
+  chunks: PromptChunk[];
+}
+
+/** 考生画像 */
+export interface StudentProfile {
+  overallMastery: number;
+  weakTags: string[];
+  strongTags: string[];
+  recentAvgScore: number;
+  totalAttempts: number;
+}
+
+/** 历史题目示例（用于复习/薄弱阶段） */
+export interface HistoryExample {
+  question: string;
+  userAnswer: string;
+  score: number;
+  keyPointsHit: string[];
+  keyPointsMissed: string[];
+}
+
+/** 出题阶段 */
+export type GenerationPhase = 'review' | 'weak' | 'new' | 'random';
+
+// ═══════════════════════════════════════════════════════
+// 常量
+// ═══════════════════════════════════════════════════════
+
+const ROLE_LABELS: Record<string, string> = {
+  material: '📚 知识资料',
+  questions_no_answer: '📝 题库（无答案）',
+  questions_with_answer: '📝 题库（含答案）',
+};
 
 const QUESTION_TYPE_DESC: Record<QuestionType, string> = {
   concept: '概念解释题 — 要求解释一个核心概念，考察记忆和理解',
@@ -20,64 +95,187 @@ const DIFFICULTY_DESC: Record<number, string> = {
   5: '专家级别 — 考察系统性思维和创新能力',
 };
 
-/** 出题 Prompt */
+/** 阶段专属策略描述 */
+const PHASE_STRATEGIES: Record<GenerationPhase, { title: string; instruction: string }> = {
+  review: {
+    title: '📗 到期复习',
+    instruction: `这是一道**复习题**。考生之前学过这些知识但需要巩固。
+策略：
+- 从**不同角度**考察同一知识点，避免原题重复
+- 如果考生之前在某些得分点表现薄弱，可以重点围绕这些点出题
+- 难度可以比上次略高，检验是否有更深入的理解
+- 参考下面的历史答题记录，了解考生对该知识的掌握情况`,
+  },
+  weak: {
+    title: '📙 薄弱强化',
+    instruction: `这是一道**薄弱强化题**。考生在这个知识点上表现不佳，需要针对性练习。
+策略：
+- 聚焦考生之前**答错或遗漏**的知识要点
+- 适当降低难度，帮助考生建立信心和基础理解
+- 如果考生多次在同一知识点犯错，尝试用**更简单直接**的方式提问
+- 参考下面的历史答题记录，特别关注考生薄弱的部分`,
+  },
+  new: {
+    title: '📘 新知识探索',
+    instruction: `这是一道**新知识题**。考生尚未被考察过这个领域。
+策略：
+- 从基础概念入手，不要一开始就出高难度题
+- 优先考察核心概念和关键定义
+- 题目应能帮助考生建立对该知识领域的初步认识
+- 参考答案应详尽，便于考生学习`,
+  },
+  random: {
+    title: '📓 随机巩固',
+    instruction: `这是一道**随机巩固题**，用于拓宽知识面。
+策略：
+- 可以跨领域出题，增加知识的广度
+- 难度适中，以检验综合运用能力为主
+- 尽量选择材料中有趣或实用的知识点`,
+  },
+};
+
+// ═══════════════════════════════════════════════════════
+// 核心：动态出题 Prompt
+// ═══════════════════════════════════════════════════════
+
 export function buildQuestionPrompt(
-  chunks: string[],
+  storeContexts: StorePromptContext[],
   questionType: QuestionType,
   difficulty: number,
-  existingQuestions?: string[],
-  sourceRole?: VectorStoreRole,
+  phase: GenerationPhase,
+  options?: {
+    rolePrompt?: string;
+    quizDirection?: string;
+    existingQuestions?: string[];
+    studentProfile?: StudentProfile;
+    historyExamples?: HistoryExample[];
+    targetTag?: string;
+    targetTopic?: string;
+  },
 ): string {
-  const dedup = existingQuestions?.length
-    ? `\n\n## 已有题目（请勿重复）\n${existingQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`
-    : '';
+  const sections: string[] = [];
 
-  const chunksContent = chunks.join('\n\n---\n\n');
+  // ═══ ① 角色定位 ═══
+  const defaultRole = '你是一位专业的出题专家和知识评估师。';
+  const rolePrompt = options?.rolePrompt?.trim() || defaultRole;
+  sections.push(`# 角色\n\n${rolePrompt}`);
 
-  let roleIntro: string;
-  let contentLabel: string;
-  let roleRequirements: string;
+  // ═══ ② 数据源 ═══
+  const dataSections: string[] = [];
+  for (const store of storeContexts) {
+    const roleLabel = ROLE_LABELS[store.role || 'material'];
+    const storeHeader = `## 【向量库】${store.name}（${roleLabel}）`;
+    const storeInfo: string[] = [];
+    if (store.summary) {
+      storeInfo.push(`> **摘要**: ${store.summary}`);
+    }
+    if (store.topicVocabulary && store.topicVocabulary.length > 0) {
+      storeInfo.push(`> **主题词表（该向量库的核心知识领域）**: ${store.topicVocabulary.slice(0, 20).join(' · ')}`);
+      storeInfo.push(`> _出题时应优先围绕上述主题词所涵盖的知识领域展开_`);
+    }
 
-  if (sourceRole === 'questions_no_answer') {
-    roleIntro = '你是一位专业的出题专家。以下是一些题目素材（不含答案），请基于这些题目进行再创作。';
-    contentLabel = '原始题目素材';
-    roleRequirements = `1. 首先理解每道题目的考查方向
-2. 为题目生成完整的参考答案
-3. 对题目进行适当的扩展和改动，使其更加完善
-4. 保持题目的核心考查方向不变`;
-  } else if (sourceRole === 'questions_with_answer') {
-    roleIntro = '你是一位专业的出题专家。以下是一些题目及其答案，请基于这些内容进行丰富和扩展。';
-    contentLabel = '原始题目与答案';
-    roleRequirements = `1. 在原题目和答案的基础上，进行丰富、扩展和补充
-2. 可以调整题目角度、增加深度或拓展广度
-3. 确保参考答案覆盖所有关键知识点
-4. 保持与原题相关的知识领域`;
-  } else {
-    roleIntro = '你是一位专业的技术面试官和出题专家。请根据以下知识内容，生成一道高质量的题目。';
-    contentLabel = '知识内容';
-    roleRequirements = `1. **题型**: ${QUESTION_TYPE_DESC[questionType] || QUESTION_TYPE_DESC.concept}
-2. **难度**: ${difficulty}/5（${DIFFICULTY_DESC[difficulty] || DIFFICULTY_DESC[3]}）
-3. **目标**: 考察对核心概念的深度理解，而非死记硬背
-4. **语言**: 中文出题`;
+    const chunkTexts = store.chunks.map((chunk, i) => {
+      const lines: string[] = [];
+      const header = `### 片段 ${i + 1}`;
+      lines.push(header);
+
+      // 元信息行
+      const metaParts: string[] = [];
+      if (chunk.metadata?.fileName) metaParts.push(`文件: ${chunk.metadata.fileName}`);
+      if (chunk.metadata?.pageNumber) metaParts.push(`页码: ${chunk.metadata.pageNumber}`);
+      if (chunk.chunkId) metaParts.push(`ID: ${chunk.chunkId}`);
+      if (metaParts.length > 0) {
+        lines.push(`[${metaParts.join(' | ')}]`);
+      }
+
+      // 标签关联历史
+      if (chunk.relatedTags && chunk.relatedTags.length > 0) {
+        const tagLines = chunk.relatedTags.map(t => {
+          const ago = t.lastReviewAt
+            ? `${Math.round((Date.now() - t.lastReviewAt) / 86400000)}天前`
+            : '从未';
+          return `  - 「${t.tag}」${t.masteryLevel}，均分${Math.round(t.avgScore)}，考${t.totalAttempts}次，上次${ago}`;
+        });
+        lines.push(`[关联标签]\n${tagLines.join('\n')}`);
+      }
+
+      lines.push('');
+      lines.push(chunk.text);
+      return lines.join('\n');
+    });
+
+    dataSections.push([storeHeader, ...storeInfo, '', ...chunkTexts].join('\n'));
+  }
+  sections.push(`# 数据源\n\n${dataSections.join('\n\n---\n\n')}`);
+
+  // ═══ ③ 考生画像 ═══
+  if (options?.studentProfile) {
+    const p = options.studentProfile;
+    sections.push(`# 考生画像
+
+- 整体掌握率: ${p.overallMastery}%
+- 近期平均分: ${p.recentAvgScore}/100
+- 已练习次数: ${p.totalAttempts}
+- 薄弱标签: ${p.weakTags.join('、') || '无'}
+- 擅长标签: ${p.strongTags.join('、') || '无'}`);
   }
 
-  // For non-material roles, still include type/difficulty info
-  const extraReqs = sourceRole && sourceRole !== 'material'
-    ? `\n5. **题型**: ${QUESTION_TYPE_DESC[questionType] || QUESTION_TYPE_DESC.concept}\n6. **难度**: ${difficulty}/5（${DIFFICULTY_DESC[difficulty] || DIFFICULTY_DESC[3]}）\n7. **语言**: 中文出题`
-    : '';
+  // ═══ ③.5 出题方向 ═══
+  if (options?.quizDirection?.trim()) {
+    sections.push(`# 出题方向（用户指定）
 
-  return `${roleIntro}
+${options.quizDirection.trim()}
 
-## ${contentLabel}
+> 请严格遵循以上出题方向，确保生成的题目符合用户的学习意图。`);
+  }
 
-${chunksContent}
+  // ═══ ④ 阶段专属要求 ═══
+  const phaseInfo = PHASE_STRATEGIES[phase];
+  let phaseSection = `# 出题阶段：${phaseInfo.title}\n\n${phaseInfo.instruction}`;
 
-## 出题要求
+  if (options?.targetTag) {
+    phaseSection += `\n\n**本题目标标签**: 「${options.targetTag}」`;
+  }
+  if (options?.targetTopic) {
+    phaseSection += `\n\n**本题目标主题**: 「${options.targetTopic}」`;
+  }
 
-${roleRequirements}${extraReqs}
-${dedup}
+  // 历史题目示例（复习和薄弱阶段）
+  if (options?.historyExamples && options.historyExamples.length > 0) {
+    const examples = options.historyExamples.slice(0, 2).map((ex, i) => {
+      return `**历史题目 ${i + 1}** (得分: ${ex.score}/100)
+题目: ${ex.question}
+考生回答: ${ex.userAnswer.slice(0, 300)}${ex.userAnswer.length > 300 ? '...' : ''}
+命中: ${ex.keyPointsHit.join('、') || '无'}
+遗漏: ${ex.keyPointsMissed.join('、') || '无'}`;
+    }).join('\n\n');
 
-## 输出格式（严格 JSON，不要多余文字）
+    phaseSection += `\n\n## 历史答题记录\n\n${examples}`;
+  }
+
+  sections.push(phaseSection);
+
+  // ═══ ⑤ 通用出题规则 ═══
+  let rules = `# 出题要求
+
+- **题型**: ${QUESTION_TYPE_DESC[questionType] || QUESTION_TYPE_DESC.concept}
+- **难度**: ${difficulty}/5（${DIFFICULTY_DESC[difficulty] || DIFFICULTY_DESC[3]}）
+- **语言**: 中文出题
+- 考察对核心概念的深度理解，而非死记硬背
+- 不要出选择题，只出开放式问答题
+- keyPoints 应为 3-5 个独立可验证的知识要点
+- referenceAnswer 应完整（200-500字）但不啰嗦
+- tags 应反映知识点所属领域，2-4 个`;
+
+  // 去重
+  if (options?.existingQuestions?.length) {
+    rules += `\n\n## 已有题目（请勿重复）\n${options.existingQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`;
+  }
+
+  sections.push(rules);
+
+  // ═══ ⑥ 输出格式 ═══
+  sections.push(`# 输出格式（严格 JSON，不要多余文字）
 
 \`\`\`json
 {
@@ -92,15 +290,14 @@ ${dedup}
   ],
   "tags": ["知识标签1", "知识标签2"]
 }
-\`\`\`
+\`\`\``);
 
-## 注意事项
-
-- keyPoints 应为 3-5 个，每个是独立可验证的知识要点
-- referenceAnswer 应完整但不啰嗦
-- tags 应反映知识点所属领域，2-4 个
-- 不要出选择题，只出开放式问答题`;
+  return sections.join('\n\n');
 }
+
+// ═══════════════════════════════════════════════════════
+// 评分 Prompt
+// ═══════════════════════════════════════════════════════
 
 /** 评分 Prompt（第三级 LLM 深度评分） */
 export function buildScoringPrompt(
@@ -110,12 +307,23 @@ export function buildScoringPrompt(
   userAnswer: string,
   cosineSimilarity: number,
   keyPointMatches: Array<{ keyPoint: string; status: string; similarity: number }>,
+  isInterview?: boolean,
+  historyExamples?: Array<{
+    question: string;
+    userAnswer: string;
+    score: number;
+    masteryLevel: string;
+    hitPoints: string[];
+    missedPoints: string[];
+  }>,
 ): string {
   const kpFormatted = keyPointMatches
     .map(kp => `- ${kp.keyPoint}: ${kp.status === 'hit' ? '✅ 命中' : kp.status === 'partial' ? '⚠️ 部分命中' : '❌ 未命中'} (相似度: ${(kp.similarity * 100).toFixed(0)}%)`)
     .join('\n');
 
-  return `你是一位严格但公正的技术考官。请评估以下回答。
+  const sections: string[] = [];
+
+  sections.push(`你是一位严格但公正的技术考官。请评估以下回答。
 
 ## 题目
 
@@ -135,11 +343,23 @@ ${userAnswer}
 
 ## 预评估数据
 
-- 语义相似度: ${(cosineSimilarity * 100).toFixed(1)}%（仅供参考）
-- 关键点初步匹配:
-${kpFormatted}
+- 语义相似度: ${(cosineSimilarity * 100).toFixed(1)}%（仅供参考，embedding 相似度容易偏高，不应作为高分依据）
+- 关键点初步匹配（基于语义向量，仅供参考，需要你根据实际内容重新判断）:
+${kpFormatted}`);
 
-## 评分标准
+  // 历史评判参考
+  if (historyExamples && historyExamples.length > 0) {
+    sections.push(`## 历史评判参考（同类题目的评分先例，帮助你保持评分一致性）
+
+${historyExamples.map((ex, i) => `### 先例 ${i + 1}
+- **题目**: ${ex.question}
+- **学生回答**: ${ex.userAnswer}
+- **评分**: ${ex.score} 分（${ex.masteryLevel}）
+- **命中得分点**: ${ex.hitPoints.length > 0 ? ex.hitPoints.join('、') : '无'}
+- **遗漏得分点**: ${ex.missedPoints.length > 0 ? ex.missedPoints.join('、') : '无'}`).join('\n\n')}`);
+  }
+
+  sections.push(`## 评分标准
 
 | 维度 | 满分 | 评分要点 |
 |------|------|---------|
@@ -161,7 +381,10 @@ ${kpFormatted}
   },
   "overallFeedback": "总体评语",
   "suggestions": ["改进建议1"],
-  "masteryLevel": "not_mastered|partially|mastered|expert"
+  "masteryLevel": "not_mastered|partially|mastered|expert"${isInterview ? `,
+  "shouldFollowUp": true,
+  "followUpReason": "需要追问的原因（如有遗漏知识点/存在错误/需要深入）",
+  "interviewerComment": "面试官的简短口头回应（1-2句，如：'你提到了xx，不错，但还有一些重要方面没有涉及。让我追问一下...'或'很好，基本覆盖了要点。我们继续下一个问题。'）"` : ''}
 }
 \`\`\`
 
@@ -169,11 +392,20 @@ ${kpFormatted}
 
 1. totalScore 必须等于四个维度分数之和
 2. 即使学生用不同的表述方式，只要意思正确就应认可
-3. 参考预评估数据作为锚定，但最终以你的专业判断为准
-4. 如果学生有超出参考答案的正确补充，应该加分鼓励`;
+3. 预评估的语义相似度仅供参考，不要因为相似度高就直接给高分——embedding 对短文本容易产生偏高相似度
+4. 关键点的初步匹配结果仅供参考，请根据实际语义重新判断每个得分点是否真正被覆盖
+5. 如果学生有超出参考答案的正确补充，应该加分鼓励${historyExamples && historyExamples.length > 0 ? `
+6. 参考历史评判先例保持评分尺度一致，但每道题应独立评估` : ''}${isInterview ? `
+${historyExamples && historyExamples.length > 0 ? '7' : '6'}. 在面试模式下：shouldFollowUp 表示是否需要追问。如果回答有明显遗漏或错误且值得追问，设为 true。如果回答已经足够好或追问价值不大，设为 false。
+${historyExamples && historyExamples.length > 0 ? '8' : '7'}. interviewerComment 是面试官的口头回应，要自然、简短，模拟真实面试对话。` : ''}`);
+
+  return sections.join('\n\n');
 }
 
-/** 追问 Prompt */
+// ═══════════════════════════════════════════════════════
+// 追问 Prompt
+// ═══════════════════════════════════════════════════════
+
 export function buildFollowUpPrompt(
   previousQuestion: string,
   userAnswer: string,
@@ -223,7 +455,10 @@ ${userAnswer}
 \`\`\``;
 }
 
-/** Session 总结 Prompt */
+// ═══════════════════════════════════════════════════════
+// Session 总结 Prompt
+// ═══════════════════════════════════════════════════════
+
 export function buildSessionSummaryPrompt(
   totalQuestions: number,
   avgScore: number,

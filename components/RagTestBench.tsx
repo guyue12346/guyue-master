@@ -234,6 +234,40 @@ const getFolderIcon = (iconName?: string, color?: string, size = 16) => {
   return <Icon size={size} style={{ color: color || '#60A5FA' }} />;
 };
 
+/** Colored file icon SVG for PDF / Markdown; falls back to generic FileText */
+const DocIcon = ({ type, size = 14 }: { type: string; size?: number }) => {
+  const w = size;
+  const h = Math.round(size * 1.28);
+  const fold = Math.round(size * 0.32);
+  if (type === 'pdf') {
+    return (
+      <svg width={w} height={h} viewBox="0 0 14 18" style={{ display: 'inline-block', flexShrink: 0 }}>
+        <path d={`M0,0 H${14 - fold} L14,${fold} V18 H0 Z`} fill="#EF4444" />
+        <path d={`M${14 - fold},0 L${14 - fold},${fold} L14,${fold} Z`} fill="#B91C1C" />
+        <rect x="0" y="11" width="14" height="7" rx="0" fill="#B91C1C" />
+        <text x="7" y="16.5" textAnchor="middle" fill="white" fontSize="5" fontWeight="800" fontFamily="Arial,sans-serif">PDF</text>
+      </svg>
+    );
+  }
+  if (type === 'markdown') {
+    return (
+      <svg width={w} height={h} viewBox="0 0 14 18" style={{ display: 'inline-block', flexShrink: 0 }}>
+        <path d={`M0,0 H${14 - fold} L14,${fold} V18 H0 Z`} fill="#6366F1" />
+        <path d={`M${14 - fold},0 L${14 - fold},${fold} L14,${fold} Z`} fill="#4338CA" />
+        <rect x="0" y="11" width="14" height="7" rx="0" fill="#4338CA" />
+        <text x="7" y="16.5" textAnchor="middle" fill="white" fontSize="5" fontWeight="800" fontFamily="monospace">MD</text>
+      </svg>
+    );
+  }
+  // Generic file icon — gray
+  return (
+    <svg width={w} height={h} viewBox="0 0 14 18" style={{ display: 'inline-block', flexShrink: 0 }}>
+      <path d={`M0,0 H${14 - fold} L14,${fold} V18 H0 Z`} fill="#9CA3AF" />
+      <path d={`M${14 - fold},0 L${14 - fold},${fold} L14,${fold} Z`} fill="#6B7280" />
+    </svg>
+  );
+};
+
 interface CollectionMeta {
   id: string;
   name: string;
@@ -246,6 +280,8 @@ interface CollectionMeta {
   embeddingModel: string;
   /** 大模型生成的向量库内容摘要 */
   summary?: string;
+  /** LLM提取的知识主题列表 */
+  topicVocabulary?: string[];
   /** 是否已构建 HNSW 索引 */
   hasHnsw?: boolean;
   /** 是否已构建知识图谱 */
@@ -975,6 +1011,10 @@ export function RagTestBench() {
   const [rebuildingKg, setRebuildingKg] = useState(false);
   const [updatingConfig, setUpdatingConfig] = useState(false);
 
+  // ── Drag-and-drop state ──
+  const [dragItem, setDragItem] = useState<{ type: 'folder' | 'doc'; id: string } | null>(null);
+  const [dragTarget, setDragTarget] = useState<string | null>(null); // target folder id
+
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
   const pipelineRef = useRef<RagPipeline | null>(null);
   const vectorStoreRef = useRef<LocalVectorStore>(new LocalVectorStore());
@@ -1083,7 +1123,7 @@ export function RagTestBench() {
         const loadedHasHnsw = vectorStoreRef.current.searchAlgorithm === 'hnsw';
         const loadedKgCount = knowledgeGraphRef.current?.tripleCount ?? 0;
         setCollections(prev => prev.map(c => c.id === activeCollectionId
-          ? { ...c, hasHnsw: loadedHasHnsw, hasKg: loadedKgCount > 0, kgTripleCount: loadedKgCount }
+          ? { ...c, hasHnsw: loadedHasHnsw, hasKg: loadedKgCount > 0, kgTripleCount: loadedKgCount, vectorCount: vecCount }
           : c
         ));
       } else {
@@ -1245,10 +1285,20 @@ export function RagTestBench() {
     const allDeleted = new Set([folderId, ...descendantIds]);
     const deletedNode = folders.find(f => f.id === folderId);
     const targetParent = deletedNode?.parentId ?? null;
+    // Collect paths of documents inside deleted folders so we can remove from collections too
+    const pathsToDelete = new Set(
+      documents.filter(d => d.folderId && allDeleted.has(d.folderId)).map(d => d.path),
+    );
     setFolders(prev => prev.filter(f => !allDeleted.has(f.id)));
-    setDocuments(prev => prev.map(d => d.folderId && allDeleted.has(d.folderId) ? { ...d, folderId: targetParent } : d));
+    // Delete files inside — do not move to parent
+    setDocuments(prev => prev.filter(d => !d.folderId || !allDeleted.has(d.folderId)));
+    if (pathsToDelete.size > 0) {
+      setCollections(prev => prev.map(c => ({
+        ...c, docPaths: c.docPaths.filter(p => !pathsToDelete.has(p)),
+      })));
+    }
     if (currentFolderId && allDeleted.has(currentFolderId)) setCurrentFolderId(targetParent);
-  }, [folders, currentFolderId]);
+  }, [folders, currentFolderId, documents]);
 
   const handleUpdateFolderStyle = useCallback((folderId: string, icon?: string, color?: string) => {
     setFolders(prev => prev.map(f => f.id === folderId ? { ...f, ...(icon !== undefined && { icon }), ...(color !== undefined && { color }) } : f));
@@ -1276,6 +1326,79 @@ export function RagTestBench() {
     setDocuments(prev => prev.map(d => selectedDocs.has(d.path) ? { ...d, folderId: targetFolderId } : d));
     setSelectedDocs(new Set());
   }, [selectedDocs]);
+
+  /** Select all documents inside a folder (and sub-folders), then navigate into it */
+  const handleSelectFolderContents = useCallback((folderId: string) => {
+    const descendantIds = getAllDescendantIds(folders, folderId);
+    const allIds = new Set([folderId, ...descendantIds]);
+    const paths = documents
+      .filter(d => d.folderId && allIds.has(d.folderId))
+      .map(d => d.path);
+    setCurrentFolderId(folderId);
+    setSelectedDocs(new Set(paths));
+    setFolderContextMenu(null);
+    setEditingFolderId(null);
+  }, [folders, documents]);
+
+  // ── Drag-and-drop handlers ──
+  const handleDragStart = useCallback((e: React.DragEvent, type: 'folder' | 'doc', id: string) => {
+    e.stopPropagation();
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', id);
+    setDragItem({ type, id });
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent, targetFolderId: string | null) => {
+    if (!dragItem) return;
+    // Prevent dropping folder into itself or its own descendants
+    if (dragItem.type === 'folder' && targetFolderId !== null) {
+      if (dragItem.id === targetFolderId) return;
+      const desc = getAllDescendantIds(folders, dragItem.id);
+      if (desc.has(targetFolderId)) return;
+    }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragTarget(targetFolderId ?? '__root__');
+  }, [dragItem, folders]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    // Only clear if leaving the element (not entering a child)
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setDragTarget(null);
+    }
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent, targetFolderId: string | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragTarget(null);
+    if (!dragItem) return;
+
+    if (dragItem.type === 'folder') {
+      if (targetFolderId === null) {
+        // Move to root
+        setFolders(prev => prev.map(f => f.id === dragItem.id ? { ...f, parentId: null } : f));
+        setDragItem(null);
+        return;
+      }
+      // Prevent circular nesting
+      if (dragItem.id === targetFolderId) return;
+      const desc = getAllDescendantIds(folders, dragItem.id);
+      if (desc.has(targetFolderId)) return;
+      setFolders(prev => prev.map(f => f.id === dragItem.id ? { ...f, parentId: targetFolderId } : f));
+    } else if (dragItem.type === 'doc') {
+      // Move selected docs (or just this one if not selected)
+      const pathsToMove = selectedDocs.size > 0 ? selectedDocs : new Set([dragItem.id]);
+      setDocuments(prev => prev.map(d => pathsToMove.has(d.path) ? { ...d, folderId: targetFolderId } : d));
+      setSelectedDocs(new Set());
+    }
+    setDragItem(null);
+  }, [dragItem, folders, selectedDocs]);
+
+  const handleDragEnd = useCallback(() => {
+    setDragItem(null);
+    setDragTarget(null);
+  }, []);
 
   // ── Scan folder ──
   const handleScanFolder = useCallback(async () => {
@@ -1550,11 +1673,14 @@ export function RagTestBench() {
       const hadHnsw = vectorStoreRef.current.searchAlgorithm === 'hnsw';
       if (searchAlgorithm === 'hnsw' || hadHnsw) {
         const hnswAction = hadHnsw ? '增量更新' : '构建';
-        setBuildProgress({ phase: 'saving', current: 0, total: 1, detail: `${hnswAction} HNSW 索引…`, errors });
-        setIndexProgress(`🔗 ${hnswAction} HNSW 索引（${vectorStoreRef.current.size} 个向量，M=${hnswConfig.m ?? 16}）…`);
+        const hnswTotal = vectorStoreRef.current.size;
+        setBuildProgress({ phase: 'saving', current: 0, total: hnswTotal, detail: `${hnswAction} HNSW 索引…`, errors });
+        setIndexProgress(`🔗 ${hnswAction} HNSW 索引（${hnswTotal} 个向量，M=${hnswConfig.m ?? 16}）…`);
         try {
           vectorStoreRef.current.setSearchAlgorithm('hnsw', hnswConfig);
-          vectorStoreRef.current.rebuildHnswIndex();
+          await vectorStoreRef.current.rebuildHnswIndexAsync(hnswConfig, (done, tot) => {
+            setBuildProgress({ phase: 'saving', current: done, total: tot, detail: `${hnswAction} HNSW 索引 ${done}/${tot}…`, errors });
+          });
           setIndexProgress(`✅ HNSW 索引${hnswAction}完成`);
         } catch (err: any) {
           errors.push(`⚠ HNSW 构建失败，将使用暴力搜索: ${err?.message}`);
@@ -1577,20 +1703,23 @@ export function RagTestBench() {
         vectorStoreRef.current.setKnowledgeGraphStats(null);
       }
 
-      // ═══ Phase 3.9: 生成向量库摘要 ═══
+      // ═══ Phase 3.9: 生成向量库摘要 & 主题词表 ═══
       let collectionSummary = '';
+      let summaryLlmFn: ((prompt: string) => Promise<string>) | null = null;
+      let sampleTexts: string[] = [];
+      let fileNames: string[] = [];
       try {
         setBuildProgress({ phase: 'saving', current: 0, total: 1, detail: '生成向量库摘要…', errors });
         setIndexProgress('📝 正在生成向量库摘要…');
 
-        const summaryLlmFn = makeUniversalLlmFn(kgApiConfig, embeddingConfig.apiKey);
+        summaryLlmFn = makeUniversalLlmFn(kgApiConfig, embeddingConfig.apiKey);
 
         // 采样部分文本块用于摘要
         const allEntries = Array.from({ length: Math.min(enriched.length, 20) }, (_, i) =>
           enriched[Math.floor(i * enriched.length / Math.min(enriched.length, 20))]
         );
-        const sampleTexts = allEntries.map((n: any) => (typeof n.getText === 'function' ? n.getText() : n.text || '')).filter(Boolean);
-        const fileNames = [...new Set(allEntries.map((n: any) => n.metadata?.fileName).filter(Boolean))];
+        sampleTexts = allEntries.map((n: any) => (typeof n.getText === 'function' ? n.getText() : n.text || '')).filter(Boolean);
+        fileNames = [...new Set(allEntries.map((n: any) => n.metadata?.fileName).filter(Boolean))] as string[];
 
         const summaryPrompt = `你是一个知识库分析专家。请根据以下知识库的采样文本块，用 2-3 句话生成一个简短摘要，描述这个知识库的主要内容、涉及的主题和领域。
 
@@ -1606,6 +1735,43 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
       } catch (err: any) {
         console.warn('Summary generation failed (non-critical):', err?.message);
         // 摘要生成失败不影响整体流程
+      }
+
+      // ═══ Phase 3.95: 提取主题词表 ═══
+      let topicVocabulary: string[] = [];
+      try {
+        if (summaryLlmFn && sampleTexts.length > 0) {
+          setBuildProgress({ phase: 'saving', current: 0, total: 1, detail: '提取主题词表…', errors });
+          setIndexProgress('🏷️ 正在提取主题词表…');
+
+          const topicPrompt = `你是一个知识库分析专家。请从以下知识库的采样文本中，提取20-30个核心主题词/知识点关键词。
+
+要求：
+1. 每个主题词应是一个具体的知识概念（如"矛盾的同一性"而不是"哲学"）
+2. 覆盖知识库的各个方面，不要集中在某一部分
+3. 主题词粒度适中：不要太宽泛（如"科学"），也不要太细碎（如"第三段第二句"）
+4. 返回JSON数组格式
+
+知识库名称：${activeCollection?.name || '未命名'}
+包含文件：${fileNames.join('、') || '未知'}
+总文本块数：${enriched.length}
+采样文本（共 ${sampleTexts.length} 段）：
+${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).join('\n')}
+
+请直接返回JSON数组，不要有其他文字：
+["主题词1", "主题词2", ...]`;
+
+          const topicResult = (await summaryLlmFn(topicPrompt)).trim();
+          const jsonMatch = topicResult.match(/\[[\s\S]*\]/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (Array.isArray(parsed)) {
+              topicVocabulary = parsed.filter((t: any) => typeof t === 'string' && t.trim().length > 0).map((t: string) => t.trim());
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn('Topic vocabulary generation failed (non-critical):', err?.message);
       }
 
       // ═══ Phase 4: Build pipeline & save ═══
@@ -1666,6 +1832,7 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
             embeddingProvider: embeddingConfig.provider,
             embeddingModel: embeddingConfig.model,
             summary: collectionSummary || c.summary,
+            topicVocabulary: topicVocabulary.length > 0 ? topicVocabulary : c.topicVocabulary,
             hasHnsw: vectorStoreRef.current.searchAlgorithm === 'hnsw',
             hasKg: (knowledgeGraphRef.current?.tripleCount ?? 0) > 0,
             kgTripleCount: knowledgeGraphRef.current?.tripleCount ?? 0,
@@ -1789,9 +1956,12 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
     }
     setRebuildingHnsw(true);
     try {
-      setIndexProgress(`🔗 构建 HNSW 索引（${vectorStoreRef.current.size} 向量，M=${hnswConfig.m ?? 16}）…`);
+      const total = vectorStoreRef.current.size;
+      setIndexProgress(`🔗 构建 HNSW 索引（${total} 向量，M=${hnswConfig.m ?? 16}）…`);
       vectorStoreRef.current.setSearchAlgorithm('hnsw', hnswConfig);
-      vectorStoreRef.current.rebuildHnswIndex();
+      await vectorStoreRef.current.rebuildHnswIndexAsync(hnswConfig, (done, tot) => {
+        setIndexProgress(`🔗 构建 HNSW 索引 ${done}/${tot}（${Math.round(done / tot * 100)}%）…`);
+      });
       setSearchAlgorithm('hnsw');
 
       // Persist
@@ -3093,6 +3263,22 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
             </div>
           )}
 
+          {/* Topic Vocabulary */}
+          {col.topicVocabulary && col.topicVocabulary.length > 0 && (
+            <div className="mb-4 space-y-1.5">
+              <div className="text-xs font-medium text-gray-500 flex items-center gap-1">
+                <Tag size={12} /> 主题词表 ({col.topicVocabulary.length})
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {col.topicVocabulary.map((topic, i) => (
+                  <span key={i} className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">
+                    {topic}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Basic Info */}
           <div className="mb-3">
             <div className="text-[11px] font-semibold text-gray-500 mb-1 flex items-center gap-1"><Database size={11} /> 基础信息</div>
@@ -3204,6 +3390,15 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
           style={{ left: x, top: y }}
           onClick={e => e.stopPropagation()}
         >
+          {/* Select all contents */}
+          <button
+            className="w-full px-3 py-1.5 text-left hover:bg-blue-50 flex items-center gap-2 text-gray-700"
+            onClick={() => handleSelectFolderContents(folder.id)}
+          >
+            <CheckCircle2 size={14} className="text-gray-400" />
+            选中全部内容
+          </button>
+
           {/* Rename */}
           <button
             className="w-full px-3 py-1.5 text-left hover:bg-blue-50 flex items-center gap-2 text-gray-700"
@@ -3265,7 +3460,7 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
           {confirmDeleteFolderId === folder.id ? (
             <div className="px-3 py-2 space-y-1.5">
               <div className="text-xs text-red-600">确定删除「{folder.name}」？</div>
-              <div className="text-[10px] text-gray-400">子文件夹将一并删除，文件移至上级目录</div>
+              <div className="text-[10px] text-gray-400">子文件夹及其中全部文件将一并删除</div>
               <div className="flex gap-1.5 mt-1">
                 <button className="flex-1 px-2 py-1 text-[11px] rounded-md bg-red-500 text-white hover:bg-red-600 transition-colors"
                   onClick={() => { handleDeleteFolder(folder.id); setFolderContextMenu(null); setEditingFolderId(null); setConfirmDeleteFolderId(null); }}>
@@ -3387,7 +3582,7 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
           </div>
         )}
 
-        {/* Format filter + sort controls */}
+        {/* Format filter + sort controls + select all */}
         <div className="flex items-center gap-2 px-3 pb-1">
           {allTypes.size > 1 && (
             <div className="flex gap-1 overflow-x-auto scrollbar-thin flex-1 min-w-0">
@@ -3408,6 +3603,25 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
               <option value="type">类型</option>
             </select>
           </button>
+          {(sortedDocs.length > 0 || childFolders.length > 0) && (
+            <label className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600 cursor-pointer shrink-0 select-none">
+              <input type="checkbox"
+                className="accent-blue-500 w-3 h-3"
+                checked={sortedDocs.length > 0 && sortedDocs.every(d => selectedDocs.has(d.path))}
+                onChange={e => {
+                  if (e.target.checked) {
+                    setSelectedDocs(prev => new Set([...prev, ...sortedDocs.map(d => d.path)]));
+                  } else {
+                    setSelectedDocs(prev => {
+                      const n = new Set(prev);
+                      sortedDocs.forEach(d => n.delete(d.path));
+                      return n;
+                    });
+                  }
+                }} />
+              全选
+            </label>
+          )}
         </div>
 
         {/* Main content area - folders + files */}
@@ -3419,21 +3633,37 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
           ) : viewMode === 'list' ? (
             /* ── 列表视图 ── */
             <div className="space-y-0.5">
-              {/* Back to parent */}
-              {currentFolderId !== null && (
-                <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 cursor-pointer text-gray-400 transition-colors"
-                  onClick={() => {
-                    const cur = folders.find(f => f.id === currentFolderId);
-                    setCurrentFolderId(cur?.parentId ?? null);
-                  }}>
-                  <ChevronRight size={14} className="rotate-180" />
-                  <span className="text-xs">返回上级</span>
-                </div>
-              )}
+              {/* Back to parent — also a drop target */}
+              {currentFolderId !== null && (() => {
+                const parentId = folders.find(f => f.id === currentFolderId)?.parentId ?? null;
+                const parentKey = parentId ?? '__root__';
+                return (
+                  <div className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-gray-400 transition-colors ${
+                    dragTarget === parentKey ? 'bg-blue-100 ring-2 ring-blue-400 ring-offset-1' : 'hover:bg-gray-50'
+                  }`}
+                    onDragOver={e => handleDragOver(e, parentId)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={e => handleDrop(e, parentId)}
+                    onClick={() => setCurrentFolderId(parentId)}>
+                    <ChevronRight size={14} className="rotate-180" />
+                    <span className="text-xs">返回上级{dragTarget === parentKey ? ' （放入上级文件夹）' : ''}</span>
+                  </div>
+                );
+              })()}
               {/* Child folders */}
               {childFolders.map(folder => (
                 <div key={folder.id}
-                  className="flex items-center gap-2 px-2 py-1.5 rounded-lg group hover:bg-blue-50/60 cursor-pointer transition-colors"
+                  className={`flex items-center gap-2 px-2 py-1.5 rounded-lg group transition-colors cursor-pointer ${
+                    dragTarget === folder.id
+                      ? 'bg-blue-100 ring-2 ring-blue-400 ring-offset-1'
+                      : 'hover:bg-blue-50/60'
+                  } ${dragItem?.id === folder.id ? 'opacity-40' : ''}`}
+                  draggable
+                  onDragStart={e => handleDragStart(e, 'folder', folder.id)}
+                  onDragOver={e => handleDragOver(e, folder.id)}
+                  onDragLeave={handleDragLeave}
+                  onDrop={e => handleDrop(e, folder.id)}
+                  onDragEnd={handleDragEnd}
                   onClick={() => setCurrentFolderId(folder.id)}
                   onContextMenu={e => handleFolderContextMenu(e, folder.id)}>
                   {getFolderIcon(folder.icon, folder.color, 16)}
@@ -3455,9 +3685,14 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
               {sortedDocs.map(doc => {
                 const inActiveCol = activeCollection?.docPaths.includes(doc.path);
                 return (
-                  <div key={doc.path} className={`flex items-center gap-2 px-2 py-1.5 rounded-lg group transition-colors ${
-                    selectedDocs.has(doc.path) ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-gray-50'
-                  }`}>
+                  <div key={doc.path}
+                    draggable
+                    onDragStart={e => handleDragStart(e, 'doc', doc.path)}
+                    onDragEnd={handleDragEnd}
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded-lg group transition-colors ${
+                      dragItem?.id === doc.path ? 'opacity-40' :
+                      selectedDocs.has(doc.path) ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-gray-50'
+                    }`}>
                     <input type="checkbox" className="accent-blue-500 w-3.5 h-3.5 shrink-0"
                       checked={selectedDocs.has(doc.path)}
                       onChange={() => setSelectedDocs(prev => {
@@ -3465,7 +3700,7 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
                         n.has(doc.path) ? n.delete(doc.path) : n.add(doc.path);
                         return n;
                       })} />
-                    <FileText size={14} className="text-gray-400 shrink-0" />
+                    <DocIcon type={doc.type} size={14} />
                     <span className="flex-1 text-xs text-gray-800 truncate" title={doc.path}>{doc.name}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${DOC_TYPE_COLORS[doc.type] ?? DOC_TYPE_COLORS.text}`}>{doc.type}</span>
                     {inActiveCol && <CheckCircle2 size={12} className="text-green-500 shrink-0" />}
@@ -3492,7 +3727,17 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
               {/* Child folders */}
               {childFolders.map(folder => (
                 <div key={folder.id}
-                  className="flex flex-col items-center gap-1 p-2 rounded-lg cursor-pointer hover:bg-blue-50/60 transition-colors group relative"
+                  draggable
+                  onDragStart={e => handleDragStart(e, 'folder', folder.id)}
+                  onDragOver={e => handleDragOver(e, folder.id)}
+                  onDragLeave={handleDragLeave}
+                  onDrop={e => handleDrop(e, folder.id)}
+                  onDragEnd={handleDragEnd}
+                  className={`flex flex-col items-center gap-1 p-2 rounded-lg cursor-pointer transition-colors group relative ${
+                    dragTarget === folder.id
+                      ? 'bg-blue-100 ring-2 ring-blue-400'
+                      : 'hover:bg-blue-50/60'
+                  } ${dragItem?.id === folder.id ? 'opacity-40' : ''}`}
                   onClick={() => setCurrentFolderId(folder.id)}
                   onContextMenu={e => handleFolderContextMenu(e, folder.id)}>
                   <div className="relative">
@@ -3512,7 +3757,11 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
               {/* Files */}
               {sortedDocs.map(doc => (
                 <div key={doc.path}
+                  draggable
+                  onDragStart={e => handleDragStart(e, 'doc', doc.path)}
+                  onDragEnd={handleDragEnd}
                   className={`flex flex-col items-center gap-1 p-2 rounded-lg cursor-pointer transition-colors group relative ${
+                    dragItem?.id === doc.path ? 'opacity-40' :
                     selectedDocs.has(doc.path) ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-gray-50'
                   }`}
                   onClick={() => setSelectedDocs(prev => {
@@ -3521,10 +3770,7 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
                     return n;
                   })}>
                   <div className="relative">
-                    <FileText size={28} className="text-gray-400" />
-                    <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 text-[7px] font-bold text-white bg-gray-500 rounded px-0.5 leading-tight">
-                      {doc.type}
-                    </span>
+                    <DocIcon type={doc.type} size={28} />
                   </div>
                   <span className="text-[10px] text-gray-700 text-center truncate w-full" title={doc.name}>{doc.name}</span>
                 </div>

@@ -268,10 +268,10 @@ export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onCreateNote, 
   };
 
   return (
-    <div className="flex h-full bg-white relative">
+    <div className="flex h-full relative" style={{ background: 'var(--t-bg-main)' }}>
       {/* Left Sidebar: Problem List */}
       {layoutMode === 'split' && (
-        <div className="flex flex-col border-r border-gray-200 h-full w-80 flex-shrink-0 bg-white">
+        <div className="flex flex-col border-r h-full w-80 flex-shrink-0" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
           <LeetCodeList 
             lists={lists}
             progress={progress}
@@ -289,9 +289,9 @@ export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onCreateNote, 
       )}
 
       {/* Right Content: Webview + Terminal */}
-      <div className={`flex-1 flex flex-col min-w-0 bg-white ${layoutMode === 'split' ? 'border-l border-gray-200' : ''}`}>
+      <div className={`flex-1 flex flex-col min-w-0 ${layoutMode === 'split' ? 'border-l' : ''}`} style={{ background: 'var(--t-bg-main)', ...(layoutMode === 'split' ? { borderColor: 'var(--t-border)' } : {}) }}>
         {/* Toolbar */}
-        <div className="h-12 border-b border-gray-200 flex items-center px-4 gap-2 bg-gray-50/50" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+        <div className="h-12 border-b flex items-center px-4 gap-2" style={{ WebkitAppRegion: 'drag', background: 'var(--t-header-bg)', borderColor: 'var(--t-border)' } as React.CSSProperties}>
           <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             <button 
               onClick={handleGoBack}
@@ -315,7 +315,7 @@ export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onCreateNote, 
             </button>
           </div>
           
-          <div className="flex-1 px-3 py-1.5 bg-white border border-gray-200 rounded-md text-xs text-gray-500 truncate font-mono">
+          <div className="flex-1 px-3 py-1.5 border rounded-md text-xs truncate font-mono" style={{ background: 'var(--t-input-bg)', borderColor: 'var(--t-input-border)', color: 'var(--t-text-muted)' }}>
             {addressBarUrl}
           </div>
 

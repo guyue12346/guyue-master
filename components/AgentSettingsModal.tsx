@@ -214,8 +214,21 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
                     const provider = profile.provider;
                     if (!(provider in AGENT_AVAILABLE_MODELS)) return;
                     const typedProvider = provider as ChatConfig['provider'];
-                    const nextModel = AGENT_AVAILABLE_MODELS[typedProvider]?.[0]?.id || '';
-                    onChangeConfig({ ...config, provider: typedProvider, model: nextModel, apiKey: profile.apiKey, baseUrl: profile.baseUrl || '' });
+                    
+                    // 导入到 savedApiConfigs 列表
+                    const newItem: SavedAgentApiConfig = {
+                      id: crypto.randomUUID(),
+                      label: profile.name,
+                      provider: typedProvider,
+                      apiKey: profile.apiKey,
+                      baseUrl: profile.baseUrl || '',
+                    };
+                    const next = [...savedApiConfigs, newItem];
+                    setSavedApiConfigs(next);
+                    persistSavedApiConfigs(next);
+                    
+                    // 自动应用该配置
+                    applyConfig(newItem);
                   }}
                 >
                   <option value="">⬇ 从全局设置导入配置…</option>

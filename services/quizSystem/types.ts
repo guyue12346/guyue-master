@@ -1,8 +1,8 @@
 /**
  * Quiz System — 类型定义
- *
- * 基于 QUIZ_SYSTEM_DESIGN.md 设计文档
  */
+
+import type { LocalVectorStore, EmbeddingConfig } from '../ragLlamaIndex';
 
 // ═══════════════════════════════════════════════════════
 // 枚举与常量
@@ -17,7 +17,7 @@ export type VectorStoreRole = 'material' | 'questions_no_answer' | 'questions_wi
 export type MasteryLevel = 'not_mastered' | 'partially' | 'mastered' | 'expert';
 
 /** 练习模式 */
-export type SessionMode = 'practice' | 'mock_interview' | 'review';
+export type SessionMode = 'practice' | 'mock_interview' | 'review' | 'interview';
 
 /** 关键点命中状态 */
 export type KeyPointHitStatus = 'hit' | 'partial' | 'missed';
@@ -91,6 +91,10 @@ export interface AnswerEvaluation {
     calibratedScore: number;
     scoringTimeMs: number;
   };
+  // Interview mode fields
+  shouldFollowUp?: boolean;
+  followUpReason?: string;
+  interviewerComment?: string;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -134,19 +138,16 @@ export interface QuizSession {
   summary?: SessionSummary;
   startedAt: number;
   finishedAt?: number;
-  status: 'generating' | 'answering' | 'grading' | 'completed';
+  status: 'generating' | 'answering' | 'grading' | 'completed' | 'interview_active';
 }
 
 // ═══════════════════════════════════════════════════════
-// 知识点掌握度 (SM-2)
+// 标签掌握度 (SM-2) — 每个独立标签一条记录
 // ═══════════════════════════════════════════════════════
 
-/** 单个知识点掌握度 */
-export interface KnowledgePointMastery {
-  pointId: string;
-  label: string;
-  tags: string[];
-  sourceChunkIds: string[];
+/** 单个标签掌握度 */
+export interface TagMastery {
+  tag: string;                      // 标签名（即 key）
 
   // SM-2
   easeFactor: number;               // 初始 2.5，下限 1.3
@@ -167,14 +168,43 @@ export interface KnowledgePointMastery {
   masteryLevel: MasteryLevel;
 }
 
-/** 出题优先级 */
-export interface QuestionPriority {
+/** @deprecated 兼容旧数据迁移 */
+export interface KnowledgePointMastery {
   pointId: string;
+  label: string;
+  tags: string[];
+  sourceChunkIds: string[];
+  easeFactor: number;
+  interval: number;
+  repetitions: number;
+  createdAt: number;
+  lastReviewAt: number;
+  nextReviewAt: number;
+  totalAttempts: number;
+  correctCount: number;
+  avgScore: number;
+  recentScores: number[];
+  masteryLevel: MasteryLevel;
+}
+
+/** 出题优先级（按标签） */
+export interface QuestionPriority {
+  tag: string;
   priority: number;
   reason: string;
   retentionRate: number;
   suggestedType: QuestionType;
   suggestedDifficulty: number;
+}
+
+/** 向量库上下文（出题管线使用） */
+export interface StoreContext {
+  store: LocalVectorStore;
+  storeId: string;
+  name: string;
+  role?: VectorStoreRole;
+  topicVocabulary?: string[];
+  embeddingConfig: EmbeddingConfig;
 }
 
 // ═══════════════════════════════════════════════════════

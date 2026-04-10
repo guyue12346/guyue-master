@@ -7,7 +7,7 @@ export type {
   QuestionType, MasteryLevel, SessionMode, KeyPointHitStatus, FollowUpStrategy,
   QuizQuestion, KeyPointMatch, ScoreDimensions, AnswerEvaluation,
   QuizAttempt, SessionSummary, QuizSession,
-  KnowledgePointMastery, QuestionPriority,
+  TagMastery, KnowledgePointMastery, QuestionPriority, StoreContext,
   SessionConfig, QuizSettings, QuizStats,
   LLMFunction, QuizScenario, VectorStoreRole,
 } from './types';
@@ -21,6 +21,10 @@ export {
 export {
   buildQuestionPrompt, buildScoringPrompt,
   buildFollowUpPrompt, buildSessionSummaryPrompt,
+} from './prompts';
+export type {
+  PromptChunk, StorePromptContext, StudentProfile,
+  HistoryExample, GenerationPhase,
 } from './prompts';
 
 // Storage
@@ -41,12 +45,11 @@ export {
   mapScoreToQuality, updateMastery, calculateMasteryLevel,
   getRetentionRate, getRetentionStatus,
   suggestQuestionType, suggestDifficulty,
-  calculateQuestionPriorities, createMasteryPoint,
+  calculateQuestionPriorities, createTagMastery,
 } from './scheduler';
 
 // Engine
 export {
-  sampleByRandom, sampleByWeakTags,
   generateQuestion, isDuplicate, generateFollowUp,
   buildSessionPlan, generateSessionSummary,
   updateMasteryAfterAnswer,

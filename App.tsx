@@ -268,6 +268,13 @@ const App: React.FC = () => {
     return localStorage.getItem('linkmaster_browser_start_page') || 'https://www.bing.com';
   });
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+  const [appTheme, setAppTheme] = useState(() => localStorage.getItem('guyue_sidebar_theme') || 'default');
+  useEffect(() => {
+    const h = () => setAppTheme(localStorage.getItem('guyue_sidebar_theme') || 'default');
+    window.addEventListener('sidebar-theme-change', h);
+    window.addEventListener('storage', h);
+    return () => { window.removeEventListener('sidebar-theme-change', h); window.removeEventListener('storage', h); };
+  }, []);
   
   // Lazy initialization states
   const [hasTerminalMounted, setHasTerminalMounted] = useState(false);
@@ -2330,7 +2337,7 @@ const App: React.FC = () => {
           onComplete={() => setShowSplash(false)}
         />
       ) : (
-        <div className="fixed inset-0 flex overflow-hidden bg-gray-50">
+        <div className="fixed inset-0 flex overflow-hidden" style={{ background: 'var(--t-bg)' }} data-theme={appTheme}>
           {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || isLatexFullscreen) && isSidebarVisible && (
             <NavRail 
               currentMode={appMode} 
@@ -2574,18 +2581,19 @@ const App: React.FC = () => {
         </Suspense>
       )}
 
-      <div className={`flex-1 flex flex-col min-w-0 relative bg-white`} style={appMode === 'agent' ? { display: 'none' } : undefined}>
+      <div className={`flex-1 flex flex-col min-w-0 relative`} style={appMode === 'agent' ? { display: 'none' } : { background: 'var(--t-bg-main)' }}>
         {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
-        <div className="h-16 border-b border-gray-200 flex items-center justify-between px-6 bg-white shrink-0">
+        <div className="h-16 flex items-center justify-between px-6 shrink-0" style={{ borderBottom: '1px solid var(--t-border)', background: 'var(--t-bg-main)' }}>
            <div className="flex items-center gap-4 flex-1 max-w-xl">
               <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--t-text-muted)' }} />
                 <input 
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder={getSearchPlaceholder()}
-                  className="w-full pl-10 pr-4 py-2 bg-gray-100 border-none rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all"
+                  className="w-full pl-10 pr-4 py-2 border-none rounded-xl text-sm transition-all focus:ring-2 focus:ring-[var(--t-accent)]/20"
+                  style={{ background: 'var(--t-input-bg)', color: 'var(--t-text)' }}
                 />
               </div>
            </div>

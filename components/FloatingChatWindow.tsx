@@ -37,17 +37,18 @@ export const FloatingChatWindow: React.FC<FloatingChatWindowProps> = ({ isOpen, 
     : { position: 'fixed', left: position.x, top: position.y, width: size.w, height: isMinimized ? 'auto' : size.h, zIndex: 9999 };
 
   return (
-    <div style={style} className={`flex flex-col bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden ${isMaximized ? 'rounded-none' : ''}`}>
+    <div style={{ ...style, background: 'var(--t-bg-main)', borderColor: 'var(--t-border)', boxShadow: 'var(--t-shadow)' }} className={`flex flex-col rounded-xl border overflow-hidden ${isMaximized ? 'rounded-none' : ''}`}>
       {/* Title Bar */}
       <div
-        className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-200 cursor-move select-none shrink-0"
+        className="flex items-center justify-between px-3 py-2 border-b cursor-move select-none shrink-0"
+        style={{ background: 'var(--t-header-bg)', borderColor: 'var(--t-border)' }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
       >
         <div className="flex items-center gap-2">
-          <GripHorizontal className="w-3.5 h-3.5 text-gray-300" />
-          <span className="text-xs font-medium text-gray-600">{title}</span>
+          <GripHorizontal className="w-3.5 h-3.5" style={{ color: 'var(--t-text-muted)' }} />
+          <span className="text-xs font-medium" style={{ color: 'var(--t-text)' }}>{title}</span>
         </div>
         <div className="flex items-center gap-1">
           <button onClick={() => setIsMinimized(!isMinimized)} className="p-1 rounded hover:bg-gray-200 transition-colors">

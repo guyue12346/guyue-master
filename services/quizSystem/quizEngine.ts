@@ -1,20 +1,20 @@
 /**
  * Quiz System — 出题引擎
  *
- * 知识采样 → LLM生成 → 去重 → 追问 → Session配比
+ * 基于向量库搜索API的出题管线：
+ * 标签优先级 → 搜索向量库 → LLM生成 → 去重 → 追问
  */
 
 import type {
   QuizQuestion, QuestionType, LLMFunction,
-  KnowledgePointMastery, SessionConfig, DEFAULT_SESSION_CONFIG,
-  VectorStoreRole,
+  TagMastery, SessionConfig, VectorStoreRole, StoreContext,
 } from './types';
 import { buildQuestionPrompt, buildFollowUpPrompt, buildSessionSummaryPrompt } from './prompts';
-import { calculateQuestionPriorities, createMasteryPoint } from './scheduler';
-import { loadMastery, saveMastery, loadQuestionCache, addCachedQuestion, markQuestionUsed } from './storageService';
+import type { PromptChunk, StudentProfile, StorePromptContext, GenerationPhase, HistoryExample } from './prompts';
+import { calculateQuestionPriorities, createTagMastery } from './scheduler';
+import { loadMastery, saveMastery, loadQuestionCache, addCachedQuestion } from './storageService';
 import { getEmbedding } from '../ragLlamaIndex/embedding';
-import { LocalVectorStore } from '../ragLlamaIndex';
-import type { EmbeddingConfig } from '../ragLlamaIndex';
+import type { EmbeddingConfig, SearchResult } from '../ragLlamaIndex';
 
 // ═══════════════════════════════════════════════════════
 // Utilities
@@ -51,8 +51,18 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return d === 0 ? 0 : dot / d;
 }
 
+/** 去重：合并多次搜索结果，按 nodeId 去重 */
+function deduplicateResults(results: SearchResult[]): SearchResult[] {
+  const seen = new Set<string>();
+  return results.filter(r => {
+    if (seen.has(r.nodeId)) return false;
+    seen.add(r.nodeId);
+    return true;
+  });
+}
+
 // ═══════════════════════════════════════════════════════
-// Knowledge Sampling
+// 向量库搜索策略
 // ═══════════════════════════════════════════════════════
 
 interface TextChunk {
@@ -62,62 +72,218 @@ interface TextChunk {
   sourceStoreId?: string;
 }
 
-/** 从向量库获取所有 chunks */
-function getAllChunks(store: LocalVectorStore): TextChunk[] {
-  const ids = store.getEntryIds();
-  return ids.map(id => {
-    const entry = store.getEntry(id);
-    if (!entry) return null;
-    return { id: entry.id, text: entry.text, metadata: entry.metadata };
-  }).filter((c): c is NonNullable<typeof c> => c !== null) as TextChunk[];
+function searchResultToChunk(r: SearchResult, storeId: string): TextChunk {
+  return { id: r.nodeId, text: r.text, metadata: r.metadata, sourceStoreId: storeId };
 }
 
-/** 策略A: 随机采样 */
-export function sampleByRandom(
-  store: LocalVectorStore,
-  count: number,
-  excludeIds?: Set<string>,
-): TextChunk[] {
-  const chunks = getAllChunks(store);
-  const candidates = excludeIds ? chunks.filter(c => !excludeIds.has(c.id)) : chunks;
-  return shuffleArray(candidates).slice(0, count);
+/** 搜索策略：用查询文本在多个向量库中搜索，合并去重 */
+async function searchStores(
+  storeContexts: StoreContext[],
+  query: string,
+  topK: number = 5,
+): Promise<TextChunk[]> {
+  const allResults: SearchResult[] = [];
+  for (const ctx of storeContexts) {
+    try {
+      const results = await ctx.store.search(query, ctx.embeddingConfig, { topK });
+      allResults.push(...results);
+    } catch (err) {
+      console.warn(`[QuizEngine] search failed for store ${ctx.name}:`, err);
+    }
+  }
+  return deduplicateResults(allResults)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topK)
+    .map(r => searchResultToChunk(r, storeContexts[0]?.storeId || ''));
 }
 
-/** 策略C: 薄弱点定向检索 (简化版 — 用文本匹配) */
-export function sampleByWeakTags(
-  store: LocalVectorStore,
-  weakTags: string[],
-  count: number,
-): TextChunk[] {
-  const chunks = getAllChunks(store);
-  const scored = chunks.map(c => {
-    const text = (c.text + ' ' + (c.metadata?.fileName || '')).toLowerCase();
-    const matchCount = weakTags.filter(tag => text.includes(tag.toLowerCase())).length;
-    return { chunk: c, score: matchCount };
+/** 根据标签历史题目搜索相关向量块 */
+async function searchForTag(
+  tag: string,
+  storeContexts: StoreContext[],
+  questionCache: QuizQuestion[],
+): Promise<TextChunk[]> {
+  // 用该标签下最近的题目文本作为搜索query（更精准）
+  const tagQuestions = questionCache
+    .filter(q => q.tags.includes(tag))
+    .sort((a, b) => (b.lastUsedAt || b.createdAt) - (a.lastUsedAt || a.createdAt));
+
+  const queries: string[] = [];
+  if (tagQuestions.length > 0) {
+    // 用最近2道题目的文本
+    queries.push(...tagQuestions.slice(0, 2).map(q => q.question));
+  }
+  // 兜底：直接用标签名搜索
+  if (queries.length === 0) {
+    queries.push(tag);
+  }
+
+  const allChunks: TextChunk[] = [];
+  for (const query of queries) {
+    const chunks = await searchStores(storeContexts, query, 5);
+    allChunks.push(...chunks);
+  }
+
+  // 去重
+  const seen = new Set<string>();
+  return allChunks.filter(c => {
+    if (seen.has(c.id)) return false;
+    seen.add(c.id);
+    return true;
   });
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, count).map(s => s.chunk);
+}
+
+/** 根据主题词搜索新知识向量块 */
+async function searchForNewTopic(
+  topic: string,
+  storeContexts: StoreContext[],
+): Promise<TextChunk[]> {
+  return searchStores(storeContexts, topic, 5);
+}
+
+// ═══════════════════════════════════════════════════════
+// 主题词-标签 语义匹配（embedding级别）
+// ═══════════════════════════════════════════════════════
+
+/** 计算主题词是否已被现有标签覆盖 (embedding相似度) */
+async function isTopicCoveredByTags(
+  topic: string,
+  existingTags: string[],
+  embeddingConfig: EmbeddingConfig,
+  threshold: number = 0.75,
+): Promise<boolean> {
+  if (existingTags.length === 0) return false;
+  try {
+    const topicEmb = await getEmbedding(topic, embeddingConfig);
+    for (const tag of existingTags) {
+      const tagEmb = await getEmbedding(tag, embeddingConfig);
+      const sim = cosineSimilarity(topicEmb, tagEmb);
+      if (sim >= threshold) return true;
+    }
+  } catch {
+    // Fallback: 字符串包含
+    const topicLower = topic.toLowerCase();
+    for (const tag of existingTags) {
+      const tagLower = tag.toLowerCase();
+      if (topicLower.includes(tagLower) || tagLower.includes(topicLower)) return true;
+    }
+  }
+  return false;
+}
+
+/** 批量筛选未覆盖的主题词 */
+async function findUncoveredTopics(
+  allTopics: string[],
+  existingTags: string[],
+  embeddingConfig: EmbeddingConfig,
+): Promise<string[]> {
+  if (existingTags.length === 0) return allTopics;
+
+  // 批量计算embedding以减少API调用
+  const uncovered: string[] = [];
+  try {
+    const tagEmbeddings: number[][] = [];
+    for (const tag of existingTags) {
+      tagEmbeddings.push(await getEmbedding(tag, embeddingConfig));
+    }
+
+    for (const topic of allTopics) {
+      const topicEmb = await getEmbedding(topic, embeddingConfig);
+      const maxSim = Math.max(...tagEmbeddings.map(te => cosineSimilarity(topicEmb, te)));
+      if (maxSim < 0.75) {
+        uncovered.push(topic);
+      }
+    }
+  } catch {
+    // Fallback: 字符串匹配
+    for (const topic of allTopics) {
+      const topicLower = topic.toLowerCase();
+      const covered = existingTags.some(tag => {
+        const tagLower = tag.toLowerCase();
+        return topicLower.includes(tagLower) || tagLower.includes(topicLower);
+      });
+      if (!covered) uncovered.push(topic);
+    }
+  }
+  return uncovered;
 }
 
 // ═══════════════════════════════════════════════════════
 // Question Generation
 // ═══════════════════════════════════════════════════════
 
-/** 生成单道题目 */
+/** 生成单道题目（使用动态 prompt） */
 export async function generateQuestion(
   chunks: TextChunk[],
   questionType: QuestionType,
   difficulty: number,
   llmFn: LLMFunction,
-  existingQuestions?: string[],
-  sourceRole?: VectorStoreRole,
+  phase: GenerationPhase,
+  options?: {
+    storeContexts?: StoreContext[];
+    allTags?: TagMastery[];
+    rolePrompt?: string;
+    quizDirection?: string;
+    existingQuestions?: string[];
+    studentProfile?: StudentProfile;
+    historyExamples?: HistoryExample[];
+    targetTag?: string;
+    targetTopic?: string;
+  },
 ): Promise<QuizQuestion> {
+  // Build StorePromptContext[] from chunks grouped by store
+  const storeGroups = new Map<string, { ctx?: StoreContext; chunks: PromptChunk[] }>();
+  for (const chunk of chunks) {
+    const storeId = chunk.sourceStoreId || '_default';
+    if (!storeGroups.has(storeId)) {
+      const ctx = options?.storeContexts?.find(c => c.storeId === storeId);
+      storeGroups.set(storeId, { ctx, chunks: [] });
+    }
+    // Build enriched PromptChunk
+    const chunkText = chunk.text.toLowerCase();
+    const relatedTags = (options?.allTags || [])
+      .filter(t => chunkText.includes(t.tag.toLowerCase()))
+      .slice(0, 5)
+      .map(t => ({
+        tag: t.tag,
+        masteryLevel: t.masteryLevel,
+        avgScore: t.avgScore,
+        totalAttempts: t.totalAttempts,
+        lastReviewAt: t.lastReviewAt,
+      }));
+
+    storeGroups.get(storeId)!.chunks.push({
+      text: chunk.text,
+      chunkId: chunk.id,
+      role: storeGroups.get(storeId)?.ctx?.role,
+      storeName: chunk.metadata?.fileName || storeGroups.get(storeId)?.ctx?.name,
+      metadata: chunk.metadata,
+      relatedTags: relatedTags.length > 0 ? relatedTags : undefined,
+    });
+  }
+
+  const storePromptContexts: StorePromptContext[] = Array.from(storeGroups.entries()).map(([, group]) => ({
+    name: group.ctx?.name || '未知向量库',
+    role: group.ctx?.role,
+    summary: undefined, // summary from collection meta - could be passed via StoreContext
+    topicVocabulary: group.ctx?.topicVocabulary,
+    chunks: group.chunks,
+  }));
+
   const prompt = buildQuestionPrompt(
-    chunks.map(c => c.text),
+    storePromptContexts,
     questionType,
     difficulty,
-    existingQuestions,
-    sourceRole,
+    phase,
+    {
+      rolePrompt: options?.rolePrompt,
+      quizDirection: options?.quizDirection,
+      existingQuestions: options?.existingQuestions,
+      studentProfile: options?.studentProfile,
+      historyExamples: options?.historyExamples,
+      targetTag: options?.targetTag,
+      targetTopic: options?.targetTopic,
+    },
   );
 
   const response = await llmFn(prompt);
@@ -192,7 +358,7 @@ export async function generateFollowUp(
 }
 
 // ═══════════════════════════════════════════════════════
-// Session Plan
+// Session Plan — 基于搜索的出题管线
 // ═══════════════════════════════════════════════════════
 
 export interface SessionPlan {
@@ -205,9 +371,9 @@ export interface SessionPlan {
   };
 }
 
-/** 构建一个 session 的出题计划 */
+/** 构建一个 session 的出题计划（搜索API版本） */
 export async function buildSessionPlan(
-  stores: LocalVectorStore[],
+  storeContexts: StoreContext[],
   llmFn: LLMFunction,
   embeddingConfig: EmbeddingConfig,
   config: SessionConfig = {
@@ -220,8 +386,10 @@ export async function buildSessionPlan(
   questionTypes: QuestionType[] = ['concept', 'comparison', 'scenario'],
   difficulty: number = 3,
   topicHint?: string,
+  quizDirection?: string,
   onProgress?: (done: number, total: number, status: string) => void,
   storeRoles?: Record<string, VectorStoreRole[]>,
+  categoryId?: string,
 ): Promise<SessionPlan> {
   const total = config.totalQuestions;
   const reviewCount = Math.round(total * config.reviewRatio);
@@ -229,29 +397,34 @@ export async function buildSessionPlan(
   const newCount = Math.round(total * config.newKnowledgeRatio);
   const randomCount = Math.max(0, total - reviewCount - weakCount - newCount);
 
-  // Load mastery data
-  const mastery = await loadMastery();
-  const allPoints = Object.values(mastery);
-  const priorities = calculateQuestionPriorities(allPoints);
+  // Load mastery data (now TagMastery)
+  const mastery = await loadMastery(categoryId);
+  const allTags = Object.values(mastery);
+  const priorities = calculateQuestionPriorities(allTags);
 
-  // Combine all store chunks, tagging with source store ID
-  const allChunks: TextChunk[] = [];
-  for (const store of stores) {
-    const chunks = getAllChunks(store);
-    const storeId = (store as any).id || (store as any).name || '';
-    for (const chunk of chunks) {
-      chunk.sourceStoreId = storeId;
+  // Build student profile
+  const weakMastery = allTags.filter(t => t.masteryLevel === 'not_mastered' || t.masteryLevel === 'partially');
+  const studentProfile: StudentProfile | undefined = allTags.length > 0 ? {
+    overallMastery: Math.round(allTags.reduce((sum, t) => sum + t.avgScore, 0) / allTags.length),
+    weakTags: weakMastery.map(t => t.tag).slice(0, 5),
+    strongTags: allTags.filter(t => t.masteryLevel === 'mastered' || t.masteryLevel === 'expert')
+      .map(t => t.tag).slice(0, 5),
+    recentAvgScore: Math.round(allTags.slice(0, 10).reduce((sum, t) => sum + t.avgScore, 0) / Math.min(allTags.length, 10)),
+    totalAttempts: allTags.reduce((sum, t) => sum + t.totalAttempts, 0),
+  } : undefined;
+
+  // Load question cache for search queries
+  const questionCache = await loadQuestionCache();
+
+  // Collect all topic vocabularies from store contexts
+  const allTopics = storeContexts.flatMap(ctx => ctx.topicVocabulary || []);
+  const existingTagNames = allTags.map(t => t.tag);
+
+  // Apply store roles to contexts
+  for (const ctx of storeContexts) {
+    if (storeRoles?.[ctx.storeId]) {
+      ctx.role = storeRoles[ctx.storeId][0];
     }
-    allChunks.push(...chunks);
-  }
-  if (allChunks.length === 0) throw new Error('所选向量库中没有数据');
-
-  // Determine role for a chunk based on storeRoles mapping
-  function getChunkRole(chunk: TextChunk): VectorStoreRole | undefined {
-    if (!storeRoles || !chunk.sourceStoreId) return undefined;
-    const roles = storeRoles[chunk.sourceStoreId];
-    if (roles && roles.length > 0) return roles[0];
-    return undefined;
   }
 
   const existingTexts: string[] = [];
@@ -262,10 +435,42 @@ export async function buildSessionPlan(
 
   let lastError: Error | null = null;
 
-  async function gen(chunks: TextChunk[], qType?: QuestionType): Promise<QuizQuestion | null> {
+  /** 从题目缓存中获取某个标签的历史答题示例 */
+  function getHistoryExamples(tag: string): HistoryExample[] {
+    // 暂无完整的 attempt 数据，使用缓存题目的基本信息
+    const tagQuestions = questionCache
+      .filter(q => q.tags.includes(tag) && q.usedCount > 0)
+      .sort((a, b) => (b.lastUsedAt || b.createdAt) - (a.lastUsedAt || a.createdAt))
+      .slice(0, 2);
+    return tagQuestions.map(q => ({
+      question: q.question,
+      userAnswer: '（历史回答不可用）',
+      score: mastery[tag]?.avgScore ?? 0,
+      keyPointsHit: q.keyPoints.slice(0, 2),
+      keyPointsMissed: q.keyPoints.slice(2),
+    }));
+  }
+
+  async function gen(
+    chunks: TextChunk[],
+    phase: GenerationPhase,
+    qType?: QuestionType,
+    targetTag?: string,
+    targetTopic?: string,
+  ): Promise<QuizQuestion | null> {
     try {
-      const role = getChunkRole(chunks[0]);
-      const q = await generateQuestion(chunks, qType || pickType(), difficulty, llmFn, existingTexts, role);
+      const historyExamples = targetTag ? getHistoryExamples(targetTag) : undefined;
+      const q = await generateQuestion(chunks, qType || pickType(), difficulty, llmFn, phase, {
+        storeContexts,
+        allTags,
+        rolePrompt: topicHint,
+        quizDirection,
+        existingQuestions: existingTexts,
+        studentProfile,
+        historyExamples: historyExamples?.length ? historyExamples : undefined,
+        targetTag,
+        targetTopic,
+      });
       existingTexts.push(q.question);
       await addCachedQuestion(q);
       return q;
@@ -276,55 +481,72 @@ export async function buildSessionPlan(
     }
   }
 
-  // 1. 到期复习题
-  const overduePoints = priorities.filter(p => p.priority > 0).slice(0, reviewCount);
-  for (const op of overduePoints) {
+  // ── 1. 到期复习题：用历史题目搜索相关向量块 ──
+  const overdueTags = priorities.filter(p => p.priority > 0).slice(0, reviewCount);
+  for (const op of overdueTags) {
     onProgress?.(++done, total, `复习题 ${done}/${total}`);
-    const point = mastery[op.pointId];
-    if (!point) continue;
-    const relatedChunks = allChunks.filter(c => point.sourceChunkIds.includes(c.id));
-    const chunks = relatedChunks.length > 0 ? relatedChunks.slice(0, 3) : shuffleArray(allChunks).slice(0, 3);
-    const q = await gen(chunks, op.suggestedType);
+    const chunks = await searchForTag(op.tag, storeContexts, questionCache);
+    if (chunks.length === 0) continue;
+    const q = await gen(chunks.slice(0, 5), 'review', op.suggestedType, op.tag);
     if (q) questions.push(q);
   }
 
-  // 2. 薄弱点强化
-  const weakPoints = allPoints.filter(p => p.masteryLevel === 'not_mastered' || p.masteryLevel === 'partially');
-  const weakTags = weakPoints.flatMap(p => p.tags).filter((v, i, a) => a.indexOf(v) === i);
+  // ── 2. 薄弱点强化：用薄弱标签搜索 ──
+  const weakTagNames = weakMastery.map(t => t.tag);
   for (let i = 0; i < weakCount && questions.length < total; i++) {
     onProgress?.(++done, total, `薄弱强化 ${done}/${total}`);
-    const chunks = weakTags.length > 0
-      ? sampleByWeakTags(stores[0], weakTags, 3)
-      : shuffleArray(allChunks).slice(0, 3);
-    const q = await gen(chunks, 'concept');
+    const tag = weakTagNames[i % Math.max(weakTagNames.length, 1)] || '';
+    let chunks: TextChunk[];
+    if (tag) {
+      chunks = await searchForTag(tag, storeContexts, questionCache);
+    } else {
+      const randomTopic = allTopics[Math.floor(Math.random() * Math.max(allTopics.length, 1))] || '基础概念';
+      chunks = await searchStores(storeContexts, randomTopic, 5);
+    }
+    if (chunks.length === 0) continue;
+    const q = await gen(chunks.slice(0, 5), 'weak', 'concept', tag || undefined);
     if (q) questions.push(q);
   }
 
-  // 3. 新知识
-  const usedChunkIds = new Set(allPoints.flatMap(p => p.sourceChunkIds));
+  // ── 3. 新知识：用未覆盖的主题词搜索 ──
+  let uncoveredTopics: string[] = [];
+  try {
+    // 使用第一个 storeContext 的 embeddingConfig 做语义匹配
+    const matchEmbCfg = storeContexts[0]?.embeddingConfig || embeddingConfig;
+    uncoveredTopics = await findUncoveredTopics(allTopics, existingTagNames, matchEmbCfg);
+  } catch {
+    uncoveredTopics = allTopics; // 匹配失败则全部视为未覆盖
+  }
+  const shuffledTopics = shuffleArray(uncoveredTopics);
   for (let i = 0; i < newCount && questions.length < total; i++) {
     onProgress?.(++done, total, `新知识 ${done}/${total}`);
-    const newChunks = allChunks.filter(c => !usedChunkIds.has(c.id));
-    const chunks = newChunks.length > 0 ? shuffleArray(newChunks).slice(0, 3) : shuffleArray(allChunks).slice(0, 3);
-    const q = await gen(chunks);
+    const topic = shuffledTopics[i] || allTopics[Math.floor(Math.random() * Math.max(allTopics.length, 1))] || '核心概念';
+    const chunks = await searchForNewTopic(topic, storeContexts);
+    if (chunks.length === 0) continue;
+    const q = await gen(chunks.slice(0, 5), 'new', undefined, undefined, topic);
     if (q) questions.push(q);
   }
 
-  // 4. 随机巩固
+  // ── 4. 随机巩固：随机主题词搜索 ──
   for (let i = 0; i < randomCount && questions.length < total; i++) {
     onProgress?.(++done, total, `随机巩固 ${done}/${total}`);
-    const chunks = shuffleArray(allChunks).slice(0, 3);
-    const q = await gen(chunks);
+    const seeds = [...allTopics, ...existingTagNames];
+    const seed = seeds[Math.floor(Math.random() * Math.max(seeds.length, 1))] || '知识点';
+    const chunks = await searchStores(storeContexts, seed, 5);
+    if (chunks.length === 0) continue;
+    const q = await gen(chunks.slice(0, 5), 'random');
     if (q) questions.push(q);
   }
 
-  // 补足不够的题目
+  // ── 5. 补足不够的题目 ──
   while (questions.length < total) {
     onProgress?.(++done, total, `补充出题 ${done}/${total}`);
-    const chunks = shuffleArray(allChunks).slice(0, 3);
-    const q = await gen(chunks);
+    const fallbackSeed = topicHint || allTopics[Math.floor(Math.random() * Math.max(allTopics.length, 1))] || '知识点';
+    const chunks = await searchStores(storeContexts, fallbackSeed, 5);
+    if (chunks.length === 0) break;
+    const q = await gen(chunks.slice(0, 5), 'random');
     if (q) questions.push(q);
-    else break; // 避免无限循环
+    else break;
   }
 
   if (questions.length === 0 && lastError) {
@@ -334,7 +556,7 @@ export async function buildSessionPlan(
   return {
     questions,
     composition: {
-      review: Math.min(overduePoints.length, reviewCount),
+      review: Math.min(overdueTags.length, reviewCount),
       weakPoint: weakCount,
       newKnowledge: newCount,
       random: randomCount,
@@ -350,7 +572,6 @@ export async function generateSessionSummary(
 ): Promise<{ overallGrade: string; recommendation: string }> {
   const avg = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
 
-  // 按标签统计
   const tagScores: Record<string, number[]> = {};
   tags.forEach((t, i) => {
     for (const tag of t) {
@@ -372,12 +593,11 @@ export async function generateSessionSummary(
     if (parsed) return { overallGrade: parsed.overallGrade || 'C', recommendation: parsed.recommendation || '' };
   } catch {}
 
-  // Fallback
   const grade = avg >= 90 ? 'A' : avg >= 75 ? 'B' : avg >= 60 ? 'C' : avg >= 40 ? 'D' : 'F';
   return { overallGrade: grade, recommendation: weakTags.length > 0 ? `建议重点复习：${weakTags.join('、')}` : '继续保持！' };
 }
 
-/** 答题后更新/创建知识点掌握度 */
+/** 答题后更新每个标签的掌握度 */
 export async function updateMasteryAfterAnswer(
   question: QuizQuestion,
   score: number,
@@ -386,15 +606,15 @@ export async function updateMasteryAfterAnswer(
   const { updateMastery } = await import('./scheduler');
   const mastery = await loadMastery(categoryId);
 
-  // 用题目 tags 构建 pointId
-  const pointId = question.tags.sort().join('-') || `unknown-${question.id}`;
-
-  if (mastery[pointId]) {
-    mastery[pointId] = updateMastery(mastery[pointId], score);
-  } else {
-    // 创建新知识点
-    const newPoint = createMasteryPoint(pointId, question.tags.join(' / '), question.tags, question.sourceChunkIds);
-    mastery[pointId] = updateMastery(newPoint, score);
+  // 为题目的每个标签独立更新掌握度
+  for (const tag of question.tags) {
+    if (!tag.trim()) continue;
+    if (mastery[tag]) {
+      mastery[tag] = updateMastery(mastery[tag], score);
+    } else {
+      const newTag = createTagMastery(tag);
+      mastery[tag] = updateMastery(newTag, score);
+    }
   }
 
   await saveMastery(mastery, categoryId);
