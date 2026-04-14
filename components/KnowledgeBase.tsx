@@ -1112,7 +1112,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
       addDebugInfo(assistantMsgId, dbg);
       setChatError(err?.message || '发送失败'); setIsStreaming(false); setStreamingContent('');
     }
-  }, [inputValue, isStreaming, activeAiConv, chatConfig, pendingAttachments, addDebugInfo]);
+  }, [inputValue, isStreaming, activeAiConv, chatConfig, pendingAttachments, addDebugInfo, aiTurnPrompt]);
 
   const handleStopAi = useCallback(() => { chatServiceRef.current.abort(); setIsStreaming(false); }, []);
 
@@ -1281,7 +1281,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
     const debugLog: any[] = [];
     try {
       const stores: LocalVectorStore[] = [];
-      for (const id of selectedIds) { try { stores.push(await loadStore(id)); } catch {} }
+      for (const id of selectedIds) { try { stores.push(await loadStore(id)); } catch (e) { console.warn(`[KB QA] Failed to load store ${id}:`, e); } }
       if (stores.length === 0) throw new Error('无法加载向量库');
 
       // Build StoreContext[] — pairs each store with its collection metadata + embedding config
@@ -1454,7 +1454,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
       });
       attempts.push({ id: `attempt-${i}`, questionId: q.id, question: q, userAnswer: answer, evaluation, timeSpentMs: 0, createdAt: Date.now() });
       totalScore += evaluation.totalScore;
-      try { await updateMasteryAfterAnswer(q, evaluation.totalScore, activeQuizCategoryId || undefined); } catch {}
+      try { await updateMasteryAfterAnswer(q, evaluation.totalScore, activeQuizCategoryId || undefined); } catch (e) { console.warn('[KB Quiz] mastery update failed:', e); }
     }
     setQuizDebugData(prev => [...prev, ...gradeDebugLog]);
     let summary: SessionSummary | undefined;
@@ -1464,12 +1464,12 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
       const { overallGrade, recommendation } = await generateSessionSummary(scores, tags, debugFn);
       const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
       summary = { totalQuestions: questions.length, avgScore: avg, maxScore: Math.max(...scores), minScore: Math.min(...scores), strongPoints: [], weakPoints: [], overallGrade: overallGrade as any, recommendation };
-    } catch {}
+    } catch (e) { console.warn('[KB Quiz] session summary failed:', e); }
     const completed: QuizSession = { ...activeQuiz, attempts, summary, status: 'completed', finishedAt: Date.now() };
     (completed as any)._questions = questions;
     setActiveQuiz(completed);
     setGradingIndex(-1);
-    try { await recordSessionStats(completed, activeQuizCategoryId || undefined); } catch {}
+    try { await recordSessionStats(completed, activeQuizCategoryId || undefined); } catch (e) { console.warn('[KB Quiz] recordSessionStats failed:', e); }
     const updatedHist = [completed, ...recentSessions.filter(s => s.id !== completed.id)].slice(0, 50);
     setRecentSessions(updatedHist);
     saveRecentSessions(updatedHist);
@@ -1513,7 +1513,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
       });
 
       // Update mastery
-      try { await updateMasteryAfterAnswer(interviewCurrentQ, evaluation.totalScore, activeQuizCategoryId || undefined); } catch {}
+      try { await updateMasteryAfterAnswer(interviewCurrentQ, evaluation.totalScore, activeQuizCategoryId || undefined); } catch (e) { console.warn('[KB Interview] mastery update failed:', e); }
 
       // Add to history
       const historyEntry = {
@@ -1569,7 +1569,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
           setInterviewCurrentQ(followUp);
           setInterviewFollowUpCount(prev => prev + 1);
           setInterviewAnswer('');
-        } catch {
+        } catch (e) { console.warn('[KB Interview] follow-up generation failed:', e);
           doMoveToNext(updatedSession, newHistory, attempt);
         }
       } else {
@@ -1602,13 +1602,13 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
           const { overallGrade, recommendation } = await generateSessionSummary(scores, tags, debugFn);
           const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
           summary = { totalQuestions: allAttempts.length, avgScore: avg, maxScore: Math.max(...scores), minScore: Math.min(...scores), strongPoints: [], weakPoints: [], overallGrade: overallGrade as any, recommendation };
-        } catch {}
+        } catch (e) { console.warn('[KB Interview] session summary failed:', e); }
         const completed: QuizSession = { ...sess, attempts: allAttempts, summary, status: 'completed', finishedAt: Date.now() };
         (completed as any)._questions = (activeQuiz as any)?._questions;
         (completed as any)._interviewHistory = (activeQuiz as any)?._interviewHistory || [];
         setActiveQuiz(completed);
         setInterviewCurrentQ(null);
-        try { await recordSessionStats(completed, activeQuizCategoryId || undefined); } catch {}
+        try { await recordSessionStats(completed, activeQuizCategoryId || undefined); } catch (e) { console.warn('[KB Interview] recordSessionStats failed:', e); }
         const updatedHist = [completed, ...recentSessions.filter(s => s.id !== completed.id)].slice(0, 50);
         setRecentSessions(updatedHist);
         saveRecentSessions(updatedHist);
@@ -1685,7 +1685,10 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
             {isQa ? <KBAvatar /> : <AIAvatar />}
             <span className="font-semibold text-xs" style={{ color: 'var(--t-text)' }}>{isQa ? '知识库对话' : 'AI 对话'}</span>
           </div>
-          <button onClick={onNew} className={`p-1.5 hover:bg-${accentColor}-50 rounded-lg hover:text-${accentColor}-600 transition-colors`} style={{ color: 'var(--t-text-muted)' }} title="新建对话">
+          <button onClick={onNew} className="p-1.5 rounded-lg transition-colors" style={{ color: 'var(--t-text-muted)' }}
+            onMouseEnter={e => { e.currentTarget.style.background = isQa ? '#f0fdf4' : '#faf5ff'; e.currentTarget.style.color = isQa ? '#16a34a' : '#9333ea'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = ''; e.currentTarget.style.color = 'var(--t-text-muted)'; }}
+            title="新建对话">
             <Plus className="w-4 h-4" />
           </button>
         </div>
@@ -1697,15 +1700,16 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
             const isRenaming = renamingConvId === conv.id;
             return (
               <button key={conv.id} onClick={() => setActiveId(conv.id)}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left group transition-all ${isActive ? `bg-${accentColor}-50 text-${accentColor}-700 shadow-sm` : 'theme-hover'}`}
-                style={!isActive ? { color: 'var(--t-text-secondary)' } : undefined}>
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left group transition-all ${isActive ? 'shadow-sm' : 'theme-hover'}`}
+                style={isActive ? { background: isQa ? '#f0fdf4' : '#faf5ff', color: isQa ? '#15803d' : '#7e22ce' } : { color: 'var(--t-text-secondary)' }}>
                 <div className="flex-1 min-w-0">
                   {isRenaming ? (
                     <input autoFocus value={renameValue} onChange={e => setRenameValue(e.target.value)}
                       onBlur={() => handleFinishRename(isQa)}
                       onKeyDown={e => { if (e.key === 'Enter') handleFinishRename(isQa); if (e.key === 'Escape') { setRenamingConvId(null); setRenameValue(''); } e.stopPropagation(); }}
                       onClick={e => e.stopPropagation()}
-                      className={`w-full text-xs bg-white border border-${accentColor}-300 rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-${accentColor}-400`} />
+                      className="w-full text-xs bg-white rounded px-1.5 py-0.5 outline-none"
+                      style={{ borderWidth: 1, borderStyle: 'solid', borderColor: isQa ? '#86efac' : '#c084fc', outlineColor: isQa ? '#4ade80' : '#a855f7' }} />
                   ) : (
                     <p className="text-xs font-medium truncate">{conv.title}</p>
                   )}
@@ -1876,12 +1880,14 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
                     <button className="p-0.5 rounded hover:bg-red-100" onClick={e => {
                       e.stopPropagation();
                       if (confirm(`删除分类「${cat.name}」？其中的测验历史将保留。`)) {
-                        setQuizCategories(prev => prev.filter(c => c.id !== cat.id));
+                        setQuizCategories(prev => {
+                          const remaining = prev.filter(c => c.id !== cat.id);
+                          if (activeQuizCategoryId === cat.id) {
+                            setActiveQuizCategoryId(remaining.length > 0 ? remaining[0].id : null);
+                          }
+                          return remaining;
+                        });
                         setCategoryConfigs(prev => { const next = { ...prev }; delete next[cat.id]; return next; });
-                        if (activeQuizCategoryId === cat.id) {
-                          const remaining = quizCategories.filter(c => c.id !== cat.id);
-                          setActiveQuizCategoryId(remaining.length > 0 ? remaining[0].id : null);
-                        }
                       }
                     }}><Trash2 size={10} className="text-gray-400 hover:text-red-500" /></button>
                   </div>
@@ -1949,7 +1955,6 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
           <div className="p-4 flex-1 overflow-y-auto space-y-3">
             <textarea
               className={`${inputCls} h-32 resize-none font-mono text-xs`} style={inputStyle}
-              style={inputStyle}
               value={currentPrompt}
               onChange={e => {
                 const val = e.target.value;
@@ -2051,7 +2056,6 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
             <div className="relative">
               <textarea
                 className={`${inputCls} h-16 resize-none text-xs`} style={inputStyle}
-                style={inputStyle}
                 value={mode === 'ai' ? aiTurnPrompt : qaTurnPrompt}
                 onChange={e => mode === 'ai' ? setAiTurnPrompt(e.target.value) : setQaTurnPrompt(e.target.value)}
                 placeholder="例如：请用英文回答、请给出代码示例、请保持简洁…"
