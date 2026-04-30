@@ -20,8 +20,9 @@ const MarkdownEditor = React.lazy(() => import('./components/MarkdownEditor').th
 const FileRenderer = React.lazy(() => import('./components/FileRenderer').then(m => ({ default: m.FileRenderer })));
 const Terminal = React.lazy(() => import('./components/Terminal').then(m => ({ default: m.Terminal })));
 const WebBrowser = React.lazy(() => import('./components/WebBrowser').then(m => ({ default: m.WebBrowser })));
-const LeetCodeManager = React.lazy(() => import('./components/LeetCodeManager').then(m => ({ default: m.LeetCodeManager })));
-const LearningManager = React.lazy(() => import('./components/LearningManager').then(m => ({ default: m.LearningManager })));
+const SpaceManager = React.lazy(() => import('./components/SpaceManager').then(m => ({ default: m.SpaceManager })));
+const PracticeManager = React.lazy(() => import('./components/PracticeManager').then(m => ({ default: m.PracticeManager })));
+const OpenCodeManager = React.lazy(() => import('./components/OpenCodeManager'));
 const ImageHosting = React.lazy(() => import('./components/ImageHosting').then(m => ({ default: m.ImageHosting })));
 const PluginContainer = React.lazy(() => import('./components/PluginContainer').then(m => ({ default: m.PluginContainer })));
 const HeatmapContainer = React.lazy(() => import('./components/HeatmapContainer').then(m => ({ default: m.HeatmapContainer })));
@@ -77,6 +78,32 @@ const STORAGE_KEY_MUSIC_PLAYLISTS = 'guyue_music_playlists_v1';
 const STORAGE_KEY_APP_MODE = 'guyue_app_mode';
 const STORAGE_KEY_TODO_SUBMODE = 'guyue_todo_submode';
 const STORAGE_KEY_MODE_SNAPSHOTS = 'guyue_mode_snapshots';
+
+const normalizeAppTheme = (theme: string | null | undefined) => {
+  if (theme === 'minimal') return 'pure';
+  return theme || 'default';
+};
+
+const normalizeAppMode = (mode: AppMode | null | undefined) => {
+  if (mode === 'crush') return 'opencode';
+  if (mode === 'learning' || mode === 'workspace') return 'spaces';
+  if (mode === 'leetcode' || mode === 'coding-practice') return 'practice';
+  return mode || 'todo';
+};
+
+const normalizeModuleId = (id: string | undefined) => {
+  if (id === 'crush') return 'opencode';
+  if (id === 'learning' || id === 'workspace') return 'spaces';
+  if (id === 'leetcode' || id === 'coding-practice') return 'practice';
+  return id || '';
+};
+
+const REMOVED_LEGACY_MODULE_IDS = new Set(['chat', 'aichat', 'ai-chat']);
+const REMOVED_LEGACY_MODULE_NAMES = new Set(['AI对话']);
+
+const isRemovedLegacyModule = (moduleLike: { id?: string; name?: string }) =>
+  REMOVED_LEGACY_MODULE_IDS.has(moduleLike.id || '') ||
+  REMOVED_LEGACY_MODULE_NAMES.has(moduleLike.name || '');
 
 const DEFAULT_SPLASH_QUOTES = [
   '有善始者实繁，能克终者盖寡',
@@ -195,9 +222,12 @@ const App: React.FC = () => {
   const [appMode, setAppMode] = useState<AppMode>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_APP_MODE);
-      return saved ? JSON.parse(saved) : 'todo';
+      return normalizeAppMode(saved ? JSON.parse(saved) : 'todo');
     } catch { return 'todo'; }
   });
+  const handleAppModeChange = useCallback((mode: AppMode) => {
+    setAppMode(normalizeAppMode(mode));
+  }, []);
   const [todoSubMode, setTodoSubMode] = useState<TodoSubMode>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_TODO_SUBMODE);
@@ -213,14 +243,23 @@ const App: React.FC = () => {
     if (savedModules) {
       try {
         const parsed: ModuleConfig[] = JSON.parse(savedModules);
+        const normalizedParsed = parsed
+          .map(module => ({ ...module, id: normalizeModuleId(module.id) }))
+          .filter((module, index, modules) => modules.findIndex(item => item.id === module.id) === index);
         const merged = DEFAULT_MODULE_CONFIG
           .filter(m => m.id !== 'api') // API模块已并入数据中心
           .map(defaultModule => {
-          const existing = parsed.find(m => m.id === defaultModule.id);
-          return existing ? { ...defaultModule, ...existing, name: defaultModule.name } : defaultModule;
+          const existing = normalizedParsed.find(m => m.id === defaultModule.id);
+          if (!existing) return defaultModule;
+          const normalizedIcon =
+            defaultModule.id === 'spaces'
+              ? defaultModule.icon
+              : (existing.icon || defaultModule.icon);
+          return { ...defaultModule, ...existing, name: defaultModule.name, icon: normalizedIcon };
         });
-        const legacyExtras = parsed.filter(m =>
+        const legacyExtras = normalizedParsed.filter(m =>
           !merged.find(item => item.id === m.id) &&
+          !isRemovedLegacyModule(m) &&
           (m.id as string) !== 'tips' &&
           (m.id as string) !== 'renderer' &&
           (m.id as string) !== 'markdown' &&
@@ -243,6 +282,24 @@ const App: React.FC = () => {
 
   const [notes, setNotes] = useState<Note[]>([]);
   const [sshRecords, setSSHRecords] = useState<SSHRecord[]>([]);
+
+  useEffect(() => {
+    setModuleConfig(prev => {
+      const filtered = prev.filter(module => !isRemovedLegacyModule(module));
+      if (filtered.length === prev.length) return prev;
+      return filtered.map((module, index) => ({ ...module, priority: index }));
+    });
+  }, []);
+
+  useEffect(() => {
+    if (appMode === 'crush') {
+      setAppMode('opencode');
+      return;
+    }
+    if (isRemovedLegacyModule({ id: String(appMode) })) {
+      setAppMode('knowledge-base');
+    }
+  }, [appMode]);
   const [apiRecords, setApiRecords] = useState<APIRecord[]>([]);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [fileRecords, setFileRecords] = useState<FileRecord[]>([]);
@@ -268,9 +325,16 @@ const App: React.FC = () => {
     return localStorage.getItem('linkmaster_browser_start_page') || 'https://www.bing.com';
   });
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
-  const [appTheme, setAppTheme] = useState(() => localStorage.getItem('guyue_sidebar_theme') || 'default');
+  const [appTheme, setAppTheme] = useState(() => normalizeAppTheme(localStorage.getItem('guyue_sidebar_theme')));
   useEffect(() => {
-    const h = () => setAppTheme(localStorage.getItem('guyue_sidebar_theme') || 'default');
+    const h = () => {
+      const normalizedTheme = normalizeAppTheme(localStorage.getItem('guyue_sidebar_theme'));
+      if (normalizedTheme !== localStorage.getItem('guyue_sidebar_theme')) {
+        localStorage.setItem('guyue_sidebar_theme', normalizedTheme);
+      }
+      setAppTheme(normalizedTheme);
+    };
+    h();
     window.addEventListener('sidebar-theme-change', h);
     window.addEventListener('storage', h);
     return () => { window.removeEventListener('sidebar-theme-change', h); window.removeEventListener('storage', h); };
@@ -279,14 +343,15 @@ const App: React.FC = () => {
   // Lazy initialization states
   const [hasTerminalMounted, setHasTerminalMounted] = useState(false);
   const [hasBrowserMounted, setHasBrowserMounted] = useState(false);
-  const [hasLeetCodeMounted, setHasLeetCodeMounted] = useState(false);
-  const [hasLearningMounted, setHasLearningMounted] = useState(false);
+  const [hasPracticeMounted, setHasPracticeMounted] = useState(false);
+  const [hasSpacesMounted, setHasSpacesMounted] = useState(false);
   const [hasExcalidrawMounted, setHasExcalidrawMounted] = useState(false);
   const [hasDataCenterMounted, setHasDataCenterMounted] = useState(false);
   const [hasMusicMounted, setHasMusicMounted] = useState(false);
   const [hasRagMounted, setHasRagMounted] = useState(false);
   const [hasKbMounted, setHasKbMounted] = useState(false);
   const [hasWorkflowMounted, setHasWorkflowMounted] = useState(false);
+  const [hasOpenCodeMounted, setHasOpenCodeMounted] = useState(false);
 
   // Prevent body scroll to fix layout shifts on focus
   useEffect(() => {
@@ -307,11 +372,11 @@ const App: React.FC = () => {
     if (appMode === 'browser' && !hasBrowserMounted) {
       setHasBrowserMounted(true);
     }
-    if (appMode === 'leetcode' && !hasLeetCodeMounted) {
-      setHasLeetCodeMounted(true);
+    if (appMode === 'practice' && !hasPracticeMounted) {
+      setHasPracticeMounted(true);
     }
-    if (appMode === 'learning' && !hasLearningMounted) {
-      setHasLearningMounted(true);
+    if (appMode === 'spaces' && !hasSpacesMounted) {
+      setHasSpacesMounted(true);
     }
     if (appMode === 'excalidraw' && !hasExcalidrawMounted) {
       setHasExcalidrawMounted(true);
@@ -331,7 +396,10 @@ const App: React.FC = () => {
     if (appMode === 'workflow' && !hasWorkflowMounted) {
       setHasWorkflowMounted(true);
     }
-  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasLeetCodeMounted, hasLearningMounted, hasExcalidrawMounted, hasDataCenterMounted, hasMusicMounted, hasRagMounted, hasKbMounted, hasWorkflowMounted]);
+    if (appMode === 'opencode' && !hasOpenCodeMounted) {
+      setHasOpenCodeMounted(true);
+    }
+  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasPracticeMounted, hasSpacesMounted, hasExcalidrawMounted, hasDataCenterMounted, hasMusicMounted, hasRagMounted, hasKbMounted, hasWorkflowMounted, hasOpenCodeMounted]);
 
   // Persist appMode & todoSubMode to localStorage
   useEffect(() => {
@@ -381,9 +449,9 @@ const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isFloatingChatOpen, setIsFloatingChatOpen] = useState(false);
-  const [floatingChatSource, setFloatingChatSource] = useState<'leetcode' | 'learning' | null>(null);
+  const [floatingChatSource, setFloatingChatSource] = useState<'leetcode' | null>(null);
 
-  const handleToggleFloatingChat = useCallback((source: 'leetcode' | 'learning') => {
+  const handleToggleFloatingChat = useCallback((source: 'leetcode') => {
     if (isFloatingChatOpen && floatingChatSource === source) {
       setIsFloatingChatOpen(false);
     } else {
@@ -641,7 +709,9 @@ const App: React.FC = () => {
 
   // Shortcut handling
   const isTabPressed = React.useRef(false);
+  const isTabPending = React.useRef(false);
   const tabComboUsed = React.useRef(false); // whether Tab was used with a combo key
+  const tabHoldTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Agent shortcut: double-tap key detection
@@ -668,6 +738,29 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const TAB_HOLD_DELAY = 350;
+
+    const isEditableTarget = (target: EventTarget | null) => {
+      const element = target instanceof HTMLElement ? target : null;
+      return (
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement ||
+        element?.isContentEditable ||
+        !!element?.closest('.monaco-editor') ||
+        !!element?.closest('[role="textbox"]')
+      );
+    };
+
+    const clearTabState = () => {
+      if (tabHoldTimerRef.current) {
+        clearTimeout(tabHoldTimerRef.current);
+        tabHoldTimerRef.current = null;
+      }
+      isTabPressed.current = false;
+      isTabPending.current = false;
+      tabComboUsed.current = false;
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
       // Track if the agent shortcut key is being used as a combo modifier
       if (e.key === agentShortcutKey.current) {
@@ -681,12 +774,23 @@ const App: React.FC = () => {
       }
 
       if (e.key === 'Tab') {
-        isTabPressed.current = true;
-        tabComboUsed.current = false;
-        // Prevent browser default focus-jump when Tab is used as our nav modifier
+        if (isEditableTarget(e.target)) {
+          clearTabState();
+          return;
+        }
+        if (e.repeat || isTabPending.current || isTabPressed.current) return;
         e.preventDefault();
+        isTabPending.current = true;
+        tabComboUsed.current = false;
+        tabHoldTimerRef.current = setTimeout(() => {
+          isTabPressed.current = true;
+          isTabPending.current = false;
+          tabHoldTimerRef.current = null;
+        }, TAB_HOLD_DELAY);
         return;
       }
+
+      if (isEditableTarget(e.target)) return;
 
       // Check for shortcuts while Tab is held
       if (isTabPressed.current) {
@@ -705,7 +809,7 @@ const App: React.FC = () => {
 
           if (targetModule && targetModule.enabled) {
             e.preventDefault();
-            setAppMode(targetModule.id);
+            handleAppModeChange(targetModule.id);
           }
         }
 
@@ -732,25 +836,25 @@ const App: React.FC = () => {
       }
 
       if (e.key === 'Tab') {
-        if (!tabComboUsed.current) {
-          // Pure Tab press (no combo) → cycle to next enabled module from current
+        const shouldCycleModule = isTabPressed.current && !tabComboUsed.current;
+        clearTabState();
+
+        if (shouldCycleModule) {
+          // Long-press Tab (no combo) → cycle to next enabled module from current
           setAppMode(prev => {
             const enabled = moduleConfig
               .filter(m => m.enabled && m.id !== 'agent')
               .sort((a, b) => a.priority - b.priority);
             const cur = enabled.findIndex(m => m.id === prev);
             const next = enabled[(cur + 1) % enabled.length];
-            return next ? next.id : prev;
+            return next ? normalizeAppMode(next.id) : prev;
           });
         }
-        isTabPressed.current = false;
-        tabComboUsed.current = false;
       }
     };
 
     const handleBlur = () => {
-      isTabPressed.current = false;
-      tabComboUsed.current = false;
+      clearTabState();
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -758,11 +862,12 @@ const App: React.FC = () => {
     window.addEventListener('blur', handleBlur);
 
     return () => {
+      clearTabState();
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [moduleConfig]);
+  }, [handleAppModeChange, moduleConfig]);
 
   // Initial Load - Performance: Batch load all data
   useEffect(() => {
@@ -1863,8 +1968,8 @@ const App: React.FC = () => {
     setEditingTodo(null);
   };
 
-  const handleDeleteTodo = (id: string) => {
-    if (confirm('确定要删除这个待办事项吗?')) {
+  const handleDeleteTodo = (id: string, options?: { skipConfirm?: boolean }) => {
+    if (options?.skipConfirm || confirm('确定要删除这个待办事项吗?')) {
       setTodos(prev => prev.filter(t => t.id !== id));
     }
   };
@@ -2333,15 +2438,16 @@ const App: React.FC = () => {
     <>
       {showSplash ? (
         <SplashScreen
+          theme={appTheme}
           customText={splashText}
           onComplete={() => setShowSplash(false)}
         />
       ) : (
-        <div className="fixed inset-0 flex overflow-hidden" style={{ background: 'var(--t-bg)' }} data-theme={appTheme}>
+        <div className="theme-app-shell fixed inset-0 flex overflow-hidden" data-theme={appTheme}>
           {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || isLatexFullscreen) && isSidebarVisible && (
             <NavRail 
               currentMode={appMode} 
-              onModeChange={setAppMode} 
+              onModeChange={handleAppModeChange}
               onOpenSettings={() => setIsSettingsOpen(true)}
               onOpenAgent={() => setAppMode('agent')}
               isAgentOpen={appMode === 'agent'}
@@ -2435,7 +2541,7 @@ const App: React.FC = () => {
             onReorderPlaylist={handleMusicReorderPlaylist}
           />
         </Suspense>
-      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
+      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'spaces' && appMode !== 'coding-practice' && appMode !== 'opencode' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
         <Sidebar 
           appMode={appMode}  
           categories={activeCategories} 
@@ -2582,8 +2688,8 @@ const App: React.FC = () => {
       )}
 
       <div className={`flex-1 flex flex-col min-w-0 relative`} style={appMode === 'agent' ? { display: 'none' } : { background: 'var(--t-bg-main)' }}>
-        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'learning' && appMode !== 'image-hosting' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
-        <div className="h-16 flex items-center justify-between px-6 shrink-0" style={{ borderBottom: '1px solid var(--t-border)', background: 'var(--t-bg-main)' }}>
+        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'spaces' && appMode !== 'coding-practice' && appMode !== 'opencode' && appMode !== 'image-hosting' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
+        <div className="theme-header-bar h-16 flex items-center justify-between px-6 shrink-0">
            <div className="flex items-center gap-4 flex-1 max-w-xl">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--t-text-muted)' }} />
@@ -2592,8 +2698,7 @@ const App: React.FC = () => {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder={getSearchPlaceholder()}
-                  className="w-full pl-10 pr-4 py-2 border-none rounded-xl text-sm transition-all focus:ring-2 focus:ring-[var(--t-accent)]/20"
-                  style={{ background: 'var(--t-input-bg)', color: 'var(--t-text)' }}
+                  className="theme-input w-full pl-10 pr-4 py-2 text-sm transition-all"
                 />
               </div>
            </div>
@@ -2601,7 +2706,7 @@ const App: React.FC = () => {
               {appMode === 'prompts' && (
               <button
                 onClick={() => setIsSkillImportOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 border border-purple-200 text-purple-600 rounded-xl hover:bg-purple-50 transition-colors"
+                className="theme-secondary-btn theme-secondary-btn-accent flex items-center gap-2 px-4 py-2 text-sm font-medium"
               >
                 <Upload className="w-4 h-4" />
                 <span className="font-medium">导入</span>
@@ -2634,7 +2739,7 @@ const App: React.FC = () => {
                     default: break;
                   }
                 }}
-                className="w-9 h-9 flex items-center justify-center bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/30"
+                className="theme-fab-btn w-9 h-9 flex items-center justify-center"
                 title={getAddButtonLabel()}
               >
                 <Plus className="w-4.5 h-4.5" />
@@ -2643,7 +2748,7 @@ const App: React.FC = () => {
               {/* Help button */}
               <button
                 onClick={() => setIsHelpOpen(true)}
-                className="w-8 h-8 flex items-center justify-center rounded-full border border-gray-200 text-gray-400 hover:text-blue-500 hover:border-blue-300 hover:bg-blue-50 transition-all"
+                className="theme-icon-btn w-8 h-8 flex items-center justify-center rounded-full"
                 title="使用帮助"
               >
                 <HelpCircle className="w-4 h-4" />
@@ -2652,7 +2757,7 @@ const App: React.FC = () => {
         </div>
         )}
 
-        <div className={`flex-1 ${appMode === 'latex' ? 'overflow-hidden' : appMode === 'music' ? 'overflow-hidden' : appMode === 'rag' ? 'overflow-hidden' : appMode === 'knowledge-base' ? 'overflow-hidden' : appMode === 'workflow' ? 'overflow-hidden' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'learning' || appMode === 'image-hosting' || appMode === 'excalidraw' || appMode === 'datacenter' || appMode === 'latex' || appMode === 'music' || appMode === 'rag' || appMode === 'knowledge-base' || appMode === 'workflow' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'p-4' : 'p-6'}`}>
+        <div className={`flex-1 ${appMode === 'latex' ? 'overflow-hidden' : appMode === 'music' ? 'overflow-hidden' : appMode === 'rag' ? 'overflow-hidden' : appMode === 'knowledge-base' ? 'overflow-hidden' : appMode === 'workflow' ? 'overflow-hidden' : appMode === 'spaces' ? 'overflow-hidden' : appMode === 'coding-practice' ? 'overflow-hidden' : appMode === 'opencode' ? 'overflow-hidden' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'spaces' || appMode === 'coding-practice' || appMode === 'opencode' || appMode === 'image-hosting' || appMode === 'excalidraw' || appMode === 'datacenter' || appMode === 'latex' || appMode === 'music' || appMode === 'rag' || appMode === 'knowledge-base' || appMode === 'workflow' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'p-4' : 'p-6'}`}>
           <Suspense fallback={
             <div className="flex items-center justify-center h-full text-gray-400 gap-2">
               <Loader2 className="w-6 h-6 animate-spin" />
@@ -2860,9 +2965,21 @@ const App: React.FC = () => {
               </div>
             )}
 
-            {(hasLearningMounted || appMode === 'learning') && (
-              <div className={appMode === 'learning' ? 'h-full' : 'hidden'}>
-                <LearningManager onOpenChat={() => handleToggleFloatingChat('learning')} />
+            {(hasSpacesMounted || appMode === 'spaces') && (
+              <div className={appMode === 'spaces' ? 'h-full' : 'hidden'}>
+                <SpaceManager />
+              </div>
+            )}
+
+            {appMode === 'coding-practice' && (
+              <div className="h-full">
+                <CodingPracticeManager />
+              </div>
+            )}
+
+            {(hasOpenCodeMounted || appMode === 'opencode') && (
+              <div className={appMode === 'opencode' ? 'h-full' : 'hidden'}>
+                <OpenCodeManager isVisible={appMode === 'opencode'} />
               </div>
             )}
 
@@ -3122,7 +3239,7 @@ const App: React.FC = () => {
       <FloatingChatWindow
         isOpen={isFloatingChatOpen}
         onClose={() => { setIsFloatingChatOpen(false); setFloatingChatSource(null); }}
-        title={floatingChatSource === 'leetcode' ? '刷题 AI 助手' : '学习 AI 助手'}
+        title="刷题 AI 助手"
       >
         <Suspense fallback={<div className="flex items-center justify-center h-full text-gray-400 gap-2"><Loader2 className="w-5 h-5 animate-spin" /><span>加载中...</span></div>}>
           <KnowledgeBase compact />

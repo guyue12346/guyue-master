@@ -131,7 +131,7 @@ const InlineEdit: React.FC<InlineEditProps> = ({ value, onCommit, onCancel, clas
       }}
       onBlur={commit}
       onClick={e => e.stopPropagation()}
-      className={`bg-white border border-blue-400 rounded px-1.5 py-0.5 text-xs text-gray-800 outline-none focus:ring-1 focus:ring-blue-400 w-full ${className ?? ''}`}
+      className={`theme-input w-full px-1.5 py-0.5 text-xs ${className ?? ''}`}
     />
   );
 };
@@ -163,14 +163,15 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ actions, onClose, anchorRef }
   return (
     <div
       ref={menuRef}
-      className="absolute right-0 top-7 z-50 bg-white border border-gray-200 rounded-xl shadow-xl py-1 min-w-[130px]"
+      className="theme-surface absolute right-0 top-7 z-50 min-w-[136px] rounded-2xl p-1"
       onClick={e => e.stopPropagation()}
     >
       {actions.map((a, i) => (
         <button
           key={i}
           onClick={() => { a.onClick(); onClose(); }}
-          className={`w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors hover:bg-gray-50 ${a.danger ? 'text-red-500' : 'text-gray-700'}`}
+          className="theme-list-item flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs transition-colors"
+          style={a.danger ? { color: '#dc2626' } : undefined}
         >
           {a.icon}
           {a.label}
@@ -221,7 +222,7 @@ const CategoryEditorPopover: React.FC<CategoryEditorProps> = ({
   const SelectedIcon = ICON_MAP[icon] ?? FileType2;
 
   return (
-    <div ref={popRef} className="mx-2 mb-1 bg-white border border-gray-200 rounded-xl shadow-lg p-3 space-y-2.5" onClick={e => e.stopPropagation()}>
+    <div ref={popRef} className="theme-surface mx-2 mb-1 space-y-2.5 rounded-2xl p-3" onClick={e => e.stopPropagation()}>
       {/* Name input */}
       <div className="flex items-center gap-2">
         <span style={{ color }}><SelectedIcon className="w-4 h-4" /></span>
@@ -231,12 +232,12 @@ const CategoryEditorPopover: React.FC<CategoryEditorProps> = ({
           onChange={e => setName(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleCommit(); if (e.key === 'Escape') onCancel(); }}
           placeholder="分类名称"
-          className="flex-1 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-800 outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
+          className="theme-input flex-1 px-2 py-1 text-xs"
         />
       </div>
       {/* Icon grid */}
       <div>
-        <p className="text-[10px] text-gray-400 mb-1">图标</p>
+        <p className="mb-1 text-[10px]" style={{ color: 'var(--t-text-muted)' }}>图标</p>
         <div className="grid grid-cols-10 gap-0.5">
           {ICON_OPTIONS.map(opt => {
             const I = opt.icon;
@@ -245,7 +246,7 @@ const CategoryEditorPopover: React.FC<CategoryEditorProps> = ({
               <button
                 key={opt.name}
                 onClick={() => setIcon(opt.name)}
-                className={`w-6 h-6 flex items-center justify-center rounded-md transition-colors ${sel ? 'bg-blue-100 ring-1 ring-blue-400' : 'hover:bg-gray-100'}`}
+                className={`flex h-6 w-6 items-center justify-center rounded-md transition-colors ${sel ? 'theme-list-item-active' : 'theme-icon-btn'}`}
                 title={opt.name}
               >
                 <I className="w-3 h-3" style={{ color: sel ? color : '#9CA3AF' }} />
@@ -256,7 +257,7 @@ const CategoryEditorPopover: React.FC<CategoryEditorProps> = ({
       </div>
       {/* Color grid */}
       <div>
-        <p className="text-[10px] text-gray-400 mb-1">颜色</p>
+        <p className="mb-1 text-[10px]" style={{ color: 'var(--t-text-muted)' }}>颜色</p>
         <div className="flex gap-1">
           {COLOR_OPTIONS.map(c => (
             <button
@@ -271,11 +272,11 @@ const CategoryEditorPopover: React.FC<CategoryEditorProps> = ({
       </div>
       {/* Buttons */}
       <div className="flex justify-end gap-1.5 pt-0.5">
-        <button onClick={onCancel} className="px-2.5 py-1 text-[11px] text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">取消</button>
+        <button onClick={onCancel} className="theme-secondary-btn px-2.5 py-1 text-[11px]">取消</button>
         <button
           onClick={handleCommit}
           disabled={!name.trim()}
-          className="px-2.5 py-1 text-[11px] bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 transition-colors"
+          className="theme-primary-btn px-2.5 py-1 text-[11px] disabled:opacity-40"
         >确定</button>
       </div>
     </div>
@@ -444,19 +445,19 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
   return (
     <div className="flex flex-col h-full">
       {/* Sub-toolbar */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 shrink-0">
-        <span className="text-xs text-gray-400 font-medium">模板库</span>
+      <div className="flex items-center justify-between px-3 py-2 border-b shrink-0" style={{ borderColor: 'var(--t-border-light)' }}>
+        <span className="text-xs font-medium" style={{ color: 'var(--t-text-muted)' }}>模板库</span>
         <div className="flex items-center gap-1">
           <button
             onClick={() => setAddingCategory(true)}
-            className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+            className="theme-icon-btn h-7 w-7 rounded-md"
             title="新建分类"
           >
             <FolderPlus className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => setSaveModal(true)}
-            className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+            className="theme-icon-btn h-7 w-7 rounded-md"
             title="将当前内容另存为模板"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -475,7 +476,7 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
         )}
 
         {sortedCats.length === 0 && !addingCategory && (
-          <div className="flex flex-col items-center justify-center h-24 text-gray-300 gap-2">
+          <div className="flex h-24 flex-col items-center justify-center gap-2" style={{ color: 'var(--t-text-muted)' }}>
             <FileType2 className="w-7 h-7" />
             <p className="text-xs">暂无模板</p>
           </div>
@@ -484,15 +485,15 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
         {sortedCats.map(cat => (
           <div key={cat} className="mb-0.5">
             {/* Category row */}
-            <div className="group/cat flex items-center gap-1 px-2 py-1 mx-1 rounded-lg hover:bg-gray-100 transition-colors">
+            <div className="theme-list-item group/cat mx-1 flex items-center gap-1 rounded-lg px-2 py-1 transition-colors">
               <button
                 onClick={() => setCollapsed(p => ({ ...p, [cat]: !p[cat] }))}
                 className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
               >
                 {collapsed[cat]
-                  ? <ChevronRight className="w-3 h-3 text-gray-400 shrink-0" />
-                  : <ChevronDown className="w-3 h-3 text-gray-400 shrink-0" />}
-                <span className="text-gray-500 shrink-0">{getCategoryIcon(cat, catMeta)}</span>
+                  ? <ChevronRight className="w-3 h-3 shrink-0" style={{ color: 'var(--t-text-muted)' }} />
+                  : <ChevronDown className="w-3 h-3 shrink-0" style={{ color: 'var(--t-text-muted)' }} />}
+                <span className="shrink-0" style={{ color: 'var(--t-text-secondary)' }}>{getCategoryIcon(cat, catMeta)}</span>
                 {catRenaming === cat ? (
                   <InlineEdit
                     value={getCategoryLabel(cat)}
@@ -500,12 +501,12 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
                     onCancel={() => setCatRenaming(null)}
                   />
                 ) : (
-                  <span className="text-[13px] font-semibold text-gray-600 flex-1 truncate">
+                  <span className="flex-1 truncate text-[13px] font-semibold" style={{ color: 'var(--t-text-secondary)' }}>
                     {getCategoryLabel(cat)}
                   </span>
                 )}
               </button>
-              <span className="text-[10px] text-gray-400 bg-gray-200 rounded-full px-1.5 leading-none py-0.5 shrink-0">
+              <span className="theme-muted-badge shrink-0 rounded-full px-1.5 py-0.5 leading-none text-[10px]">
                 {grouped[cat]?.length ?? 0}
               </span>
               {/* Category menu */}
@@ -513,7 +514,7 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
                 <button
                   ref={catMenuRefs.current[cat] as React.RefObject<HTMLButtonElement>}
                   onClick={e => { e.stopPropagation(); setCatMenuOpen(catMenuOpen === cat ? null : cat); }}
-                  className="p-0.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-200 transition-colors"
+                  className="theme-icon-btn h-6 w-6 rounded-md"
                 >
                   <MoreHorizontal className="w-3.5 h-3.5" />
                 </button>
@@ -546,7 +547,7 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
             {!collapsed[cat] && (grouped[cat] || []).map(t => (
               <div
                 key={t.id}
-                className="group/tpl flex items-center gap-1 px-3 py-1.5 mx-1 rounded-lg hover:bg-white hover:shadow-sm transition-all"
+                className="theme-list-item group/tpl mx-1 flex items-center gap-1 rounded-lg px-3 py-1.5 transition-all"
                 title={t.description || t.name}
               >
                 <div className="flex-1 min-w-0">
@@ -558,9 +559,9 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
                     />
                   ) : (
                     <>
-                      <p className="text-xs text-gray-700 truncate font-medium leading-tight">{t.name}</p>
+                      <p className="truncate text-xs font-medium leading-tight" style={{ color: 'var(--t-text)' }}>{t.name}</p>
                       {t.description && (
-                        <p className="text-[11px] text-gray-400 truncate leading-tight mt-0.5">{t.description}</p>
+                        <p className="mt-0.5 truncate text-[11px] leading-tight" style={{ color: 'var(--t-text-muted)' }}>{t.description}</p>
                       )}
                     </>
                   )}
@@ -570,14 +571,15 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
                 <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover/tpl:opacity-100 transition-opacity">
                   <button
                     onClick={e => { e.stopPropagation(); onEditTemplate(t); }}
-                    className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                    className="theme-icon-btn h-7 w-7 rounded-md"
                     title="编辑模板"
                   >
                     <Pencil className="w-3 h-3" />
                   </button>
                   <button
                     onClick={e => { e.stopPropagation(); t.content && onLoadTemplateAsFile(t.content); }}
-                    className="p-1 rounded text-green-500 hover:text-green-700 hover:bg-green-50 transition-colors"
+                    className="theme-icon-btn h-7 w-7 rounded-md"
+                    style={{ color: '#16a34a' }}
                     title="以此模板新建文件"
                   >
                     <ArrowRight className="w-3.5 h-3.5" />
@@ -587,21 +589,22 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
                 {/* Move-to-category popover */}
                 {tplMoving === t.id && (
                   <div
-                    className="absolute right-10 z-50 bg-white border border-gray-200 rounded-xl shadow-xl py-1 min-w-[120px]"
+                    className="theme-surface absolute right-10 z-50 min-w-[128px] rounded-2xl p-1"
                     onClick={e => e.stopPropagation()}
                   >
-                    <p className="text-[10px] text-gray-400 px-3 pt-1 pb-0.5 font-semibold">移动到分类</p>
+                    <p className="px-3 pt-1 pb-0.5 text-[10px] font-semibold" style={{ color: 'var(--t-text-muted)' }}>移动到分类</p>
                     {allCategories.filter(c => c !== cat).map(c => (
                       <button
                         key={c}
-                        className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                        className="theme-list-item w-full rounded-xl px-3 py-1.5 text-left text-xs"
                         onClick={() => handleMoveTemplate(t.id, c)}
                       >
                         {getCategoryLabel(c)}
                       </button>
                     ))}
                     <button
-                      className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-50 border-t border-gray-100 mt-0.5"
+                      className="mt-0.5 w-full border-t px-3 py-1.5 text-left text-xs"
+                      style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}
                       onClick={() => setTplMoving(null)}
                     >
                       取消
@@ -614,7 +617,7 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
                   <button
                     ref={tplMenuRefs.current[t.id] as React.RefObject<HTMLButtonElement>}
                     onClick={e => { e.stopPropagation(); setTplMenuOpen(tplMenuOpen === t.id ? null : t.id); }}
-                    className="p-0.5 rounded text-gray-300 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                    className="theme-icon-btn h-6 w-6 rounded-md"
                   >
                     <MoreHorizontal className="w-3.5 h-3.5" />
                   </button>
@@ -639,35 +642,35 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
       {/* Save-as-template modal */}
       {saveModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          className="theme-modal-backdrop fixed inset-0 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) setSaveModal(false); }}
         >
-          <div className="bg-white rounded-2xl shadow-2xl w-80 p-6 space-y-4">
-            <h3 className="text-base font-semibold text-gray-800">另存为模板</h3>
+          <div className="theme-modal-shell w-80 space-y-4 p-6">
+            <h3 className="text-base font-semibold" style={{ color: 'var(--t-text)' }}>另存为模板</h3>
             <div className="space-y-3">
               <div>
-                <label className="text-xs font-medium text-gray-500 mb-1 block">模板名称 *</label>
+                <label className="mb-1 block text-xs font-medium" style={{ color: 'var(--t-text-muted)' }}>模板名称 *</label>
                 <input
                   autoFocus
                   type="text" value={newName} onChange={e => setNewName(e.target.value)}
                   placeholder="例如：中文毕业论文"
                   onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSaveAsTemplate(); }}
-                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400"
+                  className="w-full px-3 py-2 text-sm"
                 />
               </div>
               <div>
-                <label className="text-xs font-medium text-gray-500 mb-1 block">描述（可选）</label>
+                <label className="mb-1 block text-xs font-medium" style={{ color: 'var(--t-text-muted)' }}>描述（可选）</label>
                 <input
                   type="text" value={newDesc} onChange={e => setNewDesc(e.target.value)}
                   placeholder="简短描述此模板用途"
-                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400"
+                  className="w-full px-3 py-2 text-sm"
                 />
               </div>
               <div>
-                <label className="text-xs font-medium text-gray-500 mb-1 block">分类</label>
+                <label className="mb-1 block text-xs font-medium" style={{ color: 'var(--t-text-muted)' }}>分类</label>
                 <select
                   value={newCat} onChange={e => setNewCat(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 bg-white"
+                  className="w-full px-3 py-2 text-sm"
                 >
                   {allCategories.map(c => (
                     <option key={c} value={c}>{getCategoryLabel(c)}</option>
@@ -676,11 +679,11 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
               </div>
             </div>
             <div className="flex gap-2 pt-1">
-              <button onClick={() => setSaveModal(false)} className="flex-1 py-2 text-sm border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-50 transition-colors">取消</button>
+              <button onClick={() => setSaveModal(false)} className="theme-secondary-btn flex-1 py-2 text-sm">取消</button>
               <button
                 onClick={handleSaveAsTemplate}
                 disabled={saving || !newName.trim()}
-                className="flex-1 py-2 text-sm bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                className="theme-primary-btn flex-1 py-2 text-sm disabled:opacity-50"
               >
                 {saving ? '保存中...' : '保存'}
               </button>
@@ -695,6 +698,7 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
 // ─── Files Tab ────────────────────────────────────────────────────────────────
 
 const UNCATEGORIZED_KEY = '__uncategorized__';
+const LATEX_FILES_COLLAPSED_KEY = 'guyue-latex-files-collapsed';
 
 interface FilesTabProps {
   onOpenFile: (file: { path: string; content: string }) => void;
@@ -712,7 +716,14 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
   const [fileMoving, setFileMoving] = useState<string | null>(null);
   const fileMenuRefs = useRef<Record<string, React.RefObject<HTMLButtonElement | null>>>({});
   // category UI
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(LATEX_FILES_COLLAPSED_KEY);
+      return saved ? JSON.parse(saved) as Record<string, boolean> : {};
+    } catch {
+      return {};
+    }
+  });
   const [addingCategory, setAddingCategory] = useState(false);
   const [catMenuOpen, setCatMenuOpen] = useState<string | null>(null);
   const [catRenaming, setCatRenaming] = useState<string | null>(null);
@@ -721,6 +732,12 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
   // file category metadata (icon + color) — share the same meta key with templates
   const [catMeta, setCatMeta] = useState<CategoryMetaMap>({});
   const FILE_CAT_META_KEY = 'latex-file-category-meta';
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LATEX_FILES_COLLAPSED_KEY, JSON.stringify(collapsed));
+    } catch {}
+  }, [collapsed]);
 
   const loadCatMeta = useCallback(async () => {
     const data = await window.electronAPI?.loadAppData?.(FILE_CAT_META_KEY).catch(() => null);
@@ -895,14 +912,12 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
   const renderFile = (f: LatexManagedFile, catId: string) => (
     <div
       key={f.path}
-      className={`group/file flex items-center gap-2 px-3 py-2 mx-1 rounded-lg cursor-pointer transition-all ${
-        activeFilePath === f.path
-          ? 'bg-blue-50 shadow-sm'
-          : 'hover:bg-white hover:shadow-sm'
+      className={`theme-list-item group/file mx-1 flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 transition-all ${
+        activeFilePath === f.path ? 'theme-list-item-active shadow-sm' : ''
       }`}
       onClick={() => handleOpen(f)}
     >
-      <File className={`w-3.5 h-3.5 shrink-0 ${activeFilePath === f.path ? 'text-blue-500' : 'text-gray-400'}`} />
+      <File className="w-3.5 h-3.5 shrink-0" style={{ color: activeFilePath === f.path ? 'var(--t-accent)' : 'var(--t-text-muted)' }} />
       <div className="flex-1 min-w-0">
         {renamingPath === f.path ? (
           <InlineEdit
@@ -912,10 +927,10 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
           />
         ) : (
           <>
-            <p className={`text-xs truncate font-medium leading-tight ${activeFilePath === f.path ? 'text-blue-700' : 'text-gray-700'}`}>
+            <p className="truncate text-xs font-medium leading-tight" style={{ color: activeFilePath === f.path ? 'var(--t-list-active-text)' : 'var(--t-text)' }}>
               {f.name}
             </p>
-            <p className="text-[10px] text-gray-400 leading-tight mt-0.5">
+            <p className="mt-0.5 text-[10px] leading-tight" style={{ color: 'var(--t-text-muted)' }}>
               {formatDate(f.modifiedAt)} · {formatSize(f.size)}
             </p>
           </>
@@ -925,21 +940,22 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
       {/* Move-to-category popover */}
       {fileMoving === f.path && (
         <div
-          className="absolute right-10 z-50 bg-white border border-gray-200 rounded-xl shadow-xl py-1 min-w-[120px]"
+          className="theme-surface absolute right-10 z-50 min-w-[128px] rounded-2xl p-1"
           onClick={e => e.stopPropagation()}
         >
-          <p className="text-[10px] text-gray-400 px-3 pt-1 pb-0.5 font-semibold">移动到分类</p>
+          <p className="px-3 pt-1 pb-0.5 text-[10px] font-semibold" style={{ color: 'var(--t-text-muted)' }}>移动到分类</p>
           {[UNCATEGORIZED_KEY, ...categories.map(c => c.id)].filter(id => id !== catId).map(id => (
             <button
               key={id}
-              className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+              className="theme-list-item w-full rounded-xl px-3 py-1.5 text-left text-xs"
               onClick={() => handleMoveFile(f.path, id)}
             >
               {getCatName(id)}
             </button>
           ))}
           <button
-            className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-50 border-t border-gray-100 mt-0.5"
+            className="mt-0.5 w-full border-t px-3 py-1.5 text-left text-xs"
+            style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}
             onClick={() => setFileMoving(null)}
           >
             取消
@@ -952,7 +968,7 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
         <button
           ref={fileMenuRefs.current[f.path] as React.RefObject<HTMLButtonElement>}
           onClick={e => { e.stopPropagation(); setFileMenuOpen(fileMenuOpen === f.path ? null : f.path); }}
-          className="p-0.5 rounded text-gray-300 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+          className="theme-icon-btn h-6 w-6 rounded-md"
         >
           <MoreHorizontal className="w-3.5 h-3.5" />
         </button>
@@ -974,26 +990,26 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
   return (
     <div className="flex flex-col h-full">
       {/* Sub-toolbar */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 shrink-0">
-        <span className="text-xs text-gray-400 font-medium">我的文件</span>
+      <div className="flex items-center justify-between px-3 py-2 border-b shrink-0" style={{ borderColor: 'var(--t-border-light)' }}>
+        <span className="text-xs font-medium" style={{ color: 'var(--t-text-muted)' }}>我的文件</span>
         <div className="flex items-center gap-1">
           <button
             onClick={load}
-            className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+            className="theme-icon-btn h-7 w-7 rounded-md"
             title="刷新"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
           <button
             onClick={() => setAddingCategory(true)}
-            className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+            className="theme-icon-btn h-7 w-7 rounded-md"
             title="新建分类"
           >
             <FolderPlus className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => setAddingFile(true)}
-            className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+            className="theme-icon-btn h-7 w-7 rounded-md"
             title="新建文件"
           >
             <FilePlus className="w-3.5 h-3.5" />
@@ -1014,7 +1030,7 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
         {/* New file (uncategorized) */}
         {addingFile && (
           <div className="px-3 py-1.5 flex items-center gap-2">
-            <File className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+            <File className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--t-text-muted)' }} />
             <InlineEdit
               value="untitled"
               onCommit={name => handleNew(name)}
@@ -1024,10 +1040,10 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
         )}
 
         {!loading && files.length === 0 && categories.length === 0 && !addingFile && !addingCategory && (
-          <div className="flex flex-col items-center justify-center h-32 text-gray-300 gap-2 px-4 text-center">
+          <div className="flex h-32 flex-col items-center justify-center gap-2 px-4 text-center" style={{ color: 'var(--t-text-muted)' }}>
             <FileType2 className="w-8 h-8" />
             <p className="text-xs">暂无文件</p>
-            <p className="text-[10px] text-gray-300">点击 + 新建 .tex 文件</p>
+            <p className="text-[10px]">点击 + 新建 .tex 文件</p>
           </div>
         )}
 
@@ -1037,14 +1053,14 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
           return (
             <div key={catId} className="mb-0.5">
               {/* Category row */}
-              <div className="group/cat flex items-center gap-1 px-2 py-1 mx-1 rounded-lg hover:bg-gray-100 transition-colors">
+              <div className="theme-list-item group/cat mx-1 flex items-center gap-1 rounded-lg px-2 py-1 transition-colors">
                 <button
                   onClick={() => setCollapsed(p => ({ ...p, [catId]: !p[catId] }))}
                   className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
                 >
                   {collapsed[catId]
-                    ? <ChevronRight className="w-3 h-3 text-gray-400 shrink-0" />
-                    : <ChevronDown className="w-3 h-3 text-gray-400 shrink-0" />}
+                    ? <ChevronRight className="w-3 h-3 shrink-0" style={{ color: 'var(--t-text-muted)' }} />
+                    : <ChevronDown className="w-3 h-3 shrink-0" style={{ color: 'var(--t-text-muted)' }} />}
                   <span className="shrink-0">{getCatIcon(catId)}</span>
                   {catRenaming === catId && !isUncategorized ? (
                     <InlineEdit
@@ -1053,12 +1069,12 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
                       onCancel={() => setCatRenaming(null)}
                     />
                   ) : (
-                    <span className="text-[13px] font-semibold truncate flex-1 text-gray-600">
+                    <span className="flex-1 truncate text-[13px] font-semibold" style={{ color: 'var(--t-text-secondary)' }}>
                       {getCatName(catId)}
                     </span>
                   )}
                 </button>
-                <span className="text-[10px] text-gray-400 bg-gray-200 rounded-full px-1.5 leading-none py-0.5 shrink-0">
+                <span className="theme-muted-badge shrink-0 rounded-full px-1.5 py-0.5 leading-none text-[10px]">
                   {catFiles.length}
                 </span>
                 {/* Category menu */}
@@ -1067,7 +1083,7 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
                     <button
                       ref={catMenuRefs.current[catId] as React.RefObject<HTMLButtonElement>}
                       onClick={e => { e.stopPropagation(); setCatMenuOpen(catMenuOpen === catId ? null : catId); }}
-                      className="p-0.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-200 transition-colors"
+                      className="theme-icon-btn h-6 w-6 rounded-md"
                     >
                       <MoreHorizontal className="w-3.5 h-3.5" />
                     </button>
@@ -1101,7 +1117,7 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
               {/* New file in category */}
               {addingFileInCat === catId && !collapsed[catId] && (
                 <div className="px-3 py-1.5 ml-2 flex items-center gap-2">
-                  <File className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                  <File className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--t-text-muted)' }} />
                   <InlineEdit
                     value="untitled"
                     onCommit={name => handleNew(name, catId)}
@@ -1138,20 +1154,18 @@ export const LatexSidebar: React.FC<LatexSidebarProps> = ({
   };
 
   return (
-    <div className="w-60 flex flex-col h-full bg-[#F5F5F5] border-r border-gray-200 shrink-0 select-none">
+    <div className="theme-sidebar-surface w-60 flex flex-col h-full shrink-0 select-none">
       {/* Header */}
       <div
-        className="h-12 flex items-center justify-between px-3 border-b border-gray-200 shrink-0"
+        className="theme-header-bar h-12 flex items-center justify-between px-3 shrink-0"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
-        <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <div className="theme-tab-group" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           {/* Tabs */}
           <button
             onClick={() => setTab('templates')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-              tab === 'templates'
-                ? 'bg-white shadow-sm text-gray-800'
-                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'
+            className={`theme-tab flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium transition-colors ${
+              tab === 'templates' ? 'theme-tab-active' : ''
             }`}
           >
             <BookOpen className="w-3.5 h-3.5" />
@@ -1159,10 +1173,8 @@ export const LatexSidebar: React.FC<LatexSidebarProps> = ({
           </button>
           <button
             onClick={() => setTab('files')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-              tab === 'files'
-                ? 'bg-white shadow-sm text-gray-800'
-                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'
+            className={`theme-tab flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium transition-colors ${
+              tab === 'files' ? 'theme-tab-active' : ''
             }`}
           >
             <File className="w-3.5 h-3.5" />
@@ -1173,7 +1185,7 @@ export const LatexSidebar: React.FC<LatexSidebarProps> = ({
         {/* Collapse button */}
         <button
           onClick={onCollapse}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-200 transition-colors"
+          className="theme-icon-btn h-8 w-8 rounded-lg"
           title="收起侧边栏"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >

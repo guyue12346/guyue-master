@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
+import { WebglAddon } from 'xterm-addon-webgl';
+import { Unicode11Addon } from 'xterm-addon-unicode11';
+import { WebLinksAddon } from 'xterm-addon-web-links';
 import 'xterm/css/xterm.css';
 import { Terminal as TerminalIcon, Maximize2, Minimize2, Plus, X, Settings, Type } from 'lucide-react';
 
@@ -10,12 +13,30 @@ interface TerminalProps {
   initialCommand?: string;
   initialTitle?: string;
   isVisible?: boolean;
+  hideHeader?: boolean;
+  forcedRendererMode?: TerminalRendererMode;
+  forcedTerminalProfile?: TerminalProfile;
+  postLaunchInputs?: Array<{ data: string; delayMs?: number }>;
+  onActiveTerminalChange?: (id: string | null) => void;
+  spawnOnInitialChange?: boolean;
 }
 
 interface TerminalTab {
   id: string;
   title: string;
 }
+
+type TerminalRendererMode = 'auto' | 'compatibility';
+type TerminalProfile = 'default' | 'coding-cli';
+
+const DEFAULT_TERMINAL_FONT = '"SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Monaco, "Fira Code", "Noto Sans Mono CJK SC", "PingFang SC", monospace';
+const FONT_OPTIONS = [
+  { label: 'SF Mono', value: '"SF Mono", Menlo, Monaco, monospace' },
+  { label: 'JetBrains Mono', value: '"JetBrains Mono", "SF Mono", Menlo, Monaco, monospace' },
+  { label: 'Cascadia Mono', value: '"Cascadia Mono", "SF Mono", Menlo, Monaco, monospace' },
+  { label: 'Menlo', value: 'Menlo, Monaco, "Courier New", monospace' },
+  { label: 'Fira Code', value: '"Fira Code", "SF Mono", Menlo, Monaco, monospace' },
+];
 
 const LIGHT_THEME = {
   background: '#ffffff',
@@ -40,10 +61,40 @@ const LIGHT_THEME = {
   brightWhite: '#e5e5e5',
 };
 
-export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullscreen, initialCommand, initialTitle, isVisible = true }) => {
+export const Terminal: React.FC<TerminalProps> = ({
+  isFullscreen,
+  onToggleFullscreen,
+  initialCommand,
+  initialTitle,
+  isVisible = true,
+  hideHeader = false,
+  forcedRendererMode,
+  forcedTerminalProfile,
+  postLaunchInputs = [],
+  onActiveTerminalChange,
+  spawnOnInitialChange = true,
+}) => {
   const [tabs, setTabs] = useState<TerminalTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  const [fontSize, setFontSize] = useState(14);
+  const [fontSize, setFontSize] = useState(() => {
+    const saved = Number(localStorage.getItem('terminal_font_size') || '14');
+    return Number.isFinite(saved) ? saved : 14;
+  });
+  const [fontFamily, setFontFamily] = useState(() => localStorage.getItem('terminal_font_family') || DEFAULT_TERMINAL_FONT);
+  const [lineHeight, setLineHeight] = useState(() => {
+    const saved = Number(localStorage.getItem('terminal_line_height') || '1.2');
+    return Number.isFinite(saved) ? saved : 1.2;
+  });
+  const [letterSpacing, setLetterSpacing] = useState(() => {
+    const saved = Number(localStorage.getItem('terminal_letter_spacing') || '0');
+    return Number.isFinite(saved) ? saved : 0;
+  });
+  const [rendererMode, setRendererMode] = useState<TerminalRendererMode>(() => {
+    return localStorage.getItem('terminal_renderer_mode') === 'compatibility' ? 'compatibility' : 'auto';
+  });
+  const [terminalProfile, setTerminalProfile] = useState<TerminalProfile>(() => {
+    return localStorage.getItem('terminal_profile') === 'coding-cli' ? 'coding-cli' : 'default';
+  });
   const [showSeparator, setShowSeparator] = useState(() => {
     return localStorage.getItem('terminal_show_separator') === 'true';
   });
@@ -54,19 +105,117 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [defaultTitle, setDefaultTitle] = useState('Terminal');
   const defaultTitleRef = useRef('Terminal');
+  const effectiveRendererMode = forcedRendererMode || rendererMode;
+  const effectiveTerminalProfile = forcedTerminalProfile || terminalProfile;
+
+  const sendPostLaunchInputs = useCallback((id: string) => {
+    postLaunchInputs.forEach(({ data, delayMs = 0 }) => {
+      window.setTimeout(() => {
+        window.electronAPI.writeTerminal(id, data);
+      }, delayMs);
+    });
+  }, [postLaunchInputs]);
 
   // Refs to keep track of terminal instances and DOM elements
   const xtermRefs = useRef<Map<string, XTerm>>(new Map());
   const fitAddonRefs = useRef<Map<string, FitAddon>>(new Map());
+  const webglAddonRefs = useRef<Map<string, WebglAddon>>(new Map());
+  const unicodeAddonRefs = useRef<Map<string, Unicode11Addon>>(new Map());
+  const webLinksAddonRefs = useRef<Map<string, WebLinksAddon>>(new Map());
   const containerRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const resizeObserverRefs = useRef<Map<string, ResizeObserver>>(new Map());
+  const fitFrameRefs = useRef<Map<string, number>>(new Map());
   
   // We need a ref for the current active tab ID to use in the global data listener
   // because the listener closure captures the initial state
   const tabsRef = useRef<TerminalTab[]>([]);
+  const hasBootstrappedRef = useRef(false);
 
   useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
+
+  useEffect(() => {
+    onActiveTerminalChange?.(activeTabId);
+  }, [activeTabId, onActiveTerminalChange]);
+
+  useEffect(() => {
+    localStorage.setItem('terminal_font_size', String(fontSize));
+  }, [fontSize]);
+
+  useEffect(() => {
+    localStorage.setItem('terminal_font_family', fontFamily);
+  }, [fontFamily]);
+
+  useEffect(() => {
+    localStorage.setItem('terminal_line_height', String(lineHeight));
+  }, [lineHeight]);
+
+  useEffect(() => {
+    localStorage.setItem('terminal_letter_spacing', String(letterSpacing));
+  }, [letterSpacing]);
+
+  useEffect(() => {
+    if (forcedRendererMode) return;
+    localStorage.setItem('terminal_renderer_mode', rendererMode);
+  }, [rendererMode, forcedRendererMode]);
+
+  useEffect(() => {
+    if (forcedTerminalProfile) return;
+    localStorage.setItem('terminal_profile', terminalProfile);
+  }, [terminalProfile, forcedTerminalProfile]);
+
+  const fitTerminal = useCallback((id: string) => {
+    const fitAddon = fitAddonRefs.current.get(id);
+    const term = xtermRefs.current.get(id);
+    const container = containerRefs.current.get(id);
+    if (!fitAddon || !term || !container) return;
+    if (container.clientWidth <= 0 || container.clientHeight <= 0) return;
+
+    try {
+      fitAddon.fit();
+      if (term.cols > 0 && term.rows > 0) {
+        window.electronAPI.resizeTerminal(id, term.cols, term.rows);
+      }
+    } catch (error) {
+      console.warn('Failed to fit terminal', id, error);
+    }
+  }, []);
+
+  const scheduleFitTerminal = useCallback((id: string) => {
+    const pending = fitFrameRefs.current.get(id);
+    if (pending) {
+      cancelAnimationFrame(pending);
+    }
+
+    const frame = requestAnimationFrame(() => {
+      fitTerminal(id);
+      fitFrameRefs.current.delete(id);
+    });
+    fitFrameRefs.current.set(id, frame);
+  }, [fitTerminal]);
+
+  const applyRendererMode = useCallback((id: string, term: XTerm) => {
+    if (effectiveRendererMode === 'compatibility') {
+      const existingAddon = webglAddonRefs.current.get(id);
+      if (existingAddon) {
+        existingAddon.dispose();
+        webglAddonRefs.current.delete(id);
+        term.refresh(0, Math.max(0, term.rows - 1));
+      }
+      return;
+    }
+
+    if (webglAddonRefs.current.has(id)) return;
+
+    try {
+      const webglAddon = new WebglAddon();
+      term.loadAddon(webglAddon);
+      webglAddonRefs.current.set(id, webglAddon);
+    } catch (error) {
+      console.warn('WebGL terminal renderer unavailable, falling back to the default renderer.', error);
+    }
+  }, [effectiveRendererMode]);
 
   // Fetch user info for default title
   useEffect(() => {
@@ -94,12 +243,10 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
       }
     };
 
-    window.electronAPI.onTerminalData(handleData);
+    const unsubscribe = window.electronAPI.onTerminalData(handleData);
 
     return () => {
-      // Cleanup if possible (currently our preload doesn't expose removeListener easily without refactoring, 
-      // but since this component is likely long-lived, it's okay. 
-      // Ideally we should implement removeListener in preload)
+      unsubscribe?.();
     };
   }, []);
 
@@ -118,6 +265,14 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
       // Configure Shell Prompt (Zsh specific)
       // We delay this slightly to ensure the shell has started and sourced .zshrc
       setTimeout(() => {
+        if (effectiveTerminalProfile === 'coding-cli') {
+          if (command) {
+            window.electronAPI.writeTerminal(id, `${command}\n`);
+          }
+          sendPostLaunchInputs(id);
+          return;
+        }
+
         // If neither feature is enabled, do not send any PROMPT command
         if (!showSeparator && !showGreenDot) {
           // Still need to send initial command if any
@@ -144,12 +299,13 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
              window.electronAPI.writeTerminal(id, `${command}\n`);
           }, 100);
         }
+        sendPostLaunchInputs(id);
       }, 600);
 
     } catch (error) {
       console.error('Failed to create terminal tab:', error);
     }
-  }, [showSeparator, showGreenDot]);
+  }, [showSeparator, showGreenDot, effectiveTerminalProfile, sendPostLaunchInputs]);
 
   const closeTab = useCallback((id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -163,6 +319,17 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
     if (term) term.dispose();
     xtermRefs.current.delete(id);
     fitAddonRefs.current.delete(id);
+    webglAddonRefs.current.get(id)?.dispose();
+    webglAddonRefs.current.delete(id);
+    unicodeAddonRefs.current.get(id)?.dispose();
+    unicodeAddonRefs.current.delete(id);
+    webLinksAddonRefs.current.get(id)?.dispose();
+    webLinksAddonRefs.current.delete(id);
+    resizeObserverRefs.current.get(id)?.disconnect();
+    resizeObserverRefs.current.delete(id);
+    const pending = fitFrameRefs.current.get(id);
+    if (pending) cancelAnimationFrame(pending);
+    fitFrameRefs.current.delete(id);
     containerRefs.current.delete(id);
 
     setTabs(prev => {
@@ -183,22 +350,54 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
         const container = containerRefs.current.get(tab.id)!;
         
         const term = new XTerm({
-          cursorBlink: true,
-          fontSize: fontSize,
-          fontFamily: 'Menlo, Monaco, "Courier New", "PingFang SC", "Microsoft YaHei", monospace',
-          theme: LIGHT_THEME,
           allowProposedApi: true,
+          cursorBlink: true,
+          cursorStyle: 'block',
+          cursorWidth: 2,
+          fontSize: fontSize,
+          fontFamily: fontFamily,
+          fontWeight: '400',
+          fontWeightBold: '600',
+          letterSpacing: letterSpacing,
+          lineHeight: lineHeight,
+          scrollback: 10000,
+          allowTransparency: false,
+          customGlyphs: true,
+          drawBoldTextInBrightColors: true,
+          macOptionIsMeta: true,
+          minimumContrastRatio: 4.5,
+          rightClickSelectsWord: true,
+          smoothScrollDuration: 0,
+          theme: LIGHT_THEME,
         });
 
         const fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
+        const unicodeAddon = new Unicode11Addon();
+        term.loadAddon(unicodeAddon);
+        term.unicode.activeVersion = '11';
+        const webLinksAddon = new WebLinksAddon((event, uri) => {
+          event.preventDefault();
+          window.open(uri, '_blank', 'noopener,noreferrer');
+        });
+        term.loadAddon(webLinksAddon);
         
         term.open(container);
-        fitAddon.fit();
+        applyRendererMode(tab.id, term);
 
         // Store refs
         xtermRefs.current.set(tab.id, term);
         fitAddonRefs.current.set(tab.id, fitAddon);
+        unicodeAddonRefs.current.set(tab.id, unicodeAddon);
+        webLinksAddonRefs.current.set(tab.id, webLinksAddon);
+
+        if (typeof ResizeObserver !== 'undefined') {
+          const resizeObserver = new ResizeObserver(() => {
+            scheduleFitTerminal(tab.id);
+          });
+          resizeObserver.observe(container);
+          resizeObserverRefs.current.set(tab.id, resizeObserver);
+        }
 
         // Handle Input
         term.onData((data) => {
@@ -212,8 +411,8 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
 
         // Initial Resize
         setTimeout(() => {
-          fitAddon.fit();
-          window.electronAPI.resizeTerminal(tab.id, term.cols, term.rows);
+          scheduleFitTerminal(tab.id);
+          document.fonts?.ready?.then(() => scheduleFitTerminal(tab.id)).catch(() => {});
           
           // Execute initial command if any
           if ((tab as any).initialCommand) {
@@ -223,74 +422,98 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
         }, 100);
       }
     });
-  }, [tabs, fontSize]);
+  }, [tabs, fontSize, fontFamily, lineHeight, letterSpacing, scheduleFitTerminal, applyRendererMode]);
 
   // Handle Font Size Change
   useEffect(() => {
     xtermRefs.current.forEach(term => {
       term.options.fontSize = fontSize;
+      term.options.fontFamily = fontFamily;
+      term.options.lineHeight = lineHeight;
+      term.options.letterSpacing = letterSpacing;
     });
-    // Re-fit after font size change
-    setTimeout(() => {
-      fitAddonRefs.current.forEach(addon => addon.fit());
-    }, 100);
-  }, [fontSize]);
+    tabsRef.current.forEach(tab => scheduleFitTerminal(tab.id));
+  }, [fontSize, fontFamily, lineHeight, letterSpacing, scheduleFitTerminal]);
+
+  useEffect(() => {
+    tabsRef.current.forEach(tab => {
+      const term = xtermRefs.current.get(tab.id);
+      if (!term) return;
+      applyRendererMode(tab.id, term);
+      scheduleFitTerminal(tab.id);
+    });
+  }, [effectiveRendererMode, applyRendererMode, scheduleFitTerminal]);
 
   // Handle Resize Window
   useEffect(() => {
     const handleResize = () => {
-      fitAddonRefs.current.forEach((addon, id) => {
-        addon.fit();
-        const term = xtermRefs.current.get(id);
-        if (term) {
-          window.electronAPI.resizeTerminal(id, term.cols, term.rows);
-        }
-      });
+      tabsRef.current.forEach(tab => scheduleFitTerminal(tab.id));
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  }, [scheduleFitTerminal]);
 
   // Handle Fullscreen Change
   useEffect(() => {
-    setTimeout(() => {
-      fitAddonRefs.current.forEach((addon, id) => {
-        addon.fit();
-        const term = xtermRefs.current.get(id);
-        if (term) {
-          window.electronAPI.resizeTerminal(id, term.cols, term.rows);
-        }
-      });
-    }, 300);
-  }, [isFullscreen]);
+    const timer = window.setTimeout(() => {
+      tabsRef.current.forEach(tab => scheduleFitTerminal(tab.id));
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [isFullscreen, scheduleFitTerminal]);
 
   // Handle Visibility Change
   useEffect(() => {
     if (isVisible) {
-      setTimeout(() => {
-        fitAddonRefs.current.forEach((addon, id) => {
-          addon.fit();
-          const term = xtermRefs.current.get(id);
-          if (term) {
-            window.electronAPI.resizeTerminal(id, term.cols, term.rows);
-          }
-        });
-      }, 100);
+      const timer = window.setTimeout(() => {
+        tabsRef.current.forEach(tab => scheduleFitTerminal(tab.id));
+      }, 80);
+      return () => window.clearTimeout(timer);
     }
   }, [isVisible]);
 
+  useEffect(() => {
+    return () => {
+      tabsRef.current.forEach(tab => {
+        try {
+          window.electronAPI.closeTerminal(tab.id);
+        } catch (error) {
+          console.warn('Failed to close terminal during cleanup', tab.id, error);
+        }
+      });
+      resizeObserverRefs.current.forEach(observer => observer.disconnect());
+      fitFrameRefs.current.forEach(frame => cancelAnimationFrame(frame));
+      webglAddonRefs.current.forEach(addon => addon.dispose());
+      unicodeAddonRefs.current.forEach(addon => addon.dispose());
+      webLinksAddonRefs.current.forEach(addon => addon.dispose());
+      xtermRefs.current.forEach(term => term.dispose());
+      resizeObserverRefs.current.clear();
+      fitFrameRefs.current.clear();
+      webglAddonRefs.current.clear();
+      unicodeAddonRefs.current.clear();
+      webLinksAddonRefs.current.clear();
+      fitAddonRefs.current.clear();
+      xtermRefs.current.clear();
+      containerRefs.current.clear();
+    };
+  }, []);
+
   // Initial Load
   useEffect(() => {
-    if (tabs.length === 0) {
+    if (!hasBootstrappedRef.current) {
+      hasBootstrappedRef.current = true;
       createTab(initialCommand, initialTitle);
-    } else if (initialCommand) {
+      return;
+    }
+
+    if (spawnOnInitialChange && initialCommand) {
       createTab(initialCommand, initialTitle);
     }
-  }, [initialCommand, initialTitle]); // Only run when initialCommand changes (or on mount)
+  }, [initialCommand, initialTitle, createTab, spawnOnInitialChange]);
 
   return (
     <div className="flex flex-col h-full bg-white overflow-hidden">
       {/* Header */}
+      {!hideHeader && (
       <div className="h-10 bg-gray-100 border-b border-gray-200 flex items-center justify-between px-2 shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
         
         {/* Tabs */}
@@ -339,7 +562,47 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
             </button>
             
             {isSettingsOpen && (
-              <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-lg shadow-xl border border-gray-200 p-3 z-50">
+              <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-lg shadow-xl border border-gray-200 p-3 z-50 space-y-4">
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-gray-600">终端档案</label>
+                  <select
+                    value={terminalProfile}
+                    onChange={(e) => setTerminalProfile(e.target.value as TerminalProfile)}
+                    className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-blue-400"
+                  >
+                    <option value="default">默认</option>
+                    <option value="coding-cli">编程 CLI</option>
+                  </select>
+                  <p className="mt-1 text-[10px] leading-4 text-gray-400">
+                    编程 CLI 档案会关闭自定义 prompt 装饰，减少界面噪声。
+                  </p>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-gray-600">渲染模式</label>
+                  <select
+                    value={rendererMode}
+                    onChange={(e) => setRendererMode(e.target.value as TerminalRendererMode)}
+                    className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-blue-400"
+                  >
+                    <option value="auto">自适应 GPU</option>
+                    <option value="compatibility">兼容模式</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-gray-600">字体</label>
+                  <select
+                    value={fontFamily}
+                    onChange={(e) => setFontFamily(e.target.value)}
+                    className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-blue-400"
+                  >
+                    {FONT_OPTIONS.map((option) => (
+                      <option key={option.label} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-medium text-gray-600 flex items-center gap-1">
                     <Type className="w-3 h-3" /> Font Size
@@ -355,15 +618,48 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
                   onChange={(e) => setFontSize(parseInt(e.target.value))}
                   className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
                 />
-                
-                <div className="mt-4 pt-3 border-t border-gray-100 space-y-3">
+
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-xs font-medium text-gray-600">Line Height</span>
+                    <span className="text-xs text-gray-500">{lineHeight.toFixed(2)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="1.5"
+                    step="0.05"
+                    value={lineHeight}
+                    onChange={(e) => setLineHeight(parseFloat(e.target.value))}
+                    className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-xs font-medium text-gray-600">Letter Spacing</span>
+                    <span className="text-xs text-gray-500">{letterSpacing.toFixed(1)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="-0.5"
+                    max="1.5"
+                    step="0.1"
+                    value={letterSpacing}
+                    onChange={(e) => setLetterSpacing(parseFloat(e.target.value))}
+                    className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  />
+                </div>
+
+                <div className="pt-3 border-t border-gray-100 space-y-3">
                   <label className="flex items-center justify-between cursor-pointer group">
-                    <span className="text-xs font-medium text-gray-600">Show Separator</span>
+                    <span className={`text-xs font-medium ${terminalProfile === 'coding-cli' ? 'text-gray-300' : 'text-gray-600'}`}>Show Separator</span>
                     <div className={`relative w-8 h-4 rounded-full transition-colors duration-200 ${showSeparator ? 'bg-blue-600' : 'bg-gray-200'}`}>
                       <input 
                         type="checkbox" 
                         className="absolute opacity-0 w-full h-full cursor-pointer"
                         checked={showSeparator}
+                        disabled={terminalProfile === 'coding-cli'}
                         onChange={(e) => {
                           const newVal = e.target.checked;
                           setShowSeparator(newVal);
@@ -375,12 +671,13 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
                   </label>
 
                   <label className="flex items-center justify-between cursor-pointer group">
-                    <span className="text-xs font-medium text-gray-600">Show Green Dot</span>
+                    <span className={`text-xs font-medium ${terminalProfile === 'coding-cli' ? 'text-gray-300' : 'text-gray-600'}`}>Show Green Dot</span>
                     <div className={`relative w-8 h-4 rounded-full transition-colors duration-200 ${showGreenDot ? 'bg-blue-600' : 'bg-gray-200'}`}>
                       <input 
                         type="checkbox" 
                         className="absolute opacity-0 w-full h-full cursor-pointer"
                         checked={showGreenDot}
+                        disabled={terminalProfile === 'coding-cli'}
                         onChange={(e) => {
                           const newVal = e.target.checked;
                           setShowGreenDot(newVal);
@@ -406,9 +703,10 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
           )}
         </div>
       </div>
+      )}
 
       {/* Terminal Containers */}
-      <div className="flex-1 relative bg-white">
+      <div className="flex-1 relative min-h-0 bg-white">
         {tabs.map(tab => (
           <div 
             key={tab.id}
@@ -416,7 +714,7 @@ export const Terminal: React.FC<TerminalProps> = ({ isFullscreen, onToggleFullsc
               if (el) containerRefs.current.set(tab.id, el);
               else containerRefs.current.delete(tab.id);
             }}
-            className={`absolute inset-0 p-2 ${activeTabId === tab.id ? 'z-10 visible' : 'z-0 invisible'}`}
+            className={`terminal-surface absolute inset-0 p-2 ${activeTabId === tab.id ? 'z-10 visible' : 'z-0 invisible'}`}
           />
         ))}
         {tabs.length === 0 && (

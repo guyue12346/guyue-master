@@ -346,27 +346,27 @@ export const HelpModal: React.FC<HelpModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4"
+      className="theme-modal-backdrop fixed inset-0 z-[9999] flex items-center justify-center p-4"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[78vh] flex flex-col overflow-hidden"
+        className="theme-modal-shell max-w-lg w-full max-h-[78vh] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+        <div className="theme-header-bar flex items-center justify-between px-6 py-4 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center">
-              <HelpCircle className="w-5 h-5 text-blue-500" />
+            <div className="theme-logo-mark w-9 h-9 rounded-xl">
+              <HelpCircle className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-gray-800">{content.title}</h2>
-              <p className="text-xs text-gray-400 mt-0.5">使用帮助</p>
+              <h2 className="text-base font-semibold" style={{ color: 'var(--t-text)' }}>{content.title}</h2>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--t-text-muted)' }}>使用帮助</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-600"
+            className="theme-icon-btn w-8 h-8 flex items-center justify-center"
           >
             <X className="w-4 h-4" />
           </button>
@@ -374,17 +374,17 @@ export const HelpModal: React.FC<HelpModalProps> = ({
 
         {/* Body */}
         <div className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
-          <p className="text-sm text-gray-600 leading-relaxed">{content.description}</p>
+          <p className="text-sm leading-relaxed" style={{ color: 'var(--t-text-secondary)' }}>{content.description}</p>
 
           {content.sections.map((section, i) => (
             <div key={i}>
-              <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2.5">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wider mb-2.5" style={{ color: 'var(--t-text-muted)' }}>
                 {section.title}
               </h3>
               <ul className="space-y-2">
                 {section.items.map((item, j) => (
-                  <li key={j} className="flex items-start gap-2.5 text-sm text-gray-600">
-                    <span className="mt-[7px] w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
+                  <li key={j} className="flex items-start gap-2.5 text-sm" style={{ color: 'var(--t-text-secondary)' }}>
+                    <span className="mt-[7px] w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: 'var(--t-help-dot)' }} />
                     <span className="leading-relaxed">{item.text}</span>
                   </li>
                 ))}
@@ -394,10 +394,10 @@ export const HelpModal: React.FC<HelpModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3 bg-gray-50 border-t border-gray-100 shrink-0">
+        <div className="px-6 py-3 shrink-0" style={{ background: 'var(--t-bg-secondary)', borderTop: '1px solid var(--t-border-light)' }}>
           <button
             onClick={onClose}
-            className="w-full py-2 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 transition-colors"
+            className="theme-primary-btn w-full py-2 text-sm font-medium"
           >
             知道了
           </button>

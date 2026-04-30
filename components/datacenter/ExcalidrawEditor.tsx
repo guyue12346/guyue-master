@@ -78,6 +78,115 @@ const pickAppState = (appState: any): Record<string, any> => {
   return picked;
 };
 
+const getElementsBounds = (elements: readonly any[]) => {
+  if (!elements.length) {
+    return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const element of elements) {
+    const x = Number(element.x) || 0;
+    const y = Number(element.y) || 0;
+    const width = Number(element.width) || 0;
+    const height = Number(element.height) || 0;
+
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x + width);
+    maxY = Math.max(maxY, y + height);
+  }
+
+  return { minX, minY, maxX, maxY };
+};
+
+const offsetElements = (elements: readonly any[], dx: number, dy: number) =>
+  elements.map(element => ({
+    ...element,
+    x: (Number(element.x) || 0) + dx,
+    y: (Number(element.y) || 0) + dy,
+  }));
+
+const applyCurrentStyleToElements = (elements: readonly any[], appState: any) =>
+  elements.map(element => {
+    const styled = { ...element };
+    const isText = styled.type === 'text';
+    const isLinear = styled.type === 'arrow' || styled.type === 'line';
+    const isShape = !isText && !isLinear && styled.type !== 'image';
+
+    if (appState.currentItemStrokeColor) {
+      styled.strokeColor = appState.currentItemStrokeColor;
+    }
+    if (appState.currentItemStrokeWidth !== undefined) {
+      styled.strokeWidth = appState.currentItemStrokeWidth;
+    }
+    if (appState.currentItemStrokeStyle !== undefined) {
+      styled.strokeStyle = appState.currentItemStrokeStyle;
+    }
+    if (appState.currentItemRoughness !== undefined) {
+      styled.roughness = appState.currentItemRoughness;
+    }
+    if (appState.currentItemOpacity !== undefined) {
+      styled.opacity = appState.currentItemOpacity;
+    }
+
+    if (isShape) {
+      if (appState.currentItemBackgroundColor !== undefined) {
+        styled.backgroundColor = appState.currentItemBackgroundColor;
+      }
+      if (appState.currentItemFillStyle !== undefined) {
+        styled.fillStyle = appState.currentItemFillStyle;
+      }
+      if (appState.currentItemRoundness !== undefined) {
+        styled.roundness = appState.currentItemRoundness;
+      }
+    }
+
+    if (isText) {
+      if (appState.currentItemFontFamily !== undefined) {
+        styled.fontFamily = appState.currentItemFontFamily;
+      }
+      if (appState.currentItemFontSize !== undefined) {
+        styled.fontSize = appState.currentItemFontSize;
+      }
+    }
+
+    if (isLinear) {
+      if (appState.currentItemStartArrowhead !== undefined) {
+        styled.startArrowhead = appState.currentItemStartArrowhead;
+      }
+      if (appState.currentItemEndArrowhead !== undefined) {
+        styled.endArrowhead = appState.currentItemEndArrowhead;
+      }
+      if (appState.currentItemRoundness !== undefined) {
+        styled.roundness = appState.currentItemRoundness;
+      }
+    }
+
+    return styled;
+  });
+
+const closeBuiltinMermaidDialog = (api: any) => {
+  try {
+    api?.updateScene?.({
+      appState: {
+        openDialog: null,
+      },
+    });
+  } catch (error) {
+    console.warn('Failed to close Excalidraw Mermaid dialog via API:', error);
+  }
+
+  requestAnimationFrame(() => {
+    const closeButton = document.querySelector(
+      '.ttd-dialog button[aria-label="Close"], .ttd-dialog .Modal__close, .ttd-dialog button[title="Close"]',
+    ) as HTMLButtonElement | null;
+    closeButton?.click();
+  });
+};
+
 // ======== 工具函数 ========
 const generateId = () => `draw_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
@@ -446,6 +555,98 @@ const ExportToHostingModal: React.FC<{
   );
 };
 
+const MermaidImportModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onImport: (code: string, mode: 'append' | 'replace') => void;
+  isImporting: boolean;
+}> = ({ isOpen, onClose, onImport, isImporting }) => {
+  const [code, setCode] = useState('flowchart TD\n  A[开始] --> B{是否继续}\n  B -->|是| C[处理]\n  B -->|否| D[结束]');
+  const [mode, setMode] = useState<'append' | 'replace'>('append');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setMode('append');
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const canSubmit = !!code.trim() && !isImporting;
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="m-4 w-full max-w-2xl rounded-2xl bg-white shadow-2xl dark:bg-gray-800" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4 dark:border-gray-700">
+          <div>
+            <h3 className="text-base font-semibold text-gray-900 dark:text-white">根据 Mermaid 生成绘图</h3>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">粘贴 Mermaid 代码后，直接生成到当前 Excalidraw 画布。</p>
+          </div>
+          <button onClick={onClose} className="rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="space-y-4 p-5">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setMode('append')}
+              className={`rounded-xl px-3 py-1.5 text-sm transition-colors ${
+                mode === 'append'
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+              }`}
+            >
+              追加到当前画布
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('replace')}
+              className={`rounded-xl px-3 py-1.5 text-sm transition-colors ${
+                mode === 'replace'
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+              }`}
+            >
+              替换当前画布
+            </button>
+          </div>
+
+          <textarea
+            value={code}
+            onChange={e => setCode(e.target.value)}
+            spellCheck={false}
+            rows={14}
+            placeholder="在这里粘贴 Mermaid 代码..."
+            className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 font-mono text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+          />
+
+          <div className="text-xs text-gray-500 dark:text-gray-400">
+            当前接入的是官方 `@excalidraw/mermaid-to-excalidraw`。常用 `flowchart`、`sequence`、`class` 更稳，复杂语法解析失败时会直接报错。
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-gray-200 bg-gray-50 px-5 py-4 dark:border-gray-700 dark:bg-gray-800/60">
+          <button
+            onClick={onClose}
+            className="rounded-xl px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            取消
+          </button>
+          <button
+            onClick={() => onImport(code.trim(), mode)}
+            disabled={!canSubmit}
+            className="flex items-center gap-1.5 rounded-xl bg-blue-500 px-4 py-2 text-sm text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+            {isImporting ? '生成中...' : '生成绘图'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ======== 主组件 ========
 export const ExcalidrawEditor: React.FC = () => {
   // Excalidraw 动态导入
@@ -464,6 +665,8 @@ export const ExcalidrawEditor: React.FC = () => {
   const [deleteTarget, setDeleteTarget] = useState<DrawingFile | null>(null);
   const [renameTarget, setRenameTarget] = useState<DrawingFile | null>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isMermaidModalOpen, setIsMermaidModalOpen] = useState(false);
+  const [isMermaidImporting, setIsMermaidImporting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isFileListOpen, setIsFileListOpen] = useState(false);
   const [isDark, setIsDark] = useState(false);
@@ -520,6 +723,7 @@ export const ExcalidrawEditor: React.FC = () => {
 
   // 画布容器 ref（用于 DOM 检测）
   const canvasContainerRef = useRef<HTMLDivElement>(null);
+  const mermaidDialogInterceptedRef = useRef(false);
 
   // 检测暗色模式
   useEffect(() => {
@@ -558,7 +762,18 @@ export const ExcalidrawEditor: React.FC = () => {
   }, []);
 
   // LaTeX 自动渲染：文本编辑完成后检测 $$...$$ 并转为公式图片
-  const handleChange = useCallback((elements: readonly any[], _appState: any) => {
+  const handleChange = useCallback((elements: readonly any[], appState: any) => {
+    const isBuiltinMermaidDialogOpen =
+      appState?.openDialog?.name === 'ttd' && appState?.openDialog?.tab === 'mermaid';
+
+    if (isBuiltinMermaidDialogOpen && !mermaidDialogInterceptedRef.current) {
+      mermaidDialogInterceptedRef.current = true;
+      closeBuiltinMermaidDialog(excalidrawAPIRef.current);
+      setIsMermaidModalOpen(true);
+    } else if (!isBuiltinMermaidDialogOpen && mermaidDialogInterceptedRef.current && !isMermaidModalOpen) {
+      mermaidDialogInterceptedRef.current = false;
+    }
+
     // 每次变化都重置防抖计时器
     if (latexDebounceRef.current) clearTimeout(latexDebounceRef.current);
 
@@ -628,7 +843,7 @@ export const ExcalidrawEditor: React.FC = () => {
         break; // 一次只处理一个
       }
     }, 800);
-  }, [exportUtils]);
+  }, [exportUtils, isMermaidModalOpen]);
 
   // 监听画布容器上的双击事件（编辑 LaTeX 公式）
   useEffect(() => {
@@ -760,6 +975,91 @@ export const ExcalidrawEditor: React.FC = () => {
     saveCurrentScene();
     showToast('已保存');
   }, [saveCurrentScene, showToast]);
+
+  const handleImportMermaid = useCallback(async (code: string, mode: 'append' | 'replace') => {
+    if (!excalidrawAPIRef.current || !exportUtils?.convertToExcalidrawElements || !activeId) {
+      showToast('绘图引擎未就绪', 'error');
+      return;
+    }
+
+    setIsMermaidImporting(true);
+    try {
+      const api = excalidrawAPIRef.current;
+      const currentAppState = api.getAppState();
+      const preferredFontSize = Number(currentAppState.currentItemFontSize) || 22;
+      const { parseMermaidToExcalidraw } = await import('@excalidraw/mermaid-to-excalidraw');
+      const result = await parseMermaidToExcalidraw(code, {
+        themeVariables: {
+          fontSize: `${preferredFontSize}px`,
+        },
+      });
+
+      const currentElements = api.getSceneElements().filter((el: any) => !el.isDeleted);
+      const currentFiles = api.getFiles();
+      const importedFiles = result.files || {};
+      if (Object.keys(importedFiles).length) {
+        api.addFiles(Object.values(importedFiles));
+      }
+
+      let importedElements = applyCurrentStyleToElements(
+        exportUtils.convertToExcalidrawElements(result.elements || []),
+        currentAppState,
+      );
+      if (!importedElements.length) {
+        throw new Error('没有解析出可绘制元素');
+      }
+
+      if (mode === 'append' && currentElements.length) {
+        const currentBounds = getElementsBounds(currentElements);
+        const importedBounds = getElementsBounds(importedElements);
+        const gap = 160;
+        importedElements = offsetElements(
+          importedElements,
+          currentBounds.maxX - importedBounds.minX + gap,
+          currentBounds.minY - importedBounds.minY,
+        );
+      }
+
+      const nextElements = mode === 'replace' ? importedElements : [...currentElements, ...importedElements];
+      const nextFiles = mode === 'replace' ? importedFiles : { ...currentFiles, ...importedFiles };
+
+      api.updateScene({
+        elements: nextElements,
+        files: nextFiles,
+      });
+
+      const updated = drawings.map(d =>
+        d.id === activeId
+          ? {
+              ...d,
+              data: {
+                elements: nextElements,
+                appState: pickAppState(currentAppState),
+                files: nextFiles,
+              },
+              updatedAt: Date.now(),
+            }
+          : d,
+      );
+      setDrawings(updated);
+      saveDrawings(updated);
+
+      setIsMermaidModalOpen(false);
+      requestAnimationFrame(() => {
+        try {
+          api.scrollToContent?.(nextElements, {
+            fitToContent: true,
+          });
+        } catch {}
+      });
+      showToast(mode === 'replace' ? 'Mermaid 已生成并替换当前画布' : 'Mermaid 已追加到当前画布');
+    } catch (err: any) {
+      console.error('Import Mermaid error:', err);
+      showToast(err?.message || 'Mermaid 生成失败', 'error');
+    } finally {
+      setIsMermaidImporting(false);
+    }
+  }, [activeId, drawings, exportUtils, showToast]);
 
   // 自动保存（每30秒）
   useEffect(() => {
@@ -1246,6 +1546,17 @@ export const ExcalidrawEditor: React.FC = () => {
         isUploading={isUploading}
         defaultName={activeDrawing?.name || 'drawing'}
         availableCategories={imageCategories}
+      />
+      <MermaidImportModal
+        isOpen={isMermaidModalOpen}
+        onClose={() => {
+          if (!isMermaidImporting) {
+            mermaidDialogInterceptedRef.current = false;
+            setIsMermaidModalOpen(false);
+          }
+        }}
+        onImport={handleImportMermaid}
+        isImporting={isMermaidImporting}
       />
       <LatexEditModal
         isOpen={!!latexEditTarget}

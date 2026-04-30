@@ -31,7 +31,14 @@ import type { FileReader as RagFileReader } from '../services/ragLlamaIndex';
 import type { QueryEngineConfig } from '../services/ragLlamaIndex';
 import type { QueryMode, QueryModeConfig, SubQuestionConfig, IterativeConfig, CustomQueryConfig } from '../services/ragLlamaIndex/queryModes';
 import VectorSearchModal from './VectorSearchModal';
-import { deleteCollection as deleteCollectionCache } from '../services/vectorService';
+import {
+  deleteCollection as deleteCollectionCache,
+  loadCollectionPayload as loadVectorCollectionPayload,
+  saveCollectionPayload as saveVectorCollectionPayload,
+  saveCollectionConfig as saveVectorCollectionConfig,
+  saveCollectionKnowledgeGraph as saveVectorCollectionKnowledgeGraph,
+  saveCollectionVectorStore as saveVectorCollectionStore,
+} from '../services/vectorService';
 import { loadProfiles, API_PROVIDER_LABELS, API_PROVIDER_BASE_URLS } from '../utils/apiProfileService';
 import type { ApiProfile } from '../types';
 
@@ -53,7 +60,6 @@ const LS_SEARCH_ALGO = `${LS_PREFIX}search_algorithm`;
 const LS_KG_API_PROFILE = `${LS_PREFIX}kg_api_profile`;
 const LS_PRE_RETRIEVAL_API_PROFILE = `${LS_PREFIX}pre_retrieval_api_profile`;
 const LS_LLM_RERANKER_API_PROFILE = `${LS_PREFIX}llm_reranker_api_profile`;
-const RAG_DIR_NAME = 'rag-indexes';
 
 const PROVIDERS: EmbeddingProvider[] = ['openai', 'gemini', 'zhipu', 'qwen', 'ollama', 'custom'];
 const PROVIDER_LABELS: Record<EmbeddingProvider, string> = {
@@ -468,32 +474,12 @@ const electronFileReader: RagFileReader = {
   },
 };
 
-async function getRagDir(): Promise<string> {
-  const userData = await eApi().getUserDataPath();
-  return `${userData}/${RAG_DIR_NAME}`;
-}
-
-async function ensureRagDir(): Promise<string> {
-  const dir = await getRagDir();
-  await eApi().ensureDir(dir);
-  return dir;
-}
-
-async function saveCollectionToDisk(id: string, data: any): Promise<void> {
-  const dir = await ensureRagDir();
-  await eApi().writeFile(`${dir}/${id}.json`, JSON.stringify(data));
-}
-
 async function loadCollectionFromDisk(id: string): Promise<any | null> {
-  const dir = await getRagDir();
-  const raw = await eApi().readFile(`${dir}/${id}.json`);
-  if (!raw) return null;
-  try { return JSON.parse(raw); } catch { return null; }
-}
-
-async function deleteCollectionFromDisk(id: string): Promise<void> {
-  const dir = await getRagDir();
-  await eApi().deleteFile(`${dir}/${id}.json`);
+  try {
+    return await loadVectorCollectionPayload(id);
+  } catch {
+    return null;
+  }
 }
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
@@ -1091,7 +1077,7 @@ export function RagTestBench() {
         const restoredRerankerCfg = data.config?.reranker ?? rerankerConfig;
         const qCfg: QueryEngineConfig = { retrieval: restoredRetCfg, reranker: restoredRerankerCfg, embeddingConfig: restoredEmbCfg };
         const pipeline = new RagPipeline(qCfg);
-        pipeline.loadFromSerialized({ vectorStore: JSON.stringify(data.vectorStore) });
+        pipeline.setVectorStore(vectorStoreRef.current);
         pipeline.buildBM25();
 
         // 恢复知识图谱
@@ -1228,8 +1214,7 @@ export function RagTestBench() {
 
   // ── Delete collection ──
   const deleteCollection = useCallback(async (id: string) => {
-    await deleteCollectionFromDisk(id);
-    deleteCollectionCache(id); // clear vectorService in-memory cache
+    await deleteCollectionCache(id);
     setCollections(prev => prev.filter(c => c.id !== id));
     if (activeCollectionId === id) setActiveCollectionId('');
   }, [activeCollectionId]);
@@ -1782,7 +1767,7 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
       try {
         const qCfg: QueryEngineConfig = { retrieval: retrievalConfig, reranker: rerankerConfig, embeddingConfig };
         const pipeline = new RagPipeline(qCfg);
-        pipeline.loadFromSerialized({ vectorStore: JSON.stringify(vectorStoreRef.current.serialize()) });
+        pipeline.setVectorStore(vectorStoreRef.current);
         pipeline.buildBM25();
         pipelineRef.current = pipeline;
       } catch (err: any) {
@@ -1814,7 +1799,7 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
         if (knowledgeGraphRef.current && knowledgeGraphRef.current.tripleCount > 0) {
           saveData.knowledgeGraph = knowledgeGraphRef.current.serialize();
         }
-        await saveCollectionToDisk(activeCollectionId, saveData);
+        await saveVectorCollectionPayload(activeCollectionId, saveData);
       } catch (err: any) {
         setIndexStatus('error');
         setIndexProgress(`❌ 保存失败: ${err?.message ?? String(err)}`);
@@ -1916,8 +1901,7 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
         if (!confirmed) { setUpdatingConfig(false); return; }
       }
 
-      existing.config = newConfig;
-      await saveCollectionToDisk(activeCollectionId, existing);
+      await saveVectorCollectionConfig(activeCollectionId, newConfig);
 
       // Build diff summary
       const changes: string[] = [];
@@ -1965,11 +1949,7 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
       setSearchAlgorithm('hnsw');
 
       // Persist
-      const existing = await loadCollectionFromDisk(activeCollectionId);
-      if (existing) {
-        existing.vectorStore = vectorStoreRef.current.serialize();
-        await saveCollectionToDisk(activeCollectionId, existing);
-      }
+      await saveVectorCollectionStore(activeCollectionId, vectorStoreRef.current);
       setIndexStatus('ready');
       setIndexProgress(`✅ HNSW 索引已构建（${vectorStoreRef.current.size} 向量）`);
       setCollections(prev => prev.map(c => c.id === activeCollectionId ? { ...c, hasHnsw: true } : c));
@@ -2018,11 +1998,7 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
       setKgEnabled(true);
 
       // Persist
-      const existing = await loadCollectionFromDisk(activeCollectionId);
-      if (existing) {
-        existing.knowledgeGraph = graph.serialize();
-        await saveCollectionToDisk(activeCollectionId, existing);
-      }
+      await saveVectorCollectionKnowledgeGraph(activeCollectionId, graph.serialize());
       setIndexStatus('ready');
       setIndexProgress(`✅ 知识图谱: ${graph.tripleCount} 三元组, ${graph.entityCount} 实体`);
       setCollections(prev => prev.map(c => c.id === activeCollectionId
@@ -2073,7 +2049,7 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
       // Rebuild pipeline with latest config each search
       const qCfg: QueryEngineConfig = { retrieval: retrievalConfig, reranker: rerankerConfig, embeddingConfig };
       const pipeline = new RagPipeline(qCfg);
-      pipeline.loadFromSerialized({ vectorStore: JSON.stringify(vectorStoreRef.current.serialize()) });
+      pipeline.setVectorStore(vectorStoreRef.current);
       pipeline.buildBM25();
       if (knowledgeGraphRef.current) {
         pipeline.setKnowledgeGraph(knowledgeGraphRef.current);

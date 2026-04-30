@@ -56,7 +56,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     // if (selectedCategory !== categoryName) return null;
 
     return (
-      <div className="ml-4 mt-1 space-y-0.5 border-l border-gray-200 pl-2">
+      <div className="ml-4 mt-1 space-y-0.5 pl-2" style={{ borderLeft: '1px solid var(--t-border-light)' }}>
         {categoryFiles.map(file => (
           <button
             key={file.id}
@@ -64,11 +64,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               e.stopPropagation();
               onSelectFile(file.id);
             }}
-            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors truncate
-              ${activeFileId === file.id
-                ? 'bg-blue-50 text-blue-600 font-medium'
-                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
-              }`}
+            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors truncate ${activeFileId === file.id ? 'theme-list-item-active font-medium' : 'theme-list-item'}`}
             title={file.name}
           >
             <FileText className="w-3 h-3 flex-shrink-0" />
@@ -90,19 +86,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div key={cat.id} className="mb-1">
         <button
           onClick={() => onSelectCategory(cat.name)}
-          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 group relative
-            ${isSelected
-              ? 'bg-white shadow-sm text-gray-900 font-medium' 
-              : 'text-gray-600 hover:bg-black/5 hover:text-gray-900'
-            }`}
+          className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-all duration-200 group relative ${isSelected ? 'theme-list-item theme-list-item-active font-medium' : 'theme-list-item'}`}
         >
           <IconComponent
-            className={`w-4 h-4 transition-colors ${!cat.color ? (isSelected ? 'text-blue-500' : 'text-gray-400 group-hover:text-gray-600') : ''}`}
-            style={iconColor}
+            className="w-4 h-4 transition-colors"
+            style={iconColor ?? (!cat.color ? { color: isSelected ? 'var(--t-accent)' : 'var(--t-text-muted)' } : undefined)}
           />
           <span className="flex-1 text-left truncate">{cat.name}</span>
           {(cat.id === 'all' || cat.isSystem) && (
-            <span className={`text-[10px] py-0.5 px-2 rounded-md transition-colors ${isSelected ? 'bg-gray-100 text-gray-600' : 'bg-transparent text-gray-400 group-hover:bg-white/50'}`}>
+            <span className={`text-[10px] py-0.5 px-2 rounded-md transition-colors ${isSelected ? 'theme-muted-badge' : ''}`} style={!isSelected ? { color: 'var(--t-text-muted)' } : undefined}>
               {totalCount}
             </span>
           )}
@@ -144,14 +136,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   return (
-    <div className="w-60 h-full flex-shrink-0 bg-macOS-sidebar backdrop-blur-xl border-r border-macOS-border flex flex-col pt-6 pb-4 px-3 z-20">
+    <div className="theme-sidebar-surface w-60 h-full flex-shrink-0 flex flex-col pt-6 pb-4 px-3 z-20">
 
       {/* Context Header - Draggable Area */}
       <div className="px-2 mb-6" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
-        <h2 className="text-xl font-bold text-gray-800 tracking-tight">
+        <h2 className="text-xl font-bold tracking-tight" style={{ color: 'var(--t-text)' }}>
           {getModeTitle()}
         </h2>
-        <p className="text-xs text-gray-400 mt-1">
+        <p className="text-xs mt-1" style={{ color: 'var(--t-text-muted)' }}>
           {getModeSubtitle()}
         </p>
       </div>
@@ -161,7 +153,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         
         {/* Header / Actions */}
         <div className="flex items-center justify-between px-3 mb-2 group shrink-0 h-6">
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+          <p className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--t-text-muted)' }}>
             {isNotes ? '月份归档' : isPrompts ? 'Prompt 分类' : '分类'}
           </p>
           
@@ -169,7 +161,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {!isNotes && (
             <button 
               onClick={onOpenManager}
-              className="text-gray-400 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-gray-200/50 rounded"
+              className="theme-icon-btn opacity-0 group-hover:opacity-100 transition-all p-1"
               title="管理 & 排序"
             >
               <Settings2 className="w-3.5 h-3.5" />
@@ -178,18 +170,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
         
         {/* Category List */}
-        <div className="flex-1 overflow-y-auto -mx-2 px-2 space-y-0.5 scrollbar-thin scrollbar-thumb-gray-200 hover:scrollbar-thumb-gray-300 pr-1 overscroll-y-contain">
+        <div className="flex-1 overflow-y-auto -mx-2 px-2 space-y-0.5 pr-1 overscroll-y-contain">
           {userCategories.length > 0 ? (
             userCategories.map(renderCategoryItem)
           ) : (
-            <div className="text-xs text-gray-400 text-center py-8">
+            <div className="text-xs text-center py-8" style={{ color: 'var(--t-text-muted)' }}>
               {isNotes ? '暂无历史便签' : isPrompts ? '暂无 Prompt 分类' : '暂无分类'}
             </div>
           )}
         </div>
 
         {/* System Category at Bottom */}
-        <div className="mt-4 pt-2 border-t border-gray-200/50">
+        <div className="mt-4 pt-2" style={{ borderTop: '1px solid var(--t-border-light)' }}>
           <div className="space-y-1">
              {systemCategory && renderCategoryItem(systemCategory)}
           </div>

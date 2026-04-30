@@ -1,0 +1,88 @@
+- generic [ref=e16]:
+  - generic [ref=e17]:
+    - button "古 月" [ref=e18] [cursor=pointer]:
+      - generic [ref=e20]:
+        - generic [ref=e21]: 古
+        - generic [ref=e22]: 月
+    - generic [ref=e23]:
+      - button "AI助手" [ref=e442] [cursor=pointer]:
+        - img [ref=e443]
+        - generic: AI助手
+      - button "任务与日程" [ref=e447] [cursor=pointer]:
+        - img [ref=e448]
+        - generic: 任务与日程
+      - button "数据中心" [ref=e452] [cursor=pointer]:
+        - img [ref=e453]
+        - generic: 数据中心
+      - button "学习空间" [ref=e456] [cursor=pointer]:
+        - img [ref=e457]
+        - generic: 学习空间
+      - button "工作空间" [ref=e461] [cursor=pointer]:
+        - img [ref=e462]
+      - button "LeetCode" [ref=e467] [cursor=pointer]:
+        - img [ref=e468]
+        - generic: LeetCode
+      - button "文件管理" [ref=e473] [cursor=pointer]:
+        - img [ref=e474]
+        - generic: 文件管理
+      - button "本地终端" [ref=e477] [cursor=pointer]:
+        - img [ref=e478]
+        - generic: 本地终端
+      - button "绘图板" [ref=e481] [cursor=pointer]:
+        - img [ref=e482]
+        - generic: 绘图板
+      - button "Skills" [ref=e486] [cursor=pointer]:
+        - img [ref=e487]
+        - generic: Skills
+      - button "便签" [ref=e491] [cursor=pointer]:
+        - img [ref=e492]
+        - generic: 便签
+      - button "API管理" [ref=e496] [cursor=pointer]:
+        - img [ref=e497]
+        - generic: API管理
+      - button "内置浏览器" [ref=e502] [cursor=pointer]:
+        - img [ref=e503]
+        - generic: 内置浏览器
+      - button "图床管理" [ref=e507] [cursor=pointer]:
+        - img [ref=e508]
+        - generic: 图床管理
+      - button "LaTeX编辑器" [ref=e513] [cursor=pointer]:
+        - img [ref=e514]
+        - generic: LaTeX编辑器
+      - button "Music" [ref=e519] [cursor=pointer]:
+        - img [ref=e520]
+        - generic: Music
+      - button "RAG Lab" [ref=e525] [cursor=pointer]:
+        - img [ref=e526]
+        - generic: RAG Lab
+      - button "知识库" [ref=e531] [cursor=pointer]:
+        - img [ref=e532]
+        - generic: 知识库
+      - button "工作流引擎" [ref=e535] [cursor=pointer]:
+        - img [ref=e536]
+        - generic: 工作流引擎
+    - button "设置" [ref=e124] [cursor=pointer]:
+      - img [ref=e125]
+  - generic [ref=e543]:
+    - generic [ref=e544]:
+      - heading "工作空间" [level=1] [ref=e546]:
+        - img [ref=e547]
+        - text: 工作空间
+      - generic [ref=e551]:
+        - generic [ref=e552]:
+          - img [ref=e553]
+          - textbox "搜索..." [ref=e556]
+        - button "新建分组" [ref=e557] [cursor=pointer]:
+          - img [ref=e558]
+          - text: 新建分组
+    - generic [ref=e560]:
+      - button "工作台 项目、方案与执行内容 1 个工作空间" [ref=e561] [cursor=pointer]:
+        - img [ref=e563]
+        - heading "工作台" [level=3] [ref=e567]
+        - paragraph [ref=e568]: 项目、方案与执行内容
+        - generic [ref=e569]: 1 个工作空间
+      - generic [ref=e570]:
+        - button [ref=e571] [cursor=pointer]:
+          - img [ref=e572]
+        - button [ref=e574] [cursor=pointer]:
+          - img [ref=e575]

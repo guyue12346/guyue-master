@@ -10,8 +10,9 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import 'katex/dist/katex.min.css';
 import { MarkdownNote } from '../types';
-import { Save, Edit3, Maximize2, Minimize2, Info, Lightbulb, AlertCircle, AlertTriangle, ShieldAlert, Book, List, Check, Loader2, CloudOff } from 'lucide-react';
+import { Save, Edit3, Maximize2, Minimize2, Info, Lightbulb, AlertCircle, AlertTriangle, ShieldAlert, Book, List, Check, Loader2, CloudOff, FileDown } from 'lucide-react';
 import { MarkdownToolbar } from './MarkdownToolbar';
+import { exportElementToPdf, exportReactNodeToPdf } from '../utils/markdownPdfExport';
 
 interface MarkdownEditorProps {
   note: MarkdownNote | null;
@@ -35,6 +36,8 @@ interface MarkdownEditorProps {
   onTOCAvailableChange?: (available: boolean) => void;
   hideToolbar?: boolean;
   compact?: boolean;
+  topSlot?: React.ReactNode;
+  tocSide?: 'left' | 'right';
 }
 
 export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({ 
@@ -58,7 +61,9 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   onShowTOCChange,
   onTOCAvailableChange,
   hideToolbar = false,
-  compact = false
+  compact = false,
+  topSlot,
+  tocSide = 'left'
 }) => {
   const [isEditing, setIsEditingInternal] = useState(false);
   const isEditingRef = useRef(false);
@@ -113,6 +118,8 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastSavedContentRef = useRef<string>('');
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const previewContentRef = useRef<HTMLDivElement | null>(null);
 
   // Auto-save function
   const performAutoSave = useCallback(async () => {
@@ -741,6 +748,27 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     </>
   );
 
+  const handleExportPdf = async () => {
+    setIsExportingPdf(true);
+    try {
+      if (previewContentRef.current) {
+        await exportElementToPdf(previewContentRef.current, note.title || 'markdown-export.pdf');
+      } else {
+        await exportReactNodeToPdf(
+          <div className="prose prose-slate max-w-none">
+            {renderMarkdown(content)}
+          </div>,
+          note.title || 'markdown-export.pdf',
+        );
+      }
+    } catch (error) {
+      console.error('Failed to export markdown to PDF:', error);
+      alert('导出 PDF 失败');
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
   return (
     <div className="relative h-full flex flex-col bg-white">
       {/* Toolbar */}
@@ -855,16 +883,25 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           </button>
           )}
 
+          <button
+            onClick={handleExportPdf}
+            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-colors shrink-0"
+            title="导出 PDF"
+            disabled={isExportingPdf}
+          >
+            {isExportingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+          </button>
+
           {/* TOC Button - only show when not editing and has headers */}
           {!hideTOCButton && !isEditing && toc.length > 0 && (
             <button
               onClick={() => setShowTOC(!showTOC)}
-              className={`p-2 rounded-lg transition-colors shrink-0 ${
+              className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors shrink-0 ${
                 showTOC ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
               }`}
               title={showTOC ? "隐藏目录" : "显示目录"}
             >
-              <List className="w-4 h-4" />
+              <List className="w-3.5 h-3.5" />
             </button>
           )}
 
@@ -903,8 +940,11 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
               </div>
             ) : (
               <div className="w-full h-full overflow-y-auto bg-white p-6">
-                 <div className="prose prose-slate max-w-none mx-auto">
-                  {renderMarkdown(content)}
+                 <div className="max-w-4xl mx-auto">
+                  {topSlot && <div className="mb-6">{topSlot}</div>}
+                  <div ref={previewContentRef} className="prose prose-slate max-w-none mx-auto">
+                    {renderMarkdown(content)}
+                  </div>
                 </div>
               </div>
             )
@@ -926,8 +966,11 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
                 />
               </div>
               <div className="w-1/2 h-full overflow-y-auto bg-white p-6">
-                 <div className="prose prose-slate max-w-none">
-                  {renderMarkdown(content)}
+                 <div className="max-w-4xl">
+                  {topSlot && <div className="mb-6">{topSlot}</div>}
+                  <div ref={previewContentRef} className="prose prose-slate max-w-none">
+                    {renderMarkdown(content)}
+                  </div>
                 </div>
               </div>
             </>
@@ -936,7 +979,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           /* View Mode: Full Width Preview with optional TOC */
           <div className="w-full h-full overflow-hidden flex">
             {/* TOC Sidebar */}
-            {showTOC && toc.length > 0 && (
+            {showTOC && toc.length > 0 && tocSide === 'left' && (
               <div className="w-64 h-full border-r border-gray-200 bg-gray-50/50 overflow-y-auto shrink-0">
                 <div className="p-4">
                   <h3 className="text-sm font-semibold text-gray-600 mb-3 flex items-center gap-2">
@@ -967,10 +1010,42 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
             )}
             {/* Content */}
             <div className={`flex-1 h-full overflow-y-auto bg-white select-text ${compact ? 'p-[10px]' : 'p-8 md:p-12 lg:p-16'}`}>
-              <div className="prose prose-slate max-w-4xl mx-auto">
-                {renderMarkdown(content)}
+              <div className="max-w-4xl mx-auto">
+                {topSlot && <div className="mb-8">{topSlot}</div>}
+                <div ref={previewContentRef} className="prose prose-slate max-w-none">
+                  {renderMarkdown(content)}
+                </div>
               </div>
             </div>
+            {showTOC && toc.length > 0 && tocSide === 'right' && (
+              <div className="w-64 h-full shrink-0 overflow-y-auto border-l border-gray-200 bg-gray-50/50">
+                <div className="p-4">
+                  <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-600">
+                    <List className="w-4 h-4" />
+                    目录
+                  </h3>
+                  <nav className="space-y-1">
+                    {toc.map((item, index) => (
+                      <a
+                        key={index}
+                        href={`#${item.id}`}
+                        className="block rounded px-2 py-1 text-sm text-gray-600 transition-colors hover:bg-blue-50 hover:text-blue-600"
+                        style={{ paddingLeft: `${(item.level - 1) * 12 + 8}px` }}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          const element = document.getElementById(item.id);
+                          if (element) {
+                            element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                          }
+                        }}
+                      >
+                        {item.text}
+                      </a>
+                    ))}
+                  </nav>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

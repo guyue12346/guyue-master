@@ -1,19 +1,19 @@
 /**
  * 学习模块存储工具
- * 
- * 目录结构:
+ *
+ * 当前目录结构已经统一为 ID 路径，显示名称与磁盘路径解耦：
  * 归档目录/
  * └── 学习模块/
- *     └── [学习方向名称]/           # 如：机器学习、计算机基础
- *         └── [课程名称]/           # 如：Docker容器化技术实战
+ *     └── [categoryId]/
+ *         └── [courseId]/
  *             ├── 学习内容/
- *             │   └── [章节名称]/   # 如：Module 1: Docker 基础概念
+ *             │   └── [moduleId]/
  *             │       └── files...
  *             ├── 学习练习/
- *             │   └── [章节名称]/
+ *             │   └── [moduleId]/
  *             │       └── files...
  *             └── 其它资源/
- *                 └── [章节名称]/
+ *                 └── [moduleId]/
  *                     └── files...
  */
 
@@ -171,13 +171,13 @@ export const copyFilesToDestination = async (
     sourcePath: string;
     fileName: string;
   }>,
-  categoryName: string, 
-  courseName: string, 
-  section: SectionType, 
-  moduleName: string
+  categoryId: string,
+  courseId: string,
+  section: SectionType,
+  moduleId: string
 ): Promise<Array<{ fileName: string; destPath: string | null }>> => {
   try {
-    const modulePath = await getModulePath(categoryName, courseName, section, moduleName);
+    const modulePath = await getModulePath(categoryId, courseId, section, moduleId);
     await ensureDirectory(modulePath);
     
     // Use Promise.all for parallel processing
@@ -206,14 +206,14 @@ export const copyFilesToDestination = async (
  */
 export const copyFileToDestination = async (
   sourcePath: string,
-  categoryName: string, 
-  courseName: string, 
-  section: SectionType, 
-  moduleName: string,
+  categoryId: string,
+  courseId: string,
+  section: SectionType,
+  moduleId: string,
   fileName: string
 ): Promise<string | null> => {
   try {
-    const modulePath = await getModulePath(categoryName, courseName, section, moduleName);
+    const modulePath = await getModulePath(categoryId, courseId, section, moduleId);
     await ensureDirectory(modulePath);
     
     const destPath = await window.electronAPI.pathJoin(modulePath, fileName);
@@ -240,13 +240,13 @@ const CACHE_TTL = 5000; // 5 seconds cache
  * Performance Optimization: Lazy loading with cache
  */
 export const getFilesInModule = async (
-  categoryName: string,
-  courseName: string,
+  categoryId: string,
+  courseId: string,
   section: SectionType,
-  moduleName: string,
+  moduleId: string,
   useCache: boolean = true
 ): Promise<Array<{ name: string; isDirectory: boolean; path: string }>> => {
-  const modulePath = await getModulePath(categoryName, courseName, section, moduleName);
+  const modulePath = await getModulePath(categoryId, courseId, section, moduleId);
   const cacheKey = modulePath;
   
   // Check cache
@@ -297,8 +297,8 @@ export const isFileInLearningModule = async (filePath: string): Promise<boolean>
 /**
  * 删除学习方向及其所有内容
  */
-export const deleteCategoryFolder = async (categoryName: string): Promise<boolean> => {
-  const categoryPath = await getCategoryPath(categoryName);
+export const deleteCategoryFolder = async (categoryId: string): Promise<boolean> => {
+  const categoryPath = await getCategoryPath(categoryId);
   console.log('Deleting category folder:', categoryPath);
   return await deleteDirectory(categoryPath);
 };

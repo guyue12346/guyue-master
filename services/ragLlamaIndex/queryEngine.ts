@@ -125,6 +125,14 @@ export class RagPipeline {
   }
 
   /**
+   * 直接复用已有的向量存储，避免查询前重复序列化/反序列化整库。
+   */
+  setVectorStore(store: LocalVectorStore): void {
+    this.vectorStore = store;
+    this.bm25Index = null;
+  }
+
+  /**
    * 获取 BM25 索引
    */
   getBM25Index(): BM25Index | null {

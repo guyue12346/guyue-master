@@ -8,9 +8,10 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import 'katex/dist/katex.min.css';
 import { FileRecord } from '../types';
-import { FileText, Maximize2, Minimize2, Info, Lightbulb, AlertCircle, AlertTriangle, ShieldAlert, Edit, List, FolderSearch, RefreshCw, Type, Minus, Plus } from 'lucide-react';
+import { FileText, Maximize2, Minimize2, Info, Lightbulb, AlertCircle, AlertTriangle, ShieldAlert, Edit, List, FolderSearch, RefreshCw, Type, Minus, Plus, FileDown, Loader2 } from 'lucide-react';
 import { EnhancedPdfViewer } from './EnhancedPdfViewer';
 import { CodeBlock } from './MarkdownContent';
+import { exportElementToPdf } from '../utils/markdownPdfExport';
 
 type ReadingTheme = 'default' | 'sepia' | 'dark';
 
@@ -60,6 +61,8 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
   const [showReadingControls, setShowReadingControls] = useState(false);
   const [activeTocId, setActiveTocId] = useState<string>('');
   const contentRef = useRef<HTMLDivElement>(null);
+  const markdownPreviewRef = useRef<HTMLDivElement | null>(null);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
 
   const updateSettings = useCallback((partial: Partial<ReadingSettings>) => {
     setReadingSettings(prev => {
@@ -220,6 +223,19 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
   const isPdf = file.type.toLowerCase().replace('.', '') === 'pdf';
   const ts = themeStyles[readingSettings.theme];
 
+  const handleExportPdf = async () => {
+    if (!markdownPreviewRef.current) return;
+    setIsExportingPdf(true);
+    try {
+      await exportElementToPdf(markdownPreviewRef.current, file.name || 'markdown-export.pdf');
+    } catch (error) {
+      console.error('Failed to export markdown preview to PDF:', error);
+      alert('导出 PDF 失败');
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
   return (
     <div className={`flex flex-col h-full overflow-hidden relative ${isMarkdown ? ts.bg : 'bg-white'}`} ref={contentRef}>
       {/* Header */}
@@ -293,6 +309,16 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
               <List className="w-5 h-5" />
             </button>
           )}
+          {isMarkdown && (
+            <button
+              onClick={handleExportPdf}
+              className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
+              title="导出 PDF"
+              disabled={isExportingPdf}
+            >
+              {isExportingPdf ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileDown className="w-5 h-5" />}
+            </button>
+          )}
           {onEdit && isMarkdown && (
             <button 
               onClick={onEdit}
@@ -324,7 +350,7 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
                {isPdf ? (
                  <EnhancedPdfViewer filePath={file.path} />
                ) : (
-                 renderFileContent(file, content, readingSettings)
+                 renderFileContent(file, content, readingSettings, markdownPreviewRef)
                )}
             </div>
             
@@ -375,7 +401,12 @@ export const FileRenderer: React.FC<FileRendererProps> = ({
   );
 };
 
-const renderFileContent = (file: FileRecord, content: string, settings?: ReadingSettings) => {
+const renderFileContent = (
+  file: FileRecord,
+  content: string,
+  settings?: ReadingSettings,
+  markdownPreviewRef?: React.RefObject<HTMLDivElement | null>,
+) => {
   const ext = file.type.toLowerCase().replace('.', '');
 
   // PDF 文件已在主组件中处理，这里不再处理
@@ -517,7 +548,11 @@ const renderFileContent = (file: FileRecord, content: string, settings?: Reading
           .bq-cyan { border-color: #06b6d4 !important; background-color: #ecfeff !important; }
           .bq-teal { border-color: #14b8a6 !important; background-color: #f0fdfa !important; }
         `}</style>
-        <div className={`prose ${ts.prose} max-w-4xl mx-auto`} style={{ fontSize: `${fontSize}px`, lineHeight: lineHeight }}>
+        <div
+          ref={markdownPreviewRef || undefined}
+          className={`prose ${ts.prose} max-w-4xl mx-auto`}
+          style={{ fontSize: `${fontSize}px`, lineHeight: lineHeight }}
+        >
           <ReactMarkdown 
             remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
             rehypePlugins={[rehypeKatex]}

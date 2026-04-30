@@ -43,10 +43,60 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onTerminalData: (callback: (event: any, payload: { id: string, data: string }) => void) => {
     const subscription = (event: any, payload: { id: string, data: string }) => callback(event, payload);
     ipcRenderer.on('terminal-incoming-data', subscription);
+    return () => ipcRenderer.removeListener('terminal-incoming-data', subscription);
   },
   writeTerminal: (id: string, data: string) => ipcRenderer.send('terminal-write', { id, data }),
   resizeTerminal: (id: string, cols: number, rows: number) => ipcRenderer.send('terminal-resize', { id, cols, rows }),
   closeTerminal: (id: string) => ipcRenderer.send('terminal-close', id),
+  getOpenCodeInfo: () => ipcRenderer.invoke('opencode-get-info'),
+  getOpenCodeEmbeddedTuiConfigPath: () => ipcRenderer.invoke('opencode-get-embedded-tui-config-path'),
+  getOpenCodeRuntimeState: (params: {
+    directory?: string;
+    officialSessionId?: string;
+    startedAfter?: number;
+    providerId?: string;
+  }) => ipcRenderer.invoke('opencode-get-runtime-state', params),
+  getOpenCodeProviderModels: (params: { providerId: string; directory?: string }) => ipcRenderer.invoke('opencode-get-provider-models', params),
+  getOpenCodeSessions: (params: {
+    directory?: string;
+  }) => ipcRenderer.invoke('opencode-list-sessions', params),
+  getOpenCodeSessionMessages: (params: {
+    sessionId?: string;
+  }) => ipcRenderer.invoke('opencode-get-session-messages', params),
+  onOpenCodeMessageStream: (callback: (event: any, payload: {
+    streamId: string;
+    type: 'text' | 'done' | 'error';
+    text?: string;
+    error?: string;
+    sessionId?: string | null;
+    sessionTitle?: string | null;
+  }) => void) => {
+    const subscription = (event: any, payload: {
+      streamId: string;
+      type: 'text' | 'done' | 'error';
+      text?: string;
+      error?: string;
+      sessionId?: string | null;
+      sessionTitle?: string | null;
+    }) => callback(event, payload);
+    ipcRenderer.on('opencode-message-stream', subscription);
+    return () => ipcRenderer.removeListener('opencode-message-stream', subscription);
+  },
+  sendOpenCodeMessage: (params: {
+    streamId?: string;
+    directory?: string;
+    officialSessionId?: string;
+    title?: string;
+    providerId?: string;
+    modelId?: string;
+    argsText?: string;
+    env?: Record<string, string>;
+    prompt: string;
+  }) => ipcRenderer.invoke('opencode-send-message', params),
+  deleteOpenCodeSession: (params: {
+    sessionId: string;
+    directory?: string;
+  }) => ipcRenderer.invoke('opencode-delete-session', params),
 
   // 应用数据文件存储
   saveAppData: (key: string, data: any) => ipcRenderer.invoke('save-app-data', key, data),
@@ -56,9 +106,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // LeetCode API
   leetcodeApi: (params: { query: string; variables: any; session: string }) => ipcRenderer.invoke('leetcode-api', params),
   // Codex Usage API
-  fetchCodexUsage: (params: { sessionToken: string }) => ipcRenderer.invoke('fetch-codex-usage', params),
-  openCodexUsageLogin: () => ipcRenderer.invoke('open-codex-usage-login'),
-  fetchCodexUsageFromBrowser: () => ipcRenderer.invoke('fetch-codex-usage-browser'),
+  fetchCodexUsage: (params: { sessionToken: string; accountId?: string; baseUrl?: string }) => ipcRenderer.invoke('fetch-codex-usage', params),
+  openCodexUsageLogin: (params?: { profileId?: string }) => ipcRenderer.invoke('open-codex-usage-login', params),
+  fetchCodexUsageFromBrowser: (params?: { profileId?: string }) => ipcRenderer.invoke('fetch-codex-usage-browser', params),
 
   // Zenmux Usage API
   openZenmuxLogin: () => ipcRenderer.invoke('open-zenmux-login'),
@@ -136,6 +186,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ragSelectFiles: () => ipcRenderer.invoke('rag-select-files'),
   ragSelectFolder: () => ipcRenderer.invoke('rag-select-folder'),
   getFileStats: (filePath: string) => ipcRenderer.invoke('get-file-stats', filePath),
+  codingPracticeRun: (params: {
+    language: string;
+    files: Array<{ id: 'input' | 'code' | 'output'; name: string; content: string }>;
+    runner: { compileCommand: string; runCommand: string; timeoutSeconds: number };
+  }) => ipcRenderer.invoke('coding-practice-run', params),
+  codingPracticeCheck: (params: {
+    language: string;
+    files: Array<{ id: 'input' | 'code' | 'output'; name: string; content: string }>;
+    runner: { compileCommand: string; runCommand: string; timeoutSeconds: number };
+  }) => ipcRenderer.invoke('coding-practice-check', params),
 });
 
 // 类型定义（可选，用于 TypeScript）
@@ -165,10 +225,125 @@ export interface ElectronAPI {
   deletePlugin: (id: string) => Promise<boolean>;
   // Terminal
   createTerminal: (options?: any) => Promise<string>;
-  onTerminalData: (callback: (event: any, payload: { id: string, data: string }) => void) => void;
+  onTerminalData: (callback: (event: any, payload: { id: string, data: string }) => void) => (() => void);
   writeTerminal: (id: string, data: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => void;
   closeTerminal: (id: string) => void;
+  getOpenCodeInfo: () => Promise<{
+    binaryPath: string;
+    defaultCwd: string;
+    binaryExists: boolean;
+    version?: string | null;
+    authPath?: string;
+    providers: Array<{ id: string; label: string; authType: string; hasStoredCredential: boolean }>;
+    knownModelsByProvider: Record<string, string[]>;
+    defaultModelsByProvider: Record<string, string>;
+  }>;
+  getOpenCodeEmbeddedTuiConfigPath: () => Promise<string>;
+  getOpenCodeRuntimeState: (params: {
+    directory?: string;
+    officialSessionId?: string;
+    startedAfter?: number;
+    providerId?: string;
+  }) => Promise<{
+    session: {
+      id: string;
+      title: string;
+      directory: string;
+      projectId: string;
+      timeCreated: number;
+      timeUpdated: number;
+    } | null;
+    latestUsage: {
+      providerId: string | null;
+      providerLabel: string | null;
+      modelId: string | null;
+      cost: number;
+      tokens: {
+        total: number;
+        input: number;
+        output: number;
+        reasoning: number;
+        cacheRead: number;
+        cacheWrite: number;
+      };
+      timeUpdated: number | null;
+    } | null;
+    sessionTotals: {
+      turns: number;
+      totalCost: number;
+      totalTokens: number;
+      inputTokens: number;
+      outputTokens: number;
+      reasoningTokens: number;
+      cacheReadTokens: number;
+      cacheWriteTokens: number;
+    };
+    knownModels: string[];
+    plan: {
+      available: boolean;
+      note: string;
+    };
+    source: 'database';
+    lastUpdated: number;
+  }>;
+  getOpenCodeProviderModels: (params: { providerId: string; directory?: string }) => Promise<{
+    models: string[];
+    defaultModel: string;
+    source: 'opencode' | 'models.dev' | 'local';
+  }>;
+  getOpenCodeSessions: (params: {
+    directory?: string;
+  }) => Promise<Array<{
+    id: string;
+    title: string;
+    directory: string;
+    projectId: string;
+    timeCreated: number;
+    timeUpdated: number;
+    version: string | null;
+  }>>;
+  getOpenCodeSessionMessages: (params: {
+    sessionId?: string;
+  }) => Promise<Array<{
+    id: string;
+    role: 'user' | 'assistant' | 'system';
+    providerId: string | null;
+    modelId: string | null;
+    timeCreated: number;
+    timeUpdated: number;
+    text: string;
+    hasReasoning: boolean;
+    hasTool: boolean;
+    cost: number | null;
+    totalTokens: number | null;
+  }>>;
+  sendOpenCodeMessage: (params: {
+    streamId?: string;
+    directory?: string;
+    officialSessionId?: string;
+    title?: string;
+    providerId?: string;
+    modelId?: string;
+    argsText?: string;
+    env?: Record<string, string>;
+    prompt: string;
+  }) => Promise<{
+    ok: boolean;
+    error?: string;
+    stdout?: string;
+    stderr?: string;
+    sessionId?: string | null;
+    sessionTitle?: string | null;
+  }>;
+  onOpenCodeMessageStream: (callback: (event: any, payload: {
+    streamId: string;
+    type: 'text' | 'done' | 'error';
+    text?: string;
+    error?: string;
+    sessionId?: string | null;
+    sessionTitle?: string | null;
+  }) => void) => (() => void);
   // 应用数据文件存储
   saveAppData: (key: string, data: any) => Promise<boolean>;
   loadAppData: (key: string) => Promise<any>;
@@ -176,28 +351,44 @@ export interface ElectronAPI {
   // LeetCode API
   leetcodeApi: (params: { query: string; variables: any; session: string }) => Promise<any>;
   // Codex Usage API
-  fetchCodexUsage: (params: { sessionToken: string }) => Promise<{
+  fetchCodexUsage: (params: { sessionToken: string; accountId?: string; baseUrl?: string }) => Promise<{
     category: 'Codex';
-    fiveHourUsed: number;
-    fiveHourLimit: number;
-    weeklyUsed: number;
-    weeklyLimit: number;
-    fiveHourResetAt?: string | null;
-    weeklyResetAt?: string | null;
+    planType?: string | null;
+    primary?: { usedPercent: number; windowMinutes?: number | null; resetsAt?: number | null } | null;
+    secondary?: { usedPercent: number; windowMinutes?: number | null; resetsAt?: number | null } | null;
+    credits?: { hasCredits: boolean; unlimited: boolean; balance?: string | null } | null;
+    additionalLimits?: Array<{
+      limitId: string;
+      limitName?: string | null;
+      primary?: { usedPercent: number; windowMinutes?: number | null; resetsAt?: number | null } | null;
+      secondary?: { usedPercent: number; windowMinutes?: number | null; resetsAt?: number | null } | null;
+    }>;
+    currentUrl?: string;
+    endpoint?: string;
     lastUpdated: number;
     source: string;
+    loginRequired?: boolean;
+    error?: string | null;
   }>;
-  openCodexUsageLogin: () => Promise<boolean>;
-  fetchCodexUsageFromBrowser: () => Promise<{
+  openCodexUsageLogin: (params?: { profileId?: string }) => Promise<boolean>;
+  fetchCodexUsageFromBrowser: (params?: { profileId?: string }) => Promise<{
     category: 'Codex';
-    fiveHourUsed: number;
-    fiveHourLimit: number;
-    weeklyUsed: number;
-    weeklyLimit: number;
-    fiveHourResetAt?: string | null;
-    weeklyResetAt?: string | null;
+    planType?: string | null;
+    primary?: { usedPercent: number; windowMinutes?: number | null; resetsAt?: number | null } | null;
+    secondary?: { usedPercent: number; windowMinutes?: number | null; resetsAt?: number | null } | null;
+    credits?: { hasCredits: boolean; unlimited: boolean; balance?: string | null } | null;
+    additionalLimits?: Array<{
+      limitId: string;
+      limitName?: string | null;
+      primary?: { usedPercent: number; windowMinutes?: number | null; resetsAt?: number | null } | null;
+      secondary?: { usedPercent: number; windowMinutes?: number | null; resetsAt?: number | null } | null;
+    }>;
+    currentUrl?: string;
+    endpoint?: string;
     lastUpdated: number;
     source: string;
+    loginRequired?: boolean;
+    error?: string | null;
   }>;
   // Email API
   sendEmail: (params: { config: any; subject: string; content: string }) => Promise<{ success: boolean; error?: string }>;
@@ -240,4 +431,30 @@ export interface ElectronAPI {
   ragSelectFiles: () => Promise<string[]>;
   ragSelectFolder: () => Promise<string | null>;
   getFileStats: (filePath: string) => Promise<{ size: number; mtime: number } | null>;
+  codingPracticeRun: (params: {
+    language: string;
+    files: Array<{ id: 'input' | 'code' | 'output'; name: string; content: string }>;
+    runner: { compileCommand: string; runCommand: string; timeoutSeconds: number };
+  }) => Promise<{
+    success: boolean;
+    stage: 'prepare' | 'compile' | 'run';
+    output: string;
+    stdout: string;
+    stderr: string;
+    durationMs: number;
+    error?: string;
+  }>;
+  codingPracticeCheck: (params: {
+    language: string;
+    files: Array<{ id: 'input' | 'code' | 'output'; name: string; content: string }>;
+    runner: { compileCommand: string; runCommand: string; timeoutSeconds: number };
+  }) => Promise<{
+    success: boolean;
+    supported: boolean;
+    stage: 'prepare' | 'compile';
+    stdout: string;
+    stderr: string;
+    durationMs: number;
+    error?: string;
+  }>;
 }

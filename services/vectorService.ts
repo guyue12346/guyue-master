@@ -8,6 +8,7 @@
 import {
   LocalVectorStore,
   RagPipeline,
+  KnowledgeGraph,
   loadDocument,
   chunkDocuments,
   enrichMetadata,
@@ -87,6 +88,13 @@ export interface MultiSearchResult {
   results: VectorSearchResult[];
 }
 
+export interface CollectionPayload {
+  vectorStore: ReturnType<LocalVectorStore['serialize']>;
+  config?: Record<string, any>;
+  knowledgeGraph?: any;
+  meta?: Record<string, any>;
+}
+
 // ════════════════════════════════════════════════════════════
 // Internal Cache & Helpers
 // ════════════════════════════════════════════════════════════
@@ -104,8 +112,36 @@ async function getStoragePath(): Promise<string> {
 async function ensureStorageDir(): Promise<string> {
   const dir = await getStoragePath();
   const api = getElectronAPI();
-  try { await api.createDir(dir); } catch { /* already exists */ }
+  try { await api.ensureDir(dir); } catch { /* already exists */ }
   return dir;
+}
+
+function createElectronFileReader(): FileReader {
+  const api = getElectronAPI();
+  const reader: FileReader = {
+    async readTextFile(filePath: string): Promise<string> {
+      const result = await api.readFile(filePath);
+      if (typeof result === 'string') return result;
+      if (result instanceof ArrayBuffer) {
+        return new TextDecoder().decode(new Uint8Array(result));
+      }
+      return new TextDecoder().decode(new Uint8Array(result));
+    },
+    async readPdfText(filePath: string): Promise<string> {
+      try {
+        const text = await api.extractPdfText(filePath);
+        if (text) return text;
+      } catch {
+        // fall through to plain-text reader
+      }
+      return reader.readTextFile(filePath);
+    },
+    async getFileStats(filePath: string): Promise<{ size: number; mtime: number }> {
+      const stats = await api.getFileStats(filePath);
+      return stats ?? { size: 0, mtime: 0 };
+    },
+  };
+  return reader;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -123,13 +159,14 @@ async function ensureStorageDir(): Promise<string> {
  */
 export async function buildIndex(
   collectionId: string,
-  files: Array<{ path: string; name: string; type?: SupportedDocType }>,
+  files: Array<{ id?: string; path: string; name: string; type?: SupportedDocType }>,
   embeddingConfig: EmbeddingConfig,
-  fileReader: FileReader,
+  fileReader?: FileReader,
   options?: VectorBuildOptions,
 ): Promise<BuildResult> {
   const startTime = performance.now();
   const onProgress = options?.onProgress;
+  const effectiveFileReader = fileReader ?? createElectronFileReader();
 
   // 加载已有 store 或创建新的
   let existingCollection: CachedCollection | undefined;
@@ -158,9 +195,17 @@ export async function buildIndex(
 
     // 加载文档
     const docs = await loadDocument(file.path, {
-      fileReader,
+      fileReader: effectiveFileReader,
     });
     if (!docs.length) continue;
+    if (file.id) {
+      docs.forEach(doc => {
+        doc.metadata = {
+          ...doc.metadata,
+          fileId: file.id,
+        };
+      });
+    }
 
     // 删除旧的 chunks（增量更新）
     store.removeByFilePath(file.path);
@@ -189,7 +234,12 @@ export async function buildIndex(
   store.setChunkingConfig(chunkingStrategy, chunkingConfig);
 
   // 缓存 & 持久化
-  collectionCache.set(collectionId, { store, config: existingCollection?.config, knowledgeGraph: existingCollection?.knowledgeGraph });
+  collectionCache.set(collectionId, {
+    store,
+    config: existingCollection?.config,
+    knowledgeGraph: existingCollection?.knowledgeGraph,
+    meta: existingCollection?.meta,
+  });
   await saveCollectionToDisk(collectionId, store);
 
   return {
@@ -214,9 +264,10 @@ export async function search(
 
   const qCfg = buildQueryConfig(embeddingConfig, options, collection.config);
   const pipeline = new RagPipeline(qCfg);
-  pipeline.loadFromSerialized({
-    vectorStore: JSON.stringify(store.serialize()),
-  });
+  pipeline.setVectorStore(store);
+  if (collection.knowledgeGraph) {
+    pipeline.setKnowledgeGraph(hydrateKnowledgeGraph(collection.knowledgeGraph));
+  }
 
   // 确保 BM25 构建（hybrid/bm25 需要）
   const strategy = options?.useCollectionConfig && collection.config?.retrieval?.strategy
@@ -293,9 +344,10 @@ export async function searchWithMeta(
 
   const qCfg = buildQueryConfig(embeddingConfig, options, collection.config);
   const pipeline = new RagPipeline(qCfg);
-  pipeline.loadFromSerialized({
-    vectorStore: JSON.stringify(store.serialize()),
-  });
+  pipeline.setVectorStore(store);
+  if (collection.knowledgeGraph) {
+    pipeline.setKnowledgeGraph(hydrateKnowledgeGraph(collection.knowledgeGraph));
+  }
 
   const strategy = options?.useCollectionConfig && collection.config?.retrieval?.strategy
     ? collection.config.retrieval.strategy
@@ -453,10 +505,11 @@ export async function listCollections(): Promise<string[]> {
   try {
     const dir = await getStoragePath();
     const api = getElectronAPI();
-    const files: string[] = await api.listDir(dir);
+    const files = await api.listDir(dir);
     return files
-      .filter((f: string) => f.endsWith('.json'))
-      .map((f: string) => f.replace(/\.json$/, ''));
+      .map((entry: any) => typeof entry === 'string' ? entry : entry?.name)
+      .filter((name: string | undefined) => typeof name === 'string' && name.endsWith('.json'))
+      .map((name: string) => name.replace(/\.json$/, ''));
   } catch {
     return [];
   }
@@ -476,6 +529,112 @@ export async function getRawStore(collectionId: string): Promise<LocalVectorStor
   return getStore(collectionId);
 }
 
+export async function loadCollectionPayload(collectionId: string): Promise<CollectionPayload> {
+  return readCollectionPayloadFromDisk(collectionId);
+}
+
+export async function saveCollectionPayload(collectionId: string, payload: CollectionPayload): Promise<void> {
+  const normalized: CollectionPayload = {
+    vectorStore: payload.vectorStore,
+    ...(payload.config !== undefined ? { config: payload.config } : {}),
+    ...(payload.knowledgeGraph !== undefined ? { knowledgeGraph: payload.knowledgeGraph } : {}),
+    ...(payload.meta !== undefined ? { meta: payload.meta } : {}),
+  };
+  await writeCollectionPayloadToDisk(collectionId, normalized);
+  collectionCache.set(collectionId, {
+    store: LocalVectorStore.deserialize(normalized.vectorStore),
+    config: normalized.config,
+    knowledgeGraph: normalized.knowledgeGraph,
+    meta: normalized.meta,
+  });
+}
+
+export async function saveCollectionConfig(collectionId: string, config?: Record<string, any>): Promise<void> {
+  const payload = await readCollectionPayloadFromDisk(collectionId);
+  await saveCollectionPayload(collectionId, {
+    ...payload,
+    ...(config !== undefined ? { config } : {}),
+  });
+}
+
+export async function saveCollectionKnowledgeGraph(collectionId: string, knowledgeGraph?: any): Promise<void> {
+  const payload = await readCollectionPayloadFromDisk(collectionId);
+  await saveCollectionPayload(collectionId, {
+    ...payload,
+    ...(knowledgeGraph !== undefined ? { knowledgeGraph } : {}),
+  });
+}
+
+export async function saveCollectionVectorStore(
+  collectionId: string,
+  store: LocalVectorStore,
+  extras?: { config?: Record<string, any>; knowledgeGraph?: any; meta?: Record<string, any> },
+): Promise<void> {
+  const existing = await getCollection(collectionId).catch(() => undefined);
+  await saveCollectionPayload(collectionId, {
+    vectorStore: store.serialize(),
+    ...(extras?.config !== undefined ? { config: extras.config } : existing?.config !== undefined ? { config: existing.config } : {}),
+    ...(extras?.knowledgeGraph !== undefined ? { knowledgeGraph: extras.knowledgeGraph } : existing?.knowledgeGraph !== undefined ? { knowledgeGraph: existing.knowledgeGraph } : {}),
+    ...(extras?.meta !== undefined ? { meta: extras.meta } : existing?.meta !== undefined ? { meta: existing.meta } : {}),
+  });
+}
+
+export async function getCollectionIndexStatus(
+  collectionId: string,
+  files: Array<{ name: string; path: string }>,
+): Promise<{ newFiles: string[]; staleFiles: string[]; removedFiles: string[]; upToDate: boolean }> {
+  let store: LocalVectorStore | null = null;
+  try {
+    store = await getStore(collectionId);
+  } catch {
+    store = null;
+  }
+
+  const indexedFiles = store?.getIndexedFiles() ?? [];
+  const indexedByPath = new Map(indexedFiles.map(file => [file.filePath, file]));
+  const currentPaths = new Set(files.map(file => file.path));
+  const api = getElectronAPI();
+
+  const newFiles: string[] = [];
+  const staleFiles: string[] = [];
+  const removedFiles: string[] = [];
+
+  for (const file of files) {
+    const indexed = indexedByPath.get(file.path);
+    if (!indexed) {
+      newFiles.push(file.name);
+      continue;
+    }
+
+    const indexedAt = indexed.indexedAt || 0;
+    if (!indexedAt) continue;
+
+    try {
+      const mtime = api.getFileStats
+        ? (await api.getFileStats(file.path))?.mtime
+        : await api.getFileMtime?.(file.path);
+      if (mtime && mtime > indexedAt) {
+        staleFiles.push(file.name);
+      }
+    } catch {
+      // ignore stat failures
+    }
+  }
+
+  for (const indexed of indexedFiles) {
+    if (!currentPaths.has(indexed.filePath)) {
+      removedFiles.push(indexed.fileName);
+    }
+  }
+
+  return {
+    newFiles,
+    staleFiles,
+    removedFiles,
+    upToDate: newFiles.length === 0 && staleFiles.length === 0 && removedFiles.length === 0,
+  };
+}
+
 // ════════════════════════════════════════════════════════════
 // Internal Helpers
 // ════════════════════════════════════════════════════════════
@@ -485,6 +644,7 @@ interface CachedCollection {
   store: LocalVectorStore;
   config?: any;
   knowledgeGraph?: any;
+  meta?: any;
 }
 
 const collectionCache = new Map<string, CachedCollection>();
@@ -502,28 +662,44 @@ async function getStore(collectionId: string): Promise<LocalVectorStore> {
 }
 
 async function loadFullCollectionFromDisk(collectionId: string): Promise<CachedCollection> {
+  const data = await readCollectionPayloadFromDisk(collectionId);
+  return {
+    store: LocalVectorStore.deserialize(data.vectorStore),
+    config: data.config || undefined,
+    knowledgeGraph: data.knowledgeGraph || undefined,
+    meta: data.meta || undefined,
+  };
+}
+
+async function saveCollectionToDisk(collectionId: string, store: LocalVectorStore): Promise<void> {
+  const existing = collectionCache.get(collectionId);
+  const payload: CollectionPayload = { vectorStore: store.serialize() };
+  if (existing?.config) payload.config = existing.config;
+  if (existing?.knowledgeGraph) payload.knowledgeGraph = existing.knowledgeGraph;
+  if (existing?.meta) payload.meta = existing.meta;
+  await writeCollectionPayloadToDisk(collectionId, payload);
+}
+
+async function readCollectionPayloadFromDisk(collectionId: string): Promise<CollectionPayload> {
   const dir = await getStoragePath();
   const api = getElectronAPI();
   const raw = await api.readFile(`${dir}/${collectionId}.json`);
   if (!raw) throw new Error(`向量库集合 "${collectionId}" 不存在`);
   const data = JSON.parse(raw);
-  const serialized = data.vectorStore ?? data;
-  return {
-    store: LocalVectorStore.deserialize(serialized),
-    config: data.config || undefined,
-    knowledgeGraph: data.knowledgeGraph || undefined,
-  };
+  if (data.vectorStore) return data;
+  return { vectorStore: data };
 }
 
-async function saveCollectionToDisk(collectionId: string, store: LocalVectorStore): Promise<void> {
+async function writeCollectionPayloadToDisk(collectionId: string, payload: CollectionPayload): Promise<void> {
   const dir = await ensureStorageDir();
   const api = getElectronAPI();
-  // Preserve existing config/knowledgeGraph when saving
-  const existing = collectionCache.get(collectionId);
-  const payload: any = { vectorStore: store.serialize() };
-  if (existing?.config) payload.config = existing.config;
-  if (existing?.knowledgeGraph) payload.knowledgeGraph = existing.knowledgeGraph;
   await api.writeFile(`${dir}/${collectionId}.json`, JSON.stringify(payload));
+}
+
+function hydrateKnowledgeGraph(serializedGraph: any): KnowledgeGraph {
+  return KnowledgeGraph.deserialize(
+    typeof serializedGraph === 'string' ? JSON.parse(serializedGraph) : serializedGraph,
+  );
 }
 
 function buildQueryConfig(

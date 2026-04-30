@@ -943,7 +943,14 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   // Keyboard
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target?.isContentEditable ||
+        target?.closest('.monaco-editor') ||
+        target?.closest('[role="textbox"]')
+      ) return;
       if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
       if (e.key === 'Escape' && showFullscreenLyrics) setShowFullscreenLyrics(false);
     };

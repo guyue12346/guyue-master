@@ -1,10 +1,7 @@
-
 import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { LayoutGrid, StickyNote, Settings, Terminal, Webhook, ListTodo, FolderOpen, FileText, CheckSquare, Sparkles, Lightbulb, BookOpen, Book, Bot } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { AppMode, ModuleConfig } from '../types';
-
-type SidebarTheme = 'default' | 'vscode' | 'minimal' | 'glass' | 'candy';
 
 interface NavRailProps {
   currentMode: AppMode;
@@ -41,16 +38,6 @@ export const NavRail: React.FC<NavRailProps> = ({
   moduleConfig,
   onReorderModules
 }) => {
-  
-  const [sidebarTheme, setSidebarTheme] = useState<SidebarTheme>(() => (localStorage.getItem('guyue_sidebar_theme') as SidebarTheme) || 'default');
-
-  useEffect(() => {
-    const handler = () => setSidebarTheme((localStorage.getItem('guyue_sidebar_theme') as SidebarTheme) || 'default');
-    window.addEventListener('storage', handler);
-    window.addEventListener('sidebar-theme-change', handler);
-    return () => { window.removeEventListener('storage', handler); window.removeEventListener('sidebar-theme-change', handler); };
-  }, []);
-
   const getIcon = (iconName: string) => {
     if (ICON_MAP[iconName]) return ICON_MAP[iconName];
     const DynamicIcon = (LucideIcons as any)[iconName];
@@ -171,47 +158,21 @@ export const NavRail: React.FC<NavRailProps> = ({
     const isBeingDragged = dragIdx === idx;
     const isDropTarget = overIdx === idx && dragIdx !== null && dragIdx !== idx;
 
-    const btnClass = (() => {
-      if (sidebarTheme === 'vscode') {
-        return `relative group w-10 h-10 flex items-center justify-center rounded-none transition-all duration-300
-          ${isActive ? 'border-l-2 border-white bg-transparent text-white' : 'text-gray-400 hover:bg-white/5 hover:text-white'}
-          ${isBeingDragged ? 'opacity-40 scale-90' : ''}`;
-      }
-      if (sidebarTheme === 'minimal') {
-        return `relative group w-10 h-10 flex items-center justify-center rounded-xl transition-all duration-300
-          ${isActive ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:bg-gray-200/60 hover:text-gray-700'}
-          ${isBeingDragged ? 'opacity-40 scale-90' : ''}`;
-      }
-      if (sidebarTheme === 'glass') {
-        return `relative group w-10 h-10 flex items-center justify-center rounded-lg transition-all duration-300
-          ${isActive ? 'bg-white/15 text-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.2)]' : 'text-gray-400 hover:text-gray-200 hover:bg-white/8'}
-          ${isBeingDragged ? 'opacity-40 scale-90' : ''}`;
-      }
-      if (sidebarTheme === 'candy') {
-        return `relative group w-10 h-10 flex items-center justify-center rounded-2xl transition-all duration-300
-          ${isActive ? 'bg-white/25 text-white ring-2 ring-white/40' : 'text-white/70 hover:text-white hover:bg-white/15'}
-          ${isBeingDragged ? 'opacity-40 scale-90' : ''}`;
-      }
-      return `relative group w-12 h-12 flex items-center justify-center rounded-2xl transition-all duration-300
-        ${isActive ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30' : 'text-gray-400 hover:bg-white/10 hover:text-white'}
-        ${isBeingDragged ? 'opacity-40 scale-90' : ''}`;
-    })();
-
     return (
       <div
         ref={el => { itemRefs.current[idx] = el; }}
         onPointerDown={e => handlePointerDown(e, idx)}
         className="relative cursor-grab active:cursor-grabbing select-none"
       >
-        {isDropTarget && <div className="absolute -top-1 left-2 right-2 h-0.5 bg-blue-400 rounded-full z-10" />}
+        {isDropTarget && <div className="absolute -top-1 left-2 right-2 h-0.5 rounded-full z-10" style={{ background: 'var(--t-accent)' }} />}
         <button
           onClick={() => { if (!didDrag.current) onModeChange(mode); }}
-          className={btnClass}
+          className={`theme-rail-item group transition-all duration-300 ${isActive ? 'theme-rail-item-active' : ''} ${isBeingDragged ? 'opacity-40 scale-90' : ''}`}
           title={label}
         >
-          <Icon className={`${sidebarTheme === 'default' ? 'w-6 h-6' : 'w-5 h-5'} ${isActive ? 'scale-100' : 'scale-90 group-hover:scale-100 transition-transform'}`} />
+          <Icon className={`w-5 h-5 ${isActive ? 'scale-100' : 'scale-90 group-hover:scale-100 transition-transform'}`} />
           {!isActive && (
-            <div className="absolute left-full ml-3 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+            <div className="theme-tooltip absolute left-full ml-3 px-2 py-1 text-xs opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
               {label}
             </div>
           )}
@@ -220,63 +181,23 @@ export const NavRail: React.FC<NavRailProps> = ({
     );
   };
 
-  const railWidth = sidebarTheme === 'vscode' ? 'w-14' : sidebarTheme === 'minimal' ? 'w-16' : sidebarTheme === 'candy' ? 'w-[72px]' : 'w-20';
-  const railBg = (() => {
-    if (sidebarTheme === 'vscode') return 'bg-[#252526]';
-    if (sidebarTheme === 'minimal') return 'bg-[#F3F4F6]';
-    if (sidebarTheme === 'glass') return 'bg-[#0f172a]/85 backdrop-blur-2xl border-r border-white/[0.06]';
-    if (sidebarTheme === 'candy') return 'bg-gradient-to-b from-pink-500 via-purple-500 to-indigo-600';
-    return 'bg-[#1E1E1E]';
-  })();
-
-  const settingsBtnClass = (() => {
-    if (sidebarTheme === 'vscode') return 'w-10 h-10 flex items-center justify-center rounded-none text-gray-400 hover:bg-white/5 hover:text-white transition-all';
-    if (sidebarTheme === 'minimal') return 'w-10 h-10 flex items-center justify-center rounded-xl text-gray-500 hover:bg-gray-200/60 hover:text-gray-700 transition-all';
-    if (sidebarTheme === 'glass') return 'w-10 h-10 flex items-center justify-center rounded-lg text-gray-400 hover:bg-white/10 hover:text-gray-200 transition-all';
-    if (sidebarTheme === 'candy') return 'w-10 h-10 flex items-center justify-center rounded-2xl text-white/70 hover:bg-white/15 hover:text-white transition-all';
-    return 'w-12 h-12 flex items-center justify-center rounded-2xl text-gray-500 hover:bg-white/10 hover:text-white transition-all';
-  })();
-
   return (
-    <div className={`${railWidth} h-full flex-shrink-0 ${railBg} flex flex-col items-center py-6 z-30 shadow-xl transition-all duration-300`}
+    <div className="theme-rail-shell h-full flex-shrink-0 flex flex-col items-center py-6 z-30 transition-all duration-300"
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
       {/* Top Logo — completely outside drag system */}
       <button 
         onClick={() => onModeChange(sortedModules[0]?.id as AppMode || 'todo')}
-        className={`${sidebarTheme === 'default' || sidebarTheme === 'glass' ? 'mb-5' : 'mb-8'} relative cursor-pointer hover:scale-105 active:scale-95 transition-transform duration-200`}
+        className="mb-6 relative cursor-pointer hover:scale-105 active:scale-95 transition-transform duration-200"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         title="返回首页"
       >
-        {sidebarTheme === 'minimal' ? (
-          <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shadow-sm overflow-hidden border border-gray-200">
-            <div className="flex flex-col items-center justify-center leading-none text-gray-700">
-              <span className="font-serif text-xs font-bold -mb-0.5 tracking-widest">古</span>
-              <span className="font-serif text-xs font-bold -mt-0.5 tracking-widest">月</span>
-            </div>
+        <div className="theme-logo-mark">
+          <div className="theme-logo-glyph text-sm">
+            <span>古</span>
+            <span>月</span>
           </div>
-        ) : sidebarTheme === 'glass' ? (
-          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-cyan-400/25 to-blue-500/25 flex items-center justify-center border border-cyan-400/20 shadow-[0_0_20px_rgba(34,211,238,0.12)]">
-            <div className="flex flex-col items-center justify-center leading-none text-cyan-300">
-              <span className="font-serif text-xs font-bold -mb-0.5 tracking-widest">古</span>
-              <span className="font-serif text-xs font-bold -mt-0.5 tracking-widest">月</span>
-            </div>
-          </div>
-        ) : sidebarTheme === 'candy' ? (
-          <div className="w-10 h-10 rounded-2xl bg-white/25 flex items-center justify-center ring-2 ring-white/30">
-            <div className="flex flex-col items-center justify-center leading-none text-white">
-              <span className="font-serif text-xs font-bold -mb-0.5 tracking-widest">古</span>
-              <span className="font-serif text-xs font-bold -mt-0.5 tracking-widest">月</span>
-            </div>
-          </div>
-        ) : (
-          <div className={`${sidebarTheme === 'vscode' ? 'w-10 h-10 rounded-md' : 'w-12 h-12 rounded-xl'} bg-gradient-to-b from-slate-700 to-slate-900 flex items-center justify-center shadow-lg shadow-black/20 border border-white/10`}>
-            <div className="flex flex-col items-center justify-center leading-none text-gray-200">
-              <span className={`font-serif ${sidebarTheme === 'vscode' ? 'text-xs' : 'text-sm'} font-bold -mb-0.5 tracking-widest`}>古</span>
-              <span className={`font-serif ${sidebarTheme === 'vscode' ? 'text-xs' : 'text-sm'} font-bold -mt-0.5 tracking-widest`}>月</span>
-            </div>
-          </div>
-        )}
+        </div>
       </button>
 
       {/* Main Nav Items */}
@@ -291,8 +212,8 @@ export const NavRail: React.FC<NavRailProps> = ({
 
       {/* Bottom Actions */}
       <div className="mt-auto flex flex-col gap-4 pt-4 shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-        <button onClick={onOpenSettings} className={settingsBtnClass} title="设置">
-          <Settings className={`${sidebarTheme === 'default' ? 'w-6 h-6' : 'w-5 h-5'}`} />
+        <button onClick={onOpenSettings} className="theme-rail-item transition-all duration-300" title="设置">
+          <Settings className="w-5 h-5" />
         </button>
       </div>
     </div>

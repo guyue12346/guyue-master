@@ -23,16 +23,16 @@ export const TodoSidebar: React.FC<TodoSidebarProps> = ({
   recurringCount = 0,
 }) => {
   return (
-    <div className="w-60 h-full flex-shrink-0 bg-macOS-sidebar backdrop-blur-xl border-r border-macOS-border flex flex-col pt-6 pb-4 px-3 z-20">
+    <div className="theme-sidebar-surface w-60 h-full flex-shrink-0 flex flex-col pt-6 pb-4 px-3 z-20">
       {/* Header */}
       <div className="px-2 mb-6" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
-        <h2 className="text-xl font-bold text-gray-800 tracking-tight">TodoMaster</h2>
-        <p className="text-xs text-gray-400 mt-1">任务与日程</p>
+        <h2 className="text-xl font-bold tracking-tight" style={{ color: 'var(--t-text)' }}>TodoMaster</h2>
+        <p className="text-xs mt-1" style={{ color: 'var(--t-text-muted)' }}>任务与日程</p>
       </div>
 
       {/* Sub-mode navigation */}
       <div className="flex-1 px-1">
-        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">模块</p>
+        <p className="text-xs font-bold uppercase tracking-wider px-2 mb-2" style={{ color: 'var(--t-text-muted)' }}>模块</p>
         <div className="space-y-0.5">
           {SUB_MODES.map(({ key, label, icon: Icon, desc }) => {
             const isActive = subMode === key;
@@ -40,21 +40,15 @@ export const TodoSidebar: React.FC<TodoSidebarProps> = ({
               <button
                 key={key}
                 onClick={() => onSubModeChange(key)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 group relative
-                  ${isActive
-                    ? 'bg-white shadow-sm text-gray-900 font-medium'
-                    : 'text-gray-600 hover:bg-black/5 hover:text-gray-900'
-                  }`}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-all duration-200 group relative ${isActive ? 'theme-list-item theme-list-item-active font-medium' : 'theme-list-item'}`}
               >
-                <Icon className={`w-4 h-4 transition-colors ${isActive ? 'text-blue-500' : 'text-gray-400 group-hover:text-gray-600'}`} />
+                <Icon className="w-4 h-4 transition-colors" style={{ color: isActive ? 'var(--t-accent)' : 'var(--t-text-muted)' }} />
                 <div className="flex-1 text-left">
                   <div className="truncate">{label}</div>
-                  <div className={`text-[10px] mt-0.5 ${isActive ? 'text-gray-500' : 'text-gray-400'}`}>{desc}</div>
+                  <div className="text-[10px] mt-0.5" style={{ color: isActive ? 'var(--t-text-secondary)' : 'var(--t-text-muted)' }}>{desc}</div>
                 </div>
                 {key === 'recurring' && recurringCount > 0 && (
-                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
-                    isActive ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-500'
-                  }`}>{recurringCount}</span>
+                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${isActive ? 'theme-muted-badge' : ''}`} style={!isActive ? { background: 'var(--t-chip-bg)', color: 'var(--t-chip-text)' } : undefined}>{recurringCount}</span>
                 )}
               </button>
             );

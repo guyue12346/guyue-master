@@ -7,6 +7,19 @@ import { loadProfiles, saveProfiles, addProfile, updateProfile, deleteProfile, A
 
 const DEFAULT_SPLASH_QUOTE = '有善始者实繁，能克终者盖寡';
 
+const normalizeAppTheme = (theme: string | null | undefined) => {
+  if (theme === 'minimal') return 'pure';
+  return theme || 'default';
+};
+
+const APP_THEME_OPTIONS = [
+  { key: 'default', label: '云际', desc: '清透蓝阶', note: '圆角分层，偏产品化。' },
+  { key: 'vscode', label: '工坊', desc: '紧凑理性', note: '更利落的边角与开发台秩序感。' },
+  { key: 'pure', label: '纯白', desc: '白板极简', note: '更中性、更少装饰，接近纸面白板。' },
+  { key: 'glass', label: '毛玻璃', desc: '冰透光感', note: '保留你之前那套玻璃感主题。' },
+  { key: 'candy', label: '五彩', desc: '多彩渐变', note: '恢复更明显的粉紫蓝渐变风格。' },
+] as const;
+
 const parseStoredSplashQuotes = () => {
   if (typeof window === 'undefined') return [DEFAULT_SPLASH_QUOTE];
   const raw = localStorage.getItem('linkmaster_splash_text_v1');
@@ -78,7 +91,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [exportProgress, setExportProgress] = useState<number>(0);
   const [exportStep, setExportStep] = useState<string>('');
   const avatarInputRef = useRef<HTMLInputElement>(null);
-  const [sidebarTheme, setSidebarTheme] = useState<string>(() => localStorage.getItem('guyue_sidebar_theme') || 'default');
+  const [sidebarTheme, setSidebarTheme] = useState<string>(() => normalizeAppTheme(localStorage.getItem('guyue_sidebar_theme')));
   const [mdEngine, setMdEngine] = useState<string>(() => localStorage.getItem('guyue_md_engine') || 'default');
   const iconSelectorRef = useRef<HTMLDivElement>(null);
 
@@ -108,6 +121,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   }, []);
 
   useEffect(() => {
+    const normalizedTheme = normalizeAppTheme(localStorage.getItem('guyue_sidebar_theme'));
+    if (normalizedTheme !== localStorage.getItem('guyue_sidebar_theme')) {
+      localStorage.setItem('guyue_sidebar_theme', normalizedTheme);
+      window.dispatchEvent(new Event('sidebar-theme-change'));
+    }
+    setSidebarTheme(normalizedTheme);
+
     const savedPath = localStorage.getItem('linkmaster_archive_path');
     if (savedPath) setArchivePath(savedPath);
     
@@ -322,6 +342,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const learningCourses = read('learning_courses_v1');
     const learningProgress = read('learning_progress');
 
+    await tick('导出工作空间记录…', 60);
+    const workspaceCategories = read('workspace_categories_v1');
+    const workspaceSpaces = read('workspace_spaces_v1');
+
     await tick('导出 LeetCode 记录…', 65);
     const leetcodeLists = read('leetcode_lists');
     const leetcodeProgress = read('leetcode_progress');
@@ -360,6 +384,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       learningCategories,
       learningCourses,
       learningProgress,
+      workspaceCategories,
+      workspaceSpaces,
       leetcodeLists,
       leetcodeProgress,
       recurringEvents,
@@ -391,16 +417,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
-      <div className="absolute inset-0 z-[1] bg-black/20 backdrop-blur-sm transition-opacity" onClick={onClose} />
+      <div className="theme-modal-backdrop absolute inset-0 z-[1] transition-opacity" onClick={onClose} />
 
       {/* Modal Content */}
-      <div className="relative z-[2] flex flex-col bg-white rounded-2xl shadow-2xl w-full max-w-2xl border border-gray-200 max-h-[90vh] overflow-hidden">
+      <div className="theme-modal-shell relative z-[2] flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden">
         
         {/* Header */}
-        <div className="shrink-0 px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-white">
-          <h2 className="text-lg font-semibold text-gray-800">设置</h2>
-          <button onClick={onClose} className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-100 active:bg-gray-200 transition-colors cursor-pointer">
-            <X className="w-5 h-5 text-gray-500" />
+        <div className="theme-header-bar flex shrink-0 items-center justify-between px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="theme-logo-mark !h-10 !w-10 !rounded-2xl">
+              <div className="theme-logo-glyph text-[11px]">
+                <span>古</span>
+                <span>月</span>
+              </div>
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold" style={{ color: 'var(--t-text)' }}>设置</h2>
+              <p className="text-xs" style={{ color: 'var(--t-text-muted)' }}>全局主题、模块编排与本地配置</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="theme-icon-btn h-10 w-10 cursor-pointer">
+            <X className="w-5 h-5" />
           </button>
         </div>
 
@@ -415,11 +452,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex items-center gap-6">
               {/* Avatar */}
               <div className="relative group">
-                <div className="w-20 h-20 rounded-full overflow-hidden bg-gradient-to-br from-blue-100 to-indigo-100 flex items-center justify-center border-2 border-white shadow-md">
+                <div
+                  className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border-2 shadow-md"
+                  style={{
+                    background: 'linear-gradient(135deg, var(--t-accent-bg) 0%, var(--t-bg-secondary) 100%)',
+                    borderColor: 'var(--t-border-light)',
+                  }}
+                >
                   {userAvatar ? (
                     <img src={userAvatar} alt="头像" className="w-full h-full object-cover" />
                   ) : (
-                    <User className="w-9 h-9 text-indigo-400" />
+                    <User className="w-9 h-9" style={{ color: 'var(--t-accent)' }} />
                   )}
                 </div>
                 <button
@@ -445,13 +488,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     value={userName}
                     onChange={(e) => handleSaveUserName(e.target.value)}
                     placeholder="输入你的名字"
-                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300"
+                    className="w-full px-3 py-2 text-sm"
                   />
                 </div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => avatarInputRef.current?.click()}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+                    className="theme-secondary-btn theme-secondary-btn-accent px-3 py-1.5 text-xs font-medium"
                   >
                     <Camera className="w-3.5 h-3.5" />
                     上传头像
@@ -459,7 +502,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {userAvatar && (
                     <button
                       onClick={handleRemoveAvatar}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-500 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+                      className="theme-secondary-btn theme-secondary-btn-danger px-3 py-1.5 text-xs font-medium"
                     >
                       <X className="w-3.5 h-3.5" />
                       移除头像
@@ -477,34 +520,60 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               外观设置
             </h3>
             <div>
-              <label className="text-xs font-medium text-gray-500 mb-2 block">主题风格</label>
-              <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
-                {([
-                  { key: 'default', label: '默认', desc: '蓝色强调', preview: { bg: '#1E1E1E', item: 'rounded-xl', accent: 'bg-blue-600' } },
-                  { key: 'vscode', label: 'VSCode', desc: '天蓝强调', preview: { bg: '#252526', item: 'rounded-none', accent: 'border-l-2 border-white' } },
-                  { key: 'minimal', label: '极简', desc: '清爽蓝调', preview: { bg: '#F3F4F6', item: 'rounded-lg', accent: 'bg-white shadow' } },
-                  { key: 'glass', label: '毛玻璃', desc: '冰蓝青绿', preview: { bg: 'rgba(15,23,42,0.85)', item: 'rounded-lg', accent: 'bg-cyan-400/30' } },
-                  { key: 'candy', label: '彩虹糖', desc: '粉紫梦幻', preview: { bg: '#ec4899', item: 'rounded-2xl', accent: 'bg-white/25' } },
-                ] as const).map(t => {
-                  const isActive = sidebarTheme === t.key;
-                  const isGradient = t.key === 'candy';
+              <label className="mb-2 block text-xs font-medium" style={{ color: 'var(--t-text-muted)' }}>应用主题</label>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                {APP_THEME_OPTIONS.map((themeOption) => {
+                  const isActive = sidebarTheme === themeOption.key;
                   return (
-                    <button key={t.key}
-                      onClick={() => { setSidebarTheme(t.key); localStorage.setItem('guyue_sidebar_theme', t.key); window.dispatchEvent(new Event('sidebar-theme-change')); }}
-                      className={`p-3 rounded-xl border-2 transition-all text-left ${isActive ? 'border-blue-500 bg-blue-50/50' : 'border-gray-200 hover:border-gray-300'}`}
+                    <button
+                      key={themeOption.key}
+                      onClick={() => {
+                        setSidebarTheme(themeOption.key);
+                        localStorage.setItem('guyue_sidebar_theme', themeOption.key);
+                        window.dispatchEvent(new Event('sidebar-theme-change'));
+                      }}
+                      className="rounded-[22px] border p-3 text-left transition-all"
+                      style={
+                        isActive
+                          ? {
+                              borderColor: 'var(--t-accent)',
+                              background: 'var(--t-accent-bg)',
+                              boxShadow: 'var(--t-list-active-shadow)',
+                            }
+                          : {
+                              borderColor: 'var(--t-border)',
+                              background: 'var(--t-bg-card)',
+                            }
+                      }
                     >
-                      <div className="flex gap-1.5 mb-2">
-                        <div
-                          className="w-6 h-16 rounded-md flex flex-col items-center justify-center gap-1"
-                          style={isGradient ? { background: 'linear-gradient(to bottom, #ec4899, #8b5cf6, #4f46e5)' } : { background: t.preview.bg }}
-                        >
-                          <div className={`w-3 h-3 ${t.preview.item} ${t.key === 'minimal' ? 'bg-gray-400' : t.key === 'glass' ? 'bg-gray-500' : t.key === 'candy' ? 'bg-white/40' : 'bg-gray-600'}`} />
-                          <div className={`w-3 h-3 ${t.preview.item} ${t.key === 'minimal' ? 'bg-blue-500' : t.key === 'vscode' ? 'bg-gray-400 border-l-2 border-white' : t.key === 'glass' ? 'bg-cyan-400/50' : t.key === 'candy' ? 'bg-white/50 ring-1 ring-white/60' : 'bg-blue-500'}`} />
-                          <div className={`w-3 h-3 ${t.preview.item} ${t.key === 'minimal' ? 'bg-gray-400' : t.key === 'glass' ? 'bg-gray-500' : t.key === 'candy' ? 'bg-white/40' : 'bg-gray-600'}`} />
+                      <div data-theme={themeOption.key} className="theme-preview-shell mb-3">
+                        <div className="theme-preview-rail">
+                          <div className="theme-preview-rail-dot" />
+                          <div className="theme-preview-rail-dot is-active" />
+                          <div className="theme-preview-rail-dot" />
+                        </div>
+                        <div className="theme-preview-panel">
+                          <div className="theme-preview-header" />
+                          <div className="theme-preview-card">
+                            <div className="theme-preview-card-line w-4/5" />
+                            <div className="theme-preview-card-line w-3/5" />
+                            <div className="theme-preview-card-line w-2/3" />
+                          </div>
+                          <div className="theme-preview-chip" />
                         </div>
                       </div>
-                      <div className="text-xs font-medium text-gray-800">{t.label}</div>
-                      <div className="text-[10px] text-gray-400">{t.desc}</div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="text-xs font-semibold" style={{ color: 'var(--t-text)' }}>{themeOption.label}</div>
+                          <div className="text-[10px]" style={{ color: 'var(--t-text-muted)' }}>{themeOption.desc}</div>
+                        </div>
+                        {isActive && (
+                          <span className="theme-muted-badge rounded-full px-2 py-0.5 text-[10px] font-medium">
+                            当前
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-2 text-[10px]" style={{ color: 'var(--t-text-secondary)' }}>{themeOption.note}</div>
                     </button>
                   );
                 })}
@@ -524,7 +593,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   return (
                     <button key={e.key}
                       onClick={() => { setMdEngine(e.key); localStorage.setItem('guyue_md_engine', e.key); window.dispatchEvent(new Event('md-engine-change')); }}
-                      className={`px-3 py-2 rounded-xl border-2 transition-all text-left ${isActive ? 'border-blue-500' : 'hover:border-gray-300'}`} style={isActive ? { background: 'var(--t-accent-bg)' } : { borderColor: 'var(--t-border)' }}
+                      className="rounded-xl border px-3 py-2 text-left transition-all"
+                      style={
+                        isActive
+                          ? { borderColor: 'var(--t-accent)', background: 'var(--t-accent-bg)' }
+                          : { borderColor: 'var(--t-border)', background: 'var(--t-bg-card)' }
+                      }
                     >
                       <div className="text-xs font-medium" style={{ color: 'var(--t-text)' }}>{e.label}</div>
                       <div className="text-[10px]" style={{ color: 'var(--t-text-muted)' }}>{e.desc}</div>

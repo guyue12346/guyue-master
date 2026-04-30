@@ -3,11 +3,12 @@ import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { createSign } from 'crypto';
+import { createServer as createTcpServer } from 'net';
 import pty from 'node-pty';
 import os from 'os';
 import nodemailer from 'nodemailer';
 import dns from 'dns';
-import { spawn, exec } from 'child_process';
+import { spawn, exec, execFile } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,10 +18,1069 @@ const isDev = process.env.NODE_ENV === 'development';
 
 let mainWindow: BrowserWindow | null = null;
 let zenmuxUsageWindow: BrowserWindow | null = null;
+const codexUsageWindows = new Map<string, BrowserWindow>();
 let aiStudioWindow: BrowserWindow | null = null;
 
 const isMac = process.platform === 'darwin';
 const isWin = process.platform === 'win32';
+
+const OPENCODE_VERSION = '1.14.29';
+const OPENCODE_AUTH_PATH = path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json');
+const OPENCODE_DB_PATH = path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db');
+const OPENCODE_EMBEDDED_TUI_CONFIG = {
+  $schema: 'https://opencode.ai/tui.json',
+  keybinds: {
+    status_view: 'none',
+  },
+  plugin_enabled: {
+    'internal:sidebar-context': false,
+    'internal:sidebar-mcp': false,
+    'internal:sidebar-lsp': false,
+    'internal:sidebar-todo': false,
+    'internal:sidebar-files': false,
+    'internal:sidebar-footer': false,
+  },
+};
+
+const OPENCODE_PROVIDER_LABELS: Record<string, string> = {
+  opencode: 'OpenCode',
+  zenmux: 'ZenMux',
+  'github-copilot': 'GitHub Copilot',
+  moonshotai: 'Moonshot AI',
+  'moonshotai-cn': 'Moonshot AI (China)',
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  google: 'Google',
+  openrouter: 'OpenRouter',
+  xai: 'xAI',
+};
+
+const MODELS_DEV_PROVIDER_ALIASES: Record<string, string[]> = {
+  openai: ['openai'],
+  anthropic: ['anthropic'],
+  google: ['google'],
+  xai: ['xai'],
+  openrouter: ['openrouter'],
+  'github-copilot': ['github-copilot'],
+  moonshotai: ['moonshotai', 'moonshot'],
+  'moonshotai-cn': ['moonshotai-cn', 'moonshot'],
+  zenmux: ['zenmux', 'opencode'],
+  opencode: ['opencode'],
+};
+
+let modelsDevCache: { data: any; fetchedAt: number } | null = null;
+const opencodeProvidersSnapshotCache = new Map<string, {
+  fetchedAt: number;
+  data: {
+    providers: Array<{ id: string; label: string; authType: string; hasStoredCredential: boolean }>;
+    knownModelsByProvider: Record<string, string[]>;
+    defaultModelsByProvider: Record<string, string>;
+  };
+}>();
+
+function dedupeStrings(values: string[]) {
+  return [...new Set(values.filter((value) => typeof value === 'string' && value.trim()).map((value) => value.trim()))];
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function getAvailablePort() {
+  return await new Promise<number>((resolve, reject) => {
+    const server = createTcpServer();
+    server.unref();
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
+}
+
+function normalizeOpenCodeProviderSnapshot(payload: any) {
+  const providersRaw = Array.isArray(payload?.providers) ? payload.providers : [];
+  const defaultsRaw = payload?.default && typeof payload.default === 'object' ? payload.default : {};
+
+  const providers: Array<{ id: string; label: string; authType: string; hasStoredCredential: boolean }> = [];
+  const knownModelsByProvider: Record<string, string[]> = {};
+  const defaultModelsByProvider: Record<string, string> = {};
+
+  for (const provider of providersRaw) {
+    if (!provider || typeof provider !== 'object') continue;
+    const id = typeof provider.id === 'string' ? provider.id.trim() : '';
+    if (!id) continue;
+
+    const label = typeof provider.name === 'string' && provider.name.trim()
+      ? provider.name.trim()
+      : (OPENCODE_PROVIDER_LABELS[id] || id);
+    const authType = typeof provider.source === 'string' && provider.source.trim()
+      ? provider.source.trim()
+      : 'unknown';
+
+    const modelsObject = provider.models && typeof provider.models === 'object' ? provider.models : {};
+    const modelIds = dedupeStrings(Object.keys(modelsObject));
+    if (modelIds.length) {
+      knownModelsByProvider[id] = modelIds;
+    }
+
+    const defaultModel = typeof defaultsRaw[id] === 'string' ? defaultsRaw[id].trim() : '';
+    if (defaultModel) {
+      defaultModelsByProvider[id] = defaultModel;
+      knownModelsByProvider[id] = dedupeStrings([...(knownModelsByProvider[id] || []), defaultModel]);
+    }
+
+    providers.push({
+      id,
+      label,
+      authType,
+      hasStoredCredential: true,
+    });
+  }
+
+  return {
+    providers,
+    knownModelsByProvider,
+    defaultModelsByProvider,
+  };
+}
+
+async function fetchOpenCodeProvidersSnapshot(directory?: string, options?: { force?: boolean }) {
+  const binaryPath = getOpenCodeBinaryPath();
+  const cwd = directory?.trim() || getOpenCodeDefaultCwd();
+  const cacheKey = cwd || '__default__';
+  const cached = opencodeProvidersSnapshotCache.get(cacheKey);
+  const ttlMs = 15_000;
+
+  if (!options?.force && cached && Date.now() - cached.fetchedAt < ttlMs) {
+    return cached.data;
+  }
+
+  const port = await getAvailablePort();
+  const child = spawn(binaryPath, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], {
+    cwd,
+    env: {
+      ...process.env,
+      OPENCODE_SERVER_PASSWORD: '',
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+
+  let stderr = '';
+  child.stderr?.on('data', (chunk) => {
+    stderr += String(chunk || '');
+  });
+
+  const requestUrl = `http://127.0.0.1:${port}/config/providers`;
+
+  try {
+    const deadline = Date.now() + 8_000;
+    let response: any = null;
+
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        throw new Error(stderr.trim() || `OpenCode server exited with code ${child.exitCode}`);
+      }
+
+      try {
+        const attempt = await net.fetch(requestUrl);
+        if (attempt.ok) {
+          response = attempt;
+          break;
+        }
+      } catch {
+        // Server is still booting.
+      }
+
+      await wait(150);
+    }
+
+    if (!response) {
+      throw new Error(stderr.trim() || 'Timed out waiting for OpenCode provider snapshot');
+    }
+
+    const payload = await response.json();
+    const normalized = normalizeOpenCodeProviderSnapshot(payload);
+    opencodeProvidersSnapshotCache.set(cacheKey, { fetchedAt: Date.now(), data: normalized });
+    return normalized;
+  } finally {
+    if (!child.killed) {
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        if (!child.killed && child.exitCode === null) {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            // ignore
+          }
+        }
+      }, 500).unref?.();
+    }
+  }
+}
+
+function hasStoredOpenCodeCredential(value: unknown) {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return ['key', 'apiKey', 'token', 'access', 'refresh']
+    .some((field) => {
+      const candidate = record[field];
+      return typeof candidate === 'string' && candidate.trim() !== '';
+    });
+}
+
+async function loadOpenCodeModelCatalog() {
+  try {
+    await fs.access(OPENCODE_DB_PATH);
+  } catch {
+    return {} as Record<string, string[]>;
+  }
+
+  return await new Promise<Record<string, string[]>>((resolve) => {
+    execFile(
+      'sqlite3',
+      [
+        '-separator',
+        '\t',
+        OPENCODE_DB_PATH,
+        `
+          select providerId, modelId
+          from (
+            select
+              coalesce(json_extract(data, '$.providerID'), json_extract(data, '$.model.providerID')) as providerId,
+              coalesce(json_extract(data, '$.modelID'), json_extract(data, '$.model.modelID')) as modelId
+            from message
+            where json_extract(data, '$.role') = 'assistant'
+          )
+          where providerId is not null and providerId != ''
+            and modelId is not null and modelId != ''
+          group by providerId, modelId
+          order by providerId, modelId
+        `,
+      ],
+      { timeout: 4000 },
+      (_error, stdout) => {
+        const catalog: Record<string, string[]> = {};
+        for (const line of (stdout || '').split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const [providerId, modelId] = trimmed.split('\t');
+          if (!providerId || !modelId) continue;
+          catalog[providerId] = [...new Set([...(catalog[providerId] || []), modelId])];
+        }
+        resolve(catalog);
+      },
+    );
+  });
+}
+
+async function loadOpenCodeProviders() {
+  const modelCatalog = await loadOpenCodeModelCatalog();
+  const builtin = [{ id: 'opencode', label: 'OpenCode', authType: 'builtin', hasStoredCredential: true }];
+
+  try {
+    const raw = await fs.readFile(OPENCODE_AUTH_PATH, 'utf-8');
+    const parsed = JSON.parse(raw) as Record<string, Record<string, unknown> & { type?: string }>;
+    const providers = Object.entries(parsed).map(([id, value]) => ({
+      id,
+      label: OPENCODE_PROVIDER_LABELS[id] || id,
+      authType: value?.type || 'unknown',
+      hasStoredCredential: hasStoredOpenCodeCredential(value),
+    }));
+
+    const deduped = [...builtin, ...providers].filter((provider, index, all) =>
+      all.findIndex((item) => item.id === provider.id) === index,
+    );
+    return {
+      providers: deduped,
+      authPath: OPENCODE_AUTH_PATH,
+      knownModelsByProvider: modelCatalog,
+      defaultModelsByProvider: {},
+    };
+  } catch {
+    return {
+      providers: builtin,
+      authPath: OPENCODE_AUTH_PATH,
+      knownModelsByProvider: modelCatalog,
+      defaultModelsByProvider: {},
+    };
+  }
+}
+
+async function fetchModelsDevApiPayload() {
+  const now = Date.now();
+  if (modelsDevCache && now - modelsDevCache.fetchedAt < 10 * 60 * 1000) {
+    return modelsDevCache.data;
+  }
+
+  const response = await net.fetch('https://models.dev/api.json');
+  if (!response.ok) {
+    throw new Error(`models.dev api responded with ${response.status}`);
+  }
+
+  const data = await response.json();
+  modelsDevCache = { data, fetchedAt: now };
+  return data;
+}
+
+function extractModelId(value: Record<string, any>) {
+  const candidates = [
+    value.modelID,
+    value.modelId,
+    value.id,
+    value.model?.id,
+    value.model?.modelID,
+    value.model?.modelId,
+  ];
+
+  return candidates.find((candidate) => typeof candidate === 'string' && candidate.trim())?.trim() || '';
+}
+
+function pushModelsFromList(target: Set<string>, items: any[]) {
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const modelId = extractModelId(item);
+    if (modelId) {
+      target.add(modelId);
+    }
+  }
+}
+
+function extractModelsFromModelsDevPayload(payload: any, providerId: string) {
+  const aliases = new Set(MODELS_DEV_PROVIDER_ALIASES[providerId] || [providerId]);
+  const models = new Set<string>();
+
+  const matchesProvider = (value: Record<string, any>) => {
+    const candidates = [
+      value.providerId,
+      value.providerID,
+      value.provider_id,
+      typeof value.provider === 'string' ? value.provider : undefined,
+      value.provider?.id,
+      value.provider?.providerId,
+      value.provider?.providerID,
+    ];
+
+    return candidates.some((candidate) => typeof candidate === 'string' && aliases.has(candidate));
+  };
+
+  const visit = (value: any) => {
+    if (!value) return;
+
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+
+    if (typeof value !== 'object') return;
+
+    if (matchesProvider(value)) {
+      const modelId = extractModelId(value);
+      if (modelId) {
+        models.add(modelId);
+      }
+    }
+
+    if (value.providers && typeof value.providers === 'object') {
+      for (const alias of aliases) {
+        const providerEntry = value.providers[alias];
+        if (!providerEntry) continue;
+
+        if (Array.isArray(providerEntry)) {
+          pushModelsFromList(models, providerEntry);
+          continue;
+        }
+
+        if (providerEntry && typeof providerEntry === 'object') {
+          if (Array.isArray(providerEntry.models)) {
+            pushModelsFromList(models, providerEntry.models);
+          }
+          const directModelId = extractModelId(providerEntry);
+          if (directModelId) {
+            models.add(directModelId);
+          }
+        }
+      }
+    }
+
+    if (Array.isArray(value.models)) {
+      if (matchesProvider(value)) {
+        pushModelsFromList(models, value.models);
+      } else {
+        value.models.forEach((model: any) => {
+          if (!model || typeof model !== 'object') return;
+          const composite = {
+            ...model,
+            provider: model.provider ?? value.provider ?? value.id,
+            providerId: model.providerId ?? value.providerId ?? value.id,
+            providerID: model.providerID ?? value.providerID ?? value.id,
+          };
+          if (!matchesProvider(composite)) return;
+          const modelId = extractModelId(composite);
+          if (modelId) {
+            models.add(modelId);
+          }
+        });
+      }
+    }
+  };
+
+  visit(payload);
+  return Array.from(models).sort((a, b) => a.localeCompare(b));
+}
+
+async function loadOpenCodeProviderModels(providerId: string, directory?: string) {
+  const localCatalog = await loadOpenCodeModelCatalog();
+  const localModels = localCatalog[providerId] || [];
+
+  try {
+    const snapshot = await fetchOpenCodeProvidersSnapshot(directory);
+    const snapshotModels = snapshot.knownModelsByProvider[providerId] || [];
+    if (snapshotModels.length) {
+      return {
+        models: dedupeStrings([...snapshotModels, ...localModels]),
+        defaultModel: snapshot.defaultModelsByProvider[providerId] || '',
+        source: 'opencode' as const,
+      };
+    }
+  } catch {
+    // Fall through to secondary sources.
+  }
+
+  try {
+    const payload = await fetchModelsDevApiPayload();
+    const remoteModels = extractModelsFromModelsDevPayload(payload, providerId);
+    return {
+      models: [...new Set([...remoteModels, ...localModels])],
+      defaultModel: '',
+      source: remoteModels.length ? 'models.dev' : 'local',
+    };
+  } catch {
+    return {
+      models: [...new Set(localModels)],
+      defaultModel: '',
+      source: 'local',
+    };
+  }
+}
+
+function getOpenCodeBinaryPath() {
+  if (isDev) {
+    return path.join(process.cwd(), 'node_modules', 'opencode-ai', 'bin', '.opencode');
+  }
+  return path.join(process.resourcesPath, 'vendor', 'opencode', 'bin', '.opencode');
+}
+
+function getOpenCodeDefaultCwd() {
+  return isDev ? process.cwd() : app.getPath('home');
+}
+
+async function ensureEmbeddedOpenCodeTuiConfig() {
+  const targetDir = path.join(app.getPath('userData'), 'opencode');
+  const filePath = path.join(targetDir, 'embedded-tui.json');
+  await fs.mkdir(targetDir, { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(OPENCODE_EMBEDDED_TUI_CONFIG, null, 2), 'utf-8');
+  return filePath;
+}
+
+function sqlLiteral(value: string) {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function parseSimpleShellArgs(input: string) {
+  const tokens: string[] = [];
+  const pattern = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(input)) !== null) {
+    const value = match[1] ?? match[2] ?? match[3] ?? '';
+    if (value) {
+      tokens.push(value.replace(/\\(["'\\ ])/g, '$1'));
+    }
+  }
+
+  return tokens;
+}
+
+function safeParseJson<T = any>(raw: string | null | undefined): T | null {
+  if (!raw || typeof raw !== 'string') return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+function collectOpenCodeStreamText(value: unknown, results: Array<{ key: string; text: string }> = [], pathKey = 'root') {
+  if (!value || typeof value !== 'object') return results;
+
+  const record = value as Record<string, any>;
+  const type = typeof record.type === 'string' ? record.type : '';
+  const text = typeof record.text === 'string' ? record.text : '';
+  if (type === 'text' && text) {
+    results.push({
+      key: String(record.id || record.partID || record.messageID || pathKey),
+      text,
+    });
+  }
+
+  ['part', 'data', 'properties', 'message', 'content', 'delta'].forEach((key) => {
+    if (record[key]) collectOpenCodeStreamText(record[key], results, `${pathKey}.${key}`);
+  });
+
+  if (Array.isArray(record.parts)) {
+    record.parts.forEach((part, index) => collectOpenCodeStreamText(part, results, `${pathKey}.parts.${index}`));
+  }
+
+  return results;
+}
+
+async function runOpenCodeDbQuery<T = any>(query: string): Promise<T[]> {
+  const binaryPath = getOpenCodeBinaryPath();
+
+  return await new Promise((resolve, reject) => {
+    execFile(binaryPath, ['db', query, '--format', 'json'], { timeout: 8000 }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(stderr?.trim() || error.message));
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(stdout || '[]') as T[]);
+      } catch (parseError) {
+        reject(parseError);
+      }
+    });
+  });
+}
+
+async function loadOpenCodeRuntimeState(params: {
+  directory?: string;
+  officialSessionId?: string;
+  startedAfter?: number;
+  providerId?: string;
+}) {
+  const filters: string[] = [];
+
+  if (params.officialSessionId) {
+    filters.push(`id = ${sqlLiteral(params.officialSessionId)}`);
+  } else if (params.directory) {
+    filters.push(`directory = ${sqlLiteral(params.directory)}`);
+    if (params.startedAfter) {
+      filters.push(`time_created >= ${Math.floor(params.startedAfter)}`);
+    }
+  }
+
+  let session: {
+    id: string;
+    title: string;
+    directory: string;
+    projectId: string;
+    timeCreated: number;
+    timeUpdated: number;
+  } | null = null;
+
+  if (filters.length) {
+    const rows = await runOpenCodeDbQuery<{
+      id: string;
+      title: string;
+      directory: string;
+      projectId: string;
+      timeCreated: number;
+      timeUpdated: number;
+    }>(`
+      select
+        id,
+        title,
+        directory,
+        project_id as projectId,
+        time_created as timeCreated,
+        time_updated as timeUpdated
+      from session
+      where ${filters.join(' and ')}
+      order by time_updated desc
+      limit 1
+    `);
+    session = rows[0] || null;
+  }
+
+  if (!session && params.directory && !params.startedAfter && !params.officialSessionId) {
+    const fallbackRows = await runOpenCodeDbQuery<{
+      id: string;
+      title: string;
+      directory: string;
+      projectId: string;
+      timeCreated: number;
+      timeUpdated: number;
+    }>(`
+      select
+        id,
+        title,
+        directory,
+        project_id as projectId,
+        time_created as timeCreated,
+        time_updated as timeUpdated
+      from session
+      where directory = ${sqlLiteral(params.directory)}
+      order by time_updated desc
+      limit 1
+    `);
+    session = fallbackRows[0] || null;
+  }
+
+  if (!session) {
+    return {
+      session: null,
+      latestUsage: null,
+      sessionTotals: {
+        turns: 0,
+        totalCost: 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+      knownModels: [],
+      plan: {
+        available: false,
+        note: '官方本地库未提供',
+      },
+      source: 'database' as const,
+      lastUpdated: Date.now(),
+    };
+  }
+
+  const latestUsageRows = await runOpenCodeDbQuery<{
+    providerId: string | null;
+    modelId: string | null;
+    cost: number | null;
+    totalTokens: number | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    reasoningTokens: number | null;
+    cacheReadTokens: number | null;
+    cacheWriteTokens: number | null;
+    timeUpdated: number | null;
+  }>(`
+    select
+      coalesce(json_extract(data, '$.providerID'), json_extract(data, '$.model.providerID')) as providerId,
+      coalesce(json_extract(data, '$.modelID'), json_extract(data, '$.model.modelID')) as modelId,
+      cast(coalesce(json_extract(data, '$.cost'), 0) as real) as cost,
+      cast(coalesce(json_extract(data, '$.tokens.total'), 0) as integer) as totalTokens,
+      cast(coalesce(json_extract(data, '$.tokens.input'), 0) as integer) as inputTokens,
+      cast(coalesce(json_extract(data, '$.tokens.output'), 0) as integer) as outputTokens,
+      cast(coalesce(json_extract(data, '$.tokens.reasoning'), 0) as integer) as reasoningTokens,
+      cast(coalesce(json_extract(data, '$.tokens.cache.read'), 0) as integer) as cacheReadTokens,
+      cast(coalesce(json_extract(data, '$.tokens.cache.write'), 0) as integer) as cacheWriteTokens,
+      time_updated as timeUpdated
+    from message
+    where session_id = ${sqlLiteral(session.id)}
+      and json_extract(data, '$.role') = 'assistant'
+    order by time_updated desc
+    limit 1
+  `);
+
+  const totalsRows = await runOpenCodeDbQuery<{
+    turns: number | null;
+    totalCost: number | null;
+    totalTokens: number | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    reasoningTokens: number | null;
+    cacheReadTokens: number | null;
+    cacheWriteTokens: number | null;
+  }>(`
+    select
+      count(*) as turns,
+      round(coalesce(sum(cast(coalesce(json_extract(data, '$.cost'), 0) as real)), 0), 8) as totalCost,
+      coalesce(sum(cast(coalesce(json_extract(data, '$.tokens.total'), 0) as integer)), 0) as totalTokens,
+      coalesce(sum(cast(coalesce(json_extract(data, '$.tokens.input'), 0) as integer)), 0) as inputTokens,
+      coalesce(sum(cast(coalesce(json_extract(data, '$.tokens.output'), 0) as integer)), 0) as outputTokens,
+      coalesce(sum(cast(coalesce(json_extract(data, '$.tokens.reasoning'), 0) as integer)), 0) as reasoningTokens,
+      coalesce(sum(cast(coalesce(json_extract(data, '$.tokens.cache.read'), 0) as integer)), 0) as cacheReadTokens,
+      coalesce(sum(cast(coalesce(json_extract(data, '$.tokens.cache.write'), 0) as integer)), 0) as cacheWriteTokens
+    from message
+    where session_id = ${sqlLiteral(session.id)}
+      and json_extract(data, '$.role') = 'assistant'
+  `);
+
+  const effectiveProviderId = latestUsageRows[0]?.providerId || params.providerId || '';
+  const knownModelRows = effectiveProviderId
+    ? await runOpenCodeDbQuery<{ modelId: string | null }>(`
+        select modelId
+        from (
+          select
+            coalesce(json_extract(data, '$.modelID'), json_extract(data, '$.model.modelID')) as modelId,
+            time_updated as timeUpdated
+          from message
+          where coalesce(json_extract(data, '$.providerID'), json_extract(data, '$.model.providerID')) = ${sqlLiteral(effectiveProviderId)}
+        )
+        where modelId is not null and modelId != ''
+        order by timeUpdated desc
+        limit 50
+      `)
+    : [];
+
+  const latestUsage = latestUsageRows[0]
+    ? {
+        providerId: latestUsageRows[0].providerId,
+        providerLabel: latestUsageRows[0].providerId ? (OPENCODE_PROVIDER_LABELS[latestUsageRows[0].providerId] || latestUsageRows[0].providerId) : null,
+        modelId: latestUsageRows[0].modelId,
+        cost: Number(latestUsageRows[0].cost || 0),
+        tokens: {
+          total: Number(latestUsageRows[0].totalTokens || 0),
+          input: Number(latestUsageRows[0].inputTokens || 0),
+          output: Number(latestUsageRows[0].outputTokens || 0),
+          reasoning: Number(latestUsageRows[0].reasoningTokens || 0),
+          cacheRead: Number(latestUsageRows[0].cacheReadTokens || 0),
+          cacheWrite: Number(latestUsageRows[0].cacheWriteTokens || 0),
+        },
+        timeUpdated: latestUsageRows[0].timeUpdated || null,
+      }
+    : null;
+
+  const totals = totalsRows[0] || {};
+
+  return {
+    session,
+    latestUsage,
+    sessionTotals: {
+      turns: Number(totals.turns || 0),
+      totalCost: Number(totals.totalCost || 0),
+      totalTokens: Number(totals.totalTokens || 0),
+      inputTokens: Number(totals.inputTokens || 0),
+      outputTokens: Number(totals.outputTokens || 0),
+      reasoningTokens: Number(totals.reasoningTokens || 0),
+      cacheReadTokens: Number(totals.cacheReadTokens || 0),
+      cacheWriteTokens: Number(totals.cacheWriteTokens || 0),
+    },
+    knownModels: [...new Set(knownModelRows.map((row) => row.modelId).filter((value): value is string => Boolean(value)))],
+    plan: {
+      available: false,
+      note: '官方本地库未提供',
+    },
+    source: 'database' as const,
+    lastUpdated: Date.now(),
+  };
+}
+
+async function listOpenCodeSessions(directory: string) {
+  if (!directory.trim()) return [];
+
+  return await runOpenCodeDbQuery<{
+    id: string;
+    title: string;
+    directory: string;
+    projectId: string;
+    timeCreated: number;
+    timeUpdated: number;
+    version: string | null;
+  }>(`
+    select
+      id,
+      title,
+      directory,
+      project_id as projectId,
+      time_created as timeCreated,
+      time_updated as timeUpdated,
+      version
+    from session
+    where directory = ${sqlLiteral(directory.trim())}
+    order by time_updated desc
+    limit 100
+  `);
+}
+
+async function listOpenCodeSessionMessages(sessionId: string) {
+  if (!sessionId.trim()) return [];
+
+  const rows = await runOpenCodeDbQuery<{
+    messageId: string;
+    role: string | null;
+    messageData: string;
+    messageTimeCreated: number;
+    messageTimeUpdated: number;
+    providerId: string | null;
+    modelId: string | null;
+    partId: string | null;
+    partTimeCreated: number | null;
+    partTimeUpdated: number | null;
+    partData: string | null;
+  }>(`
+    select
+      m.id as messageId,
+      json_extract(m.data, '$.role') as role,
+      m.data as messageData,
+      m.time_created as messageTimeCreated,
+      m.time_updated as messageTimeUpdated,
+      coalesce(json_extract(m.data, '$.providerID'), json_extract(m.data, '$.model.providerID')) as providerId,
+      coalesce(json_extract(m.data, '$.modelID'), json_extract(m.data, '$.model.modelID')) as modelId,
+      p.id as partId,
+      p.time_created as partTimeCreated,
+      p.time_updated as partTimeUpdated,
+      p.data as partData
+    from message m
+    left join part p on p.message_id = m.id
+    where m.session_id = ${sqlLiteral(sessionId.trim())}
+    order by m.time_created asc, p.time_created asc, p.time_updated asc
+  `);
+
+  const messages = new Map<string, {
+    id: string;
+    role: 'user' | 'assistant' | 'system';
+    providerId: string | null;
+    modelId: string | null;
+    timeCreated: number;
+    timeUpdated: number;
+    textSegments: string[];
+    hasReasoning: boolean;
+    hasTool: boolean;
+    cost: number | null;
+    totalTokens: number | null;
+    parts: Array<Record<string, any>>;
+  }>();
+
+  for (const row of rows) {
+    if (!messages.has(row.messageId)) {
+      const messageData = safeParseJson<Record<string, any>>(row.messageData);
+      messages.set(row.messageId, {
+        id: row.messageId,
+        role: (row.role === 'assistant' || row.role === 'system' ? row.role : 'user'),
+        providerId: row.providerId || null,
+        modelId: row.modelId || null,
+        timeCreated: Number(row.messageTimeCreated || 0),
+        timeUpdated: Number(row.messageTimeUpdated || 0),
+        textSegments: [],
+        hasReasoning: false,
+        hasTool: false,
+        cost: typeof messageData?.cost === 'number' ? messageData.cost : null,
+        totalTokens: typeof messageData?.tokens?.total === 'number' ? messageData.tokens.total : null,
+        parts: [],
+      });
+    }
+
+    const target = messages.get(row.messageId)!;
+    const partData = safeParseJson<Record<string, any>>(row.partData);
+    const partType = typeof partData?.type === 'string' ? partData.type : '';
+
+    if (partType === 'text' && typeof partData?.text === 'string' && partData.text.trim()) {
+      target.textSegments.push(partData.text);
+    } else if (partType === 'reasoning') {
+      target.hasReasoning = true;
+    } else if (partType === 'tool' || partType === 'patch' || partType === 'file') {
+      target.hasTool = true;
+    } else if (partType === 'step-finish') {
+      if (typeof partData?.cost === 'number') {
+        target.cost = partData.cost;
+      }
+      if (typeof partData?.tokens?.total === 'number') {
+        target.totalTokens = partData.tokens.total;
+      }
+    }
+
+    if (partType && partType !== 'text' && partType !== 'step-start' && partType !== 'step-finish' && partType !== 'compaction') {
+      const state = partData?.state && typeof partData.state === 'object' ? partData.state : {};
+      target.parts.push({
+        id: row.partId,
+        type: partType,
+        timeCreated: row.partTimeCreated || null,
+        timeUpdated: row.partTimeUpdated || null,
+        text: typeof partData?.text === 'string' ? partData.text : '',
+        isRedactedReasoning: partType === 'reasoning' && !partData?.text && Boolean(partData?.metadata),
+        tool: typeof partData?.tool === 'string' ? partData.tool : '',
+        callId: typeof partData?.callID === 'string' ? partData.callID : '',
+        status: typeof state.status === 'string' ? state.status : '',
+        title: typeof state.title === 'string' ? state.title : typeof partData?.title === 'string' ? partData.title : '',
+        input: state.input ?? null,
+        output: typeof state.output === 'string' ? state.output : '',
+        metadata: state.metadata ?? null,
+        files: Array.isArray(partData?.files) ? partData.files : [],
+        hash: typeof partData?.hash === 'string' ? partData.hash : '',
+        filename: typeof partData?.filename === 'string' ? partData.filename : '',
+        mime: typeof partData?.mime === 'string' ? partData.mime : '',
+        url: typeof partData?.url === 'string' ? partData.url : '',
+      });
+    }
+  }
+
+  return Array.from(messages.values()).map((message) => ({
+    id: message.id,
+    role: message.role,
+    providerId: message.providerId,
+    modelId: message.modelId,
+    timeCreated: message.timeCreated,
+    timeUpdated: message.timeUpdated,
+    text: message.textSegments.join('\n\n').trim(),
+    hasReasoning: message.hasReasoning,
+    hasTool: message.hasTool,
+    cost: message.cost,
+    totalTokens: message.totalTokens,
+    parts: message.parts,
+  }));
+}
+
+async function runOpenCodePrompt(params: {
+  directory: string;
+  officialSessionId?: string;
+  title?: string;
+  providerId?: string;
+  modelId?: string;
+  argsText?: string;
+  env?: Record<string, string>;
+  prompt: string;
+  streamId?: string;
+  streamSender?: Electron.WebContents;
+}) {
+  const binaryPath = getOpenCodeBinaryPath();
+  const cwd = params.directory.trim() || getOpenCodeDefaultCwd();
+  const prompt = params.prompt.trim();
+
+  if (!prompt) {
+    return { ok: false, error: 'empty-prompt' };
+  }
+
+  const args = ['run', '--format', 'json', '--dir', cwd];
+
+  if (params.officialSessionId?.trim()) {
+    args.push('--session', params.officialSessionId.trim());
+  } else if (params.title?.trim()) {
+    args.push('--title', params.title.trim());
+  }
+
+  if (params.providerId?.trim() && params.modelId?.trim()) {
+    args.push('--model', `${params.providerId.trim()}/${params.modelId.trim()}`);
+  }
+
+  if (params.argsText?.trim()) {
+    args.push(...parseSimpleShellArgs(params.argsText.trim()));
+  }
+
+  args.push(prompt);
+
+  const startedAt = Date.now();
+
+  return await new Promise<{
+    ok: boolean;
+    error?: string;
+    stdout?: string;
+    stderr?: string;
+    sessionId?: string | null;
+    sessionTitle?: string | null;
+  }>((resolve) => {
+    const child = spawn(binaryPath, args, {
+      cwd,
+      env: {
+        ...process.env,
+        ...(params.env || {}),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let stdoutLineBuffer = '';
+    const streamedTextByKey = new Map<string, string>();
+
+    const emitStream = (payload: Record<string, unknown>) => {
+      if (!params.streamId || !params.streamSender || params.streamSender.isDestroyed()) return;
+      params.streamSender.send('opencode-message-stream', {
+        streamId: params.streamId,
+        ...payload,
+      });
+    };
+
+    const consumeStdoutChunk = (chunkText: string) => {
+      stdoutLineBuffer += chunkText;
+      const lines = stdoutLineBuffer.split(/\r?\n/);
+      stdoutLineBuffer = lines.pop() || '';
+
+      lines.forEach((line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+
+        const event = safeParseJson<Record<string, any>>(trimmed);
+        if (!event) return;
+
+        collectOpenCodeStreamText(event).forEach(({ key, text }) => {
+          const previous = streamedTextByKey.get(key) || '';
+          const delta = text.startsWith(previous) ? text.slice(previous.length) : text;
+          streamedTextByKey.set(key, text);
+          if (delta.trim()) {
+            emitStream({ type: 'text', text: delta });
+          }
+        });
+      });
+    };
+
+    child.stdout?.on('data', (chunk) => {
+      const chunkText = String(chunk);
+      stdout += chunkText;
+      consumeStdoutChunk(chunkText);
+    });
+
+    child.stderr?.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
+
+    child.on('error', (error) => {
+      emitStream({ type: 'error', error: error.message });
+      resolve({
+        ok: false,
+        error: error.message,
+        stdout,
+        stderr,
+      });
+    });
+
+    child.on('close', async (code) => {
+      try {
+        const officialSessionId = params.officialSessionId?.trim();
+        let sessionId = officialSessionId || null;
+        let sessionTitle: string | null = null;
+
+        if (!sessionId) {
+          const sessions = await listOpenCodeSessions(cwd);
+          const matched = sessions.find((session) =>
+            session.timeUpdated >= startedAt - 1000
+            && (!params.title?.trim() || session.title === params.title.trim()),
+          ) || sessions[0];
+
+          sessionId = matched?.id || null;
+          sessionTitle = matched?.title || null;
+        }
+
+        resolve({
+          ok: code === 0,
+          error: code === 0 ? undefined : (stderr.trim() || stdout.trim() || `opencode exited with code ${code}`),
+          stdout,
+          stderr,
+          sessionId,
+          sessionTitle,
+        });
+        emitStream({ type: code === 0 ? 'done' : 'error', error: code === 0 ? undefined : (stderr.trim() || stdout.trim() || `opencode exited with code ${code}`), sessionId, sessionTitle });
+      } catch (error) {
+        emitStream({ type: code === 0 ? 'done' : 'error', error: code === 0 ? undefined : (stderr.trim() || stdout.trim() || `opencode exited with code ${code}`), sessionId: params.officialSessionId?.trim() || null, sessionTitle: params.title?.trim() || null });
+        resolve({
+          ok: code === 0,
+          error: code === 0 ? undefined : (stderr.trim() || stdout.trim() || `opencode exited with code ${code}`),
+          stdout,
+          stderr: `${stderr}${stderr ? '\n' : ''}${error instanceof Error ? error.message : String(error)}`,
+          sessionId: params.officialSessionId?.trim() || null,
+          sessionTitle: params.title?.trim() || null,
+        });
+      }
+    });
+  });
+}
 
 // ── GPU 渲染稳定性修复 ──────────────────────────────────────────────────────
 // macOS 上 Chromium 自动选图形后端时偶发 GPU 进程崩溃，导致彩虹干涉纹。
@@ -81,6 +1141,11 @@ function createWindow() {
       // 尝试重新加载页面
       mainWindow?.reload();
     }
+  });
+
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    const type = level >= 2 ? 'error' : 'log';
+    console[type](`[renderer:${level}] ${message} (${sourceId}:${line})`);
   });
 
   // 开发环境加载 Vite 开发服务器
@@ -202,6 +1267,682 @@ async function ensureZenmuxUsageWindow(showWindow = false): Promise<BrowserWindo
 
   await waitForWindowLoad(zenmuxUsageWindow);
   return zenmuxUsageWindow;
+}
+
+// Codex / ChatGPT 登录窗口
+const CODEX_USAGE_PAGE_URL = 'https://chatgpt.com/codex';
+const CODEX_USAGE_PARTITION_PREFIX = 'persist:codex-usage';
+
+function normalizeCodexProfileId(profileId?: string) {
+  const trimmed = String(profileId || '').trim();
+  if (!trimmed) return 'default';
+  return trimmed.replace(/[^a-zA-Z0-9_-]+/g, '-');
+}
+
+function getCodexUsagePartition(profileId?: string) {
+  return `${CODEX_USAGE_PARTITION_PREFIX}:${normalizeCodexProfileId(profileId)}`;
+}
+
+function shouldHandleCodexPopupInApp(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+    const hostname = parsed.hostname.toLowerCase();
+    return [
+      'chatgpt.com',
+      'auth.openai.com',
+      'openai.com',
+      'accounts.google.com',
+      'appleid.apple.com',
+      'login.live.com',
+      'microsoftonline.com',
+      'github.com',
+    ].some(domain => hostname === domain || hostname.endsWith(`.${domain}`));
+  } catch {
+    return false;
+  }
+}
+
+function createCodexUsageWindow(profileId?: string, showWindow = true): BrowserWindow {
+  const normalizedProfileId = normalizeCodexProfileId(profileId);
+  const partition = getCodexUsagePartition(normalizedProfileId);
+  const win = new BrowserWindow({
+    width: 1280,
+    height: 860,
+    minWidth: 960,
+    minHeight: 640,
+    show: showWindow,
+    title: `Codex 登录 · ${normalizedProfileId}`,
+    autoHideMenuBar: true,
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      partition,
+    },
+  });
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (shouldHandleCodexPopupInApp(url)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 980,
+          height: 760,
+          autoHideMenuBar: true,
+          backgroundColor: '#ffffff',
+          webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: false,
+            partition,
+          },
+        },
+      };
+    }
+
+    if (url.startsWith('http:') || url.startsWith('https:')) {
+      void shell.openExternal(url);
+      return { action: 'deny' };
+    }
+    return { action: 'allow' };
+  });
+
+  void win.loadURL(CODEX_USAGE_PAGE_URL);
+
+  win.on('closed', () => {
+    if (codexUsageWindows.get(normalizedProfileId) === win) {
+      codexUsageWindows.delete(normalizedProfileId);
+    }
+  });
+
+  return win;
+}
+
+async function ensureCodexUsageWindow(profileId?: string, showWindow = false): Promise<BrowserWindow> {
+  const normalizedProfileId = normalizeCodexProfileId(profileId);
+  let win = codexUsageWindows.get(normalizedProfileId) ?? null;
+
+  if (!win || win.isDestroyed()) {
+    win = createCodexUsageWindow(normalizedProfileId, showWindow);
+    codexUsageWindows.set(normalizedProfileId, win);
+  } else if (showWindow) {
+    win.show();
+    win.focus();
+  }
+
+  const currentUrl = win.webContents.getURL();
+  if (!currentUrl.includes('chatgpt.com/codex') && !currentUrl.includes('auth.openai.com')) {
+    void win.loadURL(CODEX_USAGE_PAGE_URL);
+  }
+
+  await waitForWindowLoad(win);
+  return win;
+}
+
+function normalizeCodexWindow(raw: any) {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const usedPercent = Number(raw.used_percent ?? raw.usedPercent ?? 0);
+  const limitWindowSeconds = Number(raw.limit_window_seconds ?? raw.limitWindowSeconds ?? 0);
+  const resetAt = Number(raw.reset_at ?? raw.resetsAt ?? 0);
+  const hasData =
+    Number.isFinite(usedPercent) ||
+    (Number.isFinite(limitWindowSeconds) && limitWindowSeconds > 0) ||
+    (Number.isFinite(resetAt) && resetAt > 0);
+
+  if (!hasData) return null;
+
+  return {
+    usedPercent: Number.isFinite(usedPercent) ? usedPercent : 0,
+    windowMinutes: Number.isFinite(limitWindowSeconds) && limitWindowSeconds > 0
+      ? Math.round(limitWindowSeconds / 60)
+      : null,
+    resetsAt: Number.isFinite(resetAt) && resetAt > 0 ? resetAt : null,
+  };
+}
+
+function normalizeCodexCredits(raw: any) {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const hasCredits = Boolean(raw.has_credits ?? raw.hasCredits ?? false);
+  const unlimited = Boolean(raw.unlimited ?? false);
+  const balance =
+    raw.balance === undefined || raw.balance === null ? null : String(raw.balance);
+
+  if (!hasCredits && !unlimited && !balance) return null;
+
+  return {
+    hasCredits,
+    unlimited,
+    balance,
+  };
+}
+
+function parseCodexHeaderNumber(headers: Headers, name: string) {
+  const raw = headers.get(name);
+  if (raw === null || raw === undefined || raw === '') return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function parseCodexHeaderString(headers: Headers, name: string) {
+  const raw = headers.get(name);
+  if (raw === null || raw === undefined) return null;
+  const value = String(raw).trim();
+  return value ? value : null;
+}
+
+function parseCodexHeaderBoolean(headers: Headers, name: string) {
+  const raw = parseCodexHeaderString(headers, name)?.toLowerCase();
+  if (!raw) return null;
+  if (raw === 'true' || raw === '1') return true;
+  if (raw === 'false' || raw === '0') return false;
+  return null;
+}
+
+function normalizeCodexWindowFromHeaders(headers: Headers, prefix: string) {
+  const usedPercent = parseCodexHeaderNumber(headers, `${prefix}-used-percent`);
+  const windowMinutes = parseCodexHeaderNumber(headers, `${prefix}-window-minutes`);
+  const resetsAt = parseCodexHeaderNumber(headers, `${prefix}-reset-at`);
+
+  if (usedPercent === null && windowMinutes === null && resetsAt === null) {
+    return null;
+  }
+
+  return {
+    usedPercent: usedPercent ?? 0,
+    windowMinutes,
+    resetsAt,
+  };
+}
+
+type CodexUsageMeta = {
+  source: string;
+  endpoint?: string;
+  currentUrl?: string;
+  lastUpdated?: number;
+  fallbackPlanType?: string | null;
+  accountId?: string | null;
+  accountEmail?: string | null;
+  accountName?: string | null;
+};
+
+function normalizeCodexUsageHeaders(
+  headers: Headers,
+  meta: CodexUsageMeta
+) {
+  const primary = normalizeCodexWindowFromHeaders(headers, 'x-codex-primary');
+  const secondary = normalizeCodexWindowFromHeaders(headers, 'x-codex-secondary');
+
+  const hasCredits = parseCodexHeaderBoolean(headers, 'x-codex-credits-has-credits');
+  const unlimited = parseCodexHeaderBoolean(headers, 'x-codex-credits-unlimited');
+  const balance = parseCodexHeaderString(headers, 'x-codex-credits-balance');
+  const credits = hasCredits !== null || unlimited !== null || balance
+    ? {
+        hasCredits: hasCredits ?? false,
+        unlimited: unlimited ?? false,
+        balance,
+      }
+    : null;
+
+  const limitPrefixes = new Set<string>();
+  for (const [name] of headers.entries()) {
+    const lower = name.toLowerCase();
+    if (lower.endsWith('-primary-used-percent')) {
+      limitPrefixes.add(lower.slice(0, -'-primary-used-percent'.length));
+    }
+  }
+
+  const additionalLimits = [...limitPrefixes]
+    .filter(prefix => prefix !== 'x-codex')
+    .map(prefix => {
+      const parsedPrimary = normalizeCodexWindowFromHeaders(headers, `${prefix}-primary`);
+      const parsedSecondary = normalizeCodexWindowFromHeaders(headers, `${prefix}-secondary`);
+      if (!parsedPrimary && !parsedSecondary) return null;
+
+      return {
+        limitId: prefix.replace(/^x-/, '').replace(/-/g, '_'),
+        limitName: parseCodexHeaderString(headers, `${prefix}-limit-name`),
+        primary: parsedPrimary,
+        secondary: parsedSecondary,
+      };
+    })
+    .filter(Boolean);
+
+  const planType = parseCodexHeaderString(headers, 'x-codex-plan-type') ?? meta.fallbackPlanType ?? null;
+
+  if (!primary && !secondary && !credits && additionalLimits.length === 0 && !planType) {
+    return null;
+  }
+
+  return {
+    category: 'Codex' as const,
+    planType,
+    primary,
+    secondary,
+    credits,
+    additionalLimits,
+    accountId: meta.accountId ?? null,
+    accountEmail: meta.accountEmail ?? null,
+    accountName: meta.accountName ?? null,
+    currentUrl: meta.currentUrl,
+    endpoint: meta.endpoint,
+    lastUpdated: meta.lastUpdated ?? Date.now(),
+    source: meta.source,
+    loginRequired: false,
+    error: null,
+  };
+}
+
+function normalizeCodexUsagePayload(
+  payload: any,
+  meta: CodexUsageMeta
+) {
+  const primary = normalizeCodexWindow(payload?.rate_limit?.primary_window ?? payload?.rateLimit?.primaryWindow);
+  const secondary = normalizeCodexWindow(payload?.rate_limit?.secondary_window ?? payload?.rateLimit?.secondaryWindow);
+  const credits = normalizeCodexCredits(payload?.credits);
+
+  const additionalLimits = Array.isArray(payload?.additional_rate_limits)
+    ? payload.additional_rate_limits
+        .map((entry: any, index: number) => {
+          const limitId = String(entry?.metered_feature ?? entry?.limit_name ?? `codex_additional_${index}`);
+          const limitName = entry?.limit_name ? String(entry.limit_name) : null;
+          const limitPayload = entry?.rate_limit ?? entry?.rateLimit ?? null;
+          const additionalPrimary = normalizeCodexWindow(limitPayload?.primary_window ?? limitPayload?.primaryWindow);
+          const additionalSecondary = normalizeCodexWindow(limitPayload?.secondary_window ?? limitPayload?.secondaryWindow);
+
+          if (!additionalPrimary && !additionalSecondary) return null;
+
+          return {
+            limitId,
+            limitName,
+            primary: additionalPrimary,
+            secondary: additionalSecondary,
+          };
+        })
+        .filter(Boolean)
+    : [];
+
+  return {
+    category: 'Codex' as const,
+    planType:
+      typeof payload?.plan_type === 'string'
+        ? payload.plan_type
+        : typeof payload?.planType === 'string'
+          ? payload.planType
+          : meta.fallbackPlanType ?? null,
+    primary,
+    secondary,
+    credits,
+    additionalLimits,
+    accountId: meta.accountId ?? null,
+    accountEmail: meta.accountEmail ?? null,
+    accountName: meta.accountName ?? null,
+    currentUrl: meta.currentUrl,
+    endpoint: meta.endpoint,
+    lastUpdated: meta.lastUpdated ?? Date.now(),
+    source: meta.source,
+    loginRequired: false,
+    error: null,
+  };
+}
+
+function buildCodexUsageEndpointCandidates(baseUrl?: string): string[] {
+  const baseCandidates = baseUrl
+    ? [baseUrl]
+    : ['https://chatgpt.com/backend-api', 'https://chatgpt.com/backend-api/codex'];
+
+  const endpoints = baseCandidates
+    .map(value => value.trim().replace(/\/+$/, ''))
+    .filter(Boolean)
+    .map(value => {
+      if (value.endsWith('/wham/usage') || value.endsWith('/api/codex/usage')) {
+        return value;
+      }
+      return value.includes('/backend-api') ? `${value}/wham/usage` : `${value}/api/codex/usage`;
+    });
+
+  return [...new Set(endpoints)];
+}
+
+async function fetchCodexUsageWithToken(params: { sessionToken: string; accountId?: string; baseUrl?: string }) {
+  const token = params.sessionToken?.trim();
+  if (!token) {
+    throw new Error('sessionToken 不能为空');
+  }
+
+  const headers: Record<string, string> = {
+    accept: 'application/json',
+    authorization: `Bearer ${token}`,
+    origin: 'https://chatgpt.com',
+    referer: CODEX_USAGE_PAGE_URL,
+    'user-agent': 'Guyue Master',
+  };
+
+  if (params.accountId?.trim()) {
+    headers['ChatGPT-Account-Id'] = params.accountId.trim();
+  }
+
+  let lastError = 'Codex usage 接口不可用';
+
+  for (const endpoint of buildCodexUsageEndpointCandidates(params.baseUrl)) {
+    try {
+      const response = await fetch(endpoint, { headers });
+      const bodyText = await response.text();
+
+      if (!response.ok) {
+        lastError = `GET ${endpoint} 失败: ${response.status} ${bodyText.slice(0, 160)}`;
+        continue;
+      }
+
+      const normalizedFromHeaders = normalizeCodexUsageHeaders(response.headers, {
+        source: 'chatgpt-token',
+        endpoint,
+        lastUpdated: Date.now(),
+      });
+      if (normalizedFromHeaders) {
+        return normalizedFromHeaders;
+      }
+
+      if (bodyText.trim()) {
+        const payload = JSON.parse(bodyText);
+        return normalizeCodexUsagePayload(payload, {
+          source: 'chatgpt-token',
+          endpoint,
+          lastUpdated: Date.now(),
+        });
+      }
+
+      lastError = `GET ${endpoint} 成功但未返回可解析的 usage 数据`;
+    } catch (error) {
+      lastError = `${endpoint}: ${(error as Error).message}`;
+    }
+  }
+
+  throw new Error(lastError);
+}
+
+async function fetchCodexUsageFromBrowserWindow(profileId?: string) {
+  const win = await ensureCodexUsageWindow(profileId, false);
+  const currentUrl = win.webContents.getURL();
+
+  if (!currentUrl.includes('chatgpt.com/codex') && !currentUrl.includes('auth.openai.com')) {
+    void win.loadURL(CODEX_USAGE_PAGE_URL);
+    await waitForWindowLoad(win);
+  }
+
+  const script = `
+    (async () => {
+      const result = {
+        loginRequired: false,
+        error: null,
+        payload: null,
+        endpoint: null,
+        accessToken: null,
+        accountId: null,
+        accountEmail: null,
+        accountName: null,
+        planType: null,
+        currentUrl: window.location.href,
+        lastUpdated: Date.now(),
+        attempts: [],
+      };
+
+      const looksLikeLoginPage = (url, text) => {
+        const haystack = String(url || '') + '\\n' + String(text || '');
+        const lower = haystack.toLowerCase();
+        return lower.includes('auth.openai.com')
+          || lower.includes('/login')
+          || lower.includes('/log-in')
+          || lower.includes('/signin')
+          || lower.includes('continue with google')
+          || lower.includes('continue with apple')
+          || lower.includes('log in to continue')
+          || lower.includes('sign up');
+      };
+
+      const decodeJwtPayload = (token) => {
+        try {
+          const parts = String(token || '').split('.');
+          if (parts.length < 2) return null;
+          const normalized = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+          const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+          return JSON.parse(atob(padded));
+        } catch {
+          return null;
+        }
+      };
+
+      const normalizeText = (value) => {
+        if (typeof value !== 'string') return null;
+        const trimmed = value.trim();
+        return trimmed || null;
+      };
+
+      const extractSessionHints = (sessionData) => {
+        const accessToken = sessionData?.accessToken || sessionData?.access_token || sessionData?.token || null;
+        const jwtPayload = accessToken ? decodeJwtPayload(accessToken) : null;
+        const authClaims = jwtPayload?.['https://api.openai.com/auth'] || {};
+        const user = sessionData?.user || {};
+        return {
+          accessToken,
+          accountId:
+            sessionData?.account_id
+            || sessionData?.chatgpt_account_id
+            || user?.id
+            || user?.account_id
+            || authClaims?.chatgpt_account_id
+            || null,
+          accountEmail:
+            normalizeText(sessionData?.email)
+            || normalizeText(user?.email)
+            || normalizeText(user?.profile?.email)
+            || normalizeText(jwtPayload?.email)
+            || normalizeText(authClaims?.email)
+            || null,
+          accountName:
+            normalizeText(sessionData?.name)
+            || normalizeText(user?.name)
+            || normalizeText(user?.display_name)
+            || normalizeText(user?.displayName)
+            || normalizeText(user?.username)
+            || normalizeText(jwtPayload?.name)
+            || normalizeText(authClaims?.name)
+            || null,
+          planType:
+            sessionData?.chatgpt_plan_type
+            || user?.plan_type
+            || user?.planType
+            || authClaims?.chatgpt_plan_type
+            || null,
+        };
+      };
+
+      const fetchAuthSession = async () => {
+        const sessionEndpoints = ['/api/auth/session', '/auth/session'];
+        for (const endpoint of sessionEndpoints) {
+          try {
+            const response = await fetch(endpoint, {
+              method: 'GET',
+              credentials: 'include',
+              headers: { accept: 'application/json' },
+            });
+            const text = await response.text();
+            result.attempts.push({ endpoint, status: response.status });
+            if (!response.ok || !text.trim()) continue;
+
+            const sessionData = JSON.parse(text);
+            const hints = extractSessionHints(sessionData);
+            if (hints.accessToken) {
+              result.accessToken = hints.accessToken;
+              result.accountId = hints.accountId;
+              result.accountEmail = hints.accountEmail;
+              result.accountName = hints.accountName;
+              result.planType = hints.planType;
+              return hints;
+            }
+          } catch (error) {
+            result.attempts.push({ endpoint, error: (error && error.message) || String(error) });
+          }
+        }
+        return null;
+      };
+
+      try {
+        const bodyText = (document.body && document.body.innerText) || '';
+        const authSession = await fetchAuthSession();
+        if (looksLikeLoginPage(window.location.href, bodyText) && !authSession?.accessToken) {
+          result.loginRequired = true;
+          result.error = 'login-required';
+          return result;
+        }
+
+        const endpoints = ['/backend-api/wham/usage', '/backend-api/codex/wham/usage'];
+
+        for (const endpoint of endpoints) {
+          try {
+            const response = await fetch(endpoint, {
+              method: 'GET',
+              credentials: 'include',
+              headers: { accept: 'application/json' },
+            });
+            const text = await response.text();
+            result.attempts.push({ endpoint, status: response.status });
+
+            if (response.status === 401 || response.status === 403) {
+              result.endpoint = endpoint;
+              if (!authSession?.accessToken) {
+                result.loginRequired = true;
+                result.error = 'login-required';
+                return result;
+              }
+              continue;
+            }
+
+            if (looksLikeLoginPage(response.url, text) && !authSession?.accessToken) {
+              result.loginRequired = true;
+              result.error = 'login-required';
+              result.endpoint = endpoint;
+              return result;
+            }
+
+            if (!response.ok) {
+              continue;
+            }
+
+            result.payload = JSON.parse(text);
+            result.endpoint = endpoint;
+            return result;
+          } catch (error) {
+            result.attempts.push({ endpoint, error: (error && error.message) || String(error) });
+          }
+        }
+
+        if (authSession?.accessToken) {
+          result.error = 'usage-browser-fetch-failed';
+          return result;
+        }
+
+        result.error = result.attempts
+          .map(item => item.error ? item.endpoint + ': ' + item.error : item.endpoint + ': ' + item.status)
+          .join(' | ') || 'usage-unavailable';
+        return result;
+      } catch (error) {
+        result.error = (error && error.message) || String(error);
+        return result;
+      }
+    })();
+  `;
+
+  try {
+    const result = await win.webContents.executeJavaScript(script, true);
+    if (result?.payload) {
+      return normalizeCodexUsagePayload(result.payload, {
+        source: 'chatgpt-browser',
+        endpoint: result.endpoint,
+        currentUrl: result.currentUrl,
+        lastUpdated: result.lastUpdated,
+        fallbackPlanType: result.planType,
+        accountId: result.accountId,
+        accountEmail: result.accountEmail,
+        accountName: result.accountName,
+      });
+    }
+
+    if (result?.accessToken) {
+      try {
+        const tokenUsage = await fetchCodexUsageWithToken({
+          sessionToken: result.accessToken,
+          accountId: result.accountId || undefined,
+        });
+        return {
+          ...tokenUsage,
+          planType: tokenUsage.planType ?? result.planType ?? null,
+          accountId: tokenUsage.accountId ?? result.accountId ?? null,
+          accountEmail: tokenUsage.accountEmail ?? result.accountEmail ?? null,
+          accountName: tokenUsage.accountName ?? result.accountName ?? null,
+          currentUrl: result.currentUrl ?? tokenUsage.currentUrl,
+          source: 'chatgpt-browser-token',
+        };
+      } catch (tokenError) {
+        return {
+          category: 'Codex' as const,
+          planType: result.planType ?? null,
+          primary: null,
+          secondary: null,
+          credits: null,
+          additionalLimits: [],
+          accountId: result?.accountId ?? null,
+          accountEmail: result?.accountEmail ?? null,
+          accountName: result?.accountName ?? null,
+          currentUrl: result?.currentUrl,
+          endpoint: result?.endpoint,
+          lastUpdated: result?.lastUpdated ?? Date.now(),
+          source: 'chatgpt-browser-token',
+          loginRequired: false,
+          error: `${result?.error || 'usage-browser-fetch-failed'} | ${(tokenError as Error).message}`,
+        };
+      }
+    }
+
+    return {
+      category: 'Codex' as const,
+      planType: result?.planType ?? null,
+      primary: null,
+      secondary: null,
+      credits: null,
+      additionalLimits: [],
+      accountId: result?.accountId ?? null,
+      accountEmail: result?.accountEmail ?? null,
+      accountName: result?.accountName ?? null,
+      currentUrl: result?.currentUrl,
+      endpoint: result?.endpoint,
+      lastUpdated: result?.lastUpdated ?? Date.now(),
+      source: 'chatgpt-browser',
+      loginRequired: Boolean(result?.loginRequired),
+      error: result?.error ?? 'usage-unavailable',
+    };
+  } catch (error) {
+    return {
+      category: 'Codex' as const,
+      planType: null,
+      primary: null,
+      secondary: null,
+      credits: null,
+      additionalLimits: [],
+      accountId: null,
+      accountEmail: null,
+      accountName: null,
+      currentUrl: win.webContents.getURL(),
+      endpoint: undefined,
+      lastUpdated: Date.now(),
+      source: 'chatgpt-browser',
+      loginRequired: false,
+      error: (error as Error).message,
+    };
+  }
 }
 
 // 当 Electron 完成初始化时创建窗口
@@ -564,6 +2305,40 @@ ipcMain.handle('leetcode-api', async (event, { query, variables, session }) => {
   } catch (error) {
     console.error('LeetCode API error:', error);
     throw error;
+  }
+});
+
+// --- Codex Usage API ---
+
+ipcMain.handle('fetch-codex-usage', async (_event, params: { sessionToken: string; accountId?: string; baseUrl?: string }) => {
+  return await fetchCodexUsageWithToken(params);
+});
+
+ipcMain.handle('open-codex-usage-login', async (_event, params?: { profileId?: string }) => {
+  try {
+    await ensureCodexUsageWindow(params?.profileId, true);
+    return true;
+  } catch (error) {
+    throw new Error((error as Error).message || '打开 Codex 登录窗口失败');
+  }
+});
+
+ipcMain.handle('fetch-codex-usage-browser', async (_event, params?: { profileId?: string }) => {
+  try {
+    return await fetchCodexUsageFromBrowserWindow(params?.profileId);
+  } catch (error) {
+    return {
+      category: 'Codex' as const,
+      planType: null,
+      primary: null,
+      secondary: null,
+      credits: null,
+      additionalLimits: [],
+      lastUpdated: Date.now(),
+      source: 'chatgpt-browser',
+      loginRequired: false,
+      error: (error as Error).message,
+    };
   }
 });
 
@@ -1345,6 +3120,7 @@ const ptyProcesses: Record<string, any> = {};
 
 ipcMain.handle('terminal-create', (event, options) => {
   const shell = process.env[os.platform() === 'win32' ? 'COMSPEC' : 'SHELL'] || '/bin/zsh';
+  const program = options?.command || shell;
   const id = options?.id || Math.random().toString(36).substring(7);
   
   if (ptyProcesses[id]) {
@@ -1355,17 +3131,24 @@ ipcMain.handle('terminal-create', (event, options) => {
 
   try {
     // Use login shell to ensure user's profile (and PATH) is loaded
-    const args = os.platform() === 'win32' ? [] : ['-l'];
+    const args = Array.isArray(options?.args)
+      ? options.args
+      : (options?.command ? [] : (os.platform() === 'win32' ? [] : ['-l']));
     
-    const ptyProcess = pty.spawn(shell, args, {
+    const ptyProcess = pty.spawn(program, args, {
       name: 'xterm-256color',
-      cols: 80,
-      rows: 30,
-      cwd: process.env.HOME,
+      cols: options?.cols || 80,
+      rows: options?.rows || 30,
+      cwd: options?.cwd || process.env.HOME || os.homedir(),
       env: {
         ...process.env,
-        LANG: 'en_US.UTF-8',
-        LC_ALL: 'en_US.UTF-8',
+        TERM: 'xterm-256color',
+        COLORTERM: 'truecolor',
+        TERM_PROGRAM: 'Guyue Master',
+        TERM_PROGRAM_VERSION: app.getVersion(),
+        LANG: process.env.LANG || 'en_US.UTF-8',
+        LC_ALL: process.env.LC_ALL || 'en_US.UTF-8',
+        LC_CTYPE: process.env.LC_CTYPE || process.env.LANG || 'en_US.UTF-8',
         ...options?.env
       } as any
     });
@@ -1409,6 +3192,91 @@ ipcMain.on('terminal-close', (event, id) => {
   }
 });
 
+ipcMain.handle('opencode-get-info', async () => {
+  const binaryPath = getOpenCodeBinaryPath();
+  const defaultCwd = getOpenCodeDefaultCwd();
+  const binaryExists = await fs.access(binaryPath).then(() => true).catch(() => false);
+  const { providers, authPath, knownModelsByProvider, defaultModelsByProvider } = await loadOpenCodeProviders();
+
+  return {
+    binaryPath,
+    binaryExists,
+    defaultCwd,
+    version: OPENCODE_VERSION,
+    providers,
+    authPath,
+    knownModelsByProvider,
+    defaultModelsByProvider,
+  };
+});
+
+ipcMain.handle('opencode-get-embedded-tui-config-path', async () => {
+  return await ensureEmbeddedOpenCodeTuiConfig();
+});
+
+ipcMain.handle('opencode-get-runtime-state', async (_event, params?: {
+  directory?: string;
+  officialSessionId?: string;
+  startedAfter?: number;
+  providerId?: string;
+}) => {
+  return await loadOpenCodeRuntimeState({
+    directory: params?.directory,
+    officialSessionId: params?.officialSessionId,
+    startedAfter: params?.startedAfter,
+    providerId: params?.providerId,
+  });
+});
+
+ipcMain.handle('opencode-get-provider-models', async (_event, params?: {
+  providerId?: string;
+  directory?: string;
+}) => {
+  const normalizedProviderId = String(params?.providerId || '').trim();
+  if (!normalizedProviderId) {
+    return { models: [], defaultModel: '', source: 'local' as const };
+  }
+
+  return await loadOpenCodeProviderModels(normalizedProviderId, params?.directory);
+});
+
+ipcMain.handle('opencode-list-sessions', async (_event, params?: {
+  directory?: string;
+}) => {
+  return await listOpenCodeSessions(params?.directory || '');
+});
+
+ipcMain.handle('opencode-delete-session', async (_event, params?: {
+  sessionId?: string;
+  directory?: string;
+}) => {
+  const sessionId = String(params?.sessionId || '').trim();
+  if (!sessionId) {
+    return { ok: false, error: 'missing-session-id' };
+  }
+
+  const binaryPath = getOpenCodeBinaryPath();
+  const cwd = params?.directory?.trim() || getOpenCodeDefaultCwd();
+
+  return await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+    execFile(
+      binaryPath,
+      ['session', 'delete', sessionId],
+      { cwd, timeout: 15000 },
+      (error, _stdout, stderr) => {
+        if (error) {
+          resolve({
+            ok: false,
+            error: (stderr || error.message || 'delete-failed').trim(),
+          });
+          return;
+        }
+        resolve({ ok: true });
+      },
+    );
+  });
+});
+
 // ==================== 应用数据文件存储 ====================
 // 获取应用数据目录路径
 function getAppDataDir(): string {
@@ -1436,6 +3304,48 @@ ipcMain.handle('save-app-data', async (_, key: string, data: any) => {
     console.error(`Failed to save app data [${key}]:`, error);
     return false;
   }
+});
+
+ipcMain.handle('opencode-get-session-messages', async (_event, params?: {
+  sessionId?: string;
+}) => {
+  const sessionId = String(params?.sessionId || '').trim();
+  if (!sessionId) return [];
+  try {
+    return await listOpenCodeSessionMessages(sessionId);
+  } catch {
+    return [];
+  }
+});
+
+ipcMain.handle('opencode-send-message', async (_event, params?: {
+  streamId?: string;
+  directory?: string;
+  officialSessionId?: string;
+  title?: string;
+  providerId?: string;
+  modelId?: string;
+  argsText?: string;
+  env?: Record<string, string>;
+  prompt?: string;
+}) => {
+  const prompt = String(params?.prompt || '').trim();
+  if (!prompt) {
+    return { ok: false, error: 'empty-prompt' };
+  }
+
+  return await runOpenCodePrompt({
+    streamId: params?.streamId,
+    streamSender: _event.sender,
+    directory: String(params?.directory || '').trim(),
+    officialSessionId: params?.officialSessionId,
+    title: params?.title,
+    providerId: params?.providerId,
+    modelId: params?.modelId,
+    argsText: params?.argsText,
+    env: params?.env || {},
+    prompt,
+  });
 });
 
 // IPC: 读取应用数据文件
@@ -1783,6 +3693,409 @@ function which(cmd: string, custom?: string): Promise<string | null> {
     }
   });
 }
+
+interface CodingPracticeRunFile {
+  id: 'input' | 'code' | 'output';
+  name: string;
+  content: string;
+}
+
+interface CodingPracticeRunParams {
+  language: string;
+  files: CodingPracticeRunFile[];
+  runner: {
+    compileCommand: string;
+    runCommand: string;
+    timeoutSeconds: number;
+  };
+}
+
+function parseCodingPracticeCaseBlocks(rawInput: string) {
+  const text = String(rawInput || '').replace(/\r\n/g, '\n');
+  const lines = text.split('\n');
+  const markerRegex = /^\s*={3,}\s*(.*?)\s*={3,}\s*$/;
+  const cases: Array<{ label: string; content: string }> = [];
+  let currentLabel = '';
+  let currentLines: string[] = [];
+  let sawMarkers = false;
+
+  const pushCurrent = () => {
+    const label = currentLabel.trim() || `case ${cases.length + 1}`;
+    const content = currentLines.join('\n').replace(/\n+$/, '');
+    cases.push({ label, content });
+    currentLines = [];
+  };
+
+  for (const line of lines) {
+    const marker = line.match(markerRegex);
+    if (marker) {
+      if (sawMarkers) {
+        pushCurrent();
+      }
+      sawMarkers = true;
+      currentLabel = marker[1]?.trim() || `case ${cases.length + 1}`;
+      continue;
+    }
+    currentLines.push(line);
+  }
+
+  if (!sawMarkers) {
+    return [{ label: 'case 1', content: text }];
+  }
+
+  pushCurrent();
+  return cases;
+}
+
+function formatCodingPracticeCaseLog(
+  entries: Array<{ label: string; content: string }>,
+  preferRawSingle = false,
+) {
+  if (entries.length === 0) return '';
+  if (entries.length === 1 && preferRawSingle) {
+    return entries[0].content;
+  }
+
+  return entries
+    .map((entry, index) => {
+      const header = `=== ${entry.label || `case ${index + 1}`} ===`;
+      const body = entry.content.trimEnd();
+      return body ? `${header}\n${body}` : header;
+    })
+    .join('\n\n')
+    .trim();
+}
+
+function renderCodingPracticeCommand(template: string, variables: Record<string, string>) {
+  return template.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => variables[key] ?? '');
+}
+
+function inferCodingPracticeCheckTemplate(params: CodingPracticeRunParams) {
+  const compileCommand = String(params?.runner?.compileCommand || '').trim();
+  if (compileCommand) {
+    return compileCommand;
+  }
+
+  switch (params?.language) {
+    case 'python':
+      return 'python3 -m py_compile "{{codeFile}}"';
+    case 'javascript':
+      return 'node --check "{{codeFile}}"';
+    case 'go':
+      return 'go build -o "{{binaryFile}}" "{{codeFile}}"';
+    case 'swift':
+      return 'swiftc -typecheck "{{codeFile}}"';
+    default:
+      return '';
+  }
+}
+
+function executeCodingPracticeCommand(command: string, cwd: string, timeoutMs: number) {
+  return new Promise<{ exitCode: number; stdout: string; stderr: string; timedOut: boolean }>((resolve) => {
+    const child = process.platform === 'win32'
+      ? spawn(process.env.COMSPEC || 'cmd.exe', ['/d', '/s', '/c', command], { cwd, env: process.env })
+      : spawn('/bin/bash', ['-lc', command], { cwd, env: process.env });
+
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let settled = false;
+
+    const finish = (payload: { exitCode: number; stdout: string; stderr: string; timedOut: boolean }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(payload);
+    };
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      setTimeout(() => child.kill('SIGKILL'), 1000).unref();
+    }, timeoutMs);
+
+    child.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+    child.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+    child.on('error', (error) => {
+      finish({
+        exitCode: -1,
+        stdout,
+        stderr: `${stderr}${stderr ? '\n' : ''}${error.message}`,
+        timedOut,
+      });
+    });
+    child.on('close', (code) => {
+      finish({
+        exitCode: code ?? -1,
+        stdout,
+        stderr: timedOut
+          ? `${stderr}${stderr ? '\n\n' : ''}命令执行超时（${Math.max(1, Math.round(timeoutMs / 1000))} 秒）。`
+          : stderr,
+        timedOut,
+      });
+    });
+  });
+}
+
+function formatCodingPracticeOutput(baseOutput: string, title: string, stderr: string, stdout: string, error?: string) {
+  const sections = [`=== ${title} ===`];
+
+  if (baseOutput.trim()) {
+    sections.push(`程序输出:\n${baseOutput.trim()}`);
+  }
+  if ((error || '').trim()) {
+    sections.push(`错误信息:\n${(error || '').trim()}`);
+  }
+  if (stderr.trim()) {
+    sections.push(`stderr:\n${stderr.trim()}`);
+  }
+  if (stdout.trim() && stdout.trim() !== baseOutput.trim()) {
+    sections.push(`stdout:\n${stdout.trim()}`);
+  }
+
+  return sections.join('\n\n').trim();
+}
+
+ipcMain.handle('coding-practice-run', async (_event, params: CodingPracticeRunParams) => {
+  const startedAt = Date.now();
+  let workDir = '';
+
+  try {
+    const files = Array.isArray(params?.files) ? params.files : [];
+    const inputFile = files.find(file => file?.id === 'input');
+    const codeFile = files.find(file => file?.id === 'code');
+    const outputFile = files.find(file => file?.id === 'output');
+
+    if (!codeFile?.name) {
+      return {
+        success: false,
+        stage: 'prepare' as const,
+        output: formatCodingPracticeOutput('', '执行失败', '', '', '缺少核心代码文件。'),
+        stdout: '',
+        stderr: '',
+        durationMs: Date.now() - startedAt,
+        error: '缺少核心代码文件',
+      };
+    }
+
+    const runCommandTemplate = String(params?.runner?.runCommand || '').trim();
+    if (!runCommandTemplate) {
+      return {
+        success: false,
+        stage: 'prepare' as const,
+        output: formatCodingPracticeOutput('', '执行失败', '', '', '请先配置运行命令。'),
+        stdout: '',
+        stderr: '',
+        durationMs: Date.now() - startedAt,
+        error: '缺少运行命令',
+      };
+    }
+
+    const runRoot = path.join(app.getPath('userData'), 'coding-practice-runs');
+    await fs.mkdir(runRoot, { recursive: true });
+    workDir = await fs.mkdtemp(path.join(runRoot, 'run-'));
+
+    const codeFilePath = path.join(workDir, codeFile.name);
+    const inputFilePath = path.join(workDir, inputFile?.name || 'input.in');
+    const outputFilePath = path.join(workDir, outputFile?.name || 'output.out');
+    const binaryFilePath = path.join(workDir, process.platform === 'win32' ? 'main.exe' : 'main.bin');
+
+    await Promise.all([
+      fs.writeFile(codeFilePath, codeFile.content || '', 'utf8'),
+      fs.writeFile(inputFilePath, inputFile?.content || '', 'utf8'),
+      fs.writeFile(outputFilePath, '', 'utf8'),
+    ]);
+
+    const variables = {
+      workDir,
+      codeFile: codeFilePath,
+      inputFile: inputFilePath,
+      outputFile: outputFilePath,
+      binaryFile: binaryFilePath,
+    };
+    const timeoutMs = Math.max(5000, Math.min(120000, Math.round(Number(params?.runner?.timeoutSeconds || 15) * 1000)));
+    const compileCommand = renderCodingPracticeCommand(String(params?.runner?.compileCommand || ''), variables).trim();
+    const runCommand = renderCodingPracticeCommand(runCommandTemplate, variables).trim();
+    const inputCases = parseCodingPracticeCaseBlocks(inputFile?.content || '');
+    const collectedOutputEntries: Array<{ label: string; content: string }> = [];
+    const collectedStdoutEntries: Array<{ label: string; content: string }> = [];
+    const collectedStderrEntries: Array<{ label: string; content: string }> = [];
+
+    if (compileCommand) {
+      const compileResult = await executeCodingPracticeCommand(compileCommand, workDir, timeoutMs);
+      if (compileResult.exitCode !== 0) {
+        return {
+          success: false,
+          stage: 'compile' as const,
+          output: formatCodingPracticeOutput('', '编译失败', compileResult.stderr, compileResult.stdout, '编译器返回了非零退出码。'),
+          stdout: compileResult.stdout,
+          stderr: compileResult.stderr,
+          durationMs: Date.now() - startedAt,
+          caseCount: inputCases.length,
+          error: '编译失败',
+        };
+      }
+    }
+
+    for (let index = 0; index < inputCases.length; index += 1) {
+      const inputCase = inputCases[index];
+      await Promise.all([
+        fs.writeFile(inputFilePath, inputCase.content || '', 'utf8'),
+        fs.writeFile(outputFilePath, '', 'utf8'),
+      ]);
+
+      const runResult = await executeCodingPracticeCommand(runCommand, workDir, timeoutMs);
+      const rawOutput = await fs.readFile(outputFilePath, 'utf8').catch(() => '');
+
+      collectedOutputEntries.push({ label: inputCase.label, content: rawOutput });
+      if (runResult.stdout.trim()) {
+        collectedStdoutEntries.push({ label: inputCase.label, content: runResult.stdout });
+      }
+      if (runResult.stderr.trim()) {
+        collectedStderrEntries.push({ label: inputCase.label, content: runResult.stderr });
+      }
+
+      if (runResult.exitCode !== 0) {
+        const multiCaseError = inputCases.length > 1 ? `第 ${index + 1} 组用例执行失败。` : '';
+        return {
+          success: false,
+          stage: 'run' as const,
+          output: formatCodingPracticeOutput(
+            formatCodingPracticeCaseLog(collectedOutputEntries, inputCases.length === 1),
+            '运行失败',
+            formatCodingPracticeCaseLog(collectedStderrEntries, inputCases.length === 1),
+            formatCodingPracticeCaseLog(collectedStdoutEntries, inputCases.length === 1),
+            `${multiCaseError}${runResult.timedOut ? '程序执行超时。' : '程序返回了非零退出码。'}`.trim(),
+          ),
+          stdout: formatCodingPracticeCaseLog(collectedStdoutEntries, inputCases.length === 1),
+          stderr: formatCodingPracticeCaseLog(collectedStderrEntries, inputCases.length === 1),
+          durationMs: Date.now() - startedAt,
+          caseCount: inputCases.length,
+          error: '运行失败',
+        };
+      }
+    }
+
+    return {
+      success: true,
+      stage: 'run' as const,
+      output: formatCodingPracticeCaseLog(collectedOutputEntries, inputCases.length === 1),
+      stdout: formatCodingPracticeCaseLog(collectedStdoutEntries, inputCases.length === 1),
+      stderr: formatCodingPracticeCaseLog(collectedStderrEntries, inputCases.length === 1),
+      durationMs: Date.now() - startedAt,
+      caseCount: inputCases.length,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '执行失败';
+    return {
+      success: false,
+      stage: 'prepare' as const,
+      output: formatCodingPracticeOutput('', '执行失败', '', '', message),
+      stdout: '',
+      stderr: '',
+      durationMs: Date.now() - startedAt,
+      caseCount: 1,
+      error: message,
+    };
+  } finally {
+    if (workDir) {
+      await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+});
+
+ipcMain.handle('coding-practice-check', async (_event, params: CodingPracticeRunParams) => {
+  const startedAt = Date.now();
+  let workDir = '';
+
+  try {
+    const files = Array.isArray(params?.files) ? params.files : [];
+    const inputFile = files.find(file => file?.id === 'input');
+    const codeFile = files.find(file => file?.id === 'code');
+    const outputFile = files.find(file => file?.id === 'output');
+
+    if (!codeFile?.name) {
+      return {
+        success: false,
+        supported: false,
+        stage: 'prepare' as const,
+        stdout: '',
+        stderr: '',
+        durationMs: Date.now() - startedAt,
+        error: '缺少核心代码文件',
+      };
+    }
+
+    const runRoot = path.join(app.getPath('userData'), 'coding-practice-runs');
+    await fs.mkdir(runRoot, { recursive: true });
+    workDir = await fs.mkdtemp(path.join(runRoot, 'check-'));
+
+    const codeFilePath = path.join(workDir, codeFile.name);
+    const inputFilePath = path.join(workDir, inputFile?.name || 'input.in');
+    const outputFilePath = path.join(workDir, outputFile?.name || 'output.out');
+    const binaryFilePath = path.join(workDir, process.platform === 'win32' ? 'main.exe' : 'main.bin');
+
+    await Promise.all([
+      fs.writeFile(codeFilePath, codeFile.content || '', 'utf8'),
+      fs.writeFile(inputFilePath, inputFile?.content || '', 'utf8'),
+      fs.writeFile(outputFilePath, '', 'utf8'),
+    ]);
+
+    const variables = {
+      workDir,
+      codeFile: codeFilePath,
+      inputFile: inputFilePath,
+      outputFile: outputFilePath,
+      binaryFile: binaryFilePath,
+    };
+    const timeoutMs = Math.max(3000, Math.min(30000, Math.round(Number(params?.runner?.timeoutSeconds || 15) * 1000)));
+    const checkTemplate = inferCodingPracticeCheckTemplate(params);
+    const checkCommand = renderCodingPracticeCommand(checkTemplate, variables).trim();
+
+    if (!checkCommand) {
+      return {
+        success: true,
+        supported: false,
+        stage: 'prepare' as const,
+        stdout: '',
+        stderr: '',
+        durationMs: Date.now() - startedAt,
+      };
+    }
+
+    const checkResult = await executeCodingPracticeCommand(checkCommand, workDir, timeoutMs);
+    return {
+      success: checkResult.exitCode === 0,
+      supported: true,
+      stage: 'compile' as const,
+      stdout: checkResult.stdout,
+      stderr: checkResult.stderr,
+      durationMs: Date.now() - startedAt,
+      error: checkResult.exitCode === 0
+        ? undefined
+        : (checkResult.timedOut ? '检查超时' : '语法检查失败'),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '语法检查失败';
+    return {
+      success: false,
+      supported: false,
+      stage: 'prepare' as const,
+      stdout: '',
+      stderr: '',
+      durationMs: Date.now() - startedAt,
+      error: message,
+    };
+  } finally {
+    if (workDir) {
+      await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+});
 
 /** 检测 LaTeX 运行环境 */
 ipcMain.handle('latex-check-env', async () => {

@@ -206,7 +206,7 @@ export interface PluginMetadata {
   entryPath?: string; // Runtime only: absolute path to entry file
 }
 
-export type AppMode = 'notes' | 'ssh' | 'api' | 'todo' | 'files' | 'prompts' | 'markdown' | 'terminal' | 'browser' | 'leetcode' | 'learning' | 'image-hosting' | 'recurring' | string;
+export type AppMode = 'notes' | 'ssh' | 'api' | 'todo' | 'files' | 'prompts' | 'markdown' | 'terminal' | 'browser' | 'practice' | 'leetcode' | 'spaces' | 'learning' | 'workspace' | 'coding-practice' | 'opencode' | 'image-hosting' | 'recurring' | string;
 
 export interface ModuleConfig {
   id: string;
@@ -223,21 +223,22 @@ export const DEFAULT_MODULE_CONFIG: ModuleConfig[] = [
   { id: 'agent',        name: 'AI助手',    enabled: true, priority: 0,  icon: 'Bot' },
   { id: 'todo',         name: '任务与日程', enabled: true, priority: 1,  icon: 'ListTodo',      shortcut: 'Tab+1' },
   { id: 'datacenter',   name: '数据中心',  enabled: true, priority: 2,  icon: 'BarChart3',     shortcut: 'Tab+D' },
-  { id: 'learning',     name: '学习空间',  enabled: true, priority: 3,  icon: 'GraduationCap', shortcut: 'Tab+K' },
-  { id: 'leetcode',     name: 'LeetCode',  enabled: true, priority: 4,  icon: 'Code2',         shortcut: 'Tab+L' },
-  { id: 'files',        name: '文件管理',  enabled: true, priority: 5,  icon: 'FolderOpen',    shortcut: 'Tab+4' },
-  { id: 'terminal',     name: '本地终端',  enabled: true, priority: 6,  icon: 'Command',       shortcut: 'Tab+0' },
-  { id: 'excalidraw',   name: '绘图板',    enabled: true, priority: 7,  icon: 'Pencil',        shortcut: 'Tab+E' },
-  { id: 'prompts',      name: 'Skills',    enabled: true, priority: 8,  icon: 'Sparkles',      shortcut: 'Tab+5' },
-  { id: 'notes',        name: '便签',      enabled: true, priority: 9,  icon: 'StickyNote',    shortcut: 'Tab+2' },
-  { id: 'api',          name: 'API管理',   enabled: true, priority: 10, icon: 'Webhook',       shortcut: 'Tab+3' },
-  { id: 'browser',      name: '内置浏览器', enabled: true, priority: 11, icon: 'Globe',        shortcut: 'Tab+B' },
-  { id: 'image-hosting', name: '图床管理', enabled: true, priority: 12, icon: 'Image',         shortcut: 'Tab+I' },
-  { id: 'latex',        name: 'LaTeX编辑器', enabled: true, priority: 13, icon: 'FileType2',    shortcut: 'Tab+X' },
-  { id: 'music',        name: 'Music',      enabled: true, priority: 14, icon: 'Music',         shortcut: 'Tab+M' },
-  { id: 'rag',          name: 'RAG Lab',    enabled: true, priority: 15, icon: 'Database',      shortcut: 'Tab+R' },
-  { id: 'knowledge-base', name: '知识库',  enabled: true, priority: 16, icon: 'Library',       shortcut: 'Tab+J' },
-  { id: 'workflow',       name: '工作流引擎', enabled: true, priority: 17, icon: 'Workflow',      shortcut: 'Tab+W' },
+  { id: 'spaces',       name: '空间',      enabled: true, priority: 3,  icon: 'PanelsTopLeft',  shortcut: 'Tab+K' },
+  { id: 'practice',     name: '刷题',      enabled: true, priority: 4,  icon: 'Code2',         shortcut: 'Tab+L' },
+  { id: 'opencode',     name: 'OpenCode',  enabled: true, priority: 5,  icon: 'SquareTerminal', shortcut: 'Tab+O' },
+  { id: 'files',        name: '文件管理',  enabled: true, priority: 7,  icon: 'FolderOpen',    shortcut: 'Tab+4' },
+  { id: 'terminal',     name: '本地终端',  enabled: true, priority: 8,  icon: 'Command',       shortcut: 'Tab+0' },
+  { id: 'excalidraw',   name: '绘图板',    enabled: true, priority: 9,  icon: 'Pencil',        shortcut: 'Tab+E' },
+  { id: 'prompts',      name: 'Skills',    enabled: true, priority: 10, icon: 'Sparkles',      shortcut: 'Tab+5' },
+  { id: 'notes',        name: '便签',      enabled: true, priority: 11, icon: 'StickyNote',    shortcut: 'Tab+2' },
+  { id: 'api',          name: 'API管理',   enabled: true, priority: 12, icon: 'Webhook',       shortcut: 'Tab+3' },
+  { id: 'browser',      name: '内置浏览器', enabled: true, priority: 13, icon: 'Globe',        shortcut: 'Tab+B' },
+  { id: 'image-hosting', name: '图床管理', enabled: true, priority: 14, icon: 'Image',         shortcut: 'Tab+I' },
+  { id: 'latex',        name: 'LaTeX编辑器', enabled: true, priority: 15, icon: 'FileType2',    shortcut: 'Tab+X' },
+  { id: 'music',        name: 'Music',      enabled: true, priority: 16, icon: 'Music',         shortcut: 'Tab+M' },
+  { id: 'rag',          name: 'RAG Lab',    enabled: true, priority: 17, icon: 'Database',      shortcut: 'Tab+R' },
+  { id: 'knowledge-base', name: '知识库',  enabled: true, priority: 18, icon: 'Library',       shortcut: 'Tab+J' },
+  { id: 'workflow',       name: '工作流引擎', enabled: true, priority: 19, icon: 'Workflow',      shortcut: 'Tab+W' },
 ];
 
 export interface RecurringCategory {
@@ -356,12 +357,158 @@ export interface ElectronAPI {
   writeTerminal: (id: string, data: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => void;
   closeTerminal: (id: string) => void;
+  getOpenCodeInfo: () => Promise<{
+    binaryPath: string;
+    defaultCwd: string;
+    binaryExists: boolean;
+    version?: string | null;
+    authPath?: string;
+    providers: Array<{ id: string; label: string; authType: string; hasStoredCredential: boolean }>;
+    knownModelsByProvider: Record<string, string[]>;
+    defaultModelsByProvider: Record<string, string>;
+  }>;
+  getOpenCodeEmbeddedTuiConfigPath: () => Promise<string>;
+  getOpenCodeRuntimeState: (params: {
+    directory?: string;
+    officialSessionId?: string;
+    startedAfter?: number;
+    providerId?: string;
+  }) => Promise<{
+    session: {
+      id: string;
+      title: string;
+      directory: string;
+      projectId: string;
+      timeCreated: number;
+      timeUpdated: number;
+    } | null;
+    latestUsage: {
+      providerId: string | null;
+      providerLabel: string | null;
+      modelId: string | null;
+      cost: number;
+      tokens: {
+        total: number;
+        input: number;
+        output: number;
+        reasoning: number;
+        cacheRead: number;
+        cacheWrite: number;
+      };
+      timeUpdated: number | null;
+    } | null;
+    sessionTotals: {
+      turns: number;
+      totalCost: number;
+      totalTokens: number;
+      inputTokens: number;
+      outputTokens: number;
+      reasoningTokens: number;
+      cacheReadTokens: number;
+      cacheWriteTokens: number;
+    };
+    knownModels: string[];
+    plan: {
+      available: boolean;
+      note: string;
+    };
+    source: 'database';
+    lastUpdated: number;
+  }>;
+  getOpenCodeProviderModels: (params: { providerId: string; directory?: string }) => Promise<{
+    models: string[];
+    defaultModel: string;
+    source: 'opencode' | 'models.dev' | 'local';
+  }>;
+  getOpenCodeSessions: (params: {
+    directory?: string;
+  }) => Promise<Array<{
+    id: string;
+    title: string;
+    directory: string;
+    projectId: string;
+    timeCreated: number;
+    timeUpdated: number;
+    version: string | null;
+  }>>;
+  getOpenCodeSessionMessages: (params: {
+    sessionId?: string;
+  }) => Promise<Array<{
+    id: string;
+    role: 'user' | 'assistant' | 'system';
+    providerId: string | null;
+    modelId: string | null;
+    timeCreated: number;
+    timeUpdated: number;
+    text: string;
+    hasReasoning: boolean;
+    hasTool: boolean;
+    cost: number | null;
+    totalTokens: number | null;
+    parts?: Array<{
+      id?: string | null;
+      type: string;
+      timeCreated?: number | null;
+      timeUpdated?: number | null;
+      text?: string;
+      isRedactedReasoning?: boolean;
+      tool?: string;
+      callId?: string;
+      status?: string;
+      title?: string;
+      input?: unknown;
+      output?: string;
+      metadata?: unknown;
+      files?: string[];
+      hash?: string;
+      filename?: string;
+      mime?: string;
+      url?: string;
+    }>;
+  }>>;
+  sendOpenCodeMessage: (params: {
+    streamId?: string;
+    directory?: string;
+    officialSessionId?: string;
+    title?: string;
+    providerId?: string;
+    modelId?: string;
+    argsText?: string;
+    env?: Record<string, string>;
+    prompt: string;
+  }) => Promise<{
+    ok: boolean;
+    error?: string;
+    stdout?: string;
+    stderr?: string;
+    sessionId?: string | null;
+    sessionTitle?: string | null;
+  }>;
+  onOpenCodeMessageStream: (callback: (event: any, payload: {
+    streamId: string;
+    type: 'text' | 'done' | 'error';
+    text?: string;
+    error?: string;
+    sessionId?: string | null;
+    sessionTitle?: string | null;
+  }) => void) => (() => void);
+  deleteOpenCodeSession: (params: {
+    sessionId: string;
+    directory?: string;
+  }) => Promise<{
+    ok: boolean;
+    error?: string;
+  }>;
   // 应用数据文件存储
   saveAppData: (key: string, data: any) => Promise<boolean>;
   loadAppData: (key: string) => Promise<any>;
   appDataExists: (key: string) => Promise<boolean>;
   // LeetCode API
   leetcodeApi: (params: { query: string; variables: any; session: string }) => Promise<any>;
+  // Codex Usage API
+  fetchCodexUsage: (params: { sessionToken: string; accountId?: string; baseUrl?: string }) => Promise<CodexUsage>;
+  openCodexUsageLogin: (params?: { profileId?: string }) => Promise<boolean>;
+  fetchCodexUsageFromBrowser: (params?: { profileId?: string }) => Promise<CodexUsage>;
   // Zenmux Usage API
   openZenmuxLogin: () => Promise<boolean>;
   fetchZenmuxUsageFromBrowser: () => Promise<ZenmuxUsage>;
@@ -405,6 +552,45 @@ export interface ElectronAPI {
   latexSaveFileCategories: (categories: LatexFileCategory[]) => Promise<boolean>;
   latexGetFileCategoryMap: () => Promise<Record<string, string>>;
   latexSetFileCategory: (params: { filePath: string; categoryId: string }) => Promise<boolean>;
+  codingPracticeRun: (params: CodingPracticeRunParams) => Promise<CodingPracticeRunResult>;
+  codingPracticeCheck: (params: CodingPracticeRunParams) => Promise<CodingPracticeCheckResult>;
+}
+
+export interface CodingPracticeRunnerConfig {
+  compileCommand: string;
+  runCommand: string;
+  timeoutSeconds: number;
+}
+
+export interface CodingPracticeRunParams {
+  language: string;
+  files: Array<{
+    id: 'input' | 'code' | 'output';
+    name: string;
+    content: string;
+  }>;
+  runner: CodingPracticeRunnerConfig;
+}
+
+export interface CodingPracticeRunResult {
+  success: boolean;
+  stage: 'prepare' | 'compile' | 'run';
+  output: string;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  caseCount?: number;
+  error?: string;
+}
+
+export interface CodingPracticeCheckResult {
+  success: boolean;
+  supported: boolean;
+  stage: 'prepare' | 'compile';
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  error?: string;
 }
 
 declare global {
@@ -512,6 +698,43 @@ export interface ZenmuxUsage {
   source: string;              // 数据来源
 }
 
+export interface CodexUsageWindow {
+  usedPercent: number;
+  windowMinutes?: number | null;
+  resetsAt?: number | null;
+}
+
+export interface CodexUsageCredits {
+  hasCredits: boolean;
+  unlimited: boolean;
+  balance?: string | null;
+}
+
+export interface CodexAdditionalLimit {
+  limitId: string;
+  limitName?: string | null;
+  primary?: CodexUsageWindow | null;
+  secondary?: CodexUsageWindow | null;
+}
+
+export interface CodexUsage {
+  category: 'Codex';
+  planType?: string | null;
+  primary?: CodexUsageWindow | null;
+  secondary?: CodexUsageWindow | null;
+  credits?: CodexUsageCredits | null;
+  additionalLimits?: CodexAdditionalLimit[];
+  accountId?: string | null;
+  accountEmail?: string | null;
+  accountName?: string | null;
+  currentUrl?: string;
+  endpoint?: string;
+  lastUpdated: number;
+  source: string;
+  loginRequired?: boolean;
+  error?: string | null;
+}
+
 // 数据中心模块配置
 export type DataCenterModuleKey =
   | 'ssh'
@@ -520,6 +743,7 @@ export type DataCenterModuleKey =
   | 'resourceCenter'
   | 'passwordManager'
   | 'zenmuxUsage'
+  | 'codexUsage'
   | 'aiStudio'
   | 'kimiApi';
 

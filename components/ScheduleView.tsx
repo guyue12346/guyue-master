@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, Clock, Calendar as CalendarIcon, LayoutGrid,
 /* ─────────────────── Types ─────────────────── */
 
 type ViewMode = 'day' | 'week' | 'month';
+type SemesterTerm = 'spring' | 'autumn';
 
 interface ScheduleViewProps {
   todos: TodoItem[];
@@ -28,6 +29,13 @@ interface LayoutedEvent {
   totalColumns: number;
 }
 
+interface SemesterWeekSettings {
+  enabled: boolean;
+  term: SemesterTerm;
+  firstWeekStart: string;
+  totalWeeks: number;
+}
+
 /* ─────────────────── Constants ─────────────────── */
 
 const HOUR_HEIGHT = 56;
@@ -37,6 +45,13 @@ const WEEK_DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '
 const STORAGE_KEY_COMPRESS = 'guyue_schedule_compress_night';
 const STORAGE_KEY_TIMELINE = 'guyue_schedule_show_timeline';
 const STORAGE_KEY_DIM_PAST = 'guyue_schedule_dim_past';
+const STORAGE_KEY_SEMESTER_WEEK = 'guyue_schedule_semester_week_v1';
+const DEFAULT_SEMESTER_SETTINGS: SemesterWeekSettings = {
+  enabled: false,
+  term: 'spring',
+  firstWeekStart: '',
+  totalWeeks: 18,
+};
 
 /** Event custom-color → Tailwind-style inline colors */
 const EVENT_COLOR_MAP: Record<string, { bar: string; block: string; text: string }> = {
@@ -81,6 +96,54 @@ function getWeekStart(date: Date): Date {
 
 function formatHM(date: Date): string {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function loadSemesterWeekSettings(): SemesterWeekSettings {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_SEMESTER_WEEK);
+    if (!raw) return DEFAULT_SEMESTER_SETTINGS;
+    const parsed = JSON.parse(raw);
+    return {
+      enabled: typeof parsed?.enabled === 'boolean' ? parsed.enabled : DEFAULT_SEMESTER_SETTINGS.enabled,
+      term: parsed?.term === 'autumn' ? 'autumn' : 'spring',
+      firstWeekStart: typeof parsed?.firstWeekStart === 'string' ? parsed.firstWeekStart : DEFAULT_SEMESTER_SETTINGS.firstWeekStart,
+      totalWeeks: Number.isFinite(Number(parsed?.totalWeeks)) && Number(parsed.totalWeeks) > 0
+        ? Math.max(1, Math.min(60, Number(parsed.totalWeeks)))
+        : DEFAULT_SEMESTER_SETTINGS.totalWeeks,
+    };
+  } catch {
+    return DEFAULT_SEMESTER_SETTINGS;
+  }
+}
+
+function saveSemesterWeekSettings(settings: SemesterWeekSettings) {
+  try {
+    localStorage.setItem(STORAGE_KEY_SEMESTER_WEEK, JSON.stringify(settings));
+  } catch {}
+}
+
+function parseDateInputValue(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const parsed = new Date(`${value}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getSemesterWeekInfo(date: Date, settings: SemesterWeekSettings): { label: string; detail: string } | null {
+  if (!settings.enabled || !settings.firstWeekStart || !settings.totalWeeks) return null;
+  const firstWeekDate = parseDateInputValue(settings.firstWeekStart);
+  if (!firstWeekDate) return null;
+
+  const firstWeekStart = getWeekStart(firstWeekDate);
+  const targetWeekStart = getWeekStart(date);
+  const diffWeeks = Math.floor((targetWeekStart.getTime() - firstWeekStart.getTime()) / (7 * 24 * 60 * 60 * 1000));
+  if (diffWeeks < 0 || diffWeeks >= settings.totalWeeks) return null;
+
+  const weekNumber = diffWeeks + 1;
+  const termLabel = settings.term === 'autumn' ? '秋学期' : '春学期';
+  return {
+    label: `${termLabel} 第${weekNumber}周`,
+    detail: `共 ${settings.totalWeeks} 周`,
+  };
 }
 
 function todoToEvent(todo: TodoItem): CalendarEvent | null {
@@ -705,6 +768,15 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
     });
   }, []);
 
+  const [semesterWeekSettings, setSemesterWeekSettings] = useState<SemesterWeekSettings>(() => loadSemesterWeekSettings());
+  const updateSemesterWeekSettings = useCallback((updater: SemesterWeekSettings | ((prev: SemesterWeekSettings) => SemesterWeekSettings)) => {
+    setSemesterWeekSettings(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      saveSemesterWeekSettings(next);
+      return next;
+    });
+  }, []);
+
   // Sync settings when changed from SettingsModal
   useEffect(() => {
     const handleSettingsChange = () => {
@@ -828,6 +900,10 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
   }, [currentDate]);
 
   const dayArray = useMemo(() => [new Date(currentDate)], [currentDate]);
+  const semesterWeekInfo = useMemo(() => {
+    if (viewMode !== 'week') return null;
+    return getSemesterWeekInfo(currentDate, semesterWeekSettings);
+  }, [currentDate, semesterWeekSettings, viewMode]);
 
   const isToday = isSameDay(currentDate, new Date());
 
@@ -889,6 +965,19 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
             ))}
           </div>
 
+          {viewMode === 'week' && semesterWeekInfo && (
+            <div
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl border"
+              style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border-light)' }}
+              title={semesterWeekInfo.detail}
+            >
+              <div className="text-right leading-tight">
+                <div className="text-xs font-semibold" style={{ color: 'var(--t-text)' }}>{semesterWeekInfo.label}</div>
+                <div className="text-[10px]" style={{ color: 'var(--t-text-muted)' }}>{semesterWeekInfo.detail}</div>
+              </div>
+            </div>
+          )}
+
           {/* Settings button */}
           {(viewMode === 'week' || viewMode === 'day') && (
             <div className="relative" ref={settingsRef}>
@@ -900,7 +989,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
                 <Settings2 className="w-3.5 h-3.5" />
               </button>
               {showSettings && (
-                <div className="absolute right-0 top-full mt-1 rounded-lg shadow-lg border p-3 z-30 w-52" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
+                <div className="absolute right-0 top-full mt-1 rounded-lg shadow-lg border p-3 z-30 w-72" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
                   <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-700 hover:text-gray-900">
                     <input
                       type="checkbox"
@@ -924,7 +1013,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
                       <div className="font-medium text-xs">显示当前时间线</div>
                       <div className="text-[10px] text-gray-400">在今天列显示时刻指示线</div>
                     </div>
-                  </label>                  <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-700 hover:text-gray-900 mt-2">
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-700 hover:text-gray-900 mt-2">
                     <input
                       type="checkbox"
                       checked={dimPast}
@@ -935,7 +1025,71 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ todos, onEditTodo, o
                       <div className="font-medium text-xs">过去时段变暗</div>
                       <div className="text-[10px] text-gray-400">当前时间之前区域灰化</div>
                     </div>
-                  </label>                </div>
+                  </label>
+
+                  {viewMode === 'week' && (
+                    <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--t-border-light)' }}>
+                      <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-700 hover:text-gray-900">
+                        <input
+                          type="checkbox"
+                          checked={semesterWeekSettings.enabled}
+                          onChange={(e) => updateSemesterWeekSettings(prev => ({ ...prev, enabled: e.target.checked }))}
+                          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <div>
+                          <div className="font-medium text-xs">显示学期周次</div>
+                          <div className="text-[10px] text-gray-400">周视图右上角显示春/秋学期第 x 周</div>
+                        </div>
+                      </label>
+
+                      <div className={`grid grid-cols-2 gap-2 mt-3 ${semesterWeekSettings.enabled ? '' : 'opacity-50'}`}>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[11px] font-medium text-gray-500">学期</span>
+                          <select
+                            value={semesterWeekSettings.term}
+                            onChange={(e) => updateSemesterWeekSettings(prev => ({ ...prev, term: e.target.value === 'autumn' ? 'autumn' : 'spring' }))}
+                            disabled={!semesterWeekSettings.enabled}
+                            className="px-2.5 py-2 text-xs rounded-lg border bg-white text-gray-700 outline-none focus:ring-2 focus:ring-blue-200"
+                            style={{ borderColor: 'var(--t-border)' }}
+                          >
+                            <option value="spring">春学期</option>
+                            <option value="autumn">秋学期</option>
+                          </select>
+                        </label>
+
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[11px] font-medium text-gray-500">总周数</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={60}
+                            value={semesterWeekSettings.totalWeeks}
+                            onChange={(e) => {
+                              const value = Math.max(1, Math.min(60, Number(e.target.value) || DEFAULT_SEMESTER_SETTINGS.totalWeeks));
+                              updateSemesterWeekSettings(prev => ({ ...prev, totalWeeks: value }));
+                            }}
+                            disabled={!semesterWeekSettings.enabled}
+                            className="px-2.5 py-2 text-xs rounded-lg border bg-white text-gray-700 outline-none focus:ring-2 focus:ring-blue-200"
+                            style={{ borderColor: 'var(--t-border)' }}
+                          />
+                        </label>
+
+                        <label className="col-span-2 flex flex-col gap-1">
+                          <span className="text-[11px] font-medium text-gray-500">第一周日期</span>
+                          <input
+                            type="date"
+                            value={semesterWeekSettings.firstWeekStart}
+                            onChange={(e) => updateSemesterWeekSettings(prev => ({ ...prev, firstWeekStart: e.target.value }))}
+                            disabled={!semesterWeekSettings.enabled}
+                            className="px-2.5 py-2 text-xs rounded-lg border bg-white text-gray-700 outline-none focus:ring-2 focus:ring-blue-200"
+                            style={{ borderColor: 'var(--t-border)' }}
+                          />
+                          <span className="text-[10px] text-gray-400">按该日期所在周的周一开始计算学期周次</span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}

@@ -5,6 +5,7 @@ import { OJHeatmapContainer } from './OJHeatmapContainer';
 import { ResourceCenter } from './ResourceCenter';
 import { PasswordManager } from './PasswordManager';
 import { ZenmuxUsagePanel } from './ZenmuxUsagePanel';
+import { CodexUsagePanel } from './CodexUsagePanel';
 import { AIStudioPanel } from './AIStudioPanel';
 import { KimiPanel } from './KimiPanel';
 import { SSHManager } from './SSHManager';
@@ -17,7 +18,7 @@ import { AVAILABLE_ICONS } from '../../types';
 const STORAGE_KEY_DATACENTER_CONFIG = 'linkmaster_datacenter_config';
 
 // 模块默认顺序
-const DEFAULT_MODULE_ORDER: DataCenterModuleKey[] = ['ssh', 'apiManager', 'ojHeatmap', 'resourceCenter', 'passwordManager', 'zenmuxUsage', 'aiStudio', 'kimiApi'];
+const DEFAULT_MODULE_ORDER: DataCenterModuleKey[] = ['ssh', 'apiManager', 'ojHeatmap', 'resourceCenter', 'passwordManager', 'zenmuxUsage', 'codexUsage', 'aiStudio', 'kimiApi'];
 
 // 默认配置
 const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
@@ -28,6 +29,7 @@ const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
     resourceCenter: true,
     passwordManager: true,
     zenmuxUsage: true,
+    codexUsage: true,
     aiStudio: true,
     kimiApi: true,
   },
@@ -39,6 +41,7 @@ const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
     resourceCenter: '#3b82f6',
     passwordManager: '#10b981',
     zenmuxUsage: '#8b5cf6',
+    codexUsage: '#10a37f',
     aiStudio: '#06b6d4',
     kimiApi: '#ec4899',
   },
@@ -49,6 +52,7 @@ const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
     resourceCenter: 'Package',
     passwordManager: 'Shield',
     zenmuxUsage: 'Activity',
+    codexUsage: 'Command',
     aiStudio: 'Bot',
     kimiApi: 'Sparkles',
   },
@@ -78,6 +82,7 @@ const MODULE_DEFS: { key: DataCenterModuleKey; label: string; defaultColor: stri
   { key: 'resourceCenter',  label: '资源中心',  defaultColor: '#3b82f6', defaultIcon: 'Package' },
   { key: 'passwordManager', label: '网站管理',  defaultColor: '#10b981', defaultIcon: 'Shield' },
   { key: 'zenmuxUsage',     label: 'Zenmux',   defaultColor: '#8b5cf6', defaultIcon: 'Activity' },
+  { key: 'codexUsage',      label: 'Codex',    defaultColor: '#10a37f', defaultIcon: 'Command' },
   { key: 'aiStudio',        label: 'AI Studio', defaultColor: '#06b6d4', defaultIcon: 'Bot' },
   { key: 'kimiApi',         label: 'Kimi API',  defaultColor: '#ec4899', defaultIcon: 'Sparkles' },
 ];
@@ -263,7 +268,7 @@ interface DataCenterManagerProps {
   onDeleteAPICategory: (id: string) => void;
 }
 
-type SubPage = 'ssh' | 'api-manager' | 'oj-heatmap' | 'resource-center' | 'password-manager' | 'zenmux-usage' | 'ai-studio' | 'kimi-api';
+type SubPage = 'ssh' | 'api-manager' | 'oj-heatmap' | 'resource-center' | 'password-manager' | 'zenmux-usage' | 'codex-usage' | 'ai-studio' | 'kimi-api';
 
 interface NavItem {
   id: SubPage;
@@ -301,6 +306,11 @@ const NAV_ITEMS: NavItem[] = [
     id: 'zenmux-usage',
     name: 'Zenmux',
     configKey: 'zenmuxUsage',
+  },
+  {
+    id: 'codex-usage',
+    name: 'Codex',
+    configKey: 'codexUsage',
   },
   {
     id: 'ai-studio',
@@ -471,6 +481,9 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
         )}
         {activePage === 'zenmux-usage' && (
           <ZenmuxUsagePanel />
+        )}
+        {activePage === 'codex-usage' && (
+          <CodexUsagePanel />
         )}
         {activePage === 'ai-studio' && (
           <AIStudioPanel />

@@ -515,6 +515,8 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
   // ── Core ──
   const [mode, setMode] = useState<'ai' | 'qa' | 'quiz'>('ai');
   const [kbSidebarVisible, setKbSidebarVisible] = useState(true);
+  const [compactConversationMenuOpen, setCompactConversationMenuOpen] = useState(false);
+  const compactConversationMenuRef = useRef<HTMLDivElement>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>(() => {
     try { const v = localStorage.getItem('guyue_kb_selected_collections'); return v ? JSON.parse(v) : []; } catch { return []; }
   });
@@ -739,6 +741,22 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
   // ══════════════════════════════════════════════════════
   // Persistence & Effects
   // ══════════════════════════════════════════════════════
+  useEffect(() => {
+    if (!compact) return;
+    setMode('ai');
+  }, [compact]);
+
+  useEffect(() => {
+    if (!compactConversationMenuOpen) return;
+    const handler = (event: MouseEvent) => {
+      if (compactConversationMenuRef.current && !compactConversationMenuRef.current.contains(event.target as Node)) {
+        setCompactConversationMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [compactConversationMenuOpen]);
+
   useEffect(() => { localStorage.setItem('guyue_kb_selected_collections', JSON.stringify(selectedIds)); }, [selectedIds]);
   useEffect(() => { localStorage.setItem(QUIZ_CATEGORIES_KEY, JSON.stringify(quizCategories)); }, [quizCategories]);
   useEffect(() => { localStorage.setItem(QUIZ_CAT_CONFIGS_KEY, JSON.stringify(categoryConfigs)); }, [categoryConfigs]);
@@ -2075,6 +2093,159 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
     );
   }
 
+  function renderCompactConversationHeader() {
+    if (!compact || mode === 'quiz') return null;
+
+    const isQa = mode === 'qa';
+    const conversations = isQa ? qaConversations : aiConversations;
+    const activeId = isQa ? activeQaConvId : activeAiConvId;
+    const setActiveId = isQa ? setActiveQaConvId : setActiveAiConvId;
+    const onNew = isQa ? handleNewQaConv : handleNewAiConv;
+    const activeConversation = conversations.find(conv => conv.id === activeId) ?? null;
+
+    return (
+      <div
+        className="relative flex items-center gap-2 border-b px-3 py-2 shrink-0"
+        style={{ borderColor: 'var(--t-border)', background: 'var(--t-header-bg)' }}
+      >
+        <div className="relative min-w-0 flex-1" ref={compactConversationMenuRef}>
+          <button
+            type="button"
+            onClick={() => setCompactConversationMenuOpen(open => !open)}
+            className="flex w-full min-w-0 items-center gap-2 rounded-xl border px-3 py-1.5 text-left transition-colors hover:opacity-90"
+            style={{ borderColor: 'var(--t-border)', background: 'var(--t-bg-card)', color: 'var(--t-text)' }}
+            title="选择历史对话"
+          >
+            {isQa ? <Brain size={14} className="shrink-0 text-emerald-500" /> : <Sparkles size={14} className="shrink-0 text-purple-500" />}
+            <span className="truncate text-xs font-medium">{activeConversation?.title || (isQa ? '知识库对话' : 'AI 对话')}</span>
+            <ChevronDown size={14} className={`ml-auto shrink-0 transition-transform ${compactConversationMenuOpen ? 'rotate-180' : ''}`} style={{ color: 'var(--t-text-muted)' }} />
+          </button>
+
+          {compactConversationMenuOpen && (
+            <div
+              className="absolute left-0 top-full z-30 mt-2 w-full min-w-[240px] overflow-hidden rounded-2xl border shadow-xl"
+              style={{ borderColor: 'var(--t-border)', background: 'var(--t-bg-elevated)' }}
+            >
+              <div className="flex items-center justify-between border-b px-3 py-2" style={{ borderColor: 'var(--t-border-light)' }}>
+                <div className="text-[11px] font-semibold" style={{ color: 'var(--t-text-secondary)' }}>
+                  {isQa ? '知识库对话记录' : 'AI 对话记录'}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onNew();
+                    setCompactConversationMenuOpen(false);
+                  }}
+                  className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] transition-colors"
+                  style={{ color: 'var(--t-accent)' }}
+                >
+                  <Plus size={12} />
+                  新建
+                </button>
+              </div>
+              <div className="max-h-64 overflow-y-auto p-2">
+                {conversations.length === 0 ? (
+                  <div className="px-3 py-6 text-center text-xs" style={{ color: 'var(--t-text-muted)' }}>
+                    暂无对话
+                  </div>
+                ) : (
+                  conversations.map(conv => {
+                    const isActive = conv.id === activeId;
+                    const isRenaming = renamingConvId === conv.id;
+                    return (
+                      <div
+                        key={conv.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          setActiveId(conv.id);
+                          setCompactConversationMenuOpen(false);
+                        }}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setActiveId(conv.id);
+                            setCompactConversationMenuOpen(false);
+                          }
+                        }}
+                        className="group/compact mb-1 flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors last:mb-0"
+                        style={isActive ? { background: 'var(--t-list-active-bg)', color: 'var(--t-list-active-text)' } : { color: 'var(--t-text-secondary)' }}
+                      >
+                        <MessageSquare size={13} className="shrink-0" style={{ color: isActive ? 'currentColor' : 'var(--t-text-muted)' }} />
+                        <div className="min-w-0 flex-1">
+                          {isRenaming ? (
+                            <input
+                              autoFocus
+                              value={renameValue}
+                              onChange={e => setRenameValue(e.target.value)}
+                              onBlur={() => handleFinishRename(isQa)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') handleFinishRename(isQa);
+                                if (e.key === 'Escape') {
+                                  setRenamingConvId(null);
+                                  setRenameValue('');
+                                }
+                                e.stopPropagation();
+                              }}
+                              onClick={e => e.stopPropagation()}
+                              className="w-full rounded-md border bg-white px-2 py-1 text-xs outline-none"
+                              style={{ borderColor: isQa ? '#86efac' : '#c4b5fd', color: '#111827' }}
+                            />
+                          ) : (
+                            <span className="truncate text-xs font-medium">{conv.title}</span>
+                          )}
+                        </div>
+                        {!isRenaming && (
+                          <div className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover/compact:opacity-100">
+                            <button
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                handleStartRename(conv.id, conv.title);
+                              }}
+                              className="rounded p-1 text-gray-400 transition-colors hover:bg-white/80 hover:text-blue-600"
+                              title="重命名"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                isQa ? handleDeleteQaConv(conv.id) : handleDeleteAiConv(conv.id);
+                              }}
+                              className="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500"
+                              title="删除"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            onNew();
+            setCompactConversationMenuOpen(false);
+          }}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border transition-colors hover:opacity-90"
+          style={{ borderColor: 'var(--t-border)', background: 'var(--t-bg-card)', color: 'var(--t-accent)' }}
+          title="新建对话"
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+    );
+  }
+
   // ══════════════════════════════════════════════════════
   // AI Assistant Mode
   // ══════════════════════════════════════════════════════
@@ -3212,6 +3383,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
+        {compact && renderCompactConversationHeader()}
         {/* Header */}
         {!compact && (
         <div className="flex items-center justify-between px-5 py-2.5 border-b shrink-0" style={{ borderColor: 'var(--t-border)', background: 'var(--t-header-bg)' }}>

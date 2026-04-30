@@ -11,7 +11,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "electron:dev": "concurrently \"cross-env NODE_ENV=development npm run dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .\"",
+    "electron:dev": "npx tsc -p electron/tsconfig.json && concurrently \"cross-env NODE_ENV=development npm run dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .\"",
     "electron:build": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder",
     "electron:build:mac": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder --mac",
     "electron:build:dmg": "npm run build && npx tsc -p electron/tsconfig.json && electron-builder --mac dmg",
@@ -23,6 +23,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@excalidraw/excalidraw": "^0.18.0",
+    "@excalidraw/mermaid-to-excalidraw": "^1.1.2",
     "@google/genai": "^1.30.0",
     "@llamaindex/node-parser": "^2.0.22",
     "@llamaindex/openai": "^0.4.22",
@@ -44,6 +45,7 @@
     "music-metadata": "^11.12.3",
     "node-pty": "^1.0.0",
     "nodemailer": "^7.0.12",
+    "opencode-ai": "1.14.29",
     "pdf-parse": "^2.4.5",
     "pdfjs-dist": "^4.4.168",
     "react": "^19.2.0",
@@ -58,7 +60,10 @@
     "remark-math": "^6.0.0",
     "wavesurfer.js": "^7.12.5",
     "xterm": "^5.3.0",
-    "xterm-addon-fit": "^0.8.0"
+    "xterm-addon-fit": "^0.8.0",
+    "xterm-addon-unicode11": "^0.6.0",
+    "xterm-addon-web-links": "^0.9.0",
+    "xterm-addon-webgl": "^0.16.0"
   },
   "devDependencies": {
     "@tailwindcss/typography": "^0.5.19",
@@ -88,6 +93,16 @@
       "dist/**/*",
       "dist-electron/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/opencode-ai/bin",
+        "to": "vendor/opencode/bin",
+        "filter": [
+          ".opencode",
+          "opencode"
+        ]
+      }
     ],
     "mac": {
       "target": [

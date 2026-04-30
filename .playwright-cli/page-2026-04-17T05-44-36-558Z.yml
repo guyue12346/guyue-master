@@ -1,0 +1,144 @@
+- generic [ref=e16]:
+  - generic [ref=e17]:
+    - button "古 月" [ref=e18] [cursor=pointer]:
+      - generic [ref=e20]:
+        - generic [ref=e21]: 古
+        - generic [ref=e22]: 月
+    - generic [ref=e23]:
+      - button "AI助手" [ref=e220] [cursor=pointer]:
+        - img [ref=e221]
+        - generic: AI助手
+      - button "任务与日程" [ref=e225] [cursor=pointer]:
+        - img [ref=e226]
+        - generic: 任务与日程
+      - button "数据中心" [ref=e230] [cursor=pointer]:
+        - img [ref=e231]
+        - generic: 数据中心
+      - button "学习空间" [ref=e234] [cursor=pointer]:
+        - img [ref=e235]
+      - button "工作空间" [ref=e239] [cursor=pointer]:
+        - img [ref=e240]
+        - generic: 工作空间
+      - button "LeetCode" [ref=e245] [cursor=pointer]:
+        - img [ref=e246]
+        - generic: LeetCode
+      - button "文件管理" [ref=e251] [cursor=pointer]:
+        - img [ref=e252]
+        - generic: 文件管理
+      - button "本地终端" [ref=e255] [cursor=pointer]:
+        - img [ref=e256]
+        - generic: 本地终端
+      - button "绘图板" [ref=e259] [cursor=pointer]:
+        - img [ref=e260]
+        - generic: 绘图板
+      - button "Skills" [ref=e264] [cursor=pointer]:
+        - img [ref=e265]
+        - generic: Skills
+      - button "便签" [ref=e269] [cursor=pointer]:
+        - img [ref=e270]
+        - generic: 便签
+      - button "API管理" [ref=e274] [cursor=pointer]:
+        - img [ref=e275]
+        - generic: API管理
+      - button "内置浏览器" [ref=e280] [cursor=pointer]:
+        - img [ref=e281]
+        - generic: 内置浏览器
+      - button "图床管理" [ref=e285] [cursor=pointer]:
+        - img [ref=e286]
+        - generic: 图床管理
+      - button "LaTeX编辑器" [ref=e291] [cursor=pointer]:
+        - img [ref=e292]
+        - generic: LaTeX编辑器
+      - button "Music" [ref=e297] [cursor=pointer]:
+        - img [ref=e298]
+        - generic: Music
+      - button "RAG Lab" [ref=e303] [cursor=pointer]:
+        - img [ref=e304]
+        - generic: RAG Lab
+      - button "知识库" [ref=e309] [cursor=pointer]:
+        - img [ref=e310]
+        - generic: 知识库
+      - button "工作流引擎" [ref=e313] [cursor=pointer]:
+        - img [ref=e314]
+        - generic: 工作流引擎
+    - button "设置" [ref=e124] [cursor=pointer]:
+      - img [ref=e125]
+  - generic [ref=e320]:
+    - generic [ref=e321]:
+      - heading "学习空间" [level=1] [ref=e323]:
+        - img [ref=e324]
+        - text: 学习空间
+      - generic [ref=e327]:
+        - generic [ref=e328]:
+          - img [ref=e329]
+          - textbox "搜索..." [ref=e332]
+        - button "新建方向" [ref=e333] [cursor=pointer]:
+          - img [ref=e334]
+          - text: 新建方向
+    - generic [ref=e335]:
+      - generic [ref=e336]:
+        - button "机器学习 深度学习、大语言模型、强化学习等 1 门课程" [ref=e337] [cursor=pointer]:
+          - img [ref=e339]
+          - heading "机器学习" [level=3] [ref=e347]
+          - paragraph [ref=e348]: 深度学习、大语言模型、强化学习等
+          - generic [ref=e349]: 1 门课程
+        - generic [ref=e350]:
+          - button [ref=e351] [cursor=pointer]:
+            - img [ref=e352]
+          - button [ref=e354] [cursor=pointer]:
+            - img [ref=e355]
+      - generic [ref=e358]:
+        - button "计算机基础 算法、数据结构、操作系统、计算机网络 0 门课程" [ref=e359] [cursor=pointer]:
+          - img [ref=e361]
+          - heading "计算机基础" [level=3] [ref=e364]
+          - paragraph [ref=e365]: 算法、数据结构、操作系统、计算机网络
+          - generic [ref=e366]: 0 门课程
+        - generic [ref=e367]:
+          - button [ref=e368] [cursor=pointer]:
+            - img [ref=e369]
+          - button [ref=e371] [cursor=pointer]:
+            - img [ref=e372]
+      - generic [ref=e375]:
+        - button "系统架构 分布式系统、数据库、云计算 0 门课程" [ref=e376] [cursor=pointer]:
+          - img [ref=e378]
+          - heading "系统架构" [level=3] [ref=e381]
+          - paragraph [ref=e382]: 分布式系统、数据库、云计算
+          - generic [ref=e383]: 0 门课程
+        - generic [ref=e384]:
+          - button [ref=e385] [cursor=pointer]:
+            - img [ref=e386]
+          - button [ref=e388] [cursor=pointer]:
+            - img [ref=e389]
+      - generic [ref=e392]:
+        - button "编程语言 Python, Rust, Go, JavaScript 等 0 门课程" [ref=e393] [cursor=pointer]:
+          - img [ref=e395]
+          - heading "编程语言" [level=3] [ref=e398]
+          - paragraph [ref=e399]: Python, Rust, Go, JavaScript 等
+          - generic [ref=e400]: 0 门课程
+        - generic [ref=e401]:
+          - button [ref=e402] [cursor=pointer]:
+            - img [ref=e403]
+          - button [ref=e405] [cursor=pointer]:
+            - img [ref=e406]
+      - generic [ref=e409]:
+        - button "工具栈 Docker, Git, Linux, Kubernetes 2 门课程" [ref=e410] [cursor=pointer]:
+          - img [ref=e412]
+          - heading "工具栈" [level=3] [ref=e414]
+          - paragraph [ref=e415]: Docker, Git, Linux, Kubernetes
+          - generic [ref=e416]: 2 门课程
+        - generic [ref=e417]:
+          - button [ref=e418] [cursor=pointer]:
+            - img [ref=e419]
+          - button [ref=e421] [cursor=pointer]:
+            - img [ref=e422]
+      - generic [ref=e425]:
+        - button "其他 通用课程与资源 0 门课程" [ref=e426] [cursor=pointer]:
+          - img [ref=e428]
+          - heading "其他" [level=3] [ref=e430]
+          - paragraph [ref=e431]: 通用课程与资源
+          - generic [ref=e432]: 0 门课程
+        - generic [ref=e433]:
+          - button [ref=e434] [cursor=pointer]:
+            - img [ref=e435]
+          - button [ref=e437] [cursor=pointer]:
+            - img [ref=e438]
