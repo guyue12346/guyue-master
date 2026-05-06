@@ -48,7 +48,11 @@ interface PaneContent {
   origin?: 'course' | 'personal';
 }
 
-export const LearningManager: React.FC = () => {
+interface LearningManagerProps {
+  onDetailStateChange?: (inDetail: boolean) => void;
+}
+
+export const LearningManager: React.FC<LearningManagerProps> = ({ onDetailStateChange }) => {
   const [categories, setCategories] = useState<CourseCategory[]>(() => {
     const saved = localStorage.getItem('learning_categories_v1');
     return saved ? JSON.parse(saved) : COURSE_CATEGORIES;
@@ -224,6 +228,11 @@ export const LearningManager: React.FC = () => {
 
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
+
+  useEffect(() => {
+    onDetailStateChange?.(Boolean(selectedCourseId));
+    return () => onDetailStateChange?.(false);
+  }, [onDetailStateChange, selectedCourseId]);
 
   // Split View State
   const [layoutMode, setLayoutMode] = useState<'single' | 'split'>('single');

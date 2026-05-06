@@ -22,7 +22,6 @@ const Terminal = React.lazy(() => import('./components/Terminal').then(m => ({ d
 const WebBrowser = React.lazy(() => import('./components/WebBrowser').then(m => ({ default: m.WebBrowser })));
 const SpaceManager = React.lazy(() => import('./components/SpaceManager').then(m => ({ default: m.SpaceManager })));
 const PracticeManager = React.lazy(() => import('./components/PracticeManager').then(m => ({ default: m.PracticeManager })));
-const OpenCodeManager = React.lazy(() => import('./components/OpenCodeManager'));
 const ImageHosting = React.lazy(() => import('./components/ImageHosting').then(m => ({ default: m.ImageHosting })));
 const PluginContainer = React.lazy(() => import('./components/PluginContainer').then(m => ({ default: m.PluginContainer })));
 const HeatmapContainer = React.lazy(() => import('./components/HeatmapContainer').then(m => ({ default: m.HeatmapContainer })));
@@ -85,20 +84,20 @@ const normalizeAppTheme = (theme: string | null | undefined) => {
 };
 
 const normalizeAppMode = (mode: AppMode | null | undefined) => {
-  if (mode === 'crush') return 'opencode';
+  if (mode === 'crush' || mode === ('open' + 'code') || mode === 'code-agent') return 'todo';
   if (mode === 'learning' || mode === 'workspace') return 'spaces';
   if (mode === 'leetcode' || mode === 'coding-practice') return 'practice';
   return mode || 'todo';
 };
 
 const normalizeModuleId = (id: string | undefined) => {
-  if (id === 'crush') return 'opencode';
+  if (id === 'crush' || id === ('open' + 'code')) return 'code-agent';
   if (id === 'learning' || id === 'workspace') return 'spaces';
   if (id === 'leetcode' || id === 'coding-practice') return 'practice';
   return id || '';
 };
 
-const REMOVED_LEGACY_MODULE_IDS = new Set(['chat', 'aichat', 'ai-chat']);
+const REMOVED_LEGACY_MODULE_IDS = new Set(['chat', 'aichat', 'ai-chat', 'code-agent']);
 const REMOVED_LEGACY_MODULE_NAMES = new Set(['AI对话']);
 
 const isRemovedLegacyModule = (moduleLike: { id?: string; name?: string }) =>
@@ -243,19 +242,38 @@ const App: React.FC = () => {
     if (savedModules) {
       try {
         const parsed: ModuleConfig[] = JSON.parse(savedModules);
-        const normalizedParsed = parsed
-          .map(module => ({ ...module, id: normalizeModuleId(module.id) }))
-          .filter((module, index, modules) => modules.findIndex(item => item.id === module.id) === index);
+        const normalizedParsed = parsed.reduce<ModuleConfig[]>((acc, module) => {
+          const normalizedModule = { ...module, id: normalizeModuleId(module.id) };
+          const existingIndex = acc.findIndex(item => item.id === normalizedModule.id);
+
+          if (existingIndex === -1) {
+            acc.push(normalizedModule);
+            return acc;
+          }
+
+          const existing = acc[existingIndex];
+          acc[existingIndex] = {
+            ...existing,
+            ...normalizedModule,
+            enabled: Boolean(existing.enabled || normalizedModule.enabled),
+            priority: Math.min(existing.priority ?? Number.MAX_SAFE_INTEGER, normalizedModule.priority ?? Number.MAX_SAFE_INTEGER),
+          };
+          return acc;
+        }, []);
         const merged = DEFAULT_MODULE_CONFIG
           .filter(m => m.id !== 'api') // API模块已并入数据中心
           .map(defaultModule => {
           const existing = normalizedParsed.find(m => m.id === defaultModule.id);
           if (!existing) return defaultModule;
           const normalizedIcon =
-            defaultModule.id === 'spaces'
+            defaultModule.id === 'spaces' || defaultModule.id === 'practice'
               ? defaultModule.icon
               : (existing.icon || defaultModule.icon);
-          return { ...defaultModule, ...existing, name: defaultModule.name, icon: normalizedIcon };
+          const normalizedShortcut =
+            defaultModule.id === 'spaces' || defaultModule.id === 'practice'
+              ? defaultModule.shortcut
+              : existing.shortcut || defaultModule.shortcut;
+          return { ...defaultModule, ...existing, name: defaultModule.name, icon: normalizedIcon, shortcut: normalizedShortcut };
         });
         const legacyExtras = normalizedParsed.filter(m =>
           !merged.find(item => item.id === m.id) &&
@@ -292,8 +310,8 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (appMode === 'crush') {
-      setAppMode('opencode');
+    if (appMode === 'crush' || appMode === ('open' + 'code') || appMode === 'code-agent') {
+      setAppMode('todo');
       return;
     }
     if (isRemovedLegacyModule({ id: String(appMode) })) {
@@ -351,7 +369,6 @@ const App: React.FC = () => {
   const [hasRagMounted, setHasRagMounted] = useState(false);
   const [hasKbMounted, setHasKbMounted] = useState(false);
   const [hasWorkflowMounted, setHasWorkflowMounted] = useState(false);
-  const [hasOpenCodeMounted, setHasOpenCodeMounted] = useState(false);
 
   // Prevent body scroll to fix layout shifts on focus
   useEffect(() => {
@@ -396,10 +413,7 @@ const App: React.FC = () => {
     if (appMode === 'workflow' && !hasWorkflowMounted) {
       setHasWorkflowMounted(true);
     }
-    if (appMode === 'opencode' && !hasOpenCodeMounted) {
-      setHasOpenCodeMounted(true);
-    }
-  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasPracticeMounted, hasSpacesMounted, hasExcalidrawMounted, hasDataCenterMounted, hasMusicMounted, hasRagMounted, hasKbMounted, hasWorkflowMounted, hasOpenCodeMounted]);
+  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasPracticeMounted, hasSpacesMounted, hasExcalidrawMounted, hasDataCenterMounted, hasMusicMounted, hasRagMounted, hasKbMounted, hasWorkflowMounted]);
 
   // Persist appMode & todoSubMode to localStorage
   useEffect(() => {
@@ -1692,7 +1706,7 @@ const App: React.FC = () => {
     if (appMode === 'files') return '搜索文件...';
     if (appMode === 'markdown') return '搜索笔记...';
     if (appMode === 'browser') return '搜索网页...';
-    if (appMode === 'leetcode') return '搜索题目...';
+    if (appMode === 'practice') return '搜索题目...';
     if (appMode === 'image-hosting') return '搜索图片...';
     
     const currentModule = moduleConfig.find(m => m.id === appMode);
@@ -2541,7 +2555,7 @@ const App: React.FC = () => {
             onReorderPlaylist={handleMusicReorderPlaylist}
           />
         </Suspense>
-      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'spaces' && appMode !== 'coding-practice' && appMode !== 'opencode' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
+      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'practice' && appMode !== 'spaces' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
         <Sidebar 
           appMode={appMode}  
           categories={activeCategories} 
@@ -2688,7 +2702,7 @@ const App: React.FC = () => {
       )}
 
       <div className={`flex-1 flex flex-col min-w-0 relative`} style={appMode === 'agent' ? { display: 'none' } : { background: 'var(--t-bg-main)' }}>
-        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'leetcode' && appMode !== 'spaces' && appMode !== 'coding-practice' && appMode !== 'opencode' && appMode !== 'image-hosting' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
+        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'practice' && appMode !== 'spaces' && appMode !== 'image-hosting' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
         <div className="theme-header-bar h-16 flex items-center justify-between px-6 shrink-0">
            <div className="flex items-center gap-4 flex-1 max-w-xl">
               <div className="relative flex-1">
@@ -2757,7 +2771,7 @@ const App: React.FC = () => {
         </div>
         )}
 
-        <div className={`flex-1 ${appMode === 'latex' ? 'overflow-hidden' : appMode === 'music' ? 'overflow-hidden' : appMode === 'rag' ? 'overflow-hidden' : appMode === 'knowledge-base' ? 'overflow-hidden' : appMode === 'workflow' ? 'overflow-hidden' : appMode === 'spaces' ? 'overflow-hidden' : appMode === 'coding-practice' ? 'overflow-hidden' : appMode === 'opencode' ? 'overflow-hidden' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'leetcode' || appMode === 'spaces' || appMode === 'coding-practice' || appMode === 'opencode' || appMode === 'image-hosting' || appMode === 'excalidraw' || appMode === 'datacenter' || appMode === 'latex' || appMode === 'music' || appMode === 'rag' || appMode === 'knowledge-base' || appMode === 'workflow' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'p-4' : 'p-6'}`}>
+        <div className={`flex-1 ${appMode === 'latex' ? 'overflow-hidden' : appMode === 'music' ? 'overflow-hidden' : appMode === 'rag' ? 'overflow-hidden' : appMode === 'knowledge-base' ? 'overflow-hidden' : appMode === 'workflow' ? 'overflow-hidden' : appMode === 'spaces' ? 'overflow-hidden' : appMode === 'practice' ? 'overflow-hidden' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'practice' || appMode === 'spaces' || appMode === 'image-hosting' || appMode === 'excalidraw' || appMode === 'datacenter' || appMode === 'latex' || appMode === 'music' || appMode === 'rag' || appMode === 'knowledge-base' || appMode === 'workflow' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'p-4' : 'p-6'}`}>
           <Suspense fallback={
             <div className="flex items-center justify-center h-full text-gray-400 gap-2">
               <Loader2 className="w-6 h-6 animate-spin" />
@@ -2953,9 +2967,9 @@ const App: React.FC = () => {
               </div>
             )}
 
-            {(hasLeetCodeMounted || appMode === 'leetcode') && (
-              <div className={appMode === 'leetcode' ? 'h-full' : 'hidden'}>
-                <LeetCodeManager
+            {(hasPracticeMounted || appMode === 'practice') && (
+              <div className={appMode === 'practice' ? 'h-full' : 'hidden'}>
+                <PracticeManager
                   onCreateNote={() => {
                     setEditingNote(null);
                     setIsNoteModalOpen(true);
@@ -2968,18 +2982,6 @@ const App: React.FC = () => {
             {(hasSpacesMounted || appMode === 'spaces') && (
               <div className={appMode === 'spaces' ? 'h-full' : 'hidden'}>
                 <SpaceManager />
-              </div>
-            )}
-
-            {appMode === 'coding-practice' && (
-              <div className="h-full">
-                <CodingPracticeManager />
-              </div>
-            )}
-
-            {(hasOpenCodeMounted || appMode === 'opencode') && (
-              <div className={appMode === 'opencode' ? 'h-full' : 'hidden'}>
-                <OpenCodeManager isVisible={appMode === 'opencode'} />
               </div>
             )}
 

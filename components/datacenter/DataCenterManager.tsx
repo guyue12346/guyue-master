@@ -10,6 +10,7 @@ import { AIStudioPanel } from './AIStudioPanel';
 import { KimiPanel } from './KimiPanel';
 import { SSHManager } from './SSHManager';
 import { APIManager } from './APIManager';
+import { CodeCliManager } from './CodeCliManager';
 import { HelpModal } from '../HelpModal';
 import type { OJHeatmapData, ResourceCenterData, DataCenterConfig, DataCenterModuleKey, SSHRecord, Category, APIRecord } from '../../types';
 import { AVAILABLE_ICONS } from '../../types';
@@ -18,13 +19,14 @@ import { AVAILABLE_ICONS } from '../../types';
 const STORAGE_KEY_DATACENTER_CONFIG = 'linkmaster_datacenter_config';
 
 // 模块默认顺序
-const DEFAULT_MODULE_ORDER: DataCenterModuleKey[] = ['ssh', 'apiManager', 'ojHeatmap', 'resourceCenter', 'passwordManager', 'zenmuxUsage', 'codexUsage', 'aiStudio', 'kimiApi'];
+const DEFAULT_MODULE_ORDER: DataCenterModuleKey[] = ['ssh', 'apiManager', 'codeCli', 'ojHeatmap', 'resourceCenter', 'passwordManager', 'zenmuxUsage', 'codexUsage', 'aiStudio', 'kimiApi'];
 
 // 默认配置
 const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
   modules: {
     ssh: true,
     apiManager: true,
+    codeCli: true,
     ojHeatmap: true,
     resourceCenter: true,
     passwordManager: true,
@@ -37,6 +39,7 @@ const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
   moduleColors: {
     ssh: '#06b6d4',
     apiManager: '#a855f7',
+    codeCli: '#2563eb',
     ojHeatmap: '#f97316',
     resourceCenter: '#3b82f6',
     passwordManager: '#10b981',
@@ -48,6 +51,7 @@ const DEFAULT_DATACENTER_CONFIG: DataCenterConfig = {
   moduleIcons: {
     ssh: 'Terminal',
     apiManager: 'Webhook',
+    codeCli: 'SquareTerminal',
     ojHeatmap: 'Flame',
     resourceCenter: 'Package',
     passwordManager: 'Shield',
@@ -78,6 +82,7 @@ const normalizeDataCenterConfig = (rawConfig: Partial<DataCenterConfig> | null |
 const MODULE_DEFS: { key: DataCenterModuleKey; label: string; defaultColor: string; defaultIcon: string }[] = [
   { key: 'ssh',             label: 'SSH管理',   defaultColor: '#06b6d4', defaultIcon: 'Terminal' },
   { key: 'apiManager',      label: 'API管理',   defaultColor: '#a855f7', defaultIcon: 'Webhook' },
+  { key: 'codeCli',         label: 'Code CLI',  defaultColor: '#2563eb', defaultIcon: 'SquareTerminal' },
   { key: 'ojHeatmap',       label: 'OJ热力图',  defaultColor: '#f97316', defaultIcon: 'Flame' },
   { key: 'resourceCenter',  label: '资源中心',  defaultColor: '#3b82f6', defaultIcon: 'Package' },
   { key: 'passwordManager', label: '网站管理',  defaultColor: '#10b981', defaultIcon: 'Shield' },
@@ -268,7 +273,7 @@ interface DataCenterManagerProps {
   onDeleteAPICategory: (id: string) => void;
 }
 
-type SubPage = 'ssh' | 'api-manager' | 'oj-heatmap' | 'resource-center' | 'password-manager' | 'zenmux-usage' | 'codex-usage' | 'ai-studio' | 'kimi-api';
+type SubPage = 'ssh' | 'api-manager' | 'code-cli' | 'oj-heatmap' | 'resource-center' | 'password-manager' | 'zenmux-usage' | 'codex-usage' | 'ai-studio' | 'kimi-api';
 
 interface NavItem {
   id: SubPage;
@@ -286,6 +291,11 @@ const NAV_ITEMS: NavItem[] = [
     id: 'api-manager',
     name: 'API管理',
     configKey: 'apiManager',
+  },
+  {
+    id: 'code-cli',
+    name: 'Code CLI',
+    configKey: 'codeCli',
   },
   {
     id: 'oj-heatmap',
@@ -463,6 +473,9 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
             onUpdateCategories={onUpdateAPICategories}
             onDeleteCategory={onDeleteAPICategory}
           />
+        )}
+        {activePage === 'code-cli' && (
+          <CodeCliManager onOpenInTerminal={onOpenSSHInTerminal} />
         )}
         {activePage === 'oj-heatmap' && (
           <OJHeatmapContainer

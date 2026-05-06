@@ -206,7 +206,7 @@ export interface PluginMetadata {
   entryPath?: string; // Runtime only: absolute path to entry file
 }
 
-export type AppMode = 'notes' | 'ssh' | 'api' | 'todo' | 'files' | 'prompts' | 'markdown' | 'terminal' | 'browser' | 'practice' | 'leetcode' | 'spaces' | 'learning' | 'workspace' | 'coding-practice' | 'opencode' | 'image-hosting' | 'recurring' | string;
+export type AppMode = 'notes' | 'ssh' | 'api' | 'todo' | 'files' | 'prompts' | 'markdown' | 'terminal' | 'browser' | 'practice' | 'leetcode' | 'spaces' | 'learning' | 'workspace' | 'coding-practice' | 'image-hosting' | 'recurring' | string;
 
 export interface ModuleConfig {
   id: string;
@@ -225,7 +225,6 @@ export const DEFAULT_MODULE_CONFIG: ModuleConfig[] = [
   { id: 'datacenter',   name: '数据中心',  enabled: true, priority: 2,  icon: 'BarChart3',     shortcut: 'Tab+D' },
   { id: 'spaces',       name: '空间',      enabled: true, priority: 3,  icon: 'PanelsTopLeft',  shortcut: 'Tab+K' },
   { id: 'practice',     name: '刷题',      enabled: true, priority: 4,  icon: 'Code2',         shortcut: 'Tab+L' },
-  { id: 'opencode',     name: 'OpenCode',  enabled: true, priority: 5,  icon: 'SquareTerminal', shortcut: 'Tab+O' },
   { id: 'files',        name: '文件管理',  enabled: true, priority: 7,  icon: 'FolderOpen',    shortcut: 'Tab+4' },
   { id: 'terminal',     name: '本地终端',  enabled: true, priority: 8,  icon: 'Command',       shortcut: 'Tab+0' },
   { id: 'excalidraw',   name: '绘图板',    enabled: true, priority: 9,  icon: 'Pencil',        shortcut: 'Tab+E' },
@@ -330,6 +329,7 @@ export interface ElectronAPI {
   getAppVersion: () => Promise<string>;
   getPlatform: () => Promise<string>;
   getUserDataPath: () => Promise<string>;
+  getHomeDir: () => Promise<string>;
   getAppPath: () => Promise<string>;
   openPath: (path: string) => Promise<string>;
   selectDirectory: () => Promise<string | null>;
@@ -357,148 +357,6 @@ export interface ElectronAPI {
   writeTerminal: (id: string, data: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => void;
   closeTerminal: (id: string) => void;
-  getOpenCodeInfo: () => Promise<{
-    binaryPath: string;
-    defaultCwd: string;
-    binaryExists: boolean;
-    version?: string | null;
-    authPath?: string;
-    providers: Array<{ id: string; label: string; authType: string; hasStoredCredential: boolean }>;
-    knownModelsByProvider: Record<string, string[]>;
-    defaultModelsByProvider: Record<string, string>;
-  }>;
-  getOpenCodeEmbeddedTuiConfigPath: () => Promise<string>;
-  getOpenCodeRuntimeState: (params: {
-    directory?: string;
-    officialSessionId?: string;
-    startedAfter?: number;
-    providerId?: string;
-  }) => Promise<{
-    session: {
-      id: string;
-      title: string;
-      directory: string;
-      projectId: string;
-      timeCreated: number;
-      timeUpdated: number;
-    } | null;
-    latestUsage: {
-      providerId: string | null;
-      providerLabel: string | null;
-      modelId: string | null;
-      cost: number;
-      tokens: {
-        total: number;
-        input: number;
-        output: number;
-        reasoning: number;
-        cacheRead: number;
-        cacheWrite: number;
-      };
-      timeUpdated: number | null;
-    } | null;
-    sessionTotals: {
-      turns: number;
-      totalCost: number;
-      totalTokens: number;
-      inputTokens: number;
-      outputTokens: number;
-      reasoningTokens: number;
-      cacheReadTokens: number;
-      cacheWriteTokens: number;
-    };
-    knownModels: string[];
-    plan: {
-      available: boolean;
-      note: string;
-    };
-    source: 'database';
-    lastUpdated: number;
-  }>;
-  getOpenCodeProviderModels: (params: { providerId: string; directory?: string }) => Promise<{
-    models: string[];
-    defaultModel: string;
-    source: 'opencode' | 'models.dev' | 'local';
-  }>;
-  getOpenCodeSessions: (params: {
-    directory?: string;
-  }) => Promise<Array<{
-    id: string;
-    title: string;
-    directory: string;
-    projectId: string;
-    timeCreated: number;
-    timeUpdated: number;
-    version: string | null;
-  }>>;
-  getOpenCodeSessionMessages: (params: {
-    sessionId?: string;
-  }) => Promise<Array<{
-    id: string;
-    role: 'user' | 'assistant' | 'system';
-    providerId: string | null;
-    modelId: string | null;
-    timeCreated: number;
-    timeUpdated: number;
-    text: string;
-    hasReasoning: boolean;
-    hasTool: boolean;
-    cost: number | null;
-    totalTokens: number | null;
-    parts?: Array<{
-      id?: string | null;
-      type: string;
-      timeCreated?: number | null;
-      timeUpdated?: number | null;
-      text?: string;
-      isRedactedReasoning?: boolean;
-      tool?: string;
-      callId?: string;
-      status?: string;
-      title?: string;
-      input?: unknown;
-      output?: string;
-      metadata?: unknown;
-      files?: string[];
-      hash?: string;
-      filename?: string;
-      mime?: string;
-      url?: string;
-    }>;
-  }>>;
-  sendOpenCodeMessage: (params: {
-    streamId?: string;
-    directory?: string;
-    officialSessionId?: string;
-    title?: string;
-    providerId?: string;
-    modelId?: string;
-    argsText?: string;
-    env?: Record<string, string>;
-    prompt: string;
-  }) => Promise<{
-    ok: boolean;
-    error?: string;
-    stdout?: string;
-    stderr?: string;
-    sessionId?: string | null;
-    sessionTitle?: string | null;
-  }>;
-  onOpenCodeMessageStream: (callback: (event: any, payload: {
-    streamId: string;
-    type: 'text' | 'done' | 'error';
-    text?: string;
-    error?: string;
-    sessionId?: string | null;
-    sessionTitle?: string | null;
-  }) => void) => (() => void);
-  deleteOpenCodeSession: (params: {
-    sessionId: string;
-    directory?: string;
-  }) => Promise<{
-    ok: boolean;
-    error?: string;
-  }>;
   // 应用数据文件存储
   saveAppData: (key: string, data: any) => Promise<boolean>;
   loadAppData: (key: string) => Promise<any>;
@@ -742,6 +600,7 @@ export type DataCenterModuleKey =
   | 'ojHeatmap'
   | 'resourceCenter'
   | 'passwordManager'
+  | 'codeCli'
   | 'zenmuxUsage'
   | 'codexUsage'
   | 'aiStudio'

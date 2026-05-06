@@ -35,6 +35,8 @@ export const SpaceManager: React.FC = () => {
   const [activeView, setActiveView] = useState<SpaceView>(() => initialView);
   const [hasLearningMounted, setHasLearningMounted] = useState(() => initialView === 'learning');
   const [hasWorkspaceMounted, setHasWorkspaceMounted] = useState(() => initialView === 'workspace');
+  const [learningInDetail, setLearningInDetail] = useState(false);
+  const [workspaceInDetail, setWorkspaceInDetail] = useState(false);
 
   useEffect(() => {
     if (activeView === 'learning') setHasLearningMounted(true);
@@ -46,26 +48,30 @@ export const SpaceManager: React.FC = () => {
     }
   }, [activeView]);
 
+  const shouldShowSwitcher = activeView === 'learning' ? !learningInDetail : !workspaceInDetail;
+
   return (
     <div className="relative h-full bg-white">
-      <div className="absolute left-1/2 top-4 z-40 flex -translate-x-1/2 items-center border-b border-slate-200 bg-white/95 px-2">
-        {([
-          ['learning', '学习'] as const,
-          ['workspace', '工作'] as const,
-        ]).map(([view, label]) => (
-          <button
-            key={view}
-            onClick={() => setActiveView(view)}
-            className={`border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-              activeView === view
-                ? 'border-blue-600 text-slate-900'
-                : 'border-transparent text-slate-400 hover:text-slate-700'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {shouldShowSwitcher ? (
+        <div className="absolute left-1/2 top-4 z-40 flex -translate-x-1/2 items-center border-b border-slate-200 bg-white/95 px-2">
+          {([
+            ['learning', '学习'] as const,
+            ['workspace', '工作'] as const,
+          ]).map(([view, label]) => (
+            <button
+              key={view}
+              onClick={() => setActiveView(view)}
+              className={`border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+                activeView === view
+                  ? 'border-blue-600 text-slate-900'
+                  : 'border-transparent text-slate-400 hover:text-slate-700'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <Suspense fallback={
         <div className="flex h-full items-center justify-center gap-2 text-slate-400">
@@ -75,13 +81,13 @@ export const SpaceManager: React.FC = () => {
       }>
         {(hasLearningMounted || activeView === 'learning') && (
           <div className={activeView === 'learning' ? 'h-full' : 'hidden'}>
-            <LearningManager />
+            <LearningManager onDetailStateChange={setLearningInDetail} />
           </div>
         )}
 
         {(hasWorkspaceMounted || activeView === 'workspace') && (
           <div className={activeView === 'workspace' ? 'h-full' : 'hidden'}>
-            <WorkspaceManager />
+            <WorkspaceManager onDetailStateChange={setWorkspaceInDetail} />
           </div>
         )}
       </Suspense>

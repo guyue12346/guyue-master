@@ -96,6 +96,10 @@ interface PracticeEditorMarker {
   severity: 'error' | 'warning';
 }
 
+interface CodingPracticeManagerProps {
+  headerSlot?: React.ReactNode;
+}
+
 const STORAGE_KEY_CATEGORIES = 'coding_practice_categories_v1';
 const STORAGE_KEY_SESSIONS = 'coding_practice_sessions_v2';
 const LEGACY_STORAGE_KEY_SESSIONS = 'coding_practice_sessions_v1';
@@ -858,7 +862,7 @@ const PracticeCategoryModal: React.FC<PracticeCategoryModalProps> = ({ isOpen, i
   );
 };
 
-export const CodingPracticeManager: React.FC = () => {
+export const CodingPracticeManager: React.FC<CodingPracticeManagerProps> = ({ headerSlot }) => {
   const initialCategories = useMemo(() => loadCategories(), []);
   const initialSessions = useMemo(() => loadSessions(initialCategories), [initialCategories]);
   const [categories, setCategories] = useState<PracticeCategory[]>(initialCategories);
@@ -1547,7 +1551,7 @@ export const CodingPracticeManager: React.FC = () => {
   }, [activeFile?.id, activeRunnerConfig, activeSession.files, activeSession.id, activeSession.language]);
 
   return (
-    <div className="h-full flex overflow-hidden" style={{ background: 'var(--t-bg-main)' }}>
+    <div className="h-full flex overflow-hidden bg-white">
       <PracticeCategoryModal
         isOpen={categoryModalOpen}
         initialData={editingCategory}
@@ -1559,52 +1563,50 @@ export const CodingPracticeManager: React.FC = () => {
       />
       {!focusMode && (
       <aside
-        className="theme-sidebar-surface h-full shrink-0 flex flex-col pt-5 pb-3 px-3 transition-all duration-300"
-        style={{ width: 272 }}
+        className="h-full w-80 shrink-0 flex flex-col bg-white border-r border-gray-200 transition-all duration-300"
       >
-        <div className="px-2 mb-4">
-          <div className="flex items-center justify-between gap-3">
+        <div className="bg-white">
+          <div className="p-4 border-b border-gray-200">
+            <div className="flex items-center justify-between gap-3">
             <div className="min-w-0 flex items-center gap-2">
-              <div className="w-8 h-8 rounded-2xl flex items-center justify-center" style={{ background: 'rgba(37, 99, 235, 0.10)', color: '#2563eb' }}>
-                <Code2 className="w-4.5 h-4.5" />
-              </div>
-              <h2 className="text-xl font-bold tracking-tight truncate" style={{ color: 'var(--t-text)' }}>Code</h2>
+              <Code2 className="w-5 h-5 shrink-0 text-blue-600" />
+              <h2 className="font-semibold text-gray-800 truncate">Code</h2>
             </div>
+            {headerSlot ? <div className="shrink-0">{headerSlot}</div> : null}
             <div className="flex items-center gap-1">
               <button
                 onClick={() => {
                   setEditingCategory(undefined);
                   setCategoryModalOpen(true);
                 }}
-                className="theme-icon-btn p-1.5"
+                className="p-1.5 rounded-md hover:bg-gray-100 text-gray-600 transition-colors"
                 title="新建分类"
               >
                 <FolderPlus className="w-4 h-4" />
               </button>
               <button
                 onClick={() => handleCreateSession('cpp')}
-                className="theme-icon-btn p-1.5"
+                className="p-1.5 rounded-md hover:bg-gray-100 text-blue-600 transition-colors"
                 title="新建练习"
-                style={{ color: '#2563eb' }}
               >
                 <Plus className="w-4 h-4" />
               </button>
             </div>
+            </div>
           </div>
 
-          <div className="mt-3 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--t-text-muted)' }} />
+          <div className="p-3 relative">
+            <Search className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="搜索练习..."
-              className="w-full pl-10 pr-4 py-2 text-sm rounded-xl border outline-none transition-colors"
-              style={{ borderColor: 'var(--t-border)', background: 'var(--t-bg-card)', color: 'var(--t-text)' }}
+              className="w-full pl-10 pr-4 py-2 text-sm rounded-md border border-gray-200 bg-white text-gray-800 outline-none transition-colors placeholder:text-gray-400 focus:border-blue-300"
             />
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto -mx-2 px-2 space-y-1 pr-1">
+        <div className="flex-1 overflow-y-auto bg-white p-3 pt-0 space-y-1">
           {visibleCategories.map((category) => {
             const palette = colorMap[category.color] || colorMap.blue;
             const CategoryIcon = getCategoryIcon(category.icon);
@@ -1622,23 +1624,23 @@ export const CodingPracticeManager: React.FC = () => {
                 onDrop={(event) => handleCategoryDrop(event, category.id)}
               >
                 <div
-                  className="theme-list-item group/category flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors"
-                  style={isDropTarget ? { background: palette.bgColor, borderColor: `${palette.textColor}30` } : undefined}
+                  className="group/category flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-gray-50"
+                  style={isDropTarget ? { background: '#f8fafc' } : undefined}
                 >
                   <button
                     onClick={() => toggleCategoryExpanded(category.id)}
                     className="flex min-w-0 flex-1 items-center gap-2 text-left"
                   >
                     {isExpanded ? (
-                      <ChevronDown className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--t-text-muted)' }} />
+                      <ChevronDown className="h-3.5 w-3.5 shrink-0 text-gray-400" />
                     ) : (
-                      <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--t-text-muted)' }} />
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-gray-400" />
                     )}
                     <CategoryIcon className="h-4 w-4 shrink-0" style={{ color: palette.textColor }} />
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ color: 'var(--t-text)' }}>
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-800">
                       {category.name}
                     </span>
-                    <span className="theme-muted-badge shrink-0 rounded-full px-2 py-0.5 text-[10px]">
+                    <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-500">
                       {categorySessions.length}
                     </span>
                   </button>
@@ -1649,7 +1651,7 @@ export const CodingPracticeManager: React.FC = () => {
                         event.stopPropagation();
                         handleCreateSession('cpp', category.id);
                       }}
-                      className="theme-icon-btn h-6 w-6 rounded-md"
+                      className="h-6 w-6 rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-blue-600"
                       title="在该分类中新建练习"
                     >
                       <Plus className="h-3.5 w-3.5" />
@@ -1660,7 +1662,7 @@ export const CodingPracticeManager: React.FC = () => {
                         setEditingCategory(category);
                         setCategoryModalOpen(true);
                       }}
-                      className="theme-icon-btn h-6 w-6 rounded-md"
+                      className="h-6 w-6 rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-blue-600"
                       title="编辑分类"
                     >
                       <Pencil className="h-3.5 w-3.5" />
@@ -1670,7 +1672,7 @@ export const CodingPracticeManager: React.FC = () => {
                         event.stopPropagation();
                         handleDeleteCategory(category);
                       }}
-                      className="theme-icon-btn theme-icon-btn-danger h-6 w-6 rounded-md"
+                      className="h-6 w-6 rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-red-600"
                       title="删除分类"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -1679,31 +1681,31 @@ export const CodingPracticeManager: React.FC = () => {
                 </div>
 
                 {isExpanded ? (
-                  <div className="ml-3 mt-0.5 space-y-0.5 border-l pl-3" style={{ borderColor: 'var(--t-border-light)' }}>
+                  <div className="ml-3 mt-0.5 space-y-0.5 border-l border-gray-100 pl-3">
                     <button
                       onClick={() => {
                         setActiveCategoryNoteId(category.id);
                         setFocusMode(false);
                       }}
-                      className="theme-list-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-medium transition-colors"
+                      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-medium transition-colors hover:bg-gray-50"
                       style={activeCategoryNoteId === category.id ? { color: palette.textColor } : undefined}
                     >
                       <span
                         className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase"
                         style={{
-                          background: activeCategoryNoteId === category.id ? `${palette.textColor}12` : 'var(--t-chip-bg)',
-                          color: activeCategoryNoteId === category.id ? palette.textColor : 'var(--t-text-muted)',
+                          background: activeCategoryNoteId === category.id ? `${palette.textColor}12` : '#f3f4f6',
+                          color: activeCategoryNoteId === category.id ? palette.textColor : '#6b7280',
                         }}
                       >
                         md
                       </span>
-                      <FileText className="h-3.5 w-3.5 shrink-0" style={{ color: activeCategoryNoteId === category.id ? palette.textColor : 'var(--t-text-muted)' }} />
-                      <span className="min-w-0 flex-1 truncate" style={{ color: activeCategoryNoteId === category.id ? palette.textColor : 'var(--t-text-muted)' }}>
+                      <FileText className="h-3.5 w-3.5 shrink-0" style={{ color: activeCategoryNoteId === category.id ? palette.textColor : '#6b7280' }} />
+                      <span className="min-w-0 flex-1 truncate" style={{ color: activeCategoryNoteId === category.id ? palette.textColor : '#6b7280' }}>
                         {category.name}笔记
                       </span>
                     </button>
                     {categorySessions.length === 0 ? (
-                      <div className="rounded-lg border border-dashed px-3 py-3 text-center text-[11px]" style={{ borderColor: 'var(--t-border-light)', color: 'var(--t-text-muted)' }}>
+                      <div className="rounded-lg border border-dashed border-gray-200 px-3 py-3 text-center text-[11px] text-gray-400">
                         {keyword ? '没有匹配的练习' : '拖动练习到这里，或点击右侧 + 新建'}
                       </div>
                     ) : (
@@ -1724,7 +1726,7 @@ export const CodingPracticeManager: React.FC = () => {
                               }}
                               onDragOver={(event) => handleSessionDragOver(event, category.id, session.id)}
                               onDrop={(event) => handleSessionDrop(event, category.id, session.id)}
-                              className="theme-list-item group/session relative cursor-pointer rounded-lg px-2 py-1.5 transition-colors"
+                              className="group/session relative cursor-pointer rounded-lg px-2 py-1.5 transition-colors hover:bg-gray-50"
                               style={{ opacity: draggingSessionId === session.id ? 0.68 : 1 }}
                             >
                               <div className="flex items-center gap-2">
@@ -1735,7 +1737,7 @@ export const CodingPracticeManager: React.FC = () => {
                                     onDragStart={(event) => handleSessionDragStart(event, session.id)}
                                     onDragEnd={handleSessionDragEnd}
                                     onClick={(event) => event.stopPropagation()}
-                                    className="theme-icon-btn h-6 w-6 rounded-md shrink-0 opacity-0 transition-opacity group-hover/session:opacity-100"
+                                    className="h-6 w-6 rounded-md shrink-0 text-gray-400 opacity-0 transition-all hover:bg-gray-100 hover:text-gray-700 group-hover/session:opacity-100"
                                     title="拖动练习排序或移动分类"
                                   >
                                     <GripVertical className="h-3.5 w-3.5" />
@@ -1763,7 +1765,7 @@ export const CodingPracticeManager: React.FC = () => {
                                     style={{ color: meta.accent }}
                                   />
                                 ) : (
-                                  <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ color: isActive ? meta.accent : 'var(--t-text)' }}>
+                                  <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ color: isActive ? meta.accent : '#374151' }}>
                                     {session.title}
                                   </span>
                                 )}
@@ -1773,7 +1775,7 @@ export const CodingPracticeManager: React.FC = () => {
                                       event.stopPropagation();
                                       handleStartRenameSession(session);
                                     }}
-                                    className="theme-icon-btn h-6 w-6 rounded-md"
+                                    className="h-6 w-6 rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-blue-600"
                                     title="重命名练习"
                                   >
                                     <Pencil className="h-3.5 w-3.5" />
@@ -1784,7 +1786,7 @@ export const CodingPracticeManager: React.FC = () => {
                                         event.stopPropagation();
                                         handleDeleteSession(session.id);
                                       }}
-                                      className="theme-icon-btn theme-icon-btn-danger h-6 w-6 rounded-md"
+                                      className="h-6 w-6 rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-red-600"
                                       title="删除练习"
                                     >
                                       <Trash2 className="h-3.5 w-3.5" />
@@ -1794,7 +1796,7 @@ export const CodingPracticeManager: React.FC = () => {
                               </div>
 
                               {isActive ? (
-                                <div className="ml-6 mt-1 space-y-0.5 border-l pl-3" style={{ borderColor: 'var(--t-border-light)' }}>
+                                <div className="ml-6 mt-1 space-y-0.5 border-l border-gray-100 pl-3">
                                   {session.files
                                     .filter((file) => file.id === 'input' || file.id === 'code' || file.id === 'notes')
                                     .map(file => {
@@ -1817,19 +1819,19 @@ export const CodingPracticeManager: React.FC = () => {
                                           setActiveSessionId(session.id);
                                           updateSession(session.id, { activeFileId: isIoEntry ? 'input' : file.id });
                                         }}
-                                        className="theme-list-item flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-medium transition-colors"
+                                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-medium transition-colors hover:bg-gray-50"
                                         style={isCurrentFile ? { color: meta.accent } : undefined}
                                       >
                                         <span
                                           className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase"
                                           style={{
-                                            background: isCurrentFile ? 'transparent' : 'var(--t-chip-bg)',
-                                            color: isCurrentFile ? meta.accent : 'var(--t-text-muted)',
+                                            background: isCurrentFile ? 'transparent' : '#f3f4f6',
+                                            color: isCurrentFile ? meta.accent : '#6b7280',
                                           }}
                                         >
                                           {displayLabel}
                                         </span>
-                                        <span className="min-w-0 flex-1 truncate" style={{ color: isCurrentFile ? meta.accent : 'var(--t-text-muted)' }}>
+                                        <span className="min-w-0 flex-1 truncate" style={{ color: isCurrentFile ? meta.accent : '#6b7280' }}>
                                           {displayName}
                                         </span>
                                       </button>
@@ -1845,7 +1847,7 @@ export const CodingPracticeManager: React.FC = () => {
                                         void handleRunSession(session.id);
                                       }}
                                       disabled={runningSessionId === session.id}
-                                      className="theme-list-item flex h-7 w-7 items-center justify-center rounded-lg text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-70"
+                                      className="flex h-7 w-7 items-center justify-center rounded-lg text-[11px] font-medium transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-70"
                                       style={{ color: meta.accent }}
                                       title="执行当前练习"
                                     >
@@ -1856,7 +1858,7 @@ export const CodingPracticeManager: React.FC = () => {
                                         event.stopPropagation();
                                         handleDeleteSession(session.id);
                                       }}
-                                      className="theme-icon-btn theme-icon-btn-danger h-6 w-6 rounded-md"
+                                      className="h-6 w-6 rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-red-600"
                                       title="删除练习"
                                     >
                                       <Trash2 className="h-3.5 w-3.5" />
@@ -1885,13 +1887,11 @@ export const CodingPracticeManager: React.FC = () => {
 
         <div
           ref={settingsRef}
-          className="relative shrink-0 border-t px-3 py-3"
-          style={{ borderColor: 'var(--t-border-light)' }}
+          className="relative shrink-0 border-t border-gray-200 bg-white px-3 py-3"
         >
           {settingsOpen && (
             <div
-              className="absolute bottom-[calc(100%-8px)] left-3 right-3 rounded-3xl border shadow-2xl p-4 z-20"
-              style={{ borderColor: 'var(--t-border-light)', background: 'rgba(255,255,255,0.98)', backdropFilter: 'blur(20px)' }}
+              className="absolute bottom-[calc(100%-8px)] left-3 right-3 z-20 rounded-xl border border-gray-200 bg-white p-4 shadow-lg"
             >
               <div className="text-sm font-semibold mb-3" style={{ color: 'var(--t-text)' }}>编辑设置</div>
               <div className="space-y-4">
@@ -2020,8 +2020,9 @@ export const CodingPracticeManager: React.FC = () => {
 
           <button
             onClick={() => setSettingsOpen(prev => !prev)}
-            className="w-full rounded-2xl border flex items-center justify-center gap-2 h-11 transition-colors"
-            style={{ borderColor: 'var(--t-border)', background: settingsOpen ? 'rgba(37,99,235,0.10)' : 'var(--t-bg-card)', color: settingsOpen ? '#2563eb' : 'var(--t-text-muted)' }}
+            className={`w-full rounded-md border border-gray-200 flex items-center justify-center gap-2 h-10 transition-colors ${
+              settingsOpen ? 'bg-gray-50 text-blue-600' : 'bg-white text-gray-500 hover:bg-gray-50 hover:text-gray-700'
+            }`}
             title="编辑设置"
           >
             <Settings2 className="w-4 h-4" />

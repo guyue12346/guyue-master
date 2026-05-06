@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 获取用户数据路径
   getUserDataPath: () => ipcRenderer.invoke('get-user-data-path'),
+  getHomeDir: () => ipcRenderer.invoke('get-home-dir'),
   getAppPath: () => ipcRenderer.invoke('get-app-path'),
 
   // 打开文件或路径
@@ -48,55 +49,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   writeTerminal: (id: string, data: string) => ipcRenderer.send('terminal-write', { id, data }),
   resizeTerminal: (id: string, cols: number, rows: number) => ipcRenderer.send('terminal-resize', { id, cols, rows }),
   closeTerminal: (id: string) => ipcRenderer.send('terminal-close', id),
-  getOpenCodeInfo: () => ipcRenderer.invoke('opencode-get-info'),
-  getOpenCodeEmbeddedTuiConfigPath: () => ipcRenderer.invoke('opencode-get-embedded-tui-config-path'),
-  getOpenCodeRuntimeState: (params: {
-    directory?: string;
-    officialSessionId?: string;
-    startedAfter?: number;
-    providerId?: string;
-  }) => ipcRenderer.invoke('opencode-get-runtime-state', params),
-  getOpenCodeProviderModels: (params: { providerId: string; directory?: string }) => ipcRenderer.invoke('opencode-get-provider-models', params),
-  getOpenCodeSessions: (params: {
-    directory?: string;
-  }) => ipcRenderer.invoke('opencode-list-sessions', params),
-  getOpenCodeSessionMessages: (params: {
-    sessionId?: string;
-  }) => ipcRenderer.invoke('opencode-get-session-messages', params),
-  onOpenCodeMessageStream: (callback: (event: any, payload: {
-    streamId: string;
-    type: 'text' | 'done' | 'error';
-    text?: string;
-    error?: string;
-    sessionId?: string | null;
-    sessionTitle?: string | null;
-  }) => void) => {
-    const subscription = (event: any, payload: {
-      streamId: string;
-      type: 'text' | 'done' | 'error';
-      text?: string;
-      error?: string;
-      sessionId?: string | null;
-      sessionTitle?: string | null;
-    }) => callback(event, payload);
-    ipcRenderer.on('opencode-message-stream', subscription);
-    return () => ipcRenderer.removeListener('opencode-message-stream', subscription);
-  },
-  sendOpenCodeMessage: (params: {
-    streamId?: string;
-    directory?: string;
-    officialSessionId?: string;
-    title?: string;
-    providerId?: string;
-    modelId?: string;
-    argsText?: string;
-    env?: Record<string, string>;
-    prompt: string;
-  }) => ipcRenderer.invoke('opencode-send-message', params),
-  deleteOpenCodeSession: (params: {
-    sessionId: string;
-    directory?: string;
-  }) => ipcRenderer.invoke('opencode-delete-session', params),
 
   // 应用数据文件存储
   saveAppData: (key: string, data: any) => ipcRenderer.invoke('save-app-data', key, data),
@@ -203,6 +155,7 @@ export interface ElectronAPI {
   getAppVersion: () => Promise<string>;
   getPlatform: () => Promise<string>;
   getUserDataPath: () => Promise<string>;
+  getHomeDir: () => Promise<string>;
   getAppPath: () => Promise<string>;
   openPath: (path: string) => Promise<string>;
   selectDirectory: () => Promise<string | null>;
@@ -229,121 +182,6 @@ export interface ElectronAPI {
   writeTerminal: (id: string, data: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => void;
   closeTerminal: (id: string) => void;
-  getOpenCodeInfo: () => Promise<{
-    binaryPath: string;
-    defaultCwd: string;
-    binaryExists: boolean;
-    version?: string | null;
-    authPath?: string;
-    providers: Array<{ id: string; label: string; authType: string; hasStoredCredential: boolean }>;
-    knownModelsByProvider: Record<string, string[]>;
-    defaultModelsByProvider: Record<string, string>;
-  }>;
-  getOpenCodeEmbeddedTuiConfigPath: () => Promise<string>;
-  getOpenCodeRuntimeState: (params: {
-    directory?: string;
-    officialSessionId?: string;
-    startedAfter?: number;
-    providerId?: string;
-  }) => Promise<{
-    session: {
-      id: string;
-      title: string;
-      directory: string;
-      projectId: string;
-      timeCreated: number;
-      timeUpdated: number;
-    } | null;
-    latestUsage: {
-      providerId: string | null;
-      providerLabel: string | null;
-      modelId: string | null;
-      cost: number;
-      tokens: {
-        total: number;
-        input: number;
-        output: number;
-        reasoning: number;
-        cacheRead: number;
-        cacheWrite: number;
-      };
-      timeUpdated: number | null;
-    } | null;
-    sessionTotals: {
-      turns: number;
-      totalCost: number;
-      totalTokens: number;
-      inputTokens: number;
-      outputTokens: number;
-      reasoningTokens: number;
-      cacheReadTokens: number;
-      cacheWriteTokens: number;
-    };
-    knownModels: string[];
-    plan: {
-      available: boolean;
-      note: string;
-    };
-    source: 'database';
-    lastUpdated: number;
-  }>;
-  getOpenCodeProviderModels: (params: { providerId: string; directory?: string }) => Promise<{
-    models: string[];
-    defaultModel: string;
-    source: 'opencode' | 'models.dev' | 'local';
-  }>;
-  getOpenCodeSessions: (params: {
-    directory?: string;
-  }) => Promise<Array<{
-    id: string;
-    title: string;
-    directory: string;
-    projectId: string;
-    timeCreated: number;
-    timeUpdated: number;
-    version: string | null;
-  }>>;
-  getOpenCodeSessionMessages: (params: {
-    sessionId?: string;
-  }) => Promise<Array<{
-    id: string;
-    role: 'user' | 'assistant' | 'system';
-    providerId: string | null;
-    modelId: string | null;
-    timeCreated: number;
-    timeUpdated: number;
-    text: string;
-    hasReasoning: boolean;
-    hasTool: boolean;
-    cost: number | null;
-    totalTokens: number | null;
-  }>>;
-  sendOpenCodeMessage: (params: {
-    streamId?: string;
-    directory?: string;
-    officialSessionId?: string;
-    title?: string;
-    providerId?: string;
-    modelId?: string;
-    argsText?: string;
-    env?: Record<string, string>;
-    prompt: string;
-  }) => Promise<{
-    ok: boolean;
-    error?: string;
-    stdout?: string;
-    stderr?: string;
-    sessionId?: string | null;
-    sessionTitle?: string | null;
-  }>;
-  onOpenCodeMessageStream: (callback: (event: any, payload: {
-    streamId: string;
-    type: 'text' | 'done' | 'error';
-    text?: string;
-    error?: string;
-    sessionId?: string | null;
-    sessionTitle?: string | null;
-  }) => void) => (() => void);
   // 应用数据文件存储
   saveAppData: (key: string, data: any) => Promise<boolean>;
   loadAppData: (key: string) => Promise<any>;

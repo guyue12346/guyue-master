@@ -14,6 +14,7 @@ interface LeetCodeListProps {
   onSetActiveList: (id: string | null) => void;
   expandedCategoriesMap: Record<string, string[]>;
   onSetExpandedCategories: (listId: string, categories: string[]) => void;
+  headerSlot?: React.ReactNode;
 }
 
 export const LeetCodeList: React.FC<LeetCodeListProps> = ({ 
@@ -27,7 +28,8 @@ export const LeetCodeList: React.FC<LeetCodeListProps> = ({
   activeListId,
   onSetActiveList,
   expandedCategoriesMap,
-  onSetExpandedCategories
+  onSetExpandedCategories,
+  headerSlot
 }) => {
   const activeList = lists.find(l => l.id === activeListId);
   
@@ -76,22 +78,25 @@ export const LeetCodeList: React.FC<LeetCodeListProps> = ({
   // View: All Lists
   if (!activeListId) {
     return (
-      <div className="h-full flex flex-col bg-gray-50 border-r border-gray-200 w-80 shrink-0">
-        <div className="p-4 border-b border-gray-200 bg-white flex justify-between items-center">
-          <h2 className="font-semibold text-gray-800 flex items-center gap-2">
-            <FileText className="w-5 h-5 text-blue-600" />
+      <div className="h-full flex flex-col bg-white border-r border-gray-200 w-80 shrink-0">
+        <div className="p-4 border-b border-gray-200 bg-white flex justify-between items-center gap-3">
+          <h2 className="min-w-0 font-semibold text-gray-800 flex items-center gap-2">
+            <FileText className="w-5 h-5 shrink-0 text-blue-600" />
             我的题单
           </h2>
-          <button 
-            onClick={onAddList}
-            className="p-1.5 rounded-md hover:bg-gray-100 text-gray-600 transition-colors"
-            title="新建题单"
-          >
-            <Plus className="w-4 h-4" />
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {headerSlot}
+            <button
+              onClick={onAddList}
+              className="p-1.5 rounded-md hover:bg-gray-100 text-gray-600 transition-colors"
+              title="新建题单"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        <div className="flex-1 overflow-y-auto bg-white p-3 space-y-3">
           {lists.map(list => {
             const { total, completed, percent } = getListProgress(list);
             return (
@@ -146,7 +151,7 @@ export const LeetCodeList: React.FC<LeetCodeListProps> = ({
   const { total, completed, percent } = getListProgress(activeList);
 
   return (
-    <div className="h-full flex flex-col bg-gray-50 border-r border-gray-200 w-80 shrink-0">
+    <div className="h-full flex flex-col bg-white border-r border-gray-200 w-80 shrink-0">
       <div className="p-4 border-b border-gray-200 bg-white space-y-3">
         <div className="flex items-center gap-2">
           <button 
@@ -158,6 +163,7 @@ export const LeetCodeList: React.FC<LeetCodeListProps> = ({
           <h2 className="font-semibold text-gray-800 truncate flex-1" title={activeList.title}>
             {activeList.title}
           </h2>
+          {headerSlot ? <div className="shrink-0">{headerSlot}</div> : null}
         </div>
 
         <div className="space-y-1">
@@ -174,7 +180,7 @@ export const LeetCodeList: React.FC<LeetCodeListProps> = ({
         </div>
       </div>
       
-      <div className="flex-1 overflow-y-auto p-2 space-y-1">
+      <div className="flex-1 overflow-y-auto bg-white p-2 space-y-1">
         {activeList.categories.map((cat, idx) => (
           <div key={idx} className="rounded-lg overflow-hidden bg-white border border-gray-100 shadow-sm">
             <button

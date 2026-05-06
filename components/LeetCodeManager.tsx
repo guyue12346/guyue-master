@@ -11,7 +11,7 @@ import { Terminal as TerminalComponent } from './Terminal';
 interface LeetCodeManagerProps {
   onCreateNote?: () => void;
   onOpenChat?: () => void;
-  toolbarSlot?: React.ReactNode;
+  sidebarSlot?: React.ReactNode;
 }
 
 const STORAGE_KEY_LISTS = 'leetcode_lists';
@@ -19,7 +19,7 @@ const STORAGE_KEY_PROGRESS = 'leetcode_progress';
 const STORAGE_KEY_ACTIVE_LIST = 'leetcode_active_list';
 const STORAGE_KEY_EXPANDED_CATEGORIES = 'leetcode_expanded_categories';
 
-export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onCreateNote, onOpenChat, toolbarSlot }) => {
+export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onCreateNote, onOpenChat, sidebarSlot }) => {
   // addressBarUrl tracks the URL shown in the toolbar
   const [addressBarUrl, setAddressBarUrl] = useState('https://leetcode.cn/problemset/all/');
   // initialUrl is used for the webview src to prevent React from reloading the webview on state changes
@@ -285,6 +285,7 @@ export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onCreateNote, 
             onSetActiveList={setActiveListId}
             expandedCategoriesMap={expandedCategoriesMap}
             onSetExpandedCategories={handleSetExpandedCategories}
+            headerSlot={sidebarSlot}
           />
         </div>
       )}
@@ -316,12 +317,6 @@ export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onCreateNote, 
             </button>
           </div>
 
-          {toolbarSlot ? (
-            <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-              {toolbarSlot}
-            </div>
-          ) : null}
-          
           <div className="flex-1 px-3 py-1.5 border rounded-md text-xs truncate font-mono" style={{ background: 'var(--t-input-bg)', borderColor: 'var(--t-input-border)', color: 'var(--t-text-muted)' }}>
             {addressBarUrl}
           </div>

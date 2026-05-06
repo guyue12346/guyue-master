@@ -45,7 +45,6 @@
     "music-metadata": "^11.12.3",
     "node-pty": "^1.0.0",
     "nodemailer": "^7.0.12",
-    "opencode-ai": "1.14.29",
     "pdf-parse": "^2.4.5",
     "pdfjs-dist": "^4.4.168",
     "react": "^19.2.0",
@@ -94,16 +93,7 @@
       "dist-electron/**/*",
       "package.json"
     ],
-    "extraResources": [
-      {
-        "from": "node_modules/opencode-ai/bin",
-        "to": "vendor/opencode/bin",
-        "filter": [
-          ".opencode",
-          "opencode"
-        ]
-      }
-    ],
+    "extraResources": [],
     "mac": {
       "target": [
         {

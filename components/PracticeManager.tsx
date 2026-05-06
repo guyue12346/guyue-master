@@ -51,7 +51,7 @@ export const PracticeManager: React.FC<PracticeManagerProps> = ({ onCreateNote, 
   }, [activeView]);
 
   const switchControl = useMemo(() => (
-    <div className="flex items-center border border-slate-200 bg-white text-xs">
+    <div className="flex h-7 items-center border border-slate-200 bg-white text-[11px]">
       {([
         ['leetcode', '题单'] as const,
         ['coding', 'Code'] as const,
@@ -59,7 +59,7 @@ export const PracticeManager: React.FC<PracticeManagerProps> = ({ onCreateNote, 
         <button
           key={view}
           onClick={() => setActiveView(view)}
-          className={`px-3 py-1.5 transition-colors ${
+          className={`h-full px-2.5 transition-colors ${
             activeView === view
               ? 'bg-slate-900 text-white'
               : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
@@ -83,24 +83,14 @@ export const PracticeManager: React.FC<PracticeManagerProps> = ({ onCreateNote, 
           <LeetCodeManager
             onCreateNote={onCreateNote}
             onOpenChat={onOpenChat}
-            toolbarSlot={switchControl}
+            sidebarSlot={switchControl}
           />
         </div>
       )}
 
       {(hasCodingMounted || activeView === 'coding') && (
-        <div className={activeView === 'coding' ? 'flex h-full flex-col bg-white' : 'hidden'}>
-          <div
-            className="flex h-12 shrink-0 items-center justify-center border-b px-4"
-            style={{ WebkitAppRegion: 'drag', background: 'var(--t-header-bg)', borderColor: 'var(--t-border)' } as React.CSSProperties}
-          >
-            <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-              {switchControl}
-            </div>
-          </div>
-          <div className="min-h-0 flex-1">
-            <CodingPracticeManager />
-          </div>
+        <div className={activeView === 'coding' ? 'h-full bg-white' : 'hidden'}>
+          <CodingPracticeManager headerSlot={switchControl} />
         </div>
       )}
     </Suspense>

@@ -1227,7 +1227,11 @@ const MarkdownRenameModal: React.FC<{
   );
 };
 
-export const WorkspaceManager: React.FC = () => {
+interface WorkspaceManagerProps {
+  onDetailStateChange?: (inDetail: boolean) => void;
+}
+
+export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({ onDetailStateChange }) => {
   const [categories, setCategories] = useState<WorkspaceCategory[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_WORKSPACE_CATEGORIES);
@@ -1248,6 +1252,11 @@ export const WorkspaceManager: React.FC = () => {
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+
+  useEffect(() => {
+    onDetailStateChange?.(Boolean(selectedWorkspaceId));
+    return () => onDetailStateChange?.(false);
+  }, [onDetailStateChange, selectedWorkspaceId]);
 
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<WorkspaceCategory | undefined>(undefined);
