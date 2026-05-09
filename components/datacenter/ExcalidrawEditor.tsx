@@ -2,8 +2,11 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   Plus, Save, Trash2, X, Download, Upload, Image as ImageIcon,
   FileText, Edit2, Copy, CheckCircle, AlertCircle, Loader2, Pencil,
-  FolderOpen, ChevronDown, Settings, Sigma
+  Settings, Sigma, Search, Layers, Clock3, PanelLeft, Tag, FolderPlus,
+  Maximize2, Minimize2, GripVertical, Check
 } from 'lucide-react';
+import * as LucideIcons from 'lucide-react';
+import { AVAILABLE_ICONS } from '../../types';
 import '@excalidraw/excalidraw/index.css';
 
 declare global {
@@ -17,9 +20,15 @@ interface DrawingFile {
   id: string;
   name: string;
   data: any; // Excalidraw scene data (elements + appState + files)
-  thumbnail?: string;
+  category?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+interface CanvasCategoryMeta {
+  name: string;
+  icon: string;
+  color: string;
 }
 
 // ======== 存储键 ========
@@ -30,6 +39,73 @@ const STORAGE_KEY_IMAGE_RECORDS = 'linkmaster_image_records_v1';
 const STORAGE_KEY_DEFAULTS = 'guyue_excalidraw_defaults';
 const STORAGE_KEY_LIBRARY = 'guyue_excalidraw_library';
 const STORAGE_KEY_LATEX_MAP = 'guyue_excalidraw_latex_map';
+const STORAGE_KEY_CANVAS_CATEGORIES = 'guyue_excalidraw_categories';
+const ALL_CANVAS_CATEGORY = '__all__';
+const UNCATEGORIZED_CANVAS_CATEGORY = '未分类';
+const DEFAULT_CANVAS_CATEGORY_ICON = 'Layers';
+const CANVAS_CATEGORY_COLORS = [
+  '#3b82f6',
+  '#8b5cf6',
+  '#06b6d4',
+  '#10b981',
+  '#f59e0b',
+  '#ef4444',
+  '#ec4899',
+  '#64748b',
+];
+
+const isReservedCanvasCategory = (name: string) =>
+  !name || name === UNCATEGORIZED_CANVAS_CATEGORY || name === '全部' || name === ALL_CANVAS_CATEGORY;
+
+const hashCanvasCategoryName = (name: string) =>
+  Array.from(name).reduce((hash, char) => hash + char.charCodeAt(0), 0);
+
+const createCanvasCategoryMeta = (name: string): CanvasCategoryMeta => {
+  const trimmed = name.trim();
+  const color = CANVAS_CATEGORY_COLORS[hashCanvasCategoryName(trimmed) % CANVAS_CATEGORY_COLORS.length];
+  return {
+    name: trimmed,
+    icon: DEFAULT_CANVAS_CATEGORY_ICON,
+    color,
+  };
+};
+
+const normalizeCanvasCategoryMeta = (entry: unknown): CanvasCategoryMeta | null => {
+  const rawName =
+    typeof entry === 'string'
+      ? entry
+      : entry && typeof entry === 'object'
+        ? String((entry as Partial<CanvasCategoryMeta>).name || '')
+        : '';
+  const name = rawName.trim();
+  if (isReservedCanvasCategory(name)) return null;
+
+  const fallback = createCanvasCategoryMeta(name);
+  if (!entry || typeof entry !== 'object' || typeof entry === 'string') return fallback;
+
+  const rawIcon = String((entry as Partial<CanvasCategoryMeta>).icon || '').trim();
+  const rawColor = String((entry as Partial<CanvasCategoryMeta>).color || '').trim();
+
+  return {
+    name,
+    icon: rawIcon || fallback.icon,
+    color: rawColor || fallback.color,
+  };
+};
+
+const normalizeCanvasCategoryMetas = (categories: unknown[]): CanvasCategoryMeta[] => {
+  const seen = new Set<string>();
+  const normalized: CanvasCategoryMeta[] = [];
+
+  for (const category of categories) {
+    const meta = normalizeCanvasCategoryMeta(category);
+    if (!meta || seen.has(meta.name)) continue;
+    seen.add(meta.name);
+    normalized.push(meta);
+  }
+
+  return normalized;
+};
 
 // 需要持久化的 appState 属性（工具偏好设置）
 const PERSISTED_APP_STATE_KEYS = [
@@ -190,15 +266,176 @@ const closeBuiltinMermaidDialog = (api: any) => {
 // ======== 工具函数 ========
 const generateId = () => `draw_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
+const sanitizeDrawing = (drawing: DrawingFile): DrawingFile => {
+  const { thumbnail: _thumbnail, ...rest } = drawing as DrawingFile & { thumbnail?: string };
+  return rest;
+};
+
 const loadDrawings = (): DrawingFile[] => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_DRAWINGS);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const sanitized = parsed.map(sanitizeDrawing);
+    if (JSON.stringify(parsed) !== JSON.stringify(sanitized)) {
+      saveDrawings(sanitized);
+    }
+    return sanitized;
   } catch { return []; }
 };
 
 const saveDrawings = (drawings: DrawingFile[]) => {
-  localStorage.setItem(STORAGE_KEY_DRAWINGS, JSON.stringify(drawings));
+  localStorage.setItem(STORAGE_KEY_DRAWINGS, JSON.stringify(drawings.map(sanitizeDrawing)));
+};
+
+const normalizeCanvasCategory = (category?: string) => {
+  const trimmed = category?.trim();
+  return trimmed || UNCATEGORIZED_CANVAS_CATEGORY;
+};
+
+const toStoredCanvasCategory = (category: string) => {
+  const normalized = normalizeCanvasCategory(category);
+  return normalized === UNCATEGORIZED_CANVAS_CATEGORY ? undefined : normalized;
+};
+
+const loadCanvasCategories = (): CanvasCategoryMeta[] => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CANVAS_CATEGORIES);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return normalizeCanvasCategoryMetas(parsed);
+  } catch {
+    return [];
+  }
+};
+
+const saveCanvasCategories = (categories: Array<CanvasCategoryMeta | string>) => {
+  const normalized = normalizeCanvasCategoryMetas(categories);
+  localStorage.setItem(STORAGE_KEY_CANVAS_CATEGORIES, JSON.stringify(normalized));
+};
+
+const formatDrawingTime = (timestamp: number) => {
+  if (!timestamp) return '-';
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(timestamp));
+};
+
+const cloneSceneData = (data: any) => {
+  try {
+    return JSON.parse(JSON.stringify(data || { elements: [], appState: {}, files: {} }));
+  } catch {
+    return { elements: [], appState: {}, files: {} };
+  }
+};
+
+const getPreviewElements = (drawing: DrawingFile) => {
+  const elements = drawing.data?.elements;
+  if (!Array.isArray(elements)) return [];
+  return elements.filter((element: any) => !element?.isDeleted);
+};
+
+const getPreviewBounds = (elements: any[]) => {
+  if (!elements.length) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const element of elements) {
+    const x = Number(element.x) || 0;
+    const y = Number(element.y) || 0;
+    const width = Math.max(Number(element.width) || 1, 1);
+    const height = Math.max(Number(element.height) || 1, 1);
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x + width);
+    maxY = Math.max(maxY, y + height);
+  }
+
+  const padding = Math.max((maxX - minX) * 0.08, (maxY - minY) * 0.08, 24);
+  return {
+    x: minX - padding,
+    y: minY - padding,
+    width: Math.max(maxX - minX + padding * 2, 120),
+    height: Math.max(maxY - minY + padding * 2, 80),
+  };
+};
+
+const CanvasThumbnail: React.FC<{ drawing: DrawingFile }> = ({ drawing }) => {
+  const elements = getPreviewElements(drawing).slice(0, 80);
+  const bounds = getPreviewBounds(elements);
+
+  if (!bounds) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(45deg,#f8fafc_25%,transparent_25%),linear-gradient(-45deg,#f8fafc_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#f8fafc_75%),linear-gradient(-45deg,transparent_75%,#f8fafc_75%)] bg-[length:12px_12px] bg-[position:0_0,0_6px,6px_-6px,-6px_0] dark:bg-gray-900">
+        <span className="text-[11px] text-gray-300 dark:text-gray-600">空白</span>
+      </div>
+    );
+  }
+
+  const renderElement = (element: any) => {
+    const x = Number(element.x) || 0;
+    const y = Number(element.y) || 0;
+    const width = Math.max(Number(element.width) || 1, 1);
+    const height = Math.max(Number(element.height) || 1, 1);
+    const stroke = element.strokeColor || '#334155';
+    const fill = element.backgroundColor && element.backgroundColor !== 'transparent'
+      ? element.backgroundColor
+      : 'none';
+    const strokeWidth = Math.max(Number(element.strokeWidth) || 1, 1) * 1.5;
+    const opacity = Math.max(Math.min(Number(element.opacity ?? 100), 100), 8) / 100;
+
+    if (element.type === 'ellipse') {
+      return <ellipse key={element.id} cx={x + width / 2} cy={y + height / 2} rx={width / 2} ry={height / 2} fill={fill} stroke={stroke} strokeWidth={strokeWidth} opacity={opacity} />;
+    }
+    if (element.type === 'diamond') {
+      const points = `${x + width / 2},${y} ${x + width},${y + height / 2} ${x + width / 2},${y + height} ${x},${y + height / 2}`;
+      return <polygon key={element.id} points={points} fill={fill} stroke={stroke} strokeWidth={strokeWidth} opacity={opacity} />;
+    }
+    if (element.type === 'line' || element.type === 'arrow' || element.type === 'freedraw') {
+      const points = Array.isArray(element.points) && element.points.length
+        ? element.points.map((point: [number, number]) => `${x + point[0]},${y + point[1]}`).join(' ')
+        : `${x},${y} ${x + width},${y + height}`;
+      return <polyline key={element.id} points={points} fill="none" stroke={stroke} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" opacity={opacity} />;
+    }
+    if (element.type === 'text') {
+      const text = String(element.text || '').slice(0, 16);
+      return (
+        <text key={element.id} x={x} y={y + Math.min(height, 24)} fill={stroke} fontSize={Math.max(Math.min(Number(element.fontSize) || 18, 28), 10)} opacity={opacity}>
+          {text}
+        </text>
+      );
+    }
+    if (element.type === 'image') {
+      return <rect key={element.id} x={x} y={y} width={width} height={height} rx={8} fill="#e0f2fe" stroke="#38bdf8" strokeWidth={strokeWidth} opacity={opacity} />;
+    }
+    return <rect key={element.id} x={x} y={y} width={width} height={height} rx={Math.min(12, width / 4, height / 4)} fill={fill} stroke={stroke} strokeWidth={strokeWidth} opacity={opacity} />;
+  };
+
+  return (
+    <svg
+      viewBox={`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`}
+      className="h-full w-full bg-white dark:bg-gray-950"
+      preserveAspectRatio="xMidYMid meet"
+    >
+      <rect x={bounds.x} y={bounds.y} width={bounds.width} height={bounds.height} fill="currentColor" className="text-white dark:text-gray-950" />
+      {elements.map(renderElement)}
+    </svg>
+  );
+};
+
+const CanvasCategoryIcon: React.FC<{
+  icon?: string;
+  color?: string;
+  className?: string;
+}> = ({ icon, color, className = 'h-3.5 w-3.5' }) => {
+  const Icon = (LucideIcons as unknown as Record<string, React.ComponentType<any>>)[icon || DEFAULT_CANVAS_CATEGORY_ICON] || Layers;
+  return <Icon className={className} style={color ? { color } : undefined} />;
 };
 
 const loadLibrary = (): any[] => {
@@ -390,33 +627,441 @@ const DeleteConfirmModal: React.FC<{
   );
 };
 
-// ======== 重命名弹窗 ========
-const RenameModal: React.FC<{
+const CategoryPickerFields: React.FC<{
+  categories: CanvasCategoryMeta[];
+  selectedCategory: string;
+  customCategory: string;
+  onSelectedCategoryChange: (category: string) => void;
+  onCustomCategoryChange: (category: string) => void;
+}> = ({ categories, selectedCategory, customCategory, onSelectedCategoryChange, onCustomCategoryChange }) => (
+  <div className="space-y-2">
+    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">分类</label>
+    {categories.length > 0 && (
+      <div className="grid max-h-36 grid-cols-2 gap-2 overflow-y-auto pr-1">
+        {categories.map(category => {
+          const selected = selectedCategory === category.name && !customCategory;
+          return (
+            <button
+              key={category.name}
+              type="button"
+              onClick={() => {
+                onSelectedCategoryChange(category.name);
+                onCustomCategoryChange('');
+              }}
+              className={`flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-left text-sm transition-colors ${
+                selected
+                  ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-200'
+                  : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300'
+              }`}
+            >
+              <span
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg"
+                style={{ backgroundColor: `${category.color}18` }}
+              >
+                <CanvasCategoryIcon icon={category.icon} color={category.color} className="h-3.5 w-3.5" />
+              </span>
+              <span className="truncate">{category.name}</span>
+            </button>
+          );
+        })}
+      </div>
+    )}
+    <input
+      value={customCategory}
+      onChange={event => {
+        onCustomCategoryChange(event.target.value);
+        onSelectedCategoryChange('');
+      }}
+      placeholder={categories.length > 0 ? '或输入新分类' : '输入新分类'}
+      className="h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 text-sm text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white"
+    />
+  </div>
+);
+
+// ======== 新建画布弹窗 ========
+const NewCanvasModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
-  onSave: (name: string) => void;
-  currentName: string;
-}> = ({ isOpen, onClose, onSave, currentName }) => {
-  const [name, setName] = useState(currentName);
-  useEffect(() => { if (isOpen) setName(currentName); }, [isOpen, currentName]);
+  onCreate: (name: string, category: string) => void;
+  categories: CanvasCategoryMeta[];
+  defaultCategory: string;
+  defaultName: string;
+}> = ({ isOpen, onClose, onCreate, categories, defaultCategory, defaultName }) => {
+  const [name, setName] = useState(defaultName);
+  const [selectedCategory, setSelectedCategory] = useState(defaultCategory);
+  const [customCategory, setCustomCategory] = useState('');
+
+  useEffect(() => {
+    if (isOpen) {
+      setName(defaultName);
+      setSelectedCategory(defaultCategory);
+      setCustomCategory('');
+    }
+  }, [defaultCategory, defaultName, isOpen]);
+
   if (!isOpen) return null;
+
+  const finalCategory = customCategory.trim() || selectedCategory.trim();
+
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-sm m-4 shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
-          <h3 className="text-base font-semibold text-gray-900 dark:text-white">重命名画布</h3>
+          <h3 className="text-base font-semibold text-gray-900 dark:text-white">新建画布</h3>
           <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
         </div>
-        <form onSubmit={e => { e.preventDefault(); if (name.trim()) onSave(name.trim()); }} className="p-4">
-          <input
-            type="text" value={name} onChange={e => setName(e.target.value)} autoFocus
-            className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
+        <form
+          onSubmit={e => {
+            e.preventDefault();
+            if (name.trim() && finalCategory) onCreate(name.trim(), finalCategory);
+          }}
+          className="space-y-4 p-4"
+        >
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">名称</label>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              autoFocus
+              className="h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 text-sm text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white"
+            />
+          </div>
+          <CategoryPickerFields
+            categories={categories}
+            selectedCategory={selectedCategory}
+            customCategory={customCategory}
+            onSelectedCategoryChange={setSelectedCategory}
+            onCustomCategoryChange={setCustomCategory}
           />
-          <div className="flex justify-end gap-2 mt-4">
+          <div className="flex justify-end gap-2">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl">取消</button>
-            <button type="submit" className="px-4 py-2 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-xl">保存</button>
+            <button
+              type="submit"
+              disabled={!name.trim() || !finalCategory}
+              className="px-4 py-2 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-xl disabled:opacity-50"
+            >
+              创建
+            </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+};
+
+// ======== 编辑画布弹窗 ========
+const CanvasEditModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (name: string, category: string) => void;
+  currentName: string;
+  currentCategory: string;
+  categories: CanvasCategoryMeta[];
+}> = ({ isOpen, onClose, onSave, currentName, currentCategory, categories }) => {
+  const [name, setName] = useState(currentName);
+  const [selectedCategory, setSelectedCategory] = useState(currentCategory);
+  const [customCategory, setCustomCategory] = useState('');
+
+  useEffect(() => {
+    if (isOpen) {
+      setName(currentName);
+      setSelectedCategory(currentCategory === UNCATEGORIZED_CANVAS_CATEGORY ? '' : currentCategory);
+      setCustomCategory('');
+    }
+  }, [currentCategory, currentName, isOpen]);
+
+  if (!isOpen) return null;
+
+  const finalCategory = customCategory.trim() || selectedCategory.trim();
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-sm m-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+          <h3 className="text-base font-semibold text-gray-900 dark:text-white">编辑画布</h3>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        <form
+          onSubmit={e => {
+            e.preventDefault();
+            if (name.trim() && finalCategory) onSave(name.trim(), finalCategory);
+          }}
+          className="space-y-4 p-4"
+        >
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">名称</label>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              autoFocus
+              className="h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 text-sm text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white"
+            />
+          </div>
+          <CategoryPickerFields
+            categories={categories}
+            selectedCategory={selectedCategory}
+            customCategory={customCategory}
+            onSelectedCategoryChange={setSelectedCategory}
+            onCustomCategoryChange={setCustomCategory}
+          />
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl">取消</button>
+            <button
+              type="submit"
+              disabled={!name.trim() || !finalCategory}
+              className="px-4 py-2 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-xl disabled:opacity-50"
+            >
+              保存
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// ======== 画布分类管理弹窗 ========
+const CanvasCategoryManagerModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  categories: CanvasCategoryMeta[];
+  counts: Record<string, number>;
+  onAdd: (category: CanvasCategoryMeta) => void;
+  onSave: (oldName: string, category: CanvasCategoryMeta) => void;
+  onDelete: (name: string) => void;
+}> = ({ isOpen, onClose, categories, counts, onAdd, onSave, onDelete }) => {
+  const [editingName, setEditingName] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState('');
+  const [draftIcon, setDraftIcon] = useState(DEFAULT_CANVAS_CATEGORY_ICON);
+  const [draftColor, setDraftColor] = useState(CANVAS_CATEGORY_COLORS[0]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setEditingName(null);
+      setDraftName('');
+      setDraftIcon(DEFAULT_CANVAS_CATEGORY_ICON);
+      setDraftColor(CANVAS_CATEGORY_COLORS[0]);
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const startCreate = () => {
+    setEditingName(null);
+    setDraftName('');
+    setDraftIcon(DEFAULT_CANVAS_CATEGORY_ICON);
+    setDraftColor(CANVAS_CATEGORY_COLORS[0]);
+  };
+
+  const startEdit = (category: CanvasCategoryMeta) => {
+    setEditingName(category.name);
+    setDraftName(category.name);
+    setDraftIcon(category.icon || DEFAULT_CANVAS_CATEGORY_ICON);
+    setDraftColor(category.color || CANVAS_CATEGORY_COLORS[0]);
+  };
+
+  const submitCategory = (event: React.FormEvent) => {
+    event.preventDefault();
+    const name = draftName.trim();
+    if (!name) return;
+
+    const category = {
+      name,
+      icon: draftIcon || DEFAULT_CANVAS_CATEGORY_ICON,
+      color: draftColor || CANVAS_CATEGORY_COLORS[0],
+    };
+
+    if (editingName) {
+      onSave(editingName, category);
+    } else {
+      onAdd(category);
+    }
+    startCreate();
+  };
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-800" onClick={event => event.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-gray-200 p-4 dark:border-gray-700">
+          <div className="flex items-center gap-2">
+            <Tag className="h-5 w-5 text-blue-500" />
+            <h3 className="text-base font-semibold text-gray-900 dark:text-white">画布分类</h3>
+          </div>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="grid min-h-0 flex-1 grid-cols-[240px_1fr]">
+          <div className="min-h-0 border-r border-gray-100 bg-gray-50/70 p-3 dark:border-gray-700 dark:bg-gray-900/30">
+            <button
+              onClick={startCreate}
+              className={`mb-2 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed px-3 py-2.5 text-sm font-medium outline-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 dark:focus-visible:ring-blue-800 ${
+                !editingName && !draftName
+                  ? 'border-blue-300 bg-blue-50 text-blue-600 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                  : 'border-gray-300 text-gray-500 hover:border-blue-300 hover:bg-white hover:text-blue-600 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800'
+              }`}
+            >
+              <FolderPlus className="h-4 w-4" />
+              新建分类
+            </button>
+
+            <div className="max-h-[52vh] space-y-1 overflow-y-auto pr-1">
+              {categories.length === 0 ? (
+                <div className="px-3 py-6 text-center text-sm text-gray-400 dark:text-gray-500">
+                  暂无自定义分类
+                </div>
+              ) : (
+                categories.map(category => {
+                  const selected = editingName === category.name;
+                  return (
+                    <button
+                      key={category.name}
+                      onClick={() => startEdit(category)}
+                      className={`group relative flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left outline-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 dark:focus-visible:ring-blue-800 ${
+                        selected
+                          ? 'bg-blue-50/80 text-blue-700 dark:bg-blue-900/20 dark:text-blue-200'
+                          : 'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-800'
+                      }`}
+                    >
+                      {selected && (
+                        <span className="absolute left-1 top-2 bottom-2 w-0.5 rounded-full bg-blue-500" />
+                      )}
+                      <span
+                        className="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
+                        style={{ backgroundColor: selected ? `${category.color}22` : `${category.color}14` }}
+                      >
+                        <CanvasCategoryIcon icon={category.icon} color={category.color} className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                        {category.name}
+                      </span>
+                      <span className={`rounded-md px-2 py-0.5 text-xs ${
+                        selected
+                          ? 'bg-white/80 text-blue-500 dark:bg-gray-800/80 dark:text-blue-300'
+                          : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300'
+                      }`}>
+                        {counts[category.name] || 0}
+                      </span>
+                      <span
+                        onClick={event => {
+                          event.stopPropagation();
+                          onDelete(category.name);
+                        }}
+                        className="rounded-md p-1 text-gray-400 opacity-0 hover:bg-red-50 hover:text-red-500 group-hover:opacity-100 dark:hover:bg-red-900/20"
+                        title="删除分类，画布会移动到未分类"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="mt-2 border-t border-gray-100 pt-2 dark:border-gray-700">
+              <div className="flex items-center justify-between rounded-xl px-3 py-2 text-sm text-gray-500 hover:bg-white dark:text-gray-400 dark:hover:bg-gray-800">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-700">
+                    <Tag className="h-3.5 w-3.5 text-gray-400" />
+                  </span>
+                  <span className="truncate">{UNCATEGORIZED_CANVAS_CATEGORY}</span>
+                </div>
+                <span className="rounded-md bg-gray-100 px-2 py-0.5 text-xs text-gray-500 dark:bg-gray-700 dark:text-gray-300">
+                  {counts[UNCATEGORIZED_CANVAS_CATEGORY] || 0}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <form onSubmit={submitCategory} className="min-h-0 overflow-y-auto p-5">
+            <div className="mb-5">
+              <h4 className="text-sm font-semibold text-gray-800 dark:text-white">
+                {editingName ? '编辑分类' : '新建分类'}
+              </h4>
+            </div>
+
+            <div className="space-y-5">
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">分类名称</label>
+                <input
+                  value={draftName}
+                  onChange={event => setDraftName(event.target.value)}
+                  autoFocus
+                  placeholder="例如：项目草图"
+                  className="h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 text-sm text-gray-900 outline-none focus:border-blue-400 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">颜色</label>
+                <div className="flex flex-wrap gap-2">
+                  {CANVAS_CATEGORY_COLORS.map(color => (
+                    <button
+                      key={color}
+                      type="button"
+                      onClick={() => setDraftColor(color)}
+                      className={`flex h-8 w-8 items-center justify-center rounded-full transition-transform hover:scale-105 ${
+                        draftColor === color ? 'ring-2 ring-gray-400 ring-offset-2 dark:ring-offset-gray-800' : ''
+                      }`}
+                      style={{ backgroundColor: color }}
+                      title={color}
+                    >
+                      {draftColor === color ? <Check className="h-4 w-4 text-white" /> : null}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">图标</label>
+                <div className="grid max-h-48 grid-cols-8 gap-2 overflow-y-auto pr-1">
+                  {AVAILABLE_ICONS.map(iconName => {
+                    const selected = draftIcon === iconName;
+                    return (
+                      <button
+                        key={iconName}
+                        type="button"
+                        onClick={() => setDraftIcon(iconName)}
+                        className={`flex h-9 w-9 items-center justify-center rounded-xl border transition-colors ${
+                          selected
+                            ? 'border-blue-300 bg-blue-50 dark:border-blue-700 dark:bg-blue-900/30'
+                            : 'border-gray-200 bg-white hover:border-gray-300 dark:border-gray-700 dark:bg-gray-900'
+                        }`}
+                        title={iconName}
+                      >
+                        <CanvasCategoryIcon
+                          icon={iconName}
+                          color={selected ? draftColor : '#94a3b8'}
+                          className="h-4 w-4"
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-2 border-t border-gray-100 pt-4 dark:border-gray-700">
+              <button
+                type="button"
+                onClick={startCreate}
+                className="rounded-xl px-4 py-2 text-sm text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700"
+              >
+                清空
+              </button>
+              <button
+                type="submit"
+                disabled={!draftName.trim()}
+                className="rounded-xl bg-blue-500 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {editingName ? '保存' : '创建'}
+              </button>
+            </div>
+          </form>
+          </div>
       </div>
     </div>
   );
@@ -668,7 +1313,16 @@ export const ExcalidrawEditor: React.FC = () => {
   const [isMermaidModalOpen, setIsMermaidModalOpen] = useState(false);
   const [isMermaidImporting, setIsMermaidImporting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [isFileListOpen, setIsFileListOpen] = useState(false);
+  const [isCanvasManagerOpen, setIsCanvasManagerOpen] = useState(true);
+  const [canvasSearch, setCanvasSearch] = useState('');
+  const [canvasCategoryFilter, setCanvasCategoryFilter] = useState(ALL_CANVAS_CATEGORY);
+  const [canvasCategories, setCanvasCategories] = useState<CanvasCategoryMeta[]>(loadCanvasCategories);
+  const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
+  const [draggedCanvasId, setDraggedCanvasId] = useState<string | null>(null);
+  const [dragOverCanvasId, setDragOverCanvasId] = useState<string | null>(null);
+  const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false);
+  const [isNewCanvasModalOpen, setIsNewCanvasModalOpen] = useState(false);
+  const [newCanvasDefaultCategory, setNewCanvasDefaultCategory] = useState('');
   const [isDark, setIsDark] = useState(false);
 
   // 图床可用分类（同时读 records + categoriesMap）
@@ -929,45 +1583,136 @@ export const ExcalidrawEditor: React.FC = () => {
     return drawings.find(d => d.id === activeId) || null;
   }, [drawings, activeId]);
 
-  // 新建画布
+  const canvasCategoryCounts = useMemo(() => {
+    const counts: Record<string, number> = { [UNCATEGORIZED_CANVAS_CATEGORY]: 0 };
+    for (const drawing of drawings) {
+      const category = normalizeCanvasCategory(drawing.category);
+      counts[category] = (counts[category] || 0) + 1;
+    }
+    return counts;
+  }, [drawings]);
+
+  const visibleCanvasCategories = useMemo(() => {
+    const storedByName = new Map(canvasCategories.map(category => [category.name, category]));
+    const usedCategories = drawings
+      .map(drawing => normalizeCanvasCategory(drawing.category))
+      .filter(category => category !== UNCATEGORIZED_CANVAS_CATEGORY);
+    const merged = [...canvasCategories];
+    for (const category of usedCategories) {
+      if (!storedByName.has(category) && !merged.some(item => item.name === category)) {
+        merged.push(createCanvasCategoryMeta(category));
+      }
+    }
+    return merged;
+  }, [canvasCategories, drawings]);
+
+  const visibleCanvasCategoryNames = useMemo(
+    () => visibleCanvasCategories.map(category => category.name),
+    [visibleCanvasCategories],
+  );
+
+  const canvasCategoryMetaByName = useMemo(() => {
+    const map = new Map<string, CanvasCategoryMeta>();
+    for (const category of visibleCanvasCategories) {
+      map.set(category.name, category);
+    }
+    return map;
+  }, [visibleCanvasCategories]);
+
+  const filteredDrawings = useMemo(() => {
+    const keyword = canvasSearch.trim().toLowerCase();
+    return drawings.filter(drawing => {
+      if (
+        canvasCategoryFilter !== ALL_CANVAS_CATEGORY &&
+        normalizeCanvasCategory(drawing.category) !== canvasCategoryFilter
+      ) {
+        return false;
+      }
+      if (!keyword) return true;
+      return drawing.name.toLowerCase().includes(keyword);
+    });
+  }, [drawings, canvasSearch, canvasCategoryFilter]);
+
+  const getCurrentSceneSnapshot = useCallback(() => {
+    const api = excalidrawAPIRef.current;
+    if (!api || !activeId) return null;
+    return {
+      elements: api.getSceneElements(),
+      appState: pickAppState(api.getAppState()),
+      files: api.getFiles(),
+    };
+  }, [activeId]);
+
+  const updateCanvasCategories = useCallback((categories: Array<CanvasCategoryMeta | string>) => {
+    const normalized = normalizeCanvasCategoryMetas(categories);
+    setCanvasCategories(normalized);
+    saveCanvasCategories(normalized);
+    return normalized;
+  }, []);
+
   const handleNewDrawing = useCallback(() => {
+    const defaultCategory =
+      canvasCategoryFilter !== ALL_CANVAS_CATEGORY &&
+      canvasCategoryFilter !== UNCATEGORIZED_CANVAS_CATEGORY
+        ? canvasCategoryFilter
+        : '';
+    setNewCanvasDefaultCategory(defaultCategory);
+    setIsNewCanvasModalOpen(true);
+    setIsCanvasManagerOpen(true);
+  }, [canvasCategoryFilter]);
+
+  // 创建画布
+  const handleCreateDrawing = useCallback((name: string, category: string) => {
+    const finalCategory = category.trim();
+    if (!finalCategory || finalCategory === UNCATEGORIZED_CANVAS_CATEGORY || finalCategory === '全部') {
+      showToast('新建画布必须选择分类', 'error');
+      return;
+    }
+
     const defaults = loadDefaults();
+    const now = Date.now();
+    const currentSnapshot = getCurrentSceneSnapshot();
+    const baseDrawings = currentSnapshot
+      ? drawings.map(d => d.id === activeId ? { ...d, data: currentSnapshot, updatedAt: now } : d)
+      : drawings;
     const newDrawing: DrawingFile = {
       id: generateId(),
-      name: `画布 ${drawings.length + 1}`,
+      name: name.trim() || `画布 ${drawings.length + 1}`,
       data: { elements: [], appState: { ...defaults }, files: {} },
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      category: finalCategory,
+      createdAt: now,
+      updatedAt: now,
     };
-    const updated = [newDrawing, ...drawings];
+    const updated = [newDrawing, ...baseDrawings];
     setDrawings(updated);
     saveDrawings(updated);
     setActiveId(newDrawing.id);
     localStorage.setItem(STORAGE_KEY_ACTIVE, newDrawing.id);
-    setIsFileListOpen(false);
-  }, [drawings]);
+    if (!visibleCanvasCategoryNames.includes(finalCategory)) {
+      updateCanvasCategories([...canvasCategories, finalCategory]);
+    }
+    setCanvasCategoryFilter(finalCategory);
+    setIsCanvasManagerOpen(true);
+    setIsNewCanvasModalOpen(false);
+  }, [activeId, canvasCategories, drawings, getCurrentSceneSnapshot, showToast, updateCanvasCategories, visibleCanvasCategoryNames]);
 
   // 切换画布前先保存当前画布
   const saveCurrentScene = useCallback(() => {
-    if (!excalidrawAPIRef.current || !activeId) return;
-    const api = excalidrawAPIRef.current;
-    const elements = api.getSceneElements();
-    const appState = api.getAppState();
-    const files = api.getFiles();
+    const snapshot = getCurrentSceneSnapshot();
+    if (!snapshot || !activeId) return;
     const updated = drawings.map(d =>
-      d.id === activeId ? { ...d, data: { elements, appState: pickAppState(appState), files }, updatedAt: Date.now() } : d
+      d.id === activeId ? { ...d, data: snapshot, updatedAt: Date.now() } : d
     );
     setDrawings(updated);
     saveDrawings(updated);
-  }, [activeId, drawings]);
+  }, [activeId, drawings, getCurrentSceneSnapshot]);
 
   // 切换画布
   const handleSwitchDrawing = useCallback((id: string) => {
-    if (id === activeId) { setIsFileListOpen(false); return; }
+    if (id === activeId) return;
     saveCurrentScene();
     setActiveId(id);
     localStorage.setItem(STORAGE_KEY_ACTIVE, id);
-    setIsFileListOpen(false);
   }, [activeId, saveCurrentScene]);
 
   // 手动保存
@@ -1085,15 +1830,157 @@ export const ExcalidrawEditor: React.FC = () => {
     showToast('画布已删除');
   }, [drawings, activeId, showToast]);
 
-  // 重命名
-  const handleRename = useCallback((newName: string) => {
+  // 编辑画布信息
+  const handleEditDrawing = useCallback((newName: string, newCategory: string) => {
     if (!renameTarget) return;
-    const updated = drawings.map(d => d.id === renameTarget.id ? { ...d, name: newName, updatedAt: Date.now() } : d);
+    const finalCategory = newCategory.trim();
+    if (!finalCategory || finalCategory === UNCATEGORIZED_CANVAS_CATEGORY || finalCategory === '全部') {
+      showToast('画布必须选择分类', 'error');
+      return;
+    }
+
+    const snapshot = getCurrentSceneSnapshot();
+    const baseDrawings = snapshot && activeId
+      ? drawings.map(d => d.id === activeId ? { ...d, data: snapshot, updatedAt: Date.now() } : d)
+      : drawings;
+    const updated = baseDrawings.map(d =>
+      d.id === renameTarget.id
+        ? { ...d, name: newName, category: finalCategory, updatedAt: Date.now() }
+        : d,
+    );
     setDrawings(updated);
     saveDrawings(updated);
+    if (!visibleCanvasCategoryNames.includes(finalCategory)) {
+      updateCanvasCategories([...canvasCategories, finalCategory]);
+    }
     setRenameTarget(null);
-    showToast('已重命名');
-  }, [drawings, renameTarget, showToast]);
+    showToast('已保存');
+  }, [activeId, canvasCategories, drawings, getCurrentSceneSnapshot, renameTarget, showToast, updateCanvasCategories, visibleCanvasCategoryNames]);
+
+  const handleAddCanvasCategory = useCallback((category: CanvasCategoryMeta) => {
+    const name = category.name.trim();
+    if (isReservedCanvasCategory(name)) {
+      showToast('分类名称不可用', 'error');
+      return;
+    }
+    if (visibleCanvasCategoryNames.includes(name)) {
+      showToast('分类已存在', 'error');
+      return;
+    }
+    updateCanvasCategories([...canvasCategories, { ...category, name }]);
+    setCanvasCategoryFilter(name);
+    showToast('分类已添加');
+  }, [canvasCategories, showToast, updateCanvasCategories, visibleCanvasCategoryNames]);
+
+  const handleSaveCanvasCategory = useCallback((oldName: string, nextCategory: CanvasCategoryMeta) => {
+    const nextName = nextCategory.name.trim();
+    if (isReservedCanvasCategory(nextName)) {
+      showToast('分类名称不可用', 'error');
+      return;
+    }
+    if (nextName !== oldName && visibleCanvasCategoryNames.includes(nextName)) {
+      showToast('分类已存在', 'error');
+      return;
+    }
+
+    const snapshot = getCurrentSceneSnapshot();
+    const baseDrawings = snapshot && activeId
+      ? drawings.map(d => d.id === activeId ? { ...d, data: snapshot, updatedAt: Date.now() } : d)
+      : drawings;
+    const updatedDrawings = baseDrawings.map(d =>
+      normalizeCanvasCategory(d.category) === oldName ? { ...d, category: nextName, updatedAt: Date.now() } : d,
+    );
+    const normalizedNextCategory = {
+      ...nextCategory,
+      name: nextName,
+      icon: nextCategory.icon || DEFAULT_CANVAS_CATEGORY_ICON,
+      color: nextCategory.color || createCanvasCategoryMeta(nextName).color,
+    };
+    const updatedCategories = canvasCategories.some(category => category.name === oldName)
+      ? canvasCategories.map(category => category.name === oldName ? normalizedNextCategory : category)
+      : [...canvasCategories, normalizedNextCategory];
+
+    setDrawings(updatedDrawings);
+    saveDrawings(updatedDrawings);
+    updateCanvasCategories(updatedCategories);
+    if (canvasCategoryFilter === oldName) setCanvasCategoryFilter(nextName);
+    showToast('分类已保存');
+  }, [activeId, canvasCategories, canvasCategoryFilter, drawings, getCurrentSceneSnapshot, showToast, updateCanvasCategories, visibleCanvasCategoryNames]);
+
+  const handleDeleteCanvasCategory = useCallback((name: string) => {
+    const snapshot = getCurrentSceneSnapshot();
+    const baseDrawings = snapshot && activeId
+      ? drawings.map(d => d.id === activeId ? { ...d, data: snapshot, updatedAt: Date.now() } : d)
+      : drawings;
+    const updatedDrawings = baseDrawings.map(d =>
+      normalizeCanvasCategory(d.category) === name ? { ...d, category: undefined, updatedAt: Date.now() } : d,
+    );
+
+    setDrawings(updatedDrawings);
+    saveDrawings(updatedDrawings);
+    updateCanvasCategories(canvasCategories.filter(category => category.name !== name));
+    if (canvasCategoryFilter === name) setCanvasCategoryFilter(UNCATEGORIZED_CANVAS_CATEGORY);
+    showToast('分类已删除');
+  }, [activeId, canvasCategories, canvasCategoryFilter, drawings, getCurrentSceneSnapshot, showToast, updateCanvasCategories]);
+
+  const handleDuplicateDrawing = useCallback((drawing: DrawingFile) => {
+    const now = Date.now();
+    const currentSnapshot = drawing.id === activeId ? getCurrentSceneSnapshot() : null;
+    const baseDrawings = currentSnapshot
+      ? drawings.map(d => d.id === drawing.id ? { ...d, data: currentSnapshot, updatedAt: now } : d)
+      : drawings;
+    const source = baseDrawings.find(d => d.id === drawing.id);
+    if (!source) return;
+
+    const duplicated: DrawingFile = {
+      ...source,
+      id: generateId(),
+      name: `${source.name} 副本`,
+      data: cloneSceneData(source.data),
+      createdAt: now,
+      updatedAt: now,
+    };
+    const sourceIndex = baseDrawings.findIndex(d => d.id === drawing.id);
+    const updated = [
+      ...baseDrawings.slice(0, sourceIndex + 1),
+      duplicated,
+      ...baseDrawings.slice(sourceIndex + 1),
+    ];
+
+    setDrawings(updated);
+    saveDrawings(updated);
+    setActiveId(duplicated.id);
+    localStorage.setItem(STORAGE_KEY_ACTIVE, duplicated.id);
+    setIsCanvasManagerOpen(true);
+    showToast('已复制画布');
+  }, [activeId, drawings, getCurrentSceneSnapshot, showToast]);
+
+  const handleMoveDrawing = useCallback((sourceId: string, targetId: string) => {
+    if (!sourceId || !targetId || sourceId === targetId) return;
+
+    const snapshot = getCurrentSceneSnapshot();
+    const baseDrawings = snapshot && activeId
+      ? drawings.map(d => d.id === activeId ? { ...d, data: snapshot, updatedAt: Date.now() } : d)
+      : drawings;
+    const sourceIndex = baseDrawings.findIndex(d => d.id === sourceId);
+    const targetIndex = baseDrawings.findIndex(d => d.id === targetId);
+    const source = baseDrawings.find(d => d.id === sourceId);
+    if (!source || sourceIndex < 0 || targetIndex < 0) return;
+
+    const withoutSource = baseDrawings.filter(d => d.id !== sourceId);
+    const targetIndexWithoutSource = withoutSource.findIndex(d => d.id === targetId);
+    if (targetIndexWithoutSource < 0) return;
+    const insertIndex = sourceIndex < targetIndex ? targetIndexWithoutSource + 1 : targetIndexWithoutSource;
+
+    const updated = [
+      ...withoutSource.slice(0, insertIndex),
+      source,
+      ...withoutSource.slice(insertIndex),
+    ];
+
+    setDrawings(updated);
+    saveDrawings(updated);
+  }, [activeId, drawings, getCurrentSceneSnapshot]);
 
   // 导出为本地文件（PNG）
   const handleExportPNG = useCallback(async () => {
@@ -1317,6 +2204,15 @@ export const ExcalidrawEditor: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
+  useEffect(() => {
+    if (!isCanvasFullscreen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsCanvasFullscreen(false);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isCanvasFullscreen]);
+
   if (!ExcalidrawComp) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -1329,69 +2225,43 @@ export const ExcalidrawEditor: React.FC = () => {
   }
 
   return (
-    <div className="h-full flex flex-col relative">
+    <div className={isCanvasFullscreen ? 'fixed inset-0 z-[95] flex flex-col bg-white dark:bg-gray-900' : 'h-full flex flex-col relative'}>
       {/* 顶部工具栏 */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 z-10 shrink-0">
-        <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 z-10 shrink-0">
+        <div className="flex min-w-0 items-center gap-3">
+          <button
+            onClick={() => setIsCanvasManagerOpen(open => !open)}
+            className={`p-2 rounded-lg transition-colors ${
+              isCanvasManagerOpen
+                ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300'
+                : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
+            }`}
+            title="画布库"
+          >
+            <PanelLeft className="w-4 h-4" />
+          </button>
           <div className="flex items-center gap-2">
             <Pencil className="w-5 h-5 text-blue-500" />
-            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Excalidraw</h2>
+            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">绘图板</h2>
           </div>
-
-          {/* 文件选择器 */}
-          <div className="relative">
-            <button
-              onClick={() => setIsFileListOpen(!isFileListOpen)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors min-w-0 max-w-48"
-            >
-              <FileText className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
-              <span className="truncate text-gray-700 dark:text-gray-200">{activeDrawing?.name || '未选择'}</span>
-              <ChevronDown className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-            </button>
-
-            {isFileListOpen && (
-              <div className="absolute top-full left-0 mt-1 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl z-30 overflow-hidden">
-                <div className="max-h-64 overflow-y-auto">
-                  {drawings.map(d => (
-                    <div
-                      key={d.id}
-                      className={`group flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors ${
-                        d.id === activeId
-                          ? 'bg-blue-50 dark:bg-blue-900/30'
-                          : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'
-                      }`}
-                      onClick={() => handleSwitchDrawing(d.id)}
-                    >
-                      <FileText className={`w-3.5 h-3.5 flex-shrink-0 ${d.id === activeId ? 'text-blue-500' : 'text-gray-400'}`} />
-                      <span className={`text-sm flex-1 truncate ${d.id === activeId ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-gray-300'}`}>{d.name}</span>
-                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={e => { e.stopPropagation(); setRenameTarget(d); setIsFileListOpen(false); }}
-                          className="p-1 text-gray-400 hover:text-blue-500 rounded" title="重命名">
-                          <Edit2 className="w-3 h-3" />
-                        </button>
-                        {drawings.length > 1 && (
-                          <button onClick={e => { e.stopPropagation(); setDeleteTarget(d); setIsFileListOpen(false); }}
-                            className="p-1 text-gray-400 hover:text-red-500 rounded" title="删除">
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="border-t border-gray-200 dark:border-gray-700 p-1.5">
-                  <button onClick={handleNewDrawing}
-                    className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors">
-                    <Plus className="w-3.5 h-3.5" />
-                    新建画布
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+          <button
+            onClick={() => setIsCanvasManagerOpen(true)}
+            className="hidden min-w-0 max-w-[420px] items-center gap-2 rounded-lg bg-gray-100 px-3 py-1.5 text-sm hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 md:flex"
+            title={activeDrawing?.name || '未选择'}
+          >
+            <span className="truncate text-gray-700 dark:text-gray-200">{activeDrawing?.name || '未选择'}</span>
+          </button>
         </div>
 
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => setIsCanvasFullscreen(value => !value)}
+            className="p-2 text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 rounded-lg"
+            title={isCanvasFullscreen ? '退出全屏' : '全屏'}
+          >
+            {isCanvasFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          </button>
+
           {/* 保存按钮 */}
           <button onClick={handleSave}
             className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
@@ -1496,24 +2366,245 @@ export const ExcalidrawEditor: React.FC = () => {
         </div>
       </div>
 
-      {/* Excalidraw 编辑器 */}
-      <div className="flex-1 relative" style={{ minHeight: 0 }} ref={canvasContainerRef}>
-        {activeDrawing && (
-          <ExcalidrawComp
-            excalidrawAPI={(api: any) => { excalidrawAPIRef.current = api; }}
-            key={activeId}
-            initialData={{ ...activeDrawing.data, libraryItems }}
-            theme={isDark ? 'dark' : 'light'}
-            langCode="zh-CN"
-            onChange={handleChange}
-            onLibraryChange={handleLibraryChange}
-            UIOptions={{
-              canvasActions: {
-                loadScene: false,
-              },
-            }}
-          />
+      <div className="min-h-0 flex flex-1 bg-gray-50 dark:bg-gray-900">
+        {isCanvasManagerOpen && (
+          <aside className="flex w-80 shrink-0 flex-col border-r border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+            <div className="border-b border-gray-200 p-3 dark:border-gray-700">
+              <div className="flex items-center gap-2">
+                <div className="relative min-w-0 flex-1">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                  <input
+                    value={canvasSearch}
+                    onChange={event => setCanvasSearch(event.target.value)}
+                    placeholder="搜索画布"
+                    className="h-10 w-full rounded-lg border border-gray-200 bg-gray-50 pl-8 pr-3 text-sm text-gray-800 outline-none focus:border-blue-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+                  />
+                </div>
+                <button
+                  onClick={handleNewDrawing}
+                  className="flex h-10 shrink-0 items-center gap-1.5 rounded-lg bg-blue-500 px-3 text-sm font-medium text-white hover:bg-blue-600"
+                >
+                  <Plus className="h-4 w-4" />
+                  新建
+                </button>
+              </div>
+
+              <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-2 dark:border-gray-700 dark:bg-gray-900/60">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-gray-600 dark:text-gray-300">
+                    <Tag className="h-3.5 w-3.5" />
+                    分类
+                  </div>
+                  <button
+                    onClick={() => setIsCategoryManagerOpen(true)}
+                    className="rounded-md px-2 py-1 text-xs text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                  >
+                    管理
+                  </button>
+                </div>
+                <div className="max-h-28 space-y-1 overflow-y-auto pr-1">
+                  <button
+                    onClick={() => setCanvasCategoryFilter(ALL_CANVAS_CATEGORY)}
+                    className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 dark:focus-visible:ring-blue-800 ${
+                      canvasCategoryFilter === ALL_CANVAS_CATEGORY
+                        ? 'bg-white text-blue-600 shadow-sm dark:bg-gray-700 dark:text-blue-300'
+                        : 'text-gray-500 hover:bg-white hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    <span>全部</span>
+                    <span>{drawings.length}</span>
+                  </button>
+                  {visibleCanvasCategories.map(category => (
+                    <button
+                      key={category.name}
+                      onClick={() => setCanvasCategoryFilter(category.name)}
+                      className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 dark:focus-visible:ring-blue-800 ${
+                        canvasCategoryFilter === category.name
+                          ? 'bg-white text-blue-600 shadow-sm dark:bg-gray-700 dark:text-blue-300'
+                          : 'text-gray-500 hover:bg-white hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200'
+                      }`}
+                    >
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span
+                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md"
+                          style={{ backgroundColor: `${category.color}18` }}
+                        >
+                          <CanvasCategoryIcon icon={category.icon} color={category.color} className="h-3 w-3" />
+                        </span>
+                        <span className="truncate">{category.name}</span>
+                      </span>
+                      <span>{canvasCategoryCounts[category.name] || 0}</span>
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setCanvasCategoryFilter(UNCATEGORIZED_CANVAS_CATEGORY)}
+                    className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 dark:focus-visible:ring-blue-800 ${
+                      canvasCategoryFilter === UNCATEGORIZED_CANVAS_CATEGORY
+                        ? 'bg-white text-blue-600 shadow-sm dark:bg-gray-700 dark:text-blue-300'
+                        : 'text-gray-500 hover:bg-white hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-gray-100 dark:bg-gray-700">
+                        <Tag className="h-3 w-3 text-gray-400" />
+                      </span>
+                      <span className="truncate">{UNCATEGORIZED_CANVAS_CATEGORY}</span>
+                    </span>
+                    <span>{canvasCategoryCounts[UNCATEGORIZED_CANVAS_CATEGORY] || 0}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-2">
+              {filteredDrawings.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-gray-200 p-4 text-center text-sm text-gray-400 dark:border-gray-700 dark:text-gray-500">
+                  没有匹配画布
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {filteredDrawings.map(drawing => {
+                    const isActive = drawing.id === activeId;
+                    const drawingCategory = normalizeCanvasCategory(drawing.category);
+                    const drawingCategoryMeta = drawingCategory === UNCATEGORIZED_CANVAS_CATEGORY
+                      ? { name: drawingCategory, icon: 'Tag', color: '#94a3b8' }
+                      : canvasCategoryMetaByName.get(drawingCategory) || createCanvasCategoryMeta(drawingCategory);
+                    return (
+                      <div
+                        key={drawing.id}
+                        role="button"
+                        tabIndex={0}
+                        onDragOver={event => {
+                          event.preventDefault();
+                          if (draggedCanvasId && draggedCanvasId !== drawing.id) {
+                            setDragOverCanvasId(drawing.id);
+                          }
+                        }}
+                        onDragLeave={() => {
+                          if (dragOverCanvasId === drawing.id) setDragOverCanvasId(null);
+                        }}
+                        onDrop={event => {
+                          event.preventDefault();
+                          const sourceId = event.dataTransfer.getData('text/plain') || draggedCanvasId;
+                          if (sourceId) handleMoveDrawing(sourceId, drawing.id);
+                          setDraggedCanvasId(null);
+                          setDragOverCanvasId(null);
+                        }}
+                        onClick={() => handleSwitchDrawing(drawing.id)}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter' || event.key === ' ') handleSwitchDrawing(drawing.id);
+                        }}
+                        className={`group flex cursor-pointer gap-2 rounded-lg border p-2.5 outline-none transition-colors ${
+                          isActive
+                            ? 'border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/25'
+                            : 'border-transparent hover:border-gray-200 hover:bg-gray-50 dark:hover:border-gray-700 dark:hover:bg-gray-700/40'
+                        } ${draggedCanvasId === drawing.id ? 'opacity-45' : ''} ${
+                          dragOverCanvasId === drawing.id ? 'ring-2 ring-blue-300 dark:ring-blue-700' : ''
+                        }`}
+                      >
+                        <div
+                          draggable
+                          onClick={event => event.stopPropagation()}
+                          onDragStart={event => {
+                            event.stopPropagation();
+                            event.dataTransfer.effectAllowed = 'move';
+                            event.dataTransfer.setData('text/plain', drawing.id);
+                            setDraggedCanvasId(drawing.id);
+                          }}
+                          onDragEnd={() => {
+                            setDraggedCanvasId(null);
+                            setDragOverCanvasId(null);
+                          }}
+                          className="flex h-20 w-4 shrink-0 cursor-grab items-center justify-center text-gray-300 active:cursor-grabbing group-hover:text-gray-500 dark:text-gray-600 dark:group-hover:text-gray-400"
+                          title="拖拽排序"
+                        >
+                          <GripVertical className="h-4 w-4" />
+                        </div>
+                        <div className={`flex h-20 w-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border ${
+                          isActive
+                            ? 'border-blue-200 bg-white text-blue-500 dark:border-blue-800 dark:bg-gray-900'
+                            : 'border-gray-200 bg-gray-50 text-gray-400 dark:border-gray-700 dark:bg-gray-900'
+                        }`}>
+                          <CanvasThumbnail drawing={drawing} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`truncate text-sm font-medium ${
+                              isActive ? 'text-blue-700 dark:text-blue-300' : 'text-gray-800 dark:text-gray-100'
+                            }`}>
+                              {drawing.name}
+                            </span>
+                          </div>
+                          <div className="mt-2 flex min-w-0 items-center gap-2 text-[11px] text-gray-400 dark:text-gray-500">
+                            <span
+                              className="inline-flex min-w-0 max-w-[78px] shrink items-center gap-1 rounded-md px-2 py-1 shadow-sm dark:bg-gray-900"
+                              style={{
+                                backgroundColor: `${drawingCategoryMeta.color}14`,
+                                color: drawingCategoryMeta.color,
+                              }}
+                            >
+                              <CanvasCategoryIcon icon={drawingCategoryMeta.icon} color={drawingCategoryMeta.color} className="h-3 w-3 shrink-0" />
+                              <span className="truncate">{drawingCategory}</span>
+                            </span>
+                            <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap py-1">
+                              <Clock3 className="h-3 w-3" />
+                              {formatDrawingTime(drawing.updatedAt)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-start gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                          <button
+                            onClick={event => { event.stopPropagation(); setRenameTarget(drawing); }}
+                            className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-blue-500 dark:hover:bg-gray-700"
+                            title="重命名"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={event => { event.stopPropagation(); handleDuplicateDrawing(drawing); }}
+                            className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-emerald-500 dark:hover:bg-gray-700"
+                            title="复制副本"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </button>
+                          {drawings.length > 1 && (
+                            <button
+                              onClick={event => { event.stopPropagation(); setDeleteTarget(drawing); }}
+                              className="rounded-md p-1 text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20"
+                              title="删除"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </aside>
         )}
+
+        {/* Excalidraw 编辑器 */}
+        <div className="relative min-w-0 flex-1" style={{ minHeight: 0 }} ref={canvasContainerRef}>
+          {activeDrawing && (
+            <ExcalidrawComp
+              excalidrawAPI={(api: any) => { excalidrawAPIRef.current = api; }}
+              key={activeId}
+              initialData={{ ...activeDrawing.data, libraryItems }}
+              theme={isDark ? 'dark' : 'light'}
+              langCode="zh-CN"
+              onChange={handleChange}
+              onLibraryChange={handleLibraryChange}
+              UIOptions={{
+                canvasActions: {
+                  loadScene: false,
+                },
+              }}
+            />
+          )}
+        </div>
       </div>
 
       {/* Toast */}
@@ -1533,11 +2624,30 @@ export const ExcalidrawEditor: React.FC = () => {
         onConfirm={() => deleteTarget && handleDelete(deleteTarget)}
         name={deleteTarget?.name || ''}
       />
-      <RenameModal
+      <NewCanvasModal
+        isOpen={isNewCanvasModalOpen}
+        onClose={() => setIsNewCanvasModalOpen(false)}
+        onCreate={handleCreateDrawing}
+        categories={visibleCanvasCategories}
+        defaultCategory={newCanvasDefaultCategory}
+        defaultName={`画布 ${drawings.length + 1}`}
+      />
+      <CanvasEditModal
         isOpen={!!renameTarget}
         onClose={() => setRenameTarget(null)}
-        onSave={handleRename}
+        onSave={handleEditDrawing}
         currentName={renameTarget?.name || ''}
+        currentCategory={normalizeCanvasCategory(renameTarget?.category)}
+        categories={visibleCanvasCategories}
+      />
+      <CanvasCategoryManagerModal
+        isOpen={isCategoryManagerOpen}
+        onClose={() => setIsCategoryManagerOpen(false)}
+        categories={visibleCanvasCategories}
+        counts={canvasCategoryCounts}
+        onAdd={handleAddCanvasCategory}
+        onSave={handleSaveCanvasCategory}
+        onDelete={handleDeleteCanvasCategory}
       />
       <ExportToHostingModal
         isOpen={isExportModalOpen}
