@@ -175,6 +175,12 @@ interface GitRepoSummary {
   name: string;
 }
 
+interface GitRemote {
+  name: string;
+  fetchUrl?: string;
+  pushUrl?: string;
+}
+
 const GIT_SCAN_SKIP_DIRS = new Set([
   '.git',
   'node_modules',
@@ -323,20 +329,52 @@ function parseGitStatus(stdout: string): {
   return { branch, upstream, ahead, behind, files };
 }
 
+function parseGitRemotes(stdout: string): GitRemote[] {
+  const remoteMap = new Map<string, GitRemote>();
+
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    const match = trimmed.match(/^(\S+)\s+(.+?)\s+\((fetch|push)\)$/);
+    if (!match) continue;
+
+    const [, name, url, kind] = match;
+    const current = remoteMap.get(name) || { name };
+    if (kind === 'fetch') current.fetchUrl = url;
+    if (kind === 'push') current.pushUrl = url;
+    remoteMap.set(name, current);
+  }
+
+  return [...remoteMap.values()];
+}
+
 async function getGitStatus(repoPath: string) {
   const root = await resolveGitRoot(repoPath);
-  const [{ stdout }, stashResult, headResult] = await Promise.all([
+  const [{ stdout }, stashResult, headResult, remoteResult] = await Promise.all([
     runGit(['status', '--porcelain=v1', '-b', '--untracked-files=all'], root),
     runGit(['stash', 'list'], root).catch(() => ({ stdout: '', stderr: '' })),
     runGit(['rev-parse', '--short', 'HEAD'], root).catch(() => ({ stdout: '', stderr: '' })),
+    runGit(['remote', '-v'], root).catch(() => ({ stdout: '', stderr: '' })),
   ]);
   const parsed = parseGitStatus(stdout);
+  const remotes = parseGitRemotes(remoteResult.stdout);
+  const upstreamRemoteName = parsed.upstream?.split('/')[0] || null;
+  const defaultRemote =
+    remotes.find(remote => remote.name === upstreamRemoteName)
+    || remotes.find(remote => remote.name === 'origin')
+    || remotes[0]
+    || null;
 
   return {
     path: root,
     name: getRepoName(root),
     branch: parsed.branch,
     upstream: parsed.upstream,
+    upstreamRemoteName,
+    upstreamBranch: parsed.upstream?.split('/').slice(1).join('/') || null,
+    remotes,
+    defaultRemote,
     ahead: parsed.ahead,
     behind: parsed.behind,
     headHash: headResult.stdout.trim() || null,

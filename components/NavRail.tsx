@@ -170,7 +170,9 @@ export const NavRail: React.FC<NavRailProps> = ({
           className={`theme-rail-item group transition-all duration-300 ${isActive ? 'theme-rail-item-active' : ''} ${isBeingDragged ? 'opacity-40 scale-90' : ''}`}
           title={label}
         >
-          <Icon className={`w-5 h-5 ${isActive ? 'scale-100' : 'scale-90 group-hover:scale-100 transition-transform'}`} />
+          <Icon
+            className={`w-5 h-5 ${isActive ? 'scale-100' : 'scale-90 group-hover:scale-100 transition-transform'}`}
+          />
           {!isActive && (
             <div className="theme-tooltip absolute left-full ml-3 px-2 py-1 text-xs opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
               {label}

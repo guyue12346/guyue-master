@@ -343,11 +343,21 @@ export interface GitFileStatus {
   status: string;
 }
 
+export interface GitRemote {
+  name: string;
+  fetchUrl?: string;
+  pushUrl?: string;
+}
+
 export interface GitStatusData {
   path: string;
   name: string;
   branch: string;
   upstream: string | null;
+  upstreamRemoteName?: string | null;
+  upstreamBranch?: string | null;
+  remotes: GitRemote[];
+  defaultRemote: GitRemote | null;
   ahead: number;
   behind: number;
   headHash: string | null;

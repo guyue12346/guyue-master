@@ -4,13 +4,12 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Cloud,
   Clock3,
-  Copy,
   Download,
   FileDiff,
   FolderOpen,
   GitBranch,
-  GitCommitHorizontal,
   GitGraph,
   Loader2,
   Minus,
@@ -18,6 +17,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Terminal as TerminalIcon,
   Trash2,
   Upload,
 } from 'lucide-react';
@@ -32,6 +32,21 @@ type SelectedDiff =
   | { type: 'file'; filePath: string; staged: boolean; title: string; untracked?: boolean }
   | { type: 'commit'; hash: string; title: string };
 
+interface GitGraphRow {
+  commit: GitCommitRecord;
+  index: number;
+  laneIndex: number;
+  lanesBefore: string[];
+  lanesAfter: string[];
+  branchLabel: string;
+  commitColor: string;
+  isMerge: boolean;
+}
+
+interface GitManagerProps {
+  onOpenTerminal?: (repoPath: string, title: string) => void;
+}
+
 const STORAGE_KEY = 'guyue_git_repositories_v1';
 
 const statusText: Record<string, string> = {
@@ -41,6 +56,56 @@ const statusText: Record<string, string> = {
   R: 'R',
   U: 'U',
   '!': '!',
+};
+
+const BRANCH_COLORS = ['#2563eb', '#7c3aed', '#0891b2', '#059669', '#d97706', '#dc2626', '#db2777', '#4f46e5'];
+
+const hashColor = (value: string) => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return BRANCH_COLORS[hash % BRANCH_COLORS.length];
+};
+
+const colorWash = (hex: string, alpha = 0.12) => {
+  const clean = hex.replace('#', '');
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+const normalizeRefName = (ref: string) =>
+  ref
+    .replace(/^HEAD ->\s*/, '')
+    .replace(/^tag:\s*/, '')
+    .trim();
+
+const isBranchRef = (ref: string) => {
+  const normalized = normalizeRefName(ref);
+  return Boolean(normalized) && !ref.startsWith('tag:') && !normalized.includes('stash');
+};
+
+const getUpstreamRemoteName = (status?: GitStatusData) =>
+  status?.upstreamRemoteName || status?.upstream?.split('/')[0] || null;
+
+const getStatusRemote = (status?: GitStatusData) => {
+  if (!status) return null;
+  const upstreamRemoteName = getUpstreamRemoteName(status);
+  return status.defaultRemote
+    || status.remotes?.find(remote => remote.name === upstreamRemoteName)
+    || status.remotes?.find(remote => remote.name === 'origin')
+    || status.remotes?.[0]
+    || (upstreamRemoteName ? { name: upstreamRemoteName } : null);
+};
+
+const displayRemoteUrl = (url?: string, hasRemote = false) => {
+  if (!url) return hasRemote ? '远程 URL 待刷新' : '无远程仓库';
+  return url
+    .replace(/^git@([^:]+):/, '$1/')
+    .replace(/^https?:\/\/([^@]+@)?/, '')
+    .replace(/\.git$/, '');
 };
 
 const formatDate = (value: string) => {
@@ -112,7 +177,47 @@ const diffLineClass = (line: string) => {
   return 'text-slate-700';
 };
 
-export const GitManager: React.FC = () => {
+const buildGraphRows = (commits: GitCommitRecord[], currentBranch?: string): GitGraphRow[] => {
+  const lanes: string[] = [];
+
+  return commits.map((commit, index) => {
+    let laneIndex = lanes.indexOf(commit.hash);
+    if (laneIndex === -1) {
+      const insertAt = lanes.length === 0 ? 0 : Math.min(1, lanes.length);
+      lanes.splice(insertAt, 0, commit.hash);
+      laneIndex = insertAt;
+    }
+
+    const lanesBefore = [...lanes];
+    const branchRef = commit.refs.find(isBranchRef);
+    const branchLabel = branchRef ? normalizeRefName(branchRef) : (index === 0 ? currentBranch || '' : '');
+    const commitColor = hashColor(branchLabel || commit.hash);
+
+    if (commit.parents[0]) {
+      lanes[laneIndex] = commit.parents[0];
+      commit.parents.slice(1).forEach((parent, parentIndex) => {
+        if (!lanes.includes(parent)) {
+          lanes.splice(laneIndex + parentIndex + 1, 0, parent);
+        }
+      });
+    } else {
+      lanes.splice(laneIndex, 1);
+    }
+
+    return {
+      commit,
+      index,
+      laneIndex,
+      lanesBefore,
+      lanesAfter: [...lanes],
+      branchLabel,
+      commitColor,
+      isMerge: commit.parents.length > 1,
+    };
+  });
+};
+
+export const GitManager: React.FC<GitManagerProps> = ({ onOpenTerminal }) => {
   const [repositories, setRepositories] = useState<GitRepositoryRecord[]>(() => loadRepositories());
   const [selectedPath, setSelectedPath] = useState<string>(() => loadRepositories()[0]?.path || '');
   const [statuses, setStatuses] = useState<Record<string, GitStatusData>>({});
@@ -130,6 +235,10 @@ export const GitManager: React.FC = () => {
   const selectedRepo = repositories.find(repo => repo.path === selectedPath) || null;
   const selectedStatus = selectedPath ? statuses[selectedPath] : undefined;
   const selectedLog = selectedPath ? logs[selectedPath] || [] : [];
+  const selectedRemote = getStatusRemote(selectedStatus);
+  const selectedRemoteUrl = selectedRemote?.fetchUrl || selectedRemote?.pushUrl || '';
+  const currentBranchColor = hashColor(selectedStatus?.branch || selectedRepo?.name || 'git');
+  const graphRows = useMemo(() => buildGraphRows(selectedLog, selectedStatus?.branch), [selectedLog, selectedStatus?.branch]);
 
   const filteredRepositories = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -346,10 +455,19 @@ export const GitManager: React.FC = () => {
     setCommitMessage('');
   };
 
+  const openGitTerminal = () => {
+    if (!selectedRepo) return;
+    onOpenTerminal?.(selectedRepo.path, `Git Bash: ${selectedRepo.name}`);
+  };
+
   const renderRepository = (repo: GitRepositoryRecord) => {
     const status = statuses[repo.path];
     const isActive = repo.path === selectedPath;
     const count = status?.files.length || 0;
+    const branch = status?.branch || '-';
+    const branchColor = hashColor(branch || repo.name);
+    const remote = getStatusRemote(status);
+    const remoteUrl = remote?.fetchUrl || remote?.pushUrl || '';
 
     return (
       <button
@@ -371,12 +489,19 @@ export const GitManager: React.FC = () => {
         </div>
         <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500">
           <span className="flex min-w-0 items-center gap-1">
-            <GitBranch className="h-3 w-3 shrink-0" />
-            <span className="truncate">{status?.branch || '-'}</span>
+            <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full" style={{ background: colorWash(branchColor, 0.14), color: branchColor }}>
+              <GitBranch className="h-3 w-3" />
+            </span>
+            <span className="truncate font-medium" style={{ color: branchColor }}>{branch}</span>
           </span>
           <span className="shrink-0">
             {status ? `↑${status.ahead} ↓${status.behind}` : ''}
           </span>
+        </div>
+        <div className="mt-2 flex min-w-0 items-center gap-1 text-[11px] text-slate-400">
+          <Cloud className="h-3 w-3 shrink-0 text-cyan-500" />
+          <span className="shrink-0">{remote?.name || '-'}</span>
+          <span className="truncate">{displayRemoteUrl(remoteUrl, Boolean(remote))}</span>
         </div>
       </button>
     );
@@ -441,6 +566,78 @@ export const GitManager: React.FC = () => {
     );
   };
 
+  const renderGraphCell = (row: GitGraphRow) => {
+    const laneCount = Math.max(row.lanesBefore.length, row.lanesAfter.length, 1);
+    const width = Math.min(124, Math.max(64, laneCount * 16 + 28));
+    const xForIndex = (index: number) => 12 + index * 16;
+    const commitX = xForIndex(row.laneIndex);
+    const commitY = 25;
+    const firstParent = row.commit.parents[0];
+
+    return (
+      <svg width={width} height="58" viewBox={`0 0 ${width} 58`} className="shrink-0 overflow-visible">
+        {row.lanesBefore.map((laneHash, laneIndex) => {
+          const x = xForIndex(laneIndex);
+          const isCurrentLane = laneIndex === row.laneIndex;
+          const color = isCurrentLane ? row.commitColor : hashColor(laneHash);
+
+          if (isCurrentLane) {
+            return (
+              <g key={`current-${laneHash}-${laneIndex}`}>
+                <line x1={x} y1="0" x2={x} y2={commitY - 9} stroke={color} strokeWidth="2" strokeLinecap="round" opacity="0.85" />
+                {firstParent && <line x1={x} y1={commitY + 9} x2={x} y2="58" stroke={color} strokeWidth="2" strokeLinecap="round" opacity="0.85" />}
+              </g>
+            );
+          }
+
+          return (
+            <line
+              key={`lane-${laneHash}-${laneIndex}`}
+              x1={x}
+              y1="0"
+              x2={x}
+              y2="58"
+              stroke={color}
+              strokeWidth="2"
+              strokeLinecap="round"
+              opacity="0.62"
+            />
+          );
+        })}
+
+        {row.commit.parents.slice(1).map((parentHash, parentIndex) => {
+          const parentLaneIndex = row.lanesAfter.indexOf(parentHash);
+          const targetX = xForIndex(parentLaneIndex >= 0 ? parentLaneIndex : row.laneIndex + parentIndex + 1);
+          const color = hashColor(parentHash);
+          return (
+            <path
+              key={`merge-${parentHash}`}
+              d={`M ${commitX} ${commitY + 7} C ${commitX} ${commitY + 25}, ${targetX} ${commitY + 25}, ${targetX} 58`}
+              fill="none"
+              stroke={color}
+              strokeWidth="2"
+              strokeLinecap="round"
+              opacity="0.82"
+            />
+          );
+        })}
+
+        <circle cx={commitX} cy={commitY} r="9" fill={row.commitColor} stroke="white" strokeWidth="2" />
+        <circle cx={commitX} cy={commitY} r="3" fill="white" opacity="0.92" />
+        {row.isMerge && (
+          <path
+            d={`M ${commitX - 3.5} ${commitY - 1.5} L ${commitX} ${commitY + 3.5} L ${commitX + 4} ${commitY - 4}`}
+            fill="none"
+            stroke="white"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        )}
+      </svg>
+    );
+  };
+
   const renderSection = (id: string, title: string, files: GitFileStatus[], staged: boolean) => {
     const isCollapsed = collapsed[id] === true;
     return (
@@ -500,7 +697,7 @@ export const GitManager: React.FC = () => {
         <div className="border-b border-slate-200 px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-white">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 via-emerald-500 to-blue-600 text-white shadow-sm">
                 <GitBranch className="h-4 w-4" />
               </div>
               <div>
@@ -556,9 +753,24 @@ export const GitManager: React.FC = () => {
                 {selectedStatus?.clean && <Check className="h-4 w-4 text-emerald-500" />}
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                <span className="flex items-center gap-1"><GitBranch className="h-3.5 w-3.5" />{selectedStatus?.branch || '-'}</span>
+                <span
+                  className="flex items-center gap-1 rounded-full px-2 py-0.5 font-semibold"
+                  style={{ background: colorWash(currentBranchColor, 0.12), color: currentBranchColor }}
+                >
+                  <GitBranch className="h-3.5 w-3.5" />{selectedStatus?.branch || '-'}
+                </span>
+                {selectedStatus?.upstream && (
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-500">
+                    {selectedStatus.upstream}
+                  </span>
+                )}
                 <span>↑{selectedStatus?.ahead || 0} ↓{selectedStatus?.behind || 0}</span>
                 {selectedStatus?.stashCount ? <span>{selectedStatus.stashCount} stash</span> : null}
+              </div>
+              <div className="mt-2 flex min-w-0 items-center gap-2 text-xs text-slate-500">
+                <Cloud className="h-3.5 w-3.5 shrink-0 text-cyan-500" />
+                <span className="shrink-0 font-medium">{selectedRemote?.name || 'remote'}</span>
+                <span className="truncate font-mono text-[11px] text-slate-400">{displayRemoteUrl(selectedRemoteUrl, Boolean(selectedRemote))}</span>
               </div>
             </div>
             {selectedRepo && (
@@ -602,21 +814,13 @@ export const GitManager: React.FC = () => {
               <Upload className="mr-1 inline h-3.5 w-3.5" />Push
             </button>
             {selectedRepo && (
-              <>
-                <button
-                  onClick={() => window.electronAPI.openPath(selectedRepo.path)}
-                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-slate-300 hover:text-slate-900"
-                >
-                  <FolderOpen className="mr-1 inline h-3.5 w-3.5" />打开
-                </button>
-                <button
-                  onClick={() => navigator.clipboard.writeText(selectedRepo.path)}
-                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-slate-300 hover:text-slate-900"
-                  title="复制路径"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </button>
-              </>
+              <button
+                onClick={openGitTerminal}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-slate-300 hover:text-slate-900"
+                title="在当前仓库打开 Git Bash"
+              >
+                <TerminalIcon className="mr-1 inline h-3.5 w-3.5" />Git Bash
+              </button>
             )}
           </div>
 
@@ -704,7 +908,7 @@ export const GitManager: React.FC = () => {
         <div className="flex h-1/2 min-h-[260px] flex-col border-b border-slate-200 bg-white">
           <div className="flex h-12 shrink-0 items-center justify-between border-b border-slate-200 px-4">
             <div className="flex items-center gap-2">
-              <GitGraph className="h-4 w-4 text-slate-500" />
+              <GitGraph className="h-4 w-4 text-blue-600" />
               <h3 className="text-sm font-bold text-slate-900">图表</h3>
               <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{selectedLog.length}</span>
             </div>
@@ -713,13 +917,14 @@ export const GitManager: React.FC = () => {
             )}
           </div>
           <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
-            {selectedLog.length === 0 ? (
+            {graphRows.length === 0 ? (
               <div className="flex h-full items-center justify-center text-sm text-slate-400">
                 暂无提交
               </div>
             ) : (
               <div className="space-y-0">
-                {selectedLog.map((commit, index) => {
+                {graphRows.map((row) => {
+                  const { commit, branchLabel, commitColor, isMerge } = row;
                   const active = selectedDiff?.type === 'commit' && selectedDiff.hash === commit.hash;
                   return (
                     <button
@@ -729,28 +934,53 @@ export const GitManager: React.FC = () => {
                         active ? 'bg-slate-100' : 'hover:bg-slate-50'
                       }`}
                     >
-                      <div className="flex w-8 shrink-0 flex-col items-center">
-                        <div className={`mt-1 flex h-5 w-5 items-center justify-center rounded-full border ${
-                          index === 0 ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300 bg-white text-slate-500'
-                        }`}>
-                          <GitCommitHorizontal className="h-3 w-3" />
-                        </div>
-                        {index < selectedLog.length - 1 && <div className="mt-1 h-8 w-px bg-slate-200" />}
-                      </div>
+                      {renderGraphCell(row)}
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-semibold text-slate-800">{commit.subject}</div>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className="truncate text-sm font-semibold text-slate-800">{commit.subject}</div>
+                          {branchLabel && (
+                            <span
+                              className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                              style={{ background: colorWash(commitColor, 0.12), color: commitColor }}
+                            >
+                              {branchLabel}
+                            </span>
+                          )}
+                          {isMerge && (
+                            <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                              merge {commit.parents.length}
+                            </span>
+                          )}
+                        </div>
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
                           <span className="font-mono">{commit.shortHash}</span>
                           <span>{commit.author}</span>
                           <span className="flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatDate(commit.date)}</span>
+                          {isMerge && (
+                            <span className="font-mono text-amber-600">
+                              parents {commit.parents.map(parent => parent.slice(0, 7)).join(' + ')}
+                            </span>
+                          )}
                         </div>
                         {commit.refs.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-1">
-                            {commit.refs.slice(0, 4).map(ref => (
-                              <span key={ref} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
-                                {ref}
+                            {commit.refs.slice(0, 6).map(ref => {
+                              const normalizedRef = normalizeRefName(ref);
+                              const refColor = hashColor(normalizedRef);
+                              const isTag = ref.startsWith('tag:');
+                              return (
+                              <span
+                                key={ref}
+                                className="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                                style={{
+                                  background: isTag ? '#fef3c7' : colorWash(refColor, 0.12),
+                                  color: isTag ? '#b45309' : refColor,
+                                }}
+                              >
+                                {normalizedRef}
                               </span>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </div>

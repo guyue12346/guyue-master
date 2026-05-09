@@ -340,6 +340,7 @@ const App: React.FC = () => {
   const [isLatexFullscreen, setIsLatexFullscreen] = useState(false);
   const [initialTerminalCommand, setInitialTerminalCommand] = useState<string | undefined>(undefined);
   const [initialTerminalTitle, setInitialTerminalTitle] = useState<string | undefined>(undefined);
+  const [initialTerminalCwd, setInitialTerminalCwd] = useState<string | undefined>(undefined);
   const [browserUrl, setBrowserUrl] = useState<string>(() => {
     return localStorage.getItem('linkmaster_browser_start_page') || 'https://www.bing.com';
   });
@@ -1391,6 +1392,7 @@ const App: React.FC = () => {
     if (appMode !== 'terminal') {
       setInitialTerminalCommand(undefined);
       setInitialTerminalTitle(undefined);
+      setInitialTerminalCwd(undefined);
     }
   }, [appMode]);
 
@@ -2301,6 +2303,14 @@ const App: React.FC = () => {
   const handleOpenSSHInTerminal = (command: string, title: string) => {
     setInitialTerminalCommand(command);
     setInitialTerminalTitle(title);
+    setInitialTerminalCwd(undefined);
+    setAppMode('terminal');
+  };
+
+  const handleOpenGitTerminal = (repoPath: string, title: string) => {
+    setInitialTerminalCommand('git status -sb');
+    setInitialTerminalTitle(title);
+    setInitialTerminalCwd(repoPath);
     setAppMode('terminal');
   };
 
@@ -2961,6 +2971,7 @@ const App: React.FC = () => {
                   onToggleFullscreen={() => setIsTerminalFullscreen(!isTerminalFullscreen)}
                   initialCommand={initialTerminalCommand}
                   initialTitle={initialTerminalTitle}
+                  initialCwd={initialTerminalCwd}
                   isVisible={appMode === 'terminal'}
                 />
               </div>
@@ -3031,7 +3042,7 @@ const App: React.FC = () => {
 
             {(hasGitMounted || appMode === 'git') && (
               <div className={appMode === 'git' ? 'h-full' : 'hidden'}>
-                <GitManager />
+                <GitManager onOpenTerminal={handleOpenGitTerminal} />
               </div>
             )}
 

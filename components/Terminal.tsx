@@ -12,6 +12,7 @@ interface TerminalProps {
   onToggleFullscreen?: () => void;
   initialCommand?: string;
   initialTitle?: string;
+  initialCwd?: string;
   isVisible?: boolean;
   hideHeader?: boolean;
   forcedRendererMode?: TerminalRendererMode;
@@ -37,6 +38,8 @@ const FONT_OPTIONS = [
   { label: 'Menlo', value: 'Menlo, Monaco, "Courier New", monospace' },
   { label: 'Fira Code', value: '"Fira Code", "SF Mono", Menlo, Monaco, monospace' },
 ];
+
+const EMPTY_POST_LAUNCH_INPUTS: Array<{ data: string; delayMs?: number }> = [];
 
 const LIGHT_THEME = {
   background: '#ffffff',
@@ -66,11 +69,12 @@ export const Terminal: React.FC<TerminalProps> = ({
   onToggleFullscreen,
   initialCommand,
   initialTitle,
+  initialCwd,
   isVisible = true,
   hideHeader = false,
   forcedRendererMode,
   forcedTerminalProfile,
-  postLaunchInputs = [],
+  postLaunchInputs = EMPTY_POST_LAUNCH_INPUTS,
   onActiveTerminalChange,
   spawnOnInitialChange = true,
 }) => {
@@ -130,6 +134,7 @@ export const Terminal: React.FC<TerminalProps> = ({
   // because the listener closure captures the initial state
   const tabsRef = useRef<TerminalTab[]>([]);
   const hasBootstrappedRef = useRef(false);
+  const lastInitialLaunchRef = useRef<string>('');
 
   useEffect(() => {
     tabsRef.current = tabs;
@@ -250,11 +255,11 @@ export const Terminal: React.FC<TerminalProps> = ({
     };
   }, []);
 
-  const createTab = useCallback(async (command?: string, title?: string) => {
+  const createTab = useCallback(async (command?: string, title?: string, cwd?: string) => {
     if (!window.electronAPI) return;
 
     try {
-      const id = await window.electronAPI.createTerminal();
+      const id = await window.electronAPI.createTerminal(cwd ? { cwd } : undefined);
       // Use provided title, or default title (user@host), or fallback to 'Terminal'
       const tabTitle = title || defaultTitleRef.current;
       const newTab = { id, title: tabTitle };
@@ -499,16 +504,24 @@ export const Terminal: React.FC<TerminalProps> = ({
 
   // Initial Load
   useEffect(() => {
+    const launchKey = JSON.stringify({
+      command: initialCommand || '',
+      title: initialTitle || '',
+      cwd: initialCwd || '',
+    });
+
     if (!hasBootstrappedRef.current) {
       hasBootstrappedRef.current = true;
-      createTab(initialCommand, initialTitle);
+      lastInitialLaunchRef.current = launchKey;
+      createTab(initialCommand, initialTitle, initialCwd);
       return;
     }
 
-    if (spawnOnInitialChange && initialCommand) {
-      createTab(initialCommand, initialTitle);
+    if (spawnOnInitialChange && initialCommand && launchKey !== lastInitialLaunchRef.current) {
+      lastInitialLaunchRef.current = launchKey;
+      createTab(initialCommand, initialTitle, initialCwd);
     }
-  }, [initialCommand, initialTitle, createTab, spawnOnInitialChange]);
+  }, [initialCommand, initialTitle, initialCwd, createTab, spawnOnInitialChange]);
 
   return (
     <div className="flex flex-col h-full bg-white overflow-hidden">
