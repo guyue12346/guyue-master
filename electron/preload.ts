@@ -62,20 +62,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openCodexUsageLogin: (params?: { profileId?: string }) => ipcRenderer.invoke('open-codex-usage-login', params),
   fetchCodexUsageFromBrowser: (params?: { profileId?: string }) => ipcRenderer.invoke('fetch-codex-usage-browser', params),
 
-  // Zenmux Usage API
-  openZenmuxLogin: () => ipcRenderer.invoke('open-zenmux-login'),
-  fetchZenmuxUsageFromBrowser: () => ipcRenderer.invoke('fetch-zenmux-usage-browser'),
-  fetchZenmuxDashboardData: () => ipcRenderer.invoke('fetch-zenmux-dashboard-data'),
+  // ZenMux Management API
+  fetchZenmuxManagementData: (params: { apiKey: string }) => ipcRenderer.invoke('fetch-zenmux-management-data', params),
+  fetchApiKeyBalance: (params: { provider: 'kimi' | 'deepseek'; apiKey: string }) => ipcRenderer.invoke('fetch-api-key-balance', params),
+  fetchGoogleApiMetrics: (params: { projectId: string; serviceAccountJson: string }) => ipcRenderer.invoke('fetch-google-api-metrics', params),
 
   // AI Studio API
   openAIStudioLogin: () => ipcRenderer.invoke('open-aistudio-login'),
-  fetchAIStudioData: (params?: { projectId?: string }) => ipcRenderer.invoke('fetch-aistudio-data', params),
-
-  // GCP Billing API
-  fetchGCPBillingData: (params: { serviceAccountJson: string; projectId: string; billingAccountId?: string }) =>
-    ipcRenderer.invoke('fetch-gcp-billing-data', params),
-  queryBigQueryBilling: (params: { serviceAccountJson: string; projectId: string; bqTablePath: string; bqLocation?: string }) =>
-    ipcRenderer.invoke('query-bigquery-billing', params),
+  fetchAIStudioData: (params?: { projectId?: string; serviceAccountJson?: string }) => ipcRenderer.invoke('fetch-aistudio-data', params),
 
   // Email API
   sendEmail: (params: { config: any; subject: string; content: string }) => ipcRenderer.invoke('send-email', params),
@@ -169,7 +163,7 @@ export interface ElectronAPI {
   getFileMtime: (path: string) => Promise<number | null>;
   writeFile: (path: string, content: string) => Promise<boolean>;
   deleteFile: (path: string) => Promise<boolean>;
-  listDir: (path: string) => Promise<Array<{ name: string; isDirectory: boolean; path: string }>>;
+  listDir: (path: string) => Promise<Array<{ name: string; isDirectory: boolean; isFile?: boolean; path: string; size?: number; mtime?: number | null }>>;
   getUserInfo: () => Promise<{ username: string; hostname: string }>;
   uploadImage: (params: { accessToken: string; owner: string; repo: string; path: string; content: string; message: string }) => Promise<any>;
   // Plugins
@@ -228,12 +222,15 @@ export interface ElectronAPI {
     loginRequired?: boolean;
     error?: string | null;
   }>;
+  fetchZenmuxManagementData: (params: { apiKey: string }) => Promise<any>;
+  fetchApiKeyBalance: (params: { provider: 'kimi' | 'deepseek'; apiKey: string }) => Promise<any>;
+  fetchGoogleApiMetrics: (params: { projectId: string; serviceAccountJson: string }) => Promise<any>;
+  // AI Studio API
+  openAIStudioLogin: () => Promise<boolean>;
+  fetchAIStudioData: (params?: { projectId?: string; serviceAccountJson?: string }) => Promise<any>;
   // Email API
   sendEmail: (params: { config: any; subject: string; content: string }) => Promise<{ success: boolean; error?: string }>;
   testEmailConfig: (config: any) => Promise<{ success: boolean; error?: string }>;
-  // GCP Billing API
-  fetchGCPBillingData: (params: { serviceAccountJson: string; projectId: string; billingAccountId?: string }) => Promise<any>;
-  queryBigQueryBilling: (params: { serviceAccountJson: string; projectId: string; bqTablePath: string; bqLocation?: string }) => Promise<any>;
   // Agent 网络搜索
   agentWebSearch: (params: { query: string }) => Promise<{ success: boolean; results: Array<{ title: string; url: string; snippet: string }>; error?: string; query?: string }>;
   // 代理设置
@@ -268,7 +265,7 @@ export interface ElectronAPI {
   // RAG Lab
   ragSelectFiles: () => Promise<string[]>;
   ragSelectFolder: () => Promise<string | null>;
-  getFileStats: (filePath: string) => Promise<{ size: number; mtime: number } | null>;
+  getFileStats: (filePath: string) => Promise<{ size: number; mtime: number; isDirectory?: boolean; isFile?: boolean } | null>;
   codingPracticeRun: (params: {
     language: string;
     files: Array<{ id: 'input' | 'code' | 'output'; name: string; content: string }>;

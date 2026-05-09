@@ -1,7 +1,7 @@
 /**
  * Legacy RAG compatibility layer.
  *
- * ChatManager / AgentPanel 还在用这组旧 API，这里把它们统一桥接到 vectorService，
+ * Legacy chat and AgentPanel still use this older API shape, so this layer bridges them to vectorService.
  * 保留旧调用方式，但底层索引、检索、持久化都走新的 collection-based 实现。
  */
 

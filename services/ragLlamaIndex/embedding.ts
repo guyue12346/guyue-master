@@ -39,7 +39,7 @@
  *
  * 📚 知识点：为什么不直接用 LlamaIndex 内置的 Embedding？
  * ──────────────────────────────────────────────────────
- * LlamaIndex TS 内置的 Embedding 适配器(@llamaindex/openai 等)
+ * LlamaIndex TS 内置的 Embedding 适配器
  * 只支持有限的提供商。我们的 App 已经支持 5+ 个 Embedding 提供商
  * (Gemini/OpenAI/智谱/千问/自定义)，所以我们写一个适配器层，
  * 把现有提供商桥接到 LlamaIndex 的接口。

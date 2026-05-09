@@ -1,51 +1,80 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, Loader2, LogIn, ExternalLink, CheckCircle2, AlertCircle, Clock, Settings, X, ToggleLeft, ToggleRight } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  AlertCircle,
+  CalendarDays,
+  CheckCircle2,
+  Clock,
+  CreditCard,
+  Crown,
+  ExternalLink,
+  KeyRound,
+  Loader2,
+  RefreshCw,
+  Settings,
+  Wallet,
+  X,
+} from 'lucide-react';
 
-/* ─── 设置 ─── */
-
-interface ZenmuxPanelSettings {
-  showRequestCounts: boolean;
-  showModelBreakdown: boolean;
-  showMonthlyHistory: boolean;
+interface ZenmuxQuota {
+  usage_percentage?: number;
+  resets_at?: string | null;
+  max_flows?: number;
+  used_flows?: number;
+  remaining_flows?: number;
+  used_value_usd?: number;
+  max_value_usd?: number;
 }
 
-const DEFAULT_SETTINGS: ZenmuxPanelSettings = {
-  showRequestCounts: false,
-  showModelBreakdown: false,
-  showMonthlyHistory: false,
-};
+interface ZenmuxManagementData {
+  subscription?: {
+    plan?: {
+      tier?: string;
+      amount_usd?: number;
+      interval?: string;
+      expires_at?: string;
+    };
+    currency?: string;
+    base_usd_per_flow?: number;
+    effective_usd_per_flow?: number;
+    account_status?: string;
+    quota_5_hour?: ZenmuxQuota;
+    quota_7_day?: ZenmuxQuota;
+    quota_monthly?: Pick<ZenmuxQuota, 'max_flows' | 'max_value_usd'>;
+  };
+  balance?: {
+    currency?: string;
+    total_credits?: number;
+    top_up_credits?: number;
+    bonus_credits?: number;
+  } | null;
+  partialErrors?: Record<string, string | null>;
+}
 
-const SETTINGS_KEY = 'zenmux_panel_settings';
+interface ZenmuxDashboardResult {
+  data?: ZenmuxManagementData;
+  error?: string | null;
+  missingApiKey?: boolean;
+  lastUpdated?: number;
+  source?: string;
+}
 
-function loadSettings(): ZenmuxPanelSettings {
+const MANAGEMENT_KEY_STORAGE = 'zenmux_management_api_key';
+
+function loadApiKey(): string {
   try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return DEFAULT_SETTINGS;
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    return localStorage.getItem(MANAGEMENT_KEY_STORAGE) || '';
   } catch {
-    return DEFAULT_SETTINGS;
+    return '';
   }
 }
 
-function saveSettings(s: ZenmuxPanelSettings) {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+function saveApiKey(apiKey: string) {
+  if (apiKey.trim()) {
+    localStorage.setItem(MANAGEMENT_KEY_STORAGE, apiKey.trim());
+  } else {
+    localStorage.removeItem(MANAGEMENT_KEY_STORAGE);
+  }
 }
-
-/* ─── 工具函数 ─── */
-
-/** "20260308" → "03/08" */
-const fmtDate = (s: string) => s.length === 8 ? s.slice(4, 6) + '/' + s.slice(6, 8) : s;
-
-/** "202603" → "2026年03月" */
-const fmtMonth = (s: string) => s.length === 6 ? `${s.slice(0, 4)}年${s.slice(4, 6)}月` : s;
-
-/** "20260308" → "03月08日 周x" */
-const fmtDateFull = (s: string) => {
-  if (s.length !== 8) return s;
-  const y = +s.slice(0, 4), m = +s.slice(4, 6) - 1, d = +s.slice(6, 8);
-  const weekday = ['日', '一', '二', '三', '四', '五', '六'][new Date(y, m, d).getDay()];
-  return `${s.slice(4, 6)}月${s.slice(6, 8)}日 周${weekday}`;
-};
 
 const timeAgo = (ts: number): string => {
   const diff = Date.now() - ts;
@@ -55,128 +84,18 @@ const timeAgo = (ts: number): string => {
   return Math.floor(diff / 86400_000) + ' 天前';
 };
 
-/* ─── 数据处理 ─── */
-
-interface DaySummary {
-  date: string;
-  totalTokens: number;
-  totalRequests: number;
-  totalCost: number;
-  topModel: string;
-  topModelTokens: number;
+function formatMoney(value: number | undefined | null, digits = 4): string {
+  return `$${Number(value || 0).toFixed(digits)}`;
 }
 
-interface ModelStat {
-  model: string;
-  tokens: number;
-  requests: number;
-  cost: number;
+function formatPercent(value: number | undefined): string {
+  return `${Math.round(Number(value || 0) * 100)}%`;
 }
 
-function aggregateDailyUsage(usageData: any): Map<string, { totalTokens: number; totalRequests: number; topModel: string; topModelTokens: number }> {
-  const map = new Map<string, { totalTokens: number; totalRequests: number; models: Map<string, number> }>();
-  const rows: any[] = usageData?.data?.tokensByModel ?? [];
-  for (const row of rows) {
-    const date = String(row.bizTime ?? '');
-    const model = String(row.modelSlug ?? '');
-    const tokens = Number(row.tokens ?? 0);
-    const requests = Number(row.requestCounts ?? 0);
-    if (!date) continue;
-    let entry = map.get(date);
-    if (!entry) { entry = { totalTokens: 0, totalRequests: 0, models: new Map() }; map.set(date, entry); }
-    entry.totalTokens += tokens;
-    entry.totalRequests += requests;
-    entry.models.set(model, (entry.models.get(model) || 0) + tokens);
-  }
-  const result = new Map<string, { totalTokens: number; totalRequests: number; topModel: string; topModelTokens: number }>();
-  for (const [date, { totalTokens, totalRequests, models }] of map) {
-    let topModel = '-', topModelTokens = 0;
-    for (const [m, t] of models) {
-      if (t > topModelTokens) { topModel = m; topModelTokens = t; }
-    }
-    result.set(date, { totalTokens, totalRequests, topModel, topModelTokens });
-  }
-  return result;
+function formatDateTime(value?: string | null): string {
+  if (!value) return '-';
+  return new Date(value).toLocaleString('zh-CN');
 }
-
-function aggregateDailyCost(costData: any): Map<string, number> {
-  const map = new Map<string, number>();
-  const rows: any[] = costData?.data?.costByModel ?? [];
-  for (const row of rows) {
-    const date = String(row.bizTime ?? '');
-    const cost = Number(row.billAmount ?? 0);
-    if (!date) continue;
-    map.set(date, (map.get(date) || 0) + cost);
-  }
-  return map;
-}
-
-/** 聚合所有模型维度统计 */
-function aggregateModelStats(usageData: any, costData: any): ModelStat[] {
-  const map = new Map<string, ModelStat>();
-  const usageRows: any[] = usageData?.data?.tokensByModel ?? [];
-  for (const row of usageRows) {
-    const model = String(row.modelSlug ?? '');
-    if (!model) continue;
-    const tokens = Number(row.tokens ?? 0);
-    const requests = Number(row.requestCounts ?? 0);
-    let s = map.get(model);
-    if (!s) { s = { model, tokens: 0, requests: 0, cost: 0 }; map.set(model, s); }
-    s.tokens += tokens;
-    s.requests += requests;
-  }
-  const costRows: any[] = costData?.data?.costByModel ?? [];
-  for (const row of costRows) {
-    const model = String(row.modelSlug ?? '');
-    if (!model) continue;
-    const cost = Number(row.billAmount ?? 0);
-    let s = map.get(model);
-    if (!s) { s = { model, tokens: 0, requests: 0, cost: 0 }; map.set(model, s); }
-    s.cost += cost;
-  }
-  return [...map.values()].sort((a, b) => b.tokens - a.tokens);
-}
-
-/** 计算某月总花费 */
-function sumMonthlyCost(costData: any): number {
-  const rows: any[] = costData?.data?.costByModel ?? [];
-  return rows.reduce((s, r) => s + Number(r.billAmount ?? 0), 0);
-}
-
-function extractBalance(creditsData: any): { total: number; topUp: number; bonus: number; totalCharged: number; totalSpent: number } | null {
-  const d = creditsData?.data;
-  if (!d || typeof d !== 'object') return null;
-  const total = Number(d.balance ?? 0);
-  const topUp = Number(d.balancesMap?.charge ?? 0);
-  const bonus = Number(d.balancesMap?.discount ?? 0);
-  // actualFee = 历史总充值+赠送金额，spent = 已消耗
-  const totalCharged = Number(d.actualFee ?? (topUp + bonus));
-  const totalSpent = Math.max(0, totalCharged - total);
-  if (total === 0 && topUp === 0 && bonus === 0) return null;
-  return { total, topUp, bonus, totalCharged, totalSpent };
-}
-
-function getLast7Days(): string[] {
-  const days: string[] = [];
-  const now = new Date();
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - i);
-    days.push(
-      String(d.getFullYear()) +
-      String(d.getMonth() + 1).padStart(2, '0') +
-      String(d.getDate()).padStart(2, '0')
-    );
-  }
-  return days;
-}
-
-function shortModelName(slug: string): string {
-  const parts = slug.split('/');
-  return parts.length > 1 ? parts.slice(1).join('/') : slug;
-}
-
-/* ─── 子组件 ─── */
 
 const ZenmuxLogo = () => (
   <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
@@ -184,148 +103,135 @@ const ZenmuxLogo = () => (
   </div>
 );
 
-/** 设置面板 */
-const SettingsPanel: React.FC<{
-  settings: ZenmuxPanelSettings;
-  onClose: () => void;
-  onChange: (s: ZenmuxPanelSettings) => void;
-}> = ({ settings, onClose, onChange }) => {
-  const toggle = (key: keyof ZenmuxPanelSettings) => {
-    const next = { ...settings, [key]: !settings[key] };
-    onChange(next);
-    saveSettings(next);
-  };
-
-  const items: { key: keyof ZenmuxPanelSettings; label: string; desc: string }[] = [
-    { key: 'showRequestCounts', label: '每日请求次数', desc: '在7日明细中显示每日请求次数列' },
-    { key: 'showModelBreakdown', label: '模型使用明细', desc: '展示本月各模型 Token / 请求次数 / 花费排名' },
-    { key: 'showMonthlyHistory', label: '历史月账单', desc: '展示前两个月的花费对比' },
-  ];
-
+const QuotaBlock: React.FC<{ title: string; quota?: ZenmuxQuota | null }> = ({ title, quota }) => {
+  const pct = Math.min(100, Math.max(0, Number(quota?.usage_percentage || 0) * 100));
   return (
-    <div className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60 px-5 py-4">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">展示选项（默认关闭）</span>
-        <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded">
-          <X className="w-4 h-4" />
-        </button>
+    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 p-4">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{title}</p>
+        <span className="text-xs font-semibold text-gray-900 dark:text-white">{formatPercent(quota?.usage_percentage)}</span>
       </div>
-      <div className="space-y-2">
-        {items.map(({ key, label, desc }) => (
-          <div key={key} className="flex items-center justify-between py-1.5 gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-200">{label}</p>
-              <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{desc}</p>
-            </div>
-            <button onClick={() => toggle(key)} className="shrink-0">
-              {settings[key]
-                ? <ToggleRight className="w-6 h-6 text-indigo-500" />
-                : <ToggleLeft className="w-6 h-6 text-gray-300 dark:text-gray-600" />}
-            </button>
-          </div>
-        ))}
+      <div className="h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+        <div className="h-full bg-gradient-to-r from-indigo-400 to-violet-500 rounded-full" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="grid grid-cols-3 gap-2 mt-3 text-[10px] text-gray-400 dark:text-gray-500">
+        <div>
+          <p>已用</p>
+          <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">{Number(quota?.used_flows || 0).toFixed(2)}</p>
+        </div>
+        <div>
+          <p>剩余</p>
+          <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">{Number(quota?.remaining_flows || 0).toFixed(2)}</p>
+        </div>
+        <div>
+          <p>上限</p>
+          <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">{Number(quota?.max_flows || 0).toFixed(2)}</p>
+        </div>
+      </div>
+      <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 text-[10px] text-gray-400 dark:text-gray-500">
+        <div className="flex justify-between">
+          <span>已用价值</span>
+          <span>{formatMoney(quota?.used_value_usd, 2)} / {formatMoney(quota?.max_value_usd, 2)}</span>
+        </div>
+        <div className="flex justify-between mt-1">
+          <span>重置时间</span>
+          <span>{formatDateTime(quota?.resets_at)}</span>
+        </div>
       </div>
     </div>
   );
 };
 
-/* ─── 主组件 ─── */
+const MetricTile: React.FC<{
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: 'indigo' | 'emerald' | 'amber' | 'gray';
+}> = ({ label, value, hint, tone = 'gray' }) => {
+  const valueColor = tone === 'indigo'
+    ? 'text-indigo-600 dark:text-indigo-300'
+    : tone === 'emerald'
+      ? 'text-emerald-600 dark:text-emerald-300'
+      : tone === 'amber'
+        ? 'text-amber-600 dark:text-amber-300'
+        : 'text-gray-900 dark:text-white';
+
+  return (
+    <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
+      <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">{label}</p>
+      <p className={`text-xl font-bold ${valueColor}`}>{value}</p>
+      {hint && <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">{hint}</p>}
+    </div>
+  );
+};
 
 export const ZenmuxUsagePanel: React.FC = () => {
-  const [dashData, setDashData] = useState<any>(null);
+  const [apiKey, setApiKey] = useState(loadApiKey);
+  const [draftApiKey, setDraftApiKey] = useState(loadApiKey);
+  const [dashData, setDashData] = useState<ZenmuxDashboardResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [settings, setSettings] = useState<ZenmuxPanelSettings>(loadSettings);
-  const hasAutoOpenedLogin = useRef(false);
 
   const fetchData = useCallback(async () => {
+    const key = apiKey.trim();
+    if (!key) return;
+
     setIsLoading(true);
     setError(null);
     try {
-      if (window.electronAPI?.fetchZenmuxDashboardData) {
-        const result = await window.electronAPI.fetchZenmuxDashboardData();
-        setDashData(result);
-        if (result?.loginRequired) {
-          setError('login-required');
-          if (!hasAutoOpenedLogin.current) {
-            hasAutoOpenedLogin.current = true;
-            window.electronAPI?.openZenmuxLogin?.();
-          }
-        } else if (result?.error) {
-          setError(result.error);
-        } else {
-          hasAutoOpenedLogin.current = false;
-        }
-      } else {
+      if (!window.electronAPI?.fetchZenmuxManagementData) {
         setError('仅在桌面端可用');
+        return;
       }
+      const result = await window.electronAPI.fetchZenmuxManagementData({ apiKey: key });
+      setDashData(result);
+      if (result?.error) setError(result.error);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [apiKey]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    if (apiKey.trim()) fetchData();
+  }, [apiKey, fetchData]);
 
-  const handleLogin = () => window.electronAPI?.openZenmuxLogin();
-  const handleOpenExternal = () => window.electronAPI?.openPath?.('https://zenmux.ai/platform/pay-as-you-go');
+  const handleSaveKey = () => {
+    const key = draftApiKey.trim();
+    saveApiKey(key);
+    setApiKey(key);
+    setDashData(null);
+    setError(null);
+    setShowSettings(false);
+  };
 
-  const loginRequired = error === 'login-required' || dashData?.loginRequired;
-  const hasData = !!(dashData?.data?.usage || dashData?.data?.credits || dashData?.data?.costDetail);
+  const handleClearKey = () => {
+    saveApiKey('');
+    setApiKey('');
+    setDraftApiKey('');
+    setDashData(null);
+    setError(null);
+    setShowSettings(false);
+  };
 
-  const balance = hasData ? extractBalance(dashData.data.credits) : null;
-  const usageMap = hasData ? aggregateDailyUsage(dashData.data.usage) : new Map();
-  const costMap = hasData ? aggregateDailyCost(dashData.data.costDetail) : new Map();
-  const modelStats = hasData ? aggregateModelStats(dashData.data.usage, dashData.data.costDetail) : [];
+  const handleOpenExternal = () => window.electronAPI?.openPath?.('https://zenmux.ai/platform');
 
-  const last7 = getLast7Days();
-  const daySummaries: DaySummary[] = last7.map(date => {
-    const usage = usageMap.get(date);
-    const cost = costMap.get(date) ?? 0;
-    return {
-      date,
-      totalTokens: usage?.totalTokens ?? 0,
-      totalRequests: usage?.totalRequests ?? 0,
-      totalCost: cost,
-      topModel: usage?.topModel ?? '-',
-      topModelTokens: usage?.topModelTokens ?? 0,
-    };
-  });
+  const data = dashData?.data;
+  const hasKey = !!apiKey.trim();
+  const hasData = !!data;
+  const subscription = data?.subscription;
+  const balance = data?.balance;
+  const balanceError = data?.partialErrors?.balance;
 
-  const weekTotalTokens = daySummaries.reduce((s, d) => s + d.totalTokens, 0);
-  const weekTotalCost = daySummaries.reduce((s, d) => s + d.totalCost, 0);
-  const weekTotalRequests = daySummaries.reduce((s, d) => s + d.totalRequests, 0);
-  const maxTokens = Math.max(...daySummaries.map(d => d.totalTokens), 1);
-
-  // 历史月数据
-  const historyMonths: { month: string; cost: number }[] = [];
-  if (hasData && dashData.data.historyMonths) {
-    for (const h of dashData.data.historyMonths) {
-      historyMonths.push({ month: h.month, cost: sumMonthlyCost(h.cost) });
-    }
-  }
-  if (hasData && dashData.data.prevMonthCost) {
-    const prev = dashData.data.prevMonthCost;
-    if (!historyMonths.find(h => h.month === prev.month)) {
-      historyMonths.push({ month: prev.month, cost: sumMonthlyCost(prev.cost) });
-    }
-  }
-
-  // 当月花费（从所有 cost 数据中求和）
-  const currentMonthCost = hasData ? costMap : new Map<string, number>();
-  const currentMonthTotal = [...currentMonthCost.values()].reduce((a, b) => a + b, 0);
-
-  // 交易记录
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm shrink-0">
         <div className="flex items-center gap-3">
           <ZenmuxLogo />
           <div>
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Zenmux Dashboard</h2>
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">ZenMux Management</h2>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -336,289 +242,211 @@ export const ZenmuxUsagePanel: React.FC = () => {
             </span>
           )}
           <button
-            onClick={() => setShowSettings(v => !v)}
-            className={`p-1.5 rounded-lg transition-colors ${showSettings ? 'text-indigo-500 bg-indigo-50 dark:bg-indigo-900/20' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50'}`}
-            title="展示设置"
-          >
-            <Settings className="w-3.5 h-3.5" />
-          </button>
-          <button
             onClick={fetchData}
-            disabled={isLoading}
+            disabled={isLoading || !hasKey}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
             刷新
           </button>
           <button
+            onClick={() => {
+              setDraftApiKey(apiKey);
+              setShowSettings(true);
+            }}
+            className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors"
+            title="设置"
+          >
+            <Settings className="w-3.5 h-3.5" />
+          </button>
+          <button
             onClick={handleOpenExternal}
             className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors"
-            title="在浏览器中打开"
+            title="打开 ZenMux 控制台"
           >
             <ExternalLink className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
-      {/* Settings Panel */}
       {showSettings && (
-        <SettingsPanel
-          settings={settings}
-          onClose={() => setShowSettings(false)}
-          onChange={setSettings}
-        />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-lg rounded-xl bg-white dark:bg-gray-800 shadow-xl m-4">
+            <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+              <h4 className="font-semibold text-gray-900 dark:text-white">ZenMux 设置</h4>
+              <button type="button" onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-200 block mb-1">Management API Key</label>
+                <input
+                  type="password"
+                  value={draftApiKey}
+                  onChange={(e) => setDraftApiKey(e.target.value)}
+                  placeholder="ZENMUX_MANAGEMENT_API_KEY"
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+                />
+              </div>
+              <div className="flex justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={handleClearKey}
+                  className="px-3 py-1.5 text-sm rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
+                >
+                  清除
+                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowSettings(false)}
+                    className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveKey}
+                    className="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
+                  >
+                    保存
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
-      {/* Content */}
       <div className="flex-1 overflow-auto p-5">
-        {isLoading && !hasData && (
+        {!hasKey && (
+          <div className="flex flex-col items-center justify-center h-full gap-5">
+            <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-900/20 flex items-center justify-center">
+              <KeyRound className="w-6 h-6 text-indigo-500" />
+            </div>
+            <div className="text-center max-w-md">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">填写 Management API Key</h3>
+            </div>
+            <div className="w-full max-w-md flex gap-2">
+              <input
+                type="password"
+                value={draftApiKey}
+                onChange={(e) => setDraftApiKey(e.target.value)}
+                placeholder="ZENMUX_MANAGEMENT_API_KEY"
+                className="flex-1 px-3 py-2.5 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/30"
+              />
+              <button
+                onClick={handleSaveKey}
+                className="px-4 py-2.5 text-sm font-medium rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        )}
+
+        {hasKey && isLoading && !hasData && (
           <div className="flex flex-col items-center justify-center h-full gap-4">
             <Loader2 className="w-10 h-10 text-indigo-500 animate-spin" />
             <div className="text-center">
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">正在获取数据...</p>
-              <p className="text-xs text-gray-400 mt-1">首次加载可能需要 5-10 秒</p>
+              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">正在读取当前账号数据...</p>
             </div>
           </div>
         )}
 
-        {loginRequired && !isLoading && (
-          <div className="flex flex-col items-center justify-center h-full gap-6">
-            <ZenmuxLogo />
-            <div className="text-center max-w-sm">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">登录 Zenmux</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
-                请在独立窗口中完成登录，登录后会话将持久保存。
-              </p>
-            </div>
-            <div className="flex flex-col gap-3 w-64">
-              <button
-                onClick={handleLogin}
-                className="flex items-center justify-center gap-2 px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-xl shadow-lg shadow-indigo-500/25 transition-all active:scale-[0.98]"
-              >
-                <LogIn className="w-4 h-4" />
-                打开登录窗口
-              </button>
-              <button
-                onClick={fetchData}
-                className="flex items-center justify-center gap-2 px-5 py-3 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-sm font-medium rounded-xl border border-gray-200 dark:border-gray-600 transition-all active:scale-[0.98]"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                已登录，刷新数据
-              </button>
-            </div>
-          </div>
-        )}
-
-        {error && error !== 'login-required' && !isLoading && !loginRequired && (
+        {hasKey && error && !isLoading && !hasData && (
           <div className="flex flex-col items-center justify-center h-full gap-4">
             <AlertCircle className="w-10 h-10 text-red-400" />
-            <div className="text-center">
+            <div className="text-center max-w-md">
               <p className="text-sm font-medium text-gray-700 dark:text-gray-300">获取数据失败</p>
-              <p className="text-xs text-gray-400 mt-1">{error}</p>
+              <p className="text-xs text-gray-400 mt-1 break-words">{error}</p>
             </div>
-            <button onClick={fetchData} className="px-4 py-2 text-xs font-medium bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors">
-              重试
-            </button>
+            <div className="flex gap-2">
+              <button onClick={fetchData} className="px-4 py-2 text-xs font-medium bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors">
+                重试
+              </button>
+              <button onClick={handleClearKey} className="px-4 py-2 text-xs font-medium text-red-500 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-colors">
+                清除 Key
+              </button>
+            </div>
           </div>
         )}
 
-        {!isLoading && !loginRequired && !error && !hasData && (
-          <div className="flex flex-col items-center justify-center h-full gap-4">
-            <AlertCircle className="w-10 h-10 text-amber-400" />
-            <div className="text-center">
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">未获取到数据</p>
-              <p className="text-xs text-gray-400 mt-1">API 返回了空数据，请重试</p>
-            </div>
-            <button onClick={fetchData} className="px-4 py-2 text-xs font-medium bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors">
-              重试
-            </button>
-          </div>
-        )}
-
-        {hasData && !loginRequired && (
-          <div className="space-y-5 max-w-2xl mx-auto">
-            {/* 余额卡片 */}
-            <div className="bg-gradient-to-br from-indigo-500 to-violet-600 rounded-2xl p-5 text-white shadow-lg shadow-indigo-500/20">
-              <div className="mb-3 opacity-90">
-                <span className="text-sm font-medium">账户余额</span>
-              </div>
-              {balance ? (
-                <div className="flex items-baseline gap-1">
-                  <span className="text-3xl font-bold tracking-tight">${balance.total.toFixed(4)}</span>
-                </div>
-              ) : (
-                <span className="text-xl font-semibold opacity-70">获取中...</span>
-              )}
-              {balance && (
-                <div className="flex gap-6 mt-4 pt-3 border-t border-white/20">
-                  <div>
-                    <p className="text-[10px] opacity-60 mb-0.5">总充值</p>
-                    <p className="text-sm font-semibold">${balance.totalCharged.toFixed(4)}</p>
+        {hasData && (
+          <div className="space-y-5 max-w-5xl mx-auto">
+            <section className="rounded-2xl border border-emerald-100 dark:border-emerald-900/40 bg-emerald-50/60 dark:bg-emerald-950/20 overflow-hidden">
+              <div className="px-5 py-4 border-b border-emerald-100 dark:border-emerald-900/40 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300 flex items-center justify-center">
+                    <Wallet className="w-5 h-5" />
                   </div>
-                  <div>
-                    <p className="text-[10px] opacity-60 mb-0.5">总花费</p>
-                    <p className="text-sm font-semibold">${balance.totalSpent.toFixed(4)}</p>
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-white">PAYG</h3>
                   </div>
-                  {balance.bonus > 0 && (
-                    <div>
-                      <p className="text-[10px] opacity-60 mb-0.5">赠送余额</p>
-                      <p className="text-sm font-semibold">${balance.bonus.toFixed(4)}</p>
-                    </div>
-                  )}
                 </div>
-              )}
-            </div>
-
-            {/* 七日汇总 */}
-            <div className="flex gap-3">
-              <div className="flex-1 bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 p-4">
-                <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">7日总花费</p>
-                <p className="text-xl font-bold text-gray-900 dark:text-white">${weekTotalCost.toFixed(4)}</p>
+                <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white dark:bg-gray-800 text-xs font-semibold text-gray-700 dark:text-gray-200 border border-emerald-100 dark:border-emerald-900/50">
+                  <CreditCard className="w-3.5 h-3.5 text-emerald-500" />
+                  {balance?.currency || 'USD'}
+                </span>
               </div>
-              <div className="flex-1 bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 p-4">
-                <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">7日总 Tokens</p>
-                <p className="text-xl font-bold text-gray-900 dark:text-white">{(weekTotalTokens / 1_000_000).toFixed(2)}M</p>
-              </div>
-              {settings.showRequestCounts && (
-                <div className="flex-1 bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 p-4">
-                  <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">7日请求次数</p>
-                  <p className="text-xl font-bold text-gray-900 dark:text-white">{weekTotalRequests.toLocaleString()}</p>
-                </div>
-              )}
-            </div>
 
-            {/* 每日明细 */}
-            <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700">
-                <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">近 7 日明细</h3>
-              </div>
-              <div className="divide-y divide-gray-50 dark:divide-gray-700/50">
-                {daySummaries.map((day, i) => {
-                  const tokenM = day.totalTokens / 1_000_000;
-                  const barPct = day.totalTokens / maxTokens * 100;
-                  const isToday = i === 0;
-                  return (
-                    <div key={day.date} className={`px-4 py-3 flex items-center gap-3 ${isToday ? 'bg-indigo-50/50 dark:bg-indigo-900/10' : 'hover:bg-gray-50 dark:hover:bg-gray-700/20'} transition-colors`}>
-                      {/* 日期 */}
-                      <div className="w-[92px] shrink-0">
-                        <div className="text-sm font-medium text-gray-900 dark:text-white">
-                          {isToday ? '今天' : fmtDate(day.date)}
-                        </div>
-                        <div className="text-[10px] text-gray-400">{fmtDateFull(day.date)}</div>
-                      </div>
-
-                      {/* Token 柱形 */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 w-[52px] text-right shrink-0">
-                            {tokenM >= 0.01 ? tokenM.toFixed(2) + 'M' : day.totalTokens > 0 ? (day.totalTokens / 1000).toFixed(1) + 'K' : '-'}
-                          </span>
-                          <div className="flex-1 h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-gradient-to-r from-indigo-400 to-violet-500 rounded-full transition-all duration-500"
-                              style={{ width: `${barPct}%` }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* 请求次数（可选） */}
-                      {settings.showRequestCounts && (
-                        <div className="w-[64px] text-right shrink-0">
-                          <span className={`text-xs font-medium ${day.totalRequests > 0 ? 'text-sky-600 dark:text-sky-400' : 'text-gray-300 dark:text-gray-600'}`}>
-                            {day.totalRequests > 0 ? day.totalRequests.toLocaleString() + ' req' : '-'}
-                          </span>
-                        </div>
-                      )}
-
-                      {/* 花费 */}
-                      <div className="w-[68px] text-right shrink-0">
-                        <span className={`text-sm font-semibold ${day.totalCost > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-300 dark:text-gray-600'}`}>
-                          {day.totalCost > 0 ? '$' + day.totalCost.toFixed(4) : '-'}
-                        </span>
-                      </div>
-
-                      {/* Top Model */}
-                      <div className="w-[140px] shrink-0 text-right">
-                        {day.topModel !== '-' ? (
-                          <span className="inline-block px-2 py-0.5 text-[10px] font-medium bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-400 rounded-md truncate max-w-full" title={day.topModel}>
-                            {shortModelName(day.topModel)}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-gray-300 dark:text-gray-600">-</span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 模型使用明细（可选） */}
-            {settings.showModelBreakdown && modelStats.length > 0 && (
-              <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">本月模型明细</h3>
-                  <span className="text-[10px] text-gray-400">共 {modelStats.length} 个模型</span>
-                </div>
-                <div className="divide-y divide-gray-50 dark:divide-gray-700/50">
-                  {modelStats.slice(0, 15).map((stat, i) => (
-                    <div key={stat.model} className="px-4 py-2.5 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-gray-700/20 transition-colors">
-                      <span className="w-5 text-[10px] text-gray-400 text-right shrink-0">{i + 1}</span>
-                      <div className="flex-1 min-w-0">
-                        <span className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate block" title={stat.model}>
-                          {shortModelName(stat.model)}
-                        </span>
-                      </div>
-                      <span className="text-xs text-gray-500 dark:text-gray-400 w-[60px] text-right shrink-0">
-                        {stat.tokens >= 1_000_000 ? (stat.tokens / 1_000_000).toFixed(2) + 'M' : (stat.tokens / 1000).toFixed(1) + 'K'}
-                      </span>
-                      {stat.requests > 0 && (
-                        <span className="text-[10px] text-sky-500 w-[54px] text-right shrink-0">{stat.requests.toLocaleString()} req</span>
-                      )}
-                      <span className={`text-xs font-semibold w-[64px] text-right shrink-0 ${stat.cost > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-300 dark:text-gray-600'}`}>
-                        {stat.cost > 0 ? '$' + stat.cost.toFixed(4) : '-'}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <div className="px-4 py-2 border-t border-gray-100 dark:border-gray-700 flex items-center justify-between">
-                  <span className="text-xs text-gray-400">本月合计</span>
-                  <span className="text-sm font-bold text-gray-900 dark:text-white">${currentMonthTotal.toFixed(4)}</span>
-                </div>
-              </div>
-            )}
-
-            {/* 历史月账单（可选） */}
-            {settings.showMonthlyHistory && (
-              <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700">
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">历史月账单</h3>
-                </div>
-                <div className="divide-y divide-gray-50 dark:divide-gray-700/50">
-                  {/* 当月 */}
-                  <div className="px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700/20">
-                    <div>
-                      <span className="text-sm font-medium text-gray-900 dark:text-white">本月（至今）</span>
-                      <span className="ml-2 text-[10px] bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded">当前</span>
-                    </div>
-                    <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">${currentMonthTotal.toFixed(4)}</span>
+              <div className="p-5">
+                {balance ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <MetricTile label="PAYG 总余额" value={formatMoney(balance.total_credits)} hint="top-up + bonus" tone="emerald" />
+                    <MetricTile label="充值余额" value={formatMoney(balance.top_up_credits)} hint="top_up_credits" />
+                    <MetricTile label="赠送余额" value={formatMoney(balance.bonus_credits)} hint="bonus_credits" tone="indigo" />
                   </div>
-                  {historyMonths.length === 0 && (
-                    <div className="px-4 py-4 text-center text-xs text-gray-400">暂无历史数据</div>
-                  )}
-                  {historyMonths.map(h => (
-                    <div key={h.month} className="px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700/20">
-                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{fmtMonth(h.month)}</span>
-                      <span className={`text-sm font-semibold ${h.cost > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400'}`}>
-                        {h.cost > 0 ? '$' + h.cost.toFixed(4) : '无数据'}
-                      </span>
+                ) : (
+                  <div className="rounded-xl border border-amber-100 dark:border-amber-800/40 bg-amber-50 dark:bg-amber-900/20 px-4 py-3 text-xs text-amber-700 dark:text-amber-300">
+                    PAYG 余额暂无可展示数据{balanceError ? `：${balanceError}` : ''}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-indigo-100 dark:border-indigo-900/40 bg-white dark:bg-gray-900 overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300 flex items-center justify-center">
+                    <Crown className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Plan</h3>
+                  </div>
+                </div>
+                <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gray-50 dark:bg-gray-800 text-xs font-semibold text-gray-700 dark:text-gray-200 border border-gray-100 dark:border-gray-700">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-indigo-500" />
+                  {subscription?.account_status || '-'}
+                </span>
+              </div>
+
+              <div className="p-5 space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  <MetricTile label="订阅套餐" value={subscription?.plan?.tier || '-'} hint={subscription?.plan?.interval || undefined} tone="indigo" />
+                  <MetricTile label="套餐金额" value={formatMoney(subscription?.plan?.amount_usd, 2)} hint={subscription?.currency || 'USD'} />
+                  <MetricTile label="有效 Flow 单价" value={formatMoney(subscription?.effective_usd_per_flow, 5)} hint="effective_usd_per_flow" tone="emerald" />
+                  <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
+                    <div className="flex items-center gap-1.5 text-xs text-gray-400 dark:text-gray-500 mb-1">
+                      <CalendarDays className="w-3.5 h-3.5" />
+                      <span>订阅到期</span>
                     </div>
-                  ))}
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white">{formatDateTime(subscription?.plan?.expires_at)}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <QuotaBlock title="5 小时额度" quota={subscription?.quota_5_hour} />
+                  <QuotaBlock title="7 天额度" quota={subscription?.quota_7_day} />
+                  <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 p-4">
+                    <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">月度上限</p>
+                    <p className="text-lg font-bold text-gray-900 dark:text-white">{Number(subscription?.quota_monthly?.max_flows || 0).toLocaleString()} Flow</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{formatMoney(subscription?.quota_monthly?.max_value_usd, 2)} quota value</p>
+                  </div>
                 </div>
               </div>
-            )}
-
+            </section>
           </div>
         )}
       </div>

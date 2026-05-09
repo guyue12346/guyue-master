@@ -2,21 +2,21 @@ import { app, BrowserWindow, ipcMain, shell, dialog, session, net } from 'electr
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
-import { createSign } from 'crypto';
 import pty from 'node-pty';
 import os from 'os';
 import nodemailer from 'nodemailer';
 import dns from 'dns';
 import { spawn, exec } from 'child_process';
+import { createSign } from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // 判断是否为开发环境
 const isDev = process.env.NODE_ENV === 'development';
+const DEV_SERVER_URL = 'http://localhost:3001';
 
 let mainWindow: BrowserWindow | null = null;
-let zenmuxUsageWindow: BrowserWindow | null = null;
 const codexUsageWindows = new Map<string, BrowserWindow>();
 let aiStudioWindow: BrowserWindow | null = null;
 
@@ -70,7 +70,7 @@ function createWindow() {
     // 开发环境下可能是 Vite 还没启动，尝试重新加载
     if (isDev && errorCode === -102) { // ERR_CONNECTION_REFUSED
       setTimeout(() => {
-        mainWindow?.loadURL('http://localhost:3000');
+        mainWindow?.loadURL(DEV_SERVER_URL);
       }, 1000);
     }
   });
@@ -91,7 +91,7 @@ function createWindow() {
 
   // 开发环境加载 Vite 开发服务器
   if (isDev) {
-    mainWindow.loadURL('http://localhost:3000');
+    mainWindow.loadURL(DEV_SERVER_URL);
     mainWindow.webContents.openDevTools(); // 自动打开开发者工具
   } else {
     // 生产环境加载打包后的文件
@@ -111,46 +111,6 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
-}
-
-// Zenmux 登录窗口
-const ZENMUX_COST_PAGE_URL = 'https://zenmux.ai/platform/cost';
-
-function createZenmuxUsageWindow(showWindow = true): BrowserWindow {
-  const win = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    minWidth: 960,
-    minHeight: 640,
-    show: showWindow,
-    title: 'Zenmux 登录',
-    autoHideMenuBar: true,
-    backgroundColor: '#ffffff',
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      partition: 'persist:zenmux',
-    },
-  });
-
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http:') || url.startsWith('https:')) {
-      void shell.openExternal(url);
-      return { action: 'deny' };
-    }
-    return { action: 'allow' };
-  });
-
-  void win.loadURL(ZENMUX_COST_PAGE_URL);
-
-  win.on('closed', () => {
-    if (zenmuxUsageWindow === win) {
-      zenmuxUsageWindow = null;
-    }
-  });
-
-  return win;
 }
 
 function waitForWindowLoad(win: BrowserWindow, timeoutMs = 30000): Promise<void> {
@@ -191,23 +151,6 @@ function waitForWindowLoad(win: BrowserWindow, timeoutMs = 30000): Promise<void>
     win.webContents.once('did-finish-load', onFinish);
     win.webContents.once('did-fail-load', onFail);
   });
-}
-
-async function ensureZenmuxUsageWindow(showWindow = false): Promise<BrowserWindow> {
-  if (!zenmuxUsageWindow || zenmuxUsageWindow.isDestroyed()) {
-    zenmuxUsageWindow = createZenmuxUsageWindow(showWindow);
-  } else if (showWindow) {
-    zenmuxUsageWindow.show();
-    zenmuxUsageWindow.focus();
-  }
-
-  const currentUrl = zenmuxUsageWindow.webContents.getURL();
-  if (!currentUrl.includes('zenmux.ai/platform')) {
-    void zenmuxUsageWindow.loadURL(ZENMUX_COST_PAGE_URL);
-  }
-
-  await waitForWindowLoad(zenmuxUsageWindow);
-  return zenmuxUsageWindow;
 }
 
 // Codex / ChatGPT 登录窗口
@@ -955,7 +898,7 @@ ipcMain.handle('open-path', async (event, filePath) => {
 ipcMain.handle('select-directory', async () => {
   if (!mainWindow) return null;
   const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openDirectory']
+    properties: ['openDirectory', 'showHiddenFiles']
   });
   if (result.canceled) return null;
   return result.filePaths[0];
@@ -1005,7 +948,7 @@ ipcMain.handle('path-join', async (event, ...args) => {
 ipcMain.handle('select-file', async () => {
   if (!mainWindow) return null;
   const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile']
+    properties: ['openFile', 'showHiddenFiles']
   });
   
   if (result.canceled || result.filePaths.length === 0) return null;
@@ -1118,10 +1061,28 @@ ipcMain.handle('delete-dir', async (_, dirPath: string) => {
 ipcMain.handle('list-dir', async (_, dirPath) => {
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
-    return entries.map(entry => ({
-      name: entry.name,
-      isDirectory: entry.isDirectory(),
-      path: path.join(dirPath, entry.name)
+    return await Promise.all(entries.map(async entry => {
+      const entryPath = path.join(dirPath, entry.name);
+      try {
+        const stats = await fs.stat(entryPath);
+        return {
+          name: entry.name,
+          isDirectory: stats.isDirectory(),
+          isFile: stats.isFile(),
+          path: entryPath,
+          size: stats.size,
+          mtime: stats.mtimeMs,
+        };
+      } catch {
+        return {
+          name: entry.name,
+          isDirectory: entry.isDirectory(),
+          isFile: entry.isFile(),
+          path: entryPath,
+          size: 0,
+          mtime: null,
+        };
+      }
     }));
   } catch (error) {
     console.error('Failed to list directory:', error);
@@ -1133,7 +1094,7 @@ ipcMain.handle('list-dir', async (_, dirPath) => {
 ipcMain.handle('get-file-stats', async (_, filePath) => {
   try {
     const stats = await fs.stat(filePath);
-    return { size: stats.size, mtime: stats.mtimeMs };
+    return { size: stats.size, mtime: stats.mtimeMs, isDirectory: stats.isDirectory(), isFile: stats.isFile() };
   } catch (error) {
     console.error('Failed to get file stats:', error);
     return null;
@@ -1288,134 +1249,134 @@ ipcMain.handle('fetch-codex-usage-browser', async (_event, params?: { profileId?
   }
 });
 
-// --- Zenmux Usage API ---
+// --- ZenMux Management API ---
 
-// 用 webRequest 拦截 ctoken
-let cachedCtoken: string | null = null;
+const ZENMUX_MANAGEMENT_API_BASE = 'https://zenmux.ai/api/v1/management';
 
-function setupCtokenInterceptor(win: BrowserWindow) {
-  const filter = { urls: ['https://zenmux.ai/api/*'] };
-  win.webContents.session.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
-    const m = details.url.match(/[?&]ctoken=([^&]+)/);
-    if (m) cachedCtoken = m[1];
-    callback({ cancel: false, requestHeaders: details.requestHeaders });
+type ZenmuxManagementParams = {
+  apiKey?: string;
+};
+
+async function zenmuxManagementGet(apiKey: string, endpoint: string, params?: Record<string, string | number | undefined>): Promise<any> {
+  const url = new URL(`${ZENMUX_MANAGEMENT_API_BASE}${endpoint}`);
+  if (params) {
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined) url.searchParams.set(key, String(value));
+    }
+  }
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: 'application/json',
+    },
   });
+  const text = await response.text();
+  let payload: any = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    const message = payload?.error?.message || payload?.message || text || `${response.status} ${response.statusText}`;
+    throw new Error(`ZenMux 管理 API 请求失败：${message}`);
+  }
+  if (payload?.success === false) {
+    throw new Error(payload?.error?.message || payload?.message || 'ZenMux 管理 API 返回失败');
+  }
+  return payload?.data ?? payload;
 }
 
-// 从隐藏窗口提取 ctoken 并调用 Zenmux 内部 API
-async function fetchZenmuxDashboardData(): Promise<any> {
-  // 创建或复用隐藏窗口
-  if (!zenmuxUsageWindow || zenmuxUsageWindow.isDestroyed()) {
-    cachedCtoken = null;
-    zenmuxUsageWindow = createZenmuxUsageWindow(false);
-    setupCtokenInterceptor(zenmuxUsageWindow);
+async function fetchZenmuxManagementData(params: ZenmuxManagementParams): Promise<any> {
+  const apiKey = String(params?.apiKey || '').trim();
+  if (!apiKey) {
+    return { error: '请先填写 ZenMux Management API Key', missingApiKey: true, lastUpdated: Date.now() };
   }
 
-  // 仅在没有 ctoken 时才加载页面（首次 / 过期）
-  if (!cachedCtoken) {
-    void zenmuxUsageWindow.loadURL('https://zenmux.ai/platform/usage');
-    await waitForWindowLoad(zenmuxUsageWindow);
-    // 等待 SPA 发出至少一个带 ctoken 的请求
-    for (let i = 0; i < 30 && !cachedCtoken; i++) {
-      await new Promise(r => setTimeout(r, 300));
-    }
-    if (!cachedCtoken) {
-      return { error: 'ctoken-not-found', loginRequired: false };
-    }
-  }
+  const subscription = await zenmuxManagementGet(apiKey, '/subscription/detail');
+  const balance = await zenmuxManagementGet(apiKey, '/payg/balance').catch((error) => ({ error: (error as Error).message }));
 
-  const ctokenLiteral = JSON.stringify(cachedCtoken);
-  const script = `
-    (async () => {
-      const result = { loginRequired: false, error: null, data: null, lastUpdated: Date.now() };
-
-      try {
-        const url = window.location.href;
-        if (url.includes('/sign-in') || url.includes('/login')) { result.loginRequired = true; return result; }
-        const bodyText = (document.body && document.body.innerText) || '';
-        if (bodyText.includes('Sign in') && bodyText.includes('Continue with Google') && bodyText.length < 3000) { result.loginRequired = true; return result; }
-
-        const ctoken = ${ctokenLiteral};
-        const ym = '' + new Date().getFullYear() + String(new Date().getMonth() + 1).padStart(2, '0');
-
-        // 获取前 2 个月的月份字符串
-        const prevMonths = [];
-        for (let i = 1; i <= 2; i++) {
-          const d = new Date();
-          d.setDate(1);
-          d.setMonth(d.getMonth() - i);
-          prevMonths.push('' + d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0'));
-        }
-
-        const makePostBody = (month) => JSON.stringify({ queryDimension: 'BIZ_MTH', queryTime: month, apiKeys: [], modelSlugs: [] });
-        const postOpts = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
-
-        // 当月 + 历史月份并行调用
-        const [r1, r2, r3, r4, r5, r6] = await Promise.all([
-          fetch('/api/dashboard/usage/query?ctoken=' + ctoken, postOpts(makePostBody(ym))).then(r => r.text()).catch(() => ''),
-          fetch('/api/dashboard/cost/query/cost?ctoken=' + ctoken, postOpts(makePostBody(ym))).then(r => r.text()).catch(() => ''),
-          fetch('/api/payment/transtion/get_credits?ctoken=' + ctoken).then(r => r.text()).catch(() => ''),
-          // 前一个月
-          fetch('/api/dashboard/usage/query?ctoken=' + ctoken, postOpts(makePostBody(prevMonths[0]))).then(r => r.text()).catch(() => ''),
-          fetch('/api/dashboard/cost/query/cost?ctoken=' + ctoken, postOpts(makePostBody(prevMonths[0]))).then(r => r.text()).catch(() => ''),
-          // 前两个月
-          fetch('/api/dashboard/cost/query/cost?ctoken=' + ctoken, postOpts(makePostBody(prevMonths[1]))).then(r => r.text()).catch(() => ''),
-        ]);
-
-        result.data = {};
-        try { result.data.usage = JSON.parse(r1); } catch(e) {}
-        try { result.data.costDetail = JSON.parse(r2); } catch(e) {}
-        try { result.data.credits = JSON.parse(r3); } catch(e) {}
-        // 历史月账单（含月份标识）
-        const historyMonths = [];
-        try { if (r4) historyMonths.push({ month: prevMonths[0], usage: JSON.parse(r4) }); } catch(e) {}
-        try { if (r5) historyMonths[0] && (historyMonths[0].cost = JSON.parse(r5)); } catch(e) {}
-        result.data.historyMonths = historyMonths;
-        result.data.prevMonthCost = null;
-        try { if (r6) { const c = JSON.parse(r6); result.data.prevMonthCost = { month: prevMonths[1], cost: c }; } } catch(e) {}
-        result.data.prevMonths = prevMonths;
-
-        return result;
-      } catch (error) {
-        result.error = (error && error.message) || 'unknown-error';
-        return result;
-      }
-    })();
-  `;
-
-  try {
-    const res = await zenmuxUsageWindow.webContents.executeJavaScript(script, true);
-    // ctoken 过期（API 返回非 JSON / 登录页）则清除缓存，下次会重新加载页面
-    if (res?.loginRequired || res?.error) cachedCtoken = null;
-    return res;
-  } catch (error) {
-    cachedCtoken = null;
-    return { error: (error as Error).message, loginRequired: false };
-  }
+  return {
+    data: {
+      subscription,
+      balance: balance?.error ? null : balance,
+      partialErrors: {
+        balance: balance?.error || null,
+      },
+    },
+    lastUpdated: Date.now(),
+    source: 'zenmux-management-api',
+  };
 }
 
-ipcMain.handle('open-zenmux-login', async () => {
+ipcMain.handle('fetch-zenmux-management-data', async (_event, params: ZenmuxManagementParams) => {
   try {
-    await ensureZenmuxUsageWindow(true);
-    return true;
+    return await fetchZenmuxManagementData(params);
   } catch (error) {
-    throw new Error((error as Error).message || '打开登录窗口失败');
+    return { error: (error as Error).message, missingApiKey: false, lastUpdated: Date.now() };
   }
 });
 
-ipcMain.handle('fetch-zenmux-usage-browser', async () => {
-  try {
-    return await fetchZenmuxDashboardData();
-  } catch (error) {
-    throw new Error((error as Error).message || '同步数据失败');
-  }
-});
+// --- API Key Balance ---
 
-ipcMain.handle('fetch-zenmux-dashboard-data', async () => {
+type ApiKeyBalanceProvider = 'kimi' | 'deepseek';
+
+type ApiKeyBalanceParams = {
+  provider?: ApiKeyBalanceProvider;
+  apiKey?: string;
+};
+
+const API_KEY_BALANCE_ENDPOINTS: Record<ApiKeyBalanceProvider, string> = {
+  kimi: 'https://api.moonshot.cn/v1/users/me/balance',
+  deepseek: 'https://api.deepseek.com/user/balance',
+};
+
+async function fetchApiKeyBalance(params: ApiKeyBalanceParams): Promise<any> {
+  const provider = params?.provider;
+  const apiKey = String(params?.apiKey || '').trim();
+  if (!provider || !API_KEY_BALANCE_ENDPOINTS[provider]) {
+    throw new Error('不支持的 API Key 平台');
+  }
+  if (!apiKey) {
+    throw new Error('请先填写 API Key');
+  }
+
+  const response = await fetch(API_KEY_BALANCE_ENDPOINTS[provider], {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: 'application/json',
+    },
+  });
+  const text = await response.text();
+  let payload: any = null;
   try {
-    return await fetchZenmuxDashboardData();
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    const message = payload?.error?.message || payload?.message || text || `${response.status} ${response.statusText}`;
+    throw new Error(`${provider === 'kimi' ? 'Kimi' : 'DeepSeek'} 余额查询失败：${message}`);
+  }
+  if (provider === 'kimi' && payload?.status === false) {
+    throw new Error(payload?.message || 'Kimi 余额查询失败');
+  }
+
+  return {
+    provider,
+    data: provider === 'kimi' ? (payload?.data ?? payload) : (payload?.data ?? payload),
+    lastUpdated: Date.now(),
+  };
+}
+
+ipcMain.handle('fetch-api-key-balance', async (_event, params: ApiKeyBalanceParams) => {
+  try {
+    return await fetchApiKeyBalance(params);
   } catch (error) {
-    return { error: (error as Error).message, loginRequired: false };
+    return { error: (error as Error).message, provider: params?.provider, lastUpdated: Date.now() };
   }
 });
 
@@ -1725,241 +1686,305 @@ ipcMain.handle('open-aistudio-login', async () => {
   }
 });
 
-ipcMain.handle('fetch-aistudio-data', async (_event, params?: { projectId?: string }) => {
+type GoogleServiceAccountJson = {
+  type?: string;
+  project_id?: string;
+  private_key?: string;
+  client_email?: string;
+  token_uri?: string;
+};
+
+type GoogleApiMetricsParams = {
+  projectId?: string;
+  serviceAccountJson?: string;
+};
+
+type GoogleMetricDescriptor = {
+  type: string;
+  displayName?: string;
+  description?: string;
+  metricKind?: string;
+  valueType?: string;
+};
+
+function base64Url(input: string | Buffer): string {
+  return Buffer.from(input).toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
+function parseGoogleServiceAccount(raw: string): GoogleServiceAccountJson {
+  if (!raw?.trim()) throw new Error('请填写 Service Account JSON');
+  let parsed: GoogleServiceAccountJson;
   try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('Service Account JSON 格式不正确');
+  }
+  if (parsed.type !== 'service_account') throw new Error('JSON 不是 service_account 类型');
+  if (!parsed.client_email || !parsed.private_key) throw new Error('Service Account JSON 缺少 client_email 或 private_key');
+  return parsed;
+}
+
+function createServiceAccountJwt(sa: GoogleServiceAccountJson, scopes: string[]): string {
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const payload = {
+    iss: sa.client_email,
+    scope: scopes.join(' '),
+    aud: sa.token_uri || 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600,
+  };
+  const signingInput = `${base64Url(JSON.stringify(header))}.${base64Url(JSON.stringify(payload))}`;
+  const signer = createSign('RSA-SHA256');
+  signer.update(signingInput);
+  signer.end();
+  const signature = signer.sign(String(sa.private_key).replace(/\\n/g, '\n'));
+  return `${signingInput}.${base64Url(signature)}`;
+}
+
+async function getGoogleAccessToken(sa: GoogleServiceAccountJson, scopes: string[]): Promise<string> {
+  const assertion = createServiceAccountJwt(sa, scopes);
+  const tokenUrl = sa.token_uri || 'https://oauth2.googleapis.com/token';
+  const response = await fetch(tokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion,
+    }),
+  });
+  const payload = await response.json().catch(() => null) as any;
+  if (!response.ok || !payload?.access_token) {
+    throw new Error(payload?.error_description || payload?.error || `获取 Google access token 失败：HTTP ${response.status}`);
+  }
+  return payload.access_token;
+}
+
+async function googleGetJson(url: URL, accessToken: string): Promise<any> {
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+    },
+  });
+  const text = await response.text();
+  let payload: any = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = null;
+  }
+  if (!response.ok) {
+    const message = payload?.error?.message || text || `${response.status} ${response.statusText}`;
+    throw new Error(message);
+  }
+  return payload;
+}
+
+async function listGenerativeLanguageDescriptors(projectId: string, accessToken: string): Promise<GoogleMetricDescriptor[]> {
+  const descriptors: GoogleMetricDescriptor[] = [];
+  let pageToken = '';
+  do {
+    const url = new URL(`https://monitoring.googleapis.com/v3/projects/${encodeURIComponent(projectId)}/metricDescriptors`);
+    url.searchParams.set('filter', 'metric.type = starts_with("generativelanguage.googleapis.com/quota/")');
+    url.searchParams.set('pageSize', '200');
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+    const payload = await googleGetJson(url, accessToken);
+    descriptors.push(...(payload.metricDescriptors || []).map((item: any) => ({
+      type: item.type,
+      displayName: item.displayName,
+      description: item.description,
+      metricKind: item.metricKind,
+      valueType: item.valueType,
+    })));
+    pageToken = payload.nextPageToken || '';
+  } while (pageToken);
+  return descriptors;
+}
+
+function metricPointValue(point: any): number {
+  const value = point?.value || {};
+  const raw = value.int64Value ?? value.doubleValue ?? value.stringValue ?? 0;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function classifyGoogleMetric(type: string): 'requests' | 'tokens' | 'other' {
+  const lower = type.toLowerCase();
+  if (lower.includes('token')) return 'tokens';
+  if (lower.includes('request')) return 'requests';
+  return 'other';
+}
+
+function compactMetricName(type: string): string {
+  return type.replace('generativelanguage.googleapis.com/quota/', '');
+}
+
+async function listGoogleTimeSeries(
+  projectId: string,
+  accessToken: string,
+  descriptor: GoogleMetricDescriptor,
+  startTime: string,
+  endTime: string,
+): Promise<any[]> {
+  const isLimit = descriptor.type.endsWith('/limit');
+  const url = new URL(`https://monitoring.googleapis.com/v3/projects/${encodeURIComponent(projectId)}/timeSeries`);
+  url.searchParams.set('filter', `metric.type="${descriptor.type}"`);
+  url.searchParams.set('interval.startTime', startTime);
+  url.searchParams.set('interval.endTime', endTime);
+  url.searchParams.set('aggregation.alignmentPeriod', isLimit ? '3600s' : '86400s');
+  url.searchParams.set('aggregation.perSeriesAligner', isLimit ? 'ALIGN_MAX' : 'ALIGN_SUM');
+  url.searchParams.set('view', 'FULL');
+  url.searchParams.set('pageSize', '200');
+
+  const series: any[] = [];
+  let pageToken = '';
+  do {
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+    const payload = await googleGetJson(url, accessToken);
+    series.push(...(payload.timeSeries || []));
+    pageToken = payload.nextPageToken || '';
+  } while (pageToken);
+  return series;
+}
+
+function summarizeGoogleSeries(descriptor: GoogleMetricDescriptor, series: any[]) {
+  const isLimit = descriptor.type.endsWith('/limit');
+  const byModel = new Map<string, { model: string; method: string; limitName: string; value: number }>();
+  let total = 0;
+
+  for (const item of series) {
+    const labels = item.metric?.labels || {};
+    const model = labels.model || 'unknown';
+    const method = labels.method || '';
+    const limitName = labels.limit_name || '';
+    const points = Array.isArray(item.points) ? item.points : [];
+    const values: number[] = points.map(metricPointValue);
+    const value = isLimit ? Math.max(0, ...values) : values.reduce((sum: number, n: number) => sum + n, 0);
+    total += value;
+
+    const key = `${model}::${method}::${limitName}`;
+    const current = byModel.get(key) || { model, method, limitName, value: 0 };
+    current.value += value;
+    byModel.set(key, current);
+  }
+
+  return {
+    type: descriptor.type,
+    name: compactMetricName(descriptor.type),
+    displayName: descriptor.displayName || compactMetricName(descriptor.type),
+    category: classifyGoogleMetric(descriptor.type),
+    kind: isLimit ? 'limit' : 'usage',
+    total,
+    seriesCount: series.length,
+    byModel: [...byModel.values()]
+      .filter(item => item.value > 0)
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 12),
+  };
+}
+
+async function fetchGoogleApiMonitoringData(params: GoogleApiMetricsParams): Promise<any> {
+  const serviceAccount = parseGoogleServiceAccount(String(params?.serviceAccountJson || ''));
+  const projectId = String(params?.projectId || serviceAccount.project_id || '').trim();
+  if (!projectId) throw new Error('请填写 Google Cloud Project ID');
+
+  const accessToken = await getGoogleAccessToken(serviceAccount, [
+    'https://www.googleapis.com/auth/monitoring.read',
+  ]);
+
+  const descriptors = await listGenerativeLanguageDescriptors(projectId, accessToken);
+  const usageDescriptors = descriptors
+    .filter(item => item.type.endsWith('/usage'))
+    .filter(item => /generate|predict|embed|token|request/i.test(item.type))
+    .slice(0, 40);
+  const limitDescriptors = descriptors
+    .filter(item => item.type.endsWith('/limit'))
+    .filter(item => /generate|predict|embed|token|request/i.test(item.type))
+    .slice(0, 40);
+
+  const end = new Date();
+  const start = new Date(end.getTime() - 7 * 24 * 3600_000);
+  const startTime = start.toISOString();
+  const endTime = end.toISOString();
+
+  const usageSummaries = [];
+  for (const descriptor of usageDescriptors) {
+    try {
+      const series = await listGoogleTimeSeries(projectId, accessToken, descriptor, startTime, endTime);
+      const summary = summarizeGoogleSeries(descriptor, series);
+      if (summary.total > 0 || summary.seriesCount > 0) usageSummaries.push(summary);
+    } catch (error) {
+      usageSummaries.push({
+        type: descriptor.type,
+        name: compactMetricName(descriptor.type),
+        displayName: descriptor.displayName || compactMetricName(descriptor.type),
+        category: classifyGoogleMetric(descriptor.type),
+        kind: 'usage',
+        total: 0,
+        seriesCount: 0,
+        byModel: [],
+        error: (error as Error).message,
+      });
+    }
+  }
+
+  const limitSummaries = [];
+  for (const descriptor of limitDescriptors) {
+    try {
+      const series = await listGoogleTimeSeries(projectId, accessToken, descriptor, new Date(end.getTime() - 24 * 3600_000).toISOString(), endTime);
+      const summary = summarizeGoogleSeries(descriptor, series);
+      if (summary.total > 0 || summary.seriesCount > 0) limitSummaries.push(summary);
+    } catch {
+      // Limit descriptors are supplementary; missing data shouldn't hide usage.
+    }
+  }
+
+  const totals = usageSummaries.reduce((acc, item: any) => {
+    if (item.category === 'requests') acc.requests += item.total || 0;
+    else if (item.category === 'tokens') acc.tokens += item.total || 0;
+    else acc.other += item.total || 0;
+    return acc;
+  }, { requests: 0, tokens: 0, other: 0 });
+
+  return {
+    loginRequired: false,
+    error: null,
+    lastUpdated: Date.now(),
+    source: 'google-cloud-monitoring',
+    data: {
+      projectId,
+      serviceAccountEmail: serviceAccount.client_email,
+      windowDays: 7,
+      descriptorCount: descriptors.length,
+      totals,
+      usage: usageSummaries.sort((a: any, b: any) => (b.total || 0) - (a.total || 0)),
+      limits: limitSummaries.sort((a: any, b: any) => (b.total || 0) - (a.total || 0)),
+    },
+  };
+}
+
+ipcMain.handle('fetch-aistudio-data', async (_event, params?: GoogleApiMetricsParams) => {
+  try {
+    if (params?.serviceAccountJson) {
+      return await fetchGoogleApiMonitoringData(params);
+    }
     return await fetchAIStudioData(params?.projectId);
   } catch (error) {
     return { error: (error as Error).message, loginRequired: false };
   }
 });
 
-// --- GCP Billing ---
-
-function createGCPJWT(clientEmail: string, privateKey: string, scopes: string[]): string {
-  const now = Math.floor(Date.now() / 1000);
-  const payload = {
-    iss: clientEmail,
-    sub: clientEmail,
-    aud: 'https://oauth2.googleapis.com/token',
-    iat: now,
-    exp: now + 3600,
-    scope: scopes.join(' '),
-  };
-  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
-  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const signingInput = `${header}.${body}`;
-  const sign = createSign('RSA-SHA256');
-  sign.update(signingInput);
-  const signature = sign.sign(privateKey, 'base64url');
-  return `${signingInput}.${signature}`;
-}
-
-async function getGCPAccessToken(clientEmail: string, privateKey: string, scopes: string[]): Promise<string> {
-  const jwt = createGCPJWT(clientEmail, privateKey, scopes);
-  const resp = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion: jwt,
-    }),
-  });
-  const data = await resp.json() as any;
-  if (data.error) throw new Error(data.error_description || data.error);
-  return data.access_token as string;
-}
-
-ipcMain.handle('fetch-gcp-billing-data', async (_, params: { serviceAccountJson: string; projectId: string; billingAccountId?: string }) => {
+ipcMain.handle('fetch-google-api-metrics', async (_event, params?: GoogleApiMetricsParams) => {
   try {
-    const sa = JSON.parse(params.serviceAccountJson);
-    const { client_email, private_key } = sa;
-    if (!client_email || !private_key) throw new Error('无效的 Service Account JSON（缺少 client_email 或 private_key）');
-
-    const scopes = [
-      'https://www.googleapis.com/auth/monitoring.read',
-      'https://www.googleapis.com/auth/cloud-platform',
-      'https://www.googleapis.com/auth/cloud-billing',
-    ];
-    const accessToken = await getGCPAccessToken(client_email, private_key, scopes);
-
-    const projectId = params.projectId || sa.project_id;
-    let billingAccountId = params.billingAccountId || '';
-
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    // alignmentPeriod 必须不大于查询区间，否则 Monitoring API 返回空数据
-    const intervalSeconds = Math.max(Math.floor((now.getTime() - startOfMonth.getTime()) / 1000), 3600);
-
-    // 并行请求
-    const headers = { Authorization: `Bearer ${accessToken}` };
-
-    // 不带 resource.type 过滤，让 metric.type 单独匹配（兼容 Gemini/generativelanguage API）
-    const monitoringUrl = `https://monitoring.googleapis.com/v3/projects/${projectId}/timeSeries?` +
-      `filter=metric.type%3D%22serviceruntime.googleapis.com%2Fapi%2Frequest_count%22` +
-      `&interval.startTime=${encodeURIComponent(startOfMonth.toISOString())}` +
-      `&interval.endTime=${encodeURIComponent(now.toISOString())}` +
-      `&aggregation.alignmentPeriod=${intervalSeconds}s` +
-      `&aggregation.perSeriesAligner=ALIGN_SUM` +
-      `&aggregation.crossSeriesReducer=REDUCE_SUM` +
-      `&aggregation.groupByFields=resource.labels.service` +
-      `&pageSize=50`;
-
-    const billingInfoUrl = `https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`;
-    const resourceManagerUrl = `https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}`;
-
-    const [monitoringResp, billingInfoResp, rmResp] = await Promise.all([
-      fetch(monitoringUrl, { headers }).catch(() => null),
-      fetch(billingInfoUrl, { headers }).catch(() => null),
-      fetch(resourceManagerUrl, { headers }).catch(() => null),
-    ]);
-
-    const result: any = { lastUpdated: Date.now(), projectId };
-
-    // 获取项目编号（用于预算过滤）
-    try {
-      const rmJson = await rmResp?.json() as any;
-      if (rmJson?.projectNumber) result.projectNumber = rmJson.projectNumber;
-    } catch {}
-
-    // 正确处理监控 API 响应：区分权限错误和真正的无数据
-    try {
-      const monitoringJson = await monitoringResp?.json() as any;
-      if (monitoringJson?.error) {
-        result.monitoringError = monitoringJson.error; // { code, message, status }
-      } else {
-        result.monitoring = monitoringJson;
-      }
-    } catch {}
-    try { result.billingInfo = await billingInfoResp?.json(); } catch {}
-
-    // 从 billingInfo 自动提取 billingAccountId（格式：billingAccounts/XXXX-XXXX-XXXX）
-    if (!billingAccountId && result.billingInfo?.billingAccountName) {
-      billingAccountId = result.billingInfo.billingAccountName.replace('billingAccounts/', '');
-    }
-
-    // 获取预算数据 + 实际花费（通过 Cloud Monitoring billing 指标）
-    if (billingAccountId) {
-      // Budget API v1（stable）
-      const budgetsUrl = `https://billingbudgets.googleapis.com/v1/billingAccounts/${billingAccountId}/budgets?pageSize=50`;
-      const billingAccountUrl = `https://cloudbilling.googleapis.com/v1/billingAccounts/${billingAccountId}`;
-
-      const [budgetsResp, baResp] = await Promise.all([
-        fetch(budgetsUrl, { headers }).catch(() => null),
-        fetch(billingAccountUrl, { headers }).catch(() => null),
-      ]);
-
-      try {
-        const budgetsJson = await budgetsResp?.json() as any;
-        if (budgetsJson?.error) {
-          result.budgetsError = budgetsJson.error;
-        } else {
-          result.budgets = budgetsJson;
-        }
-      } catch {}
-
-      try {
-        result.billingAccount = await baResp?.json();
-      } catch {}
-    }
-
-    return result;
+    return await fetchGoogleApiMonitoringData(params || {});
   } catch (error) {
-    return { error: (error as Error).message };
+    return { error: (error as Error).message, loginRequired: false, lastUpdated: Date.now() };
   }
 });
-
-/* ─── BigQuery 账单查询 ─── */
-ipcMain.handle('query-bigquery-billing', async (_, params: {
-  serviceAccountJson: string;
-  projectId: string;
-  bqTablePath: string;
-  bqLocation?: string;
-}) => {
-  try {
-    const sa = JSON.parse(params.serviceAccountJson);
-    const { client_email, private_key } = sa;
-    if (!client_email || !private_key) throw new Error('无效的 Service Account JSON');
-
-    const scopes = [
-      'https://www.googleapis.com/auth/bigquery.readonly',
-      'https://www.googleapis.com/auth/cloud-platform',
-    ];
-    const accessToken = await getGCPAccessToken(client_email, private_key, scopes);
-
-    // 执行查询的 GCP 项目（从表路径提取，或用配置的 projectId）
-    const pathParts = params.bqTablePath.split('.');
-    const jobProject = pathParts.length >= 2 ? pathParts[0] : params.projectId;
-
-    // 本月花费 + 按月历史（近 3 个月）
-    const currentMonthQuery = `
-SELECT
-  service.description AS service_name,
-  SUM(cost) AS total_cost,
-  currency
-FROM \`${params.bqTablePath}\`
-WHERE
-  DATE(usage_start_time) >= DATE_TRUNC(CURRENT_DATE(), MONTH)
-GROUP BY service.description, currency
-ORDER BY total_cost DESC
-LIMIT 30`;
-
-    const headers = { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' };
-
-    // 同步查询（超时 30s）
-    const syncResp = await fetch(
-      `https://bigquery.googleapis.com/bigquery/v2/projects/${jobProject}/queries`,
-      {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          query: currentMonthQuery,
-          useLegacySql: false,
-          timeoutMs: 30000,
-          ...(params.bqLocation ? { location: params.bqLocation } : {}),
-        }),
-      }
-    );
-    const syncJson = await syncResp.json() as any;
-    if (syncJson?.error) {
-      return { error: `BigQuery 查询失败（${syncJson.error.code}）：${syncJson.error.message}` };
-    }
-
-    // 解析行数据
-    const parseRows = (json: any) => {
-      const schema: any[] = json.schema?.fields ?? [];
-      return (json.rows ?? []).map((row: any) => {
-        const obj: Record<string, any> = {};
-        (row.f ?? []).forEach((f: any, i: number) => { obj[schema[i]?.name] = f.v; });
-        return obj;
-      });
-    };
-
-    if (syncJson.jobComplete) {
-      return { results: parseRows(syncJson), totalRows: syncJson.totalRows, lastUpdated: Date.now() };
-    }
-
-    // 未在 30s 内完成：轮询
-    const jobId = syncJson.jobReference?.jobId;
-    if (!jobId) return { error: '查询超时，无法继续轮询' };
-
-    for (let i = 0; i < 20; i++) {
-      await new Promise(r => setTimeout(r, 2000));
-      const pollResp = await fetch(
-        `https://bigquery.googleapis.com/bigquery/v2/projects/${jobProject}/queries/${jobId}`,
-        { headers }
-      );
-      const pollJson = await pollResp.json() as any;
-      if (pollJson?.error) return { error: `BigQuery 轮询失败：${pollJson.error.message}` };
-      if (pollJson.jobComplete) {
-        return { results: parseRows(pollJson), totalRows: pollJson.totalRows, lastUpdated: Date.now() };
-      }
-    }
-    return { error: '查询超时（40 秒），账单表可能较大或网络较慢，请稍后重试' };
-  } catch (error) {
-    return { error: (error as Error).message };
-  }
-});
-
 
 ipcMain.handle('get-plugins', async () => {
   const pluginsDir = path.join(app.getPath('userData'), 'plugins');

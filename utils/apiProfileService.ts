@@ -113,22 +113,22 @@ export function migrateOldApiKeys(): void {
     toAdd.push({ name, provider, apiKey, baseUrl });
   };
 
-  // 1. ChatManager: Chat API profiles
+  // 1. Legacy chat API profiles
   tryMigrate('guyue_chat_api_profiles_v1', (arr: any[]) => {
     arr.forEach(c => maybeAdd(c.label || `Chat ${c.provider}`, mapProvider(c.provider), c.apiKey, c.baseUrl));
   });
 
-  // 2. ChatManager: KB API profiles
+  // 2. Legacy KB API profiles
   tryMigrate('guyue_kb_api_profiles_v1', (arr: any[]) => {
     arr.forEach(c => maybeAdd(c.label || `KB ${c.provider}`, mapProvider(c.provider), c.apiKey, c.baseUrl));
   });
 
-  // 3. ChatManager: KB embedding profiles
+  // 3. Legacy KB embedding profiles
   tryMigrate('guyue_kb_emb_profiles_v1', (arr: any[]) => {
     arr.forEach(c => maybeAdd(c.label || `Embedding ${c.provider}`, mapEmbeddingProvider(c.provider), c.apiKey, c.baseUrl));
   });
 
-  // 4. ChatManager: KB chat profiles
+  // 4. Legacy KB chat profiles
   tryMigrate('guyue_kb_chat_profiles_v1', (arr: any[]) => {
     arr.forEach(c => maybeAdd(c.label || `KB Chat ${c.provider}`, mapProvider(c.provider), c.apiKey, c.baseUrl));
   });

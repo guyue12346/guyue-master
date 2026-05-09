@@ -297,7 +297,7 @@ export const AVAILABLE_ICONS = [
   // Computer & Tech
   'Laptop', 'HardDrive', 'Keyboard', 'Mouse', 'Printer', 'Wifi', 'Bluetooth', 'Battery', 'Power',
   'Command', 'Option', 'Shift', 'Hash', 'Cpu', 'CircuitBoard', 'Binary', 'Network', 'Router',
-  'Shield', 'Lock', 'Key', 'Globe', 'Radio', 'Cast', 'Signal', 'ServerCog', 'DatabaseZap',
+  'Shield', 'Lock', 'Key', 'KeyRound', 'Globe', 'Radio', 'Cast', 'Signal', 'ServerCog', 'DatabaseZap',
   // Files & Notes
   'File', 'FilePlus', 'FileMinus', 'FileEdit', 'FileCheck', 'FileX', 'FileSearch', 'FileCode2',
   'FileJson', 'FileType', 'StickyNote', 'Notebook', 'Book', 'BookMarked', 'Library', 'Tags',
@@ -339,12 +339,14 @@ export interface ElectronAPI {
   selectFile: () => Promise<{ path: string; name: string; size: number; type: string } | null>;
   readFile: (path: string) => Promise<string>;
   readFileBase64: (path: string) => Promise<string>;
+  getFileMtime: (path: string) => Promise<number | null>;
+  getFileStats: (filePath: string) => Promise<{ size: number; mtime: number; isDirectory?: boolean; isFile?: boolean } | null>;
   writeFile: (path: string, content: string) => Promise<boolean>;
   deleteFile: (path: string) => Promise<boolean>;
   checkFileExists: (path: string) => Promise<boolean>;
   renameFile: (oldPath: string, newPath: string) => Promise<boolean>;
   deleteDir: (path: string) => Promise<boolean>;
-  listDir: (path: string) => Promise<Array<{ name: string; isDirectory: boolean; path: string }>>;
+  listDir: (path: string) => Promise<Array<{ name: string; isDirectory: boolean; isFile?: boolean; path: string; size?: number; mtime?: number | null }>>;
   getUserInfo: () => Promise<{ username: string; hostname: string }>;
   uploadImage: (params: { accessToken: string; owner: string; repo: string; path: string; content: string; message: string }) => Promise<any>;
   // Plugins
@@ -367,16 +369,13 @@ export interface ElectronAPI {
   fetchCodexUsage: (params: { sessionToken: string; accountId?: string; baseUrl?: string }) => Promise<CodexUsage>;
   openCodexUsageLogin: (params?: { profileId?: string }) => Promise<boolean>;
   fetchCodexUsageFromBrowser: (params?: { profileId?: string }) => Promise<CodexUsage>;
-  // Zenmux Usage API
-  openZenmuxLogin: () => Promise<boolean>;
-  fetchZenmuxUsageFromBrowser: () => Promise<ZenmuxUsage>;
-  fetchZenmuxDashboardData: () => Promise<any>;
+  // ZenMux Management API
+  fetchZenmuxManagementData: (params: { apiKey: string }) => Promise<any>;
+  fetchApiKeyBalance: (params: { provider: 'kimi' | 'deepseek'; apiKey: string }) => Promise<any>;
+  fetchGoogleApiMetrics: (params: { projectId: string; serviceAccountJson: string }) => Promise<any>;
   // AI Studio API
   openAIStudioLogin: () => Promise<boolean>;
-  fetchAIStudioData: (params?: { projectId?: string }) => Promise<any>;
-  // GCP Billing API
-  fetchGCPBillingData: (params: { serviceAccountJson: string; projectId: string; billingAccountId?: string }) => Promise<any>;
-  queryBigQueryBilling: (params: { serviceAccountJson: string; projectId: string; bqTablePath: string; bqLocation?: string }) => Promise<any>;
+  fetchAIStudioData: (params?: { projectId?: string; serviceAccountJson?: string }) => Promise<any>;
   // Email API
   sendEmail: (params: { config: import('./types').EmailConfig; subject: string; content: string }) => Promise<{ success: boolean; error?: string }>;
   testEmailConfig: (config: import('./types').EmailConfig) => Promise<{ success: boolean; error?: string }>;
@@ -544,18 +543,6 @@ export interface ResourceCenterData {
   items: ResourceItem[];
 }
 
-// Zenmux 使用统计
-export interface ZenmuxUsage {
-  category: 'Zenmux';
-  totalRequests: number;      // 总请求数
-  totalCost: number;           // 总花费(美元)
-  balance: number;             // 账户余额
-  monthlyRequests: number;     // 本月请求数
-  monthlyCost: number;         // 本月花费
-  lastUpdated: number;         // 最后更新时间戳
-  source: string;              // 数据来源
-}
-
 export interface CodexUsageWindow {
   usedPercent: number;
   windowMinutes?: number | null;
@@ -597,10 +584,10 @@ export interface CodexUsage {
 export type DataCenterModuleKey =
   | 'ssh'
   | 'apiManager'
+  | 'fileManager'
   | 'ojHeatmap'
   | 'resourceCenter'
   | 'passwordManager'
-  | 'codeCli'
   | 'zenmuxUsage'
   | 'codexUsage'
   | 'aiStudio'

@@ -99,7 +99,7 @@ function getEmbeddingConfig(): EmbeddingConfig {
       if (cfg.apiKey) return cfg;
     }
   } catch {}
-  // 3. Fallback: try ChatManager's embedding key
+  // 3. Fallback: try the legacy RAG embedding key
   try {
     const apiKey = localStorage.getItem('guyue_rag_embedding_key') || '';
     const baseUrl = localStorage.getItem('guyue_rag_embedding_base_url')?.trim() || undefined;
@@ -421,7 +421,7 @@ const KbLlmConfigButton: React.FC<{
 
 
 // ═══════════════════════════════════════════════════════
-// Avatars (matching ChatManager style)
+// Avatars
 // ═══════════════════════════════════════════════════════
 const AIAvatar: React.FC = () => (
   <div className="w-8 h-8 rounded-xl flex-shrink-0 flex items-center justify-center shadow-sm"
@@ -445,7 +445,7 @@ const UserAvatar: React.FC = () => {
 };
 
 // ═══════════════════════════════════════════════════════
-// MessageBubble (matching ChatManager)
+// MessageBubble
 // ═══════════════════════════════════════════════════════
 const MessageBubble: React.FC<{
   message: ChatMessage;
