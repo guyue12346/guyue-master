@@ -6,7 +6,7 @@ import pty from 'node-pty';
 import os from 'os';
 import nodemailer from 'nodemailer';
 import dns from 'dns';
-import { spawn, exec } from 'child_process';
+import { spawn, exec, execFile } from 'child_process';
 import { createSign } from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -151,6 +151,267 @@ function waitForWindowLoad(win: BrowserWindow, timeoutMs = 30000): Promise<void>
     win.webContents.once('did-finish-load', onFinish);
     win.webContents.once('did-fail-load', onFail);
   });
+}
+
+interface GitRunResult {
+  stdout: string;
+  stderr: string;
+}
+
+interface GitFileStatus {
+  path: string;
+  originalPath?: string;
+  index: string;
+  workingTree: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+  conflict: boolean;
+  status: string;
+}
+
+interface GitRepoSummary {
+  path: string;
+  name: string;
+}
+
+const GIT_SCAN_SKIP_DIRS = new Set([
+  '.git',
+  'node_modules',
+  'dist',
+  'dist-electron',
+  'release',
+  'build',
+  'out',
+  '.cache',
+  '.next',
+  '.nuxt',
+  '.venv',
+  'venv',
+  'Library',
+]);
+
+function runGit(args: string[], cwd?: string, timeoutMs = 20000): Promise<GitRunResult> {
+  return new Promise((resolve, reject) => {
+    execFile('git', args, {
+      cwd,
+      timeout: timeoutMs,
+      maxBuffer: 20 * 1024 * 1024,
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: '0',
+        LC_ALL: 'C',
+      },
+    }, (error, stdout, stderr) => {
+      if (error) {
+        const message = (stderr || error.message || 'Git command failed').trim();
+        reject(new Error(message));
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+async function resolveGitRoot(inputPath: string): Promise<string> {
+  const absolutePath = path.resolve(inputPath);
+  const { stdout } = await runGit(['rev-parse', '--show-toplevel'], absolutePath, 10000);
+  return stdout.trim();
+}
+
+function getRepoName(repoPath: string): string {
+  return path.basename(repoPath) || repoPath;
+}
+
+function ensureRelativeGitPath(repoPath: string, filePath: string): string {
+  if (!filePath || filePath.includes('\0')) {
+    throw new Error('文件路径无效');
+  }
+
+  if (!path.isAbsolute(filePath)) {
+    return filePath;
+  }
+
+  const relative = path.relative(repoPath, filePath);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('文件不在当前 Git 仓库内');
+  }
+  return relative;
+}
+
+function parseStatusBranch(line: string) {
+  const raw = line.slice(3).trim();
+  const ahead = Number(raw.match(/ahead (\d+)/)?.[1] ?? 0);
+  const behind = Number(raw.match(/behind (\d+)/)?.[1] ?? 0);
+  let branch = raw;
+  let upstream: string | null = null;
+
+  if (raw.includes('...')) {
+    const [left, right = ''] = raw.split('...');
+    branch = left.trim();
+    upstream = right.replace(/\s+\[.*\]$/, '').trim() || null;
+  } else {
+    branch = raw.replace(/\s+\[.*\]$/, '').trim();
+  }
+
+  if (branch.startsWith('No commits yet on ')) {
+    branch = branch.replace('No commits yet on ', '').trim();
+  }
+
+  return { branch: branch || 'HEAD', upstream, ahead, behind };
+}
+
+function gitStatusLabel(index: string, workingTree: string, pathValue: string): string {
+  const pair = `${index}${workingTree}`;
+  if (index === '?' && workingTree === '?') return 'U';
+  if (index === 'R' || pathValue.includes(' -> ')) return 'R';
+  if (index === 'A' || workingTree === 'A') return 'A';
+  if (index === 'D' || workingTree === 'D') return 'D';
+  if (pair.includes('U') || ['AA', 'DD'].includes(pair)) return '!';
+  if (index === 'M' || workingTree === 'M') return 'M';
+  return pair.trim() || 'M';
+}
+
+function parseGitStatus(stdout: string): {
+  branch: string;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  files: GitFileStatus[];
+} {
+  let branch = 'HEAD';
+  let upstream: string | null = null;
+  let ahead = 0;
+  let behind = 0;
+  const files: GitFileStatus[] = [];
+
+  for (const line of stdout.split('\n')) {
+    if (!line.trim()) continue;
+    if (line.startsWith('## ')) {
+      const parsed = parseStatusBranch(line);
+      branch = parsed.branch;
+      upstream = parsed.upstream;
+      ahead = parsed.ahead;
+      behind = parsed.behind;
+      continue;
+    }
+
+    const index = line[0] || ' ';
+    const workingTree = line[1] || ' ';
+    const rawPath = line.slice(3);
+    const renameParts = rawPath.includes(' -> ') ? rawPath.split(' -> ') : null;
+    const filePath = renameParts ? renameParts[renameParts.length - 1] : rawPath;
+    const originalPath = renameParts ? renameParts.slice(0, -1).join(' -> ') : undefined;
+    const untracked = index === '?' && workingTree === '?';
+    const conflict = index === 'U' || workingTree === 'U' || ['AA', 'DD', 'AU', 'UA', 'DU', 'UD'].includes(`${index}${workingTree}`);
+    const staged = !untracked && index !== ' ' && index !== '!';
+    const unstaged = untracked || workingTree !== ' ';
+
+    files.push({
+      path: filePath,
+      originalPath,
+      index,
+      workingTree,
+      staged,
+      unstaged,
+      untracked,
+      conflict,
+      status: gitStatusLabel(index, workingTree, rawPath),
+    });
+  }
+
+  return { branch, upstream, ahead, behind, files };
+}
+
+async function getGitStatus(repoPath: string) {
+  const root = await resolveGitRoot(repoPath);
+  const [{ stdout }, stashResult, headResult] = await Promise.all([
+    runGit(['status', '--porcelain=v1', '-b', '--untracked-files=all'], root),
+    runGit(['stash', 'list'], root).catch(() => ({ stdout: '', stderr: '' })),
+    runGit(['rev-parse', '--short', 'HEAD'], root).catch(() => ({ stdout: '', stderr: '' })),
+  ]);
+  const parsed = parseGitStatus(stdout);
+
+  return {
+    path: root,
+    name: getRepoName(root),
+    branch: parsed.branch,
+    upstream: parsed.upstream,
+    ahead: parsed.ahead,
+    behind: parsed.behind,
+    headHash: headResult.stdout.trim() || null,
+    stashCount: stashResult.stdout.trim() ? stashResult.stdout.trim().split('\n').length : 0,
+    clean: parsed.files.length === 0,
+    files: parsed.files,
+    updatedAt: Date.now(),
+  };
+}
+
+async function discoverGitRepositories(rootPath: string, maxDepth = 5): Promise<GitRepoSummary[]> {
+  const root = path.resolve(rootPath);
+  const found = new Map<string, GitRepoSummary>();
+
+  async function walk(dir: string, depth: number): Promise<void> {
+    if (depth > maxDepth || found.size >= 200) return;
+
+    try {
+      const dotGitPath = path.join(dir, '.git');
+      const dotGitStat = await fs.stat(dotGitPath).catch(() => null);
+      if (dotGitStat) {
+        try {
+          const gitRoot = await resolveGitRoot(dir);
+          found.set(gitRoot, { path: gitRoot, name: getRepoName(gitRoot) });
+        } catch {
+          found.set(dir, { path: dir, name: getRepoName(dir) });
+        }
+        return;
+      }
+
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      await Promise.all(entries
+        .filter(entry => entry.isDirectory() && !GIT_SCAN_SKIP_DIRS.has(entry.name))
+        .map(entry => walk(path.join(dir, entry.name), depth + 1)));
+    } catch {
+      // Ignore unreadable directories during broad scans.
+    }
+  }
+
+  await walk(root, 0);
+  return [...found.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+function parseGitLog(stdout: string) {
+  return stdout
+    .split('\x1e')
+    .map(record => record.trim())
+    .filter(Boolean)
+    .map(record => {
+      const [hash, shortHash, parents, refs, author, date, ...subjectParts] = record.split('\x1f');
+      return {
+        hash,
+        shortHash,
+        parents: parents ? parents.split(' ').filter(Boolean) : [],
+        refs: refs ? refs.split(',').map(ref => ref.trim()).filter(Boolean) : [],
+        author,
+        date,
+        subject: subjectParts.join('\x1f') || '(no subject)',
+      };
+    });
+}
+
+async function getGitLog(repoPath: string, limit = 80) {
+  const root = await resolveGitRoot(repoPath);
+  const safeLimit = String(Math.max(1, Math.min(Number(limit) || 80, 300)));
+  const { stdout } = await runGit([
+    'log',
+    '--all',
+    '--topo-order',
+    `--max-count=${safeLimit}`,
+    '--date=iso-strict',
+    '--pretty=format:%H%x1f%h%x1f%P%x1f%D%x1f%an%x1f%ad%x1f%s%x1e',
+  ], root);
+
+  return parseGitLog(stdout);
 }
 
 // Codex / ChatGPT 登录窗口
@@ -902,6 +1163,121 @@ ipcMain.handle('select-directory', async () => {
   });
   if (result.canceled) return null;
   return result.filePaths[0];
+});
+
+ipcMain.handle('git-select-repository', async () => {
+  if (!mainWindow) return null;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory', 'showHiddenFiles'],
+    title: '选择 Git 仓库',
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+
+  const repoPath = await resolveGitRoot(result.filePaths[0]);
+  return { path: repoPath, name: getRepoName(repoPath) };
+});
+
+ipcMain.handle('git-discover-repositories', async (_event, params?: { rootPath?: string; maxDepth?: number }) => {
+  if (!params?.rootPath) {
+    throw new Error('缺少扫描目录');
+  }
+  return discoverGitRepositories(params.rootPath, params.maxDepth);
+});
+
+ipcMain.handle('git-status', async (_event, repoPath: string) => {
+  if (!repoPath) throw new Error('缺少仓库路径');
+  return getGitStatus(repoPath);
+});
+
+ipcMain.handle('git-log', async (_event, params: { repoPath: string; limit?: number }) => {
+  if (!params?.repoPath) throw new Error('缺少仓库路径');
+  return getGitLog(params.repoPath, params.limit);
+});
+
+ipcMain.handle('git-diff', async (_event, params: { repoPath: string; filePath: string; staged?: boolean }) => {
+  if (!params?.repoPath || !params?.filePath) throw new Error('缺少 diff 参数');
+  const root = await resolveGitRoot(params.repoPath);
+  const relativePath = ensureRelativeGitPath(root, params.filePath);
+  const args = params.staged
+    ? ['diff', '--cached', '--no-ext-diff', '--', relativePath]
+    : ['diff', '--no-ext-diff', '--', relativePath];
+  const { stdout } = await runGit(args, root);
+  return stdout;
+});
+
+ipcMain.handle('git-show-commit', async (_event, params: { repoPath: string; hash: string }) => {
+  if (!params?.repoPath || !params?.hash) throw new Error('缺少提交参数');
+  if (!/^[a-f0-9]{4,40}$/i.test(params.hash)) throw new Error('提交哈希无效');
+  const root = await resolveGitRoot(params.repoPath);
+  const { stdout } = await runGit([
+    'show',
+    '--stat',
+    '--format=medium',
+    '--decorate=short',
+    '--no-ext-diff',
+    params.hash,
+  ], root);
+  return stdout;
+});
+
+ipcMain.handle('git-stage', async (_event, params: { repoPath: string; paths: string[] }) => {
+  if (!params?.repoPath || !Array.isArray(params.paths)) throw new Error('缺少暂存参数');
+  const root = await resolveGitRoot(params.repoPath);
+  const paths = params.paths.map(filePath => ensureRelativeGitPath(root, filePath));
+  if (paths.length === 0) return getGitStatus(root);
+  await runGit(['add', '--', ...paths], root, 60000);
+  return getGitStatus(root);
+});
+
+ipcMain.handle('git-unstage', async (_event, params: { repoPath: string; paths: string[] }) => {
+  if (!params?.repoPath || !Array.isArray(params.paths)) throw new Error('缺少取消暂存参数');
+  const root = await resolveGitRoot(params.repoPath);
+  const paths = params.paths.map(filePath => ensureRelativeGitPath(root, filePath));
+  if (paths.length === 0) return getGitStatus(root);
+  await runGit(['restore', '--staged', '--', ...paths], root, 60000);
+  return getGitStatus(root);
+});
+
+ipcMain.handle('git-discard', async (_event, params: { repoPath: string; filePath: string; untracked?: boolean }) => {
+  if (!params?.repoPath || !params?.filePath) throw new Error('缺少丢弃参数');
+  const root = await resolveGitRoot(params.repoPath);
+  const relativePath = ensureRelativeGitPath(root, params.filePath);
+  if (params.untracked) {
+    await runGit(['clean', '-f', '--', relativePath], root, 60000);
+  } else {
+    await runGit(['restore', '--worktree', '--', relativePath], root, 60000);
+  }
+  return getGitStatus(root);
+});
+
+ipcMain.handle('git-commit', async (_event, params: { repoPath: string; message: string }) => {
+  if (!params?.repoPath) throw new Error('缺少仓库路径');
+  const message = params.message?.trim();
+  if (!message) throw new Error('提交信息不能为空');
+  const root = await resolveGitRoot(params.repoPath);
+  const { stdout, stderr } = await runGit(['commit', '-m', message], root, 120000);
+  return { output: `${stdout}${stderr}`.trim(), status: await getGitStatus(root), log: await getGitLog(root, 80) };
+});
+
+ipcMain.handle('git-fetch', async (_event, repoPath: string) => {
+  if (!repoPath) throw new Error('缺少仓库路径');
+  const root = await resolveGitRoot(repoPath);
+  const { stdout, stderr } = await runGit(['fetch', '--prune'], root, 120000);
+  return { output: `${stdout}${stderr}`.trim(), status: await getGitStatus(root), log: await getGitLog(root, 80) };
+});
+
+ipcMain.handle('git-pull', async (_event, repoPath: string) => {
+  if (!repoPath) throw new Error('缺少仓库路径');
+  const root = await resolveGitRoot(repoPath);
+  const { stdout, stderr } = await runGit(['pull', '--ff-only'], root, 120000);
+  return { output: `${stdout}${stderr}`.trim(), status: await getGitStatus(root), log: await getGitLog(root, 80) };
+});
+
+ipcMain.handle('git-push', async (_event, repoPath: string) => {
+  if (!repoPath) throw new Error('缺少仓库路径');
+  const root = await resolveGitRoot(repoPath);
+  const { stdout, stderr } = await runGit(['push'], root, 120000);
+  return { output: `${stdout}${stderr}`.trim(), status: await getGitStatus(root), log: await getGitLog(root, 80) };
 });
 
 // IPC: 确保目录存在

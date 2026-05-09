@@ -67,6 +67,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchApiKeyBalance: (params: { provider: 'kimi' | 'deepseek'; apiKey: string }) => ipcRenderer.invoke('fetch-api-key-balance', params),
   fetchGoogleApiMetrics: (params: { projectId: string; serviceAccountJson: string }) => ipcRenderer.invoke('fetch-google-api-metrics', params),
 
+  // Git
+  gitSelectRepository: () => ipcRenderer.invoke('git-select-repository'),
+  gitDiscoverRepositories: (params: { rootPath: string; maxDepth?: number }) => ipcRenderer.invoke('git-discover-repositories', params),
+  gitStatus: (repoPath: string) => ipcRenderer.invoke('git-status', repoPath),
+  gitLog: (params: { repoPath: string; limit?: number }) => ipcRenderer.invoke('git-log', params),
+  gitDiff: (params: { repoPath: string; filePath: string; staged?: boolean }) => ipcRenderer.invoke('git-diff', params),
+  gitShowCommit: (params: { repoPath: string; hash: string }) => ipcRenderer.invoke('git-show-commit', params),
+  gitStage: (params: { repoPath: string; paths: string[] }) => ipcRenderer.invoke('git-stage', params),
+  gitUnstage: (params: { repoPath: string; paths: string[] }) => ipcRenderer.invoke('git-unstage', params),
+  gitDiscard: (params: { repoPath: string; filePath: string; untracked?: boolean }) => ipcRenderer.invoke('git-discard', params),
+  gitCommit: (params: { repoPath: string; message: string }) => ipcRenderer.invoke('git-commit', params),
+  gitFetch: (repoPath: string) => ipcRenderer.invoke('git-fetch', repoPath),
+  gitPull: (repoPath: string) => ipcRenderer.invoke('git-pull', repoPath),
+  gitPush: (repoPath: string) => ipcRenderer.invoke('git-push', repoPath),
+
   // AI Studio API
   openAIStudioLogin: () => ipcRenderer.invoke('open-aistudio-login'),
   fetchAIStudioData: (params?: { projectId?: string; serviceAccountJson?: string }) => ipcRenderer.invoke('fetch-aistudio-data', params),
@@ -225,6 +240,20 @@ export interface ElectronAPI {
   fetchZenmuxManagementData: (params: { apiKey: string }) => Promise<any>;
   fetchApiKeyBalance: (params: { provider: 'kimi' | 'deepseek'; apiKey: string }) => Promise<any>;
   fetchGoogleApiMetrics: (params: { projectId: string; serviceAccountJson: string }) => Promise<any>;
+  // Git
+  gitSelectRepository: () => Promise<{ path: string; name: string } | null>;
+  gitDiscoverRepositories: (params: { rootPath: string; maxDepth?: number }) => Promise<Array<{ path: string; name: string }>>;
+  gitStatus: (repoPath: string) => Promise<any>;
+  gitLog: (params: { repoPath: string; limit?: number }) => Promise<any[]>;
+  gitDiff: (params: { repoPath: string; filePath: string; staged?: boolean }) => Promise<string>;
+  gitShowCommit: (params: { repoPath: string; hash: string }) => Promise<string>;
+  gitStage: (params: { repoPath: string; paths: string[] }) => Promise<any>;
+  gitUnstage: (params: { repoPath: string; paths: string[] }) => Promise<any>;
+  gitDiscard: (params: { repoPath: string; filePath: string; untracked?: boolean }) => Promise<any>;
+  gitCommit: (params: { repoPath: string; message: string }) => Promise<{ output: string; status: any; log: any[] }>;
+  gitFetch: (repoPath: string) => Promise<{ output: string; status: any; log: any[] }>;
+  gitPull: (repoPath: string) => Promise<{ output: string; status: any; log: any[] }>;
+  gitPush: (repoPath: string) => Promise<{ output: string; status: any; log: any[] }>;
   // AI Studio API
   openAIStudioLogin: () => Promise<boolean>;
   fetchAIStudioData: (params?: { projectId?: string; serviceAccountJson?: string }) => Promise<any>;

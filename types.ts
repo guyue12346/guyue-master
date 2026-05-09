@@ -225,6 +225,7 @@ export const DEFAULT_MODULE_CONFIG: ModuleConfig[] = [
   { id: 'datacenter',   name: '数据中心',  enabled: true, priority: 2,  icon: 'BarChart3',     shortcut: 'Tab+D' },
   { id: 'spaces',       name: '空间',      enabled: true, priority: 3,  icon: 'PanelsTopLeft',  shortcut: 'Tab+K' },
   { id: 'practice',     name: '刷题',      enabled: true, priority: 4,  icon: 'Code2',         shortcut: 'Tab+L' },
+  { id: 'git',          name: 'Git管理',   enabled: true, priority: 5,  icon: 'GitBranch',     shortcut: 'Tab+G' },
   { id: 'files',        name: '文件管理',  enabled: true, priority: 7,  icon: 'FolderOpen',    shortcut: 'Tab+4' },
   { id: 'terminal',     name: '本地终端',  enabled: true, priority: 8,  icon: 'Command',       shortcut: 'Tab+0' },
   { id: 'excalidraw',   name: '绘图板',    enabled: true, priority: 9,  icon: 'Pencil',        shortcut: 'Tab+E' },
@@ -313,7 +314,7 @@ export const AVAILABLE_ICONS = [
   'Calculator', 'Sigma', 'Pi', 'Infinity', 'Equal', 'NotEqual',
   // Communication
   'MessageCircle', 'MessageSquare', 'Mail', 'Send', 'Phone', 'PhoneCall',
-  'Bot', 'User', 'Users', 'UserPlus', 'UserMinus', 'Contact'
+  'Bot', 'User', 'Users', 'UserPlus', 'UserMinus', 'Contact', 'GitBranch', 'GitGraph'
 ];
 
 export const DEFAULT_CATEGORIES: Category[] = [
@@ -324,6 +325,53 @@ export const DEFAULT_CATEGORIES: Category[] = [
   { id: 'tools', name: '工具', icon: 'Wrench' },
   { id: 'fun', name: '娱乐', icon: 'Gamepad2' }
 ];
+
+export interface GitRepositorySummary {
+  path: string;
+  name: string;
+}
+
+export interface GitFileStatus {
+  path: string;
+  originalPath?: string;
+  index: string;
+  workingTree: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+  conflict: boolean;
+  status: string;
+}
+
+export interface GitStatusData {
+  path: string;
+  name: string;
+  branch: string;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  headHash: string | null;
+  stashCount: number;
+  clean: boolean;
+  files: GitFileStatus[];
+  updatedAt: number;
+}
+
+export interface GitCommitRecord {
+  hash: string;
+  shortHash: string;
+  parents: string[];
+  refs: string[];
+  author: string;
+  date: string;
+  subject: string;
+}
+
+export interface GitOperationResult {
+  output: string;
+  status: GitStatusData;
+  log: GitCommitRecord[];
+}
 
 export interface ElectronAPI {
   getAppVersion: () => Promise<string>;
@@ -373,6 +421,20 @@ export interface ElectronAPI {
   fetchZenmuxManagementData: (params: { apiKey: string }) => Promise<any>;
   fetchApiKeyBalance: (params: { provider: 'kimi' | 'deepseek'; apiKey: string }) => Promise<any>;
   fetchGoogleApiMetrics: (params: { projectId: string; serviceAccountJson: string }) => Promise<any>;
+  // Git
+  gitSelectRepository: () => Promise<GitRepositorySummary | null>;
+  gitDiscoverRepositories: (params: { rootPath: string; maxDepth?: number }) => Promise<GitRepositorySummary[]>;
+  gitStatus: (repoPath: string) => Promise<GitStatusData>;
+  gitLog: (params: { repoPath: string; limit?: number }) => Promise<GitCommitRecord[]>;
+  gitDiff: (params: { repoPath: string; filePath: string; staged?: boolean }) => Promise<string>;
+  gitShowCommit: (params: { repoPath: string; hash: string }) => Promise<string>;
+  gitStage: (params: { repoPath: string; paths: string[] }) => Promise<GitStatusData>;
+  gitUnstage: (params: { repoPath: string; paths: string[] }) => Promise<GitStatusData>;
+  gitDiscard: (params: { repoPath: string; filePath: string; untracked?: boolean }) => Promise<GitStatusData>;
+  gitCommit: (params: { repoPath: string; message: string }) => Promise<GitOperationResult>;
+  gitFetch: (repoPath: string) => Promise<GitOperationResult>;
+  gitPull: (repoPath: string) => Promise<GitOperationResult>;
+  gitPush: (repoPath: string) => Promise<GitOperationResult>;
   // AI Studio API
   openAIStudioLogin: () => Promise<boolean>;
   fetchAIStudioData: (params?: { projectId?: string; serviceAccountJson?: string }) => Promise<any>;
