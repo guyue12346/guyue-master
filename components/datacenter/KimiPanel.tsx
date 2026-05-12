@@ -432,14 +432,6 @@ export const KimiPanel: React.FC = () => {
 
     return (
       <div className="space-y-3">
-        <div className="flex items-center gap-2 text-sm">
-          {data.is_available
-            ? <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-            : <AlertCircle className="w-4 h-4 text-amber-500" />}
-          <span className="text-gray-700 dark:text-gray-200">
-            {data.is_available ? '当前余额可用于 API 调用' : '当前余额不可用于 API 调用'}
-          </span>
-        </div>
         {infos.length > 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {infos.map(info => (

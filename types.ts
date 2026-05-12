@@ -226,6 +226,7 @@ export const DEFAULT_MODULE_CONFIG: ModuleConfig[] = [
   { id: 'spaces',       name: '空间',      enabled: true, priority: 3,  icon: 'PanelsTopLeft',  shortcut: 'Tab+K' },
   { id: 'practice',     name: '刷题',      enabled: true, priority: 4,  icon: 'Code2',         shortcut: 'Tab+L' },
   { id: 'git',          name: 'Git管理',   enabled: true, priority: 5,  icon: 'GitBranch',     shortcut: 'Tab+G' },
+  { id: 'question-bank', name: '题库',     enabled: true, priority: 6,  icon: 'BookOpenCheck', shortcut: 'Tab+Q' },
   { id: 'files',        name: '文件管理',  enabled: true, priority: 7,  icon: 'FolderOpen',    shortcut: 'Tab+4' },
   { id: 'terminal',     name: '本地终端',  enabled: true, priority: 8,  icon: 'Command',       shortcut: 'Tab+0' },
   { id: 'excalidraw',   name: '绘图板',    enabled: true, priority: 9,  icon: 'Pencil',        shortcut: 'Tab+E' },

@@ -27,6 +27,7 @@ const PluginContainer = React.lazy(() => import('./components/PluginContainer').
 const HeatmapContainer = React.lazy(() => import('./components/HeatmapContainer').then(m => ({ default: m.HeatmapContainer })));
 const DataCenterManager = React.lazy(() => import('./components/datacenter/DataCenterManager').then(m => ({ default: m.DataCenterManager })));
 const GitManager = React.lazy(() => import('./components/GitManager').then(m => ({ default: m.GitManager })));
+const QuestionBank = React.lazy(() => import('./components/QuestionBank').then(m => ({ default: m.QuestionBank })));
 const ExcalidrawEditor = React.lazy(() => import('./components/datacenter/ExcalidrawEditor').then(m => ({ default: m.ExcalidrawEditor })));
 const RecurringEventManager = React.lazy(() => import('./components/RecurringEventManager').then(m => ({ default: m.RecurringEventManager })));
 const LatexEditor = React.lazy(() => import('./components/LatexEditor').then(m => ({ default: m.LatexEditor })));
@@ -368,6 +369,7 @@ const App: React.FC = () => {
   const [hasExcalidrawMounted, setHasExcalidrawMounted] = useState(false);
   const [hasDataCenterMounted, setHasDataCenterMounted] = useState(false);
   const [hasGitMounted, setHasGitMounted] = useState(false);
+  const [hasQuestionBankMounted, setHasQuestionBankMounted] = useState(false);
   const [hasMusicMounted, setHasMusicMounted] = useState(false);
   const [hasRagMounted, setHasRagMounted] = useState(false);
   const [hasKbMounted, setHasKbMounted] = useState(false);
@@ -407,6 +409,9 @@ const App: React.FC = () => {
     if (appMode === 'git' && !hasGitMounted) {
       setHasGitMounted(true);
     }
+    if (appMode === 'question-bank' && !hasQuestionBankMounted) {
+      setHasQuestionBankMounted(true);
+    }
     if (appMode === 'music' && !hasMusicMounted) {
       setHasMusicMounted(true);
     }
@@ -419,7 +424,7 @@ const App: React.FC = () => {
     if (appMode === 'workflow' && !hasWorkflowMounted) {
       setHasWorkflowMounted(true);
     }
-  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasPracticeMounted, hasSpacesMounted, hasExcalidrawMounted, hasDataCenterMounted, hasGitMounted, hasMusicMounted, hasRagMounted, hasKbMounted, hasWorkflowMounted]);
+  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasPracticeMounted, hasSpacesMounted, hasExcalidrawMounted, hasDataCenterMounted, hasGitMounted, hasQuestionBankMounted, hasMusicMounted, hasRagMounted, hasKbMounted, hasWorkflowMounted]);
 
   // Persist appMode & todoSubMode to localStorage
   useEffect(() => {
@@ -2570,7 +2575,7 @@ const App: React.FC = () => {
             onReorderPlaylist={handleMusicReorderPlaylist}
           />
         </Suspense>
-      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'practice' && appMode !== 'spaces' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'git' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
+      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'practice' && appMode !== 'spaces' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'git' && appMode !== 'question-bank' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
         <Sidebar 
           appMode={appMode}  
           categories={activeCategories} 
@@ -2717,7 +2722,7 @@ const App: React.FC = () => {
       )}
 
       <div className={`flex-1 flex flex-col min-w-0 relative`} style={appMode === 'agent' ? { display: 'none' } : { background: 'var(--t-bg-main)' }}>
-        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'practice' && appMode !== 'spaces' && appMode !== 'image-hosting' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'git' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
+        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'practice' && appMode !== 'spaces' && appMode !== 'image-hosting' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'git' && appMode !== 'question-bank' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
         <div className="theme-header-bar h-16 flex items-center justify-between px-6 shrink-0">
            <div className="flex items-center gap-4 flex-1 max-w-xl">
               <div className="relative flex-1">
@@ -2786,7 +2791,7 @@ const App: React.FC = () => {
         </div>
         )}
 
-        <div className={`flex-1 ${appMode === 'latex' ? 'overflow-hidden' : appMode === 'music' ? 'overflow-hidden' : appMode === 'rag' ? 'overflow-hidden' : appMode === 'knowledge-base' ? 'overflow-hidden' : appMode === 'workflow' ? 'overflow-hidden' : appMode === 'git' ? 'overflow-hidden' : appMode === 'spaces' ? 'overflow-hidden' : appMode === 'practice' ? 'overflow-hidden' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'practice' || appMode === 'spaces' || appMode === 'image-hosting' || appMode === 'excalidraw' || appMode === 'datacenter' || appMode === 'git' || appMode === 'latex' || appMode === 'music' || appMode === 'rag' || appMode === 'knowledge-base' || appMode === 'workflow' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'p-4' : 'p-6'}`}>
+        <div className={`flex-1 ${appMode === 'latex' ? 'overflow-hidden' : appMode === 'music' ? 'overflow-hidden' : appMode === 'rag' ? 'overflow-hidden' : appMode === 'knowledge-base' ? 'overflow-hidden' : appMode === 'workflow' ? 'overflow-hidden' : appMode === 'git' ? 'overflow-hidden' : appMode === 'question-bank' ? 'overflow-hidden' : appMode === 'spaces' ? 'overflow-hidden' : appMode === 'practice' ? 'overflow-hidden' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'overflow-hidden' : 'overflow-auto'} ${isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || appMode === 'browser' || appMode === 'practice' || appMode === 'spaces' || appMode === 'image-hosting' || appMode === 'excalidraw' || appMode === 'datacenter' || appMode === 'git' || appMode === 'question-bank' || appMode === 'latex' || appMode === 'music' || appMode === 'rag' || appMode === 'knowledge-base' || appMode === 'workflow' || moduleConfig.find(m => m.id === appMode)?.isPlugin ? '' : (appMode === 'todo' && todoSubMode !== 'tasks') ? 'p-4' : 'p-6'}`}>
           <Suspense fallback={
             <div className="flex items-center justify-center h-full text-gray-400 gap-2">
               <Loader2 className="w-6 h-6 animate-spin" />
@@ -3043,6 +3048,12 @@ const App: React.FC = () => {
             {(hasGitMounted || appMode === 'git') && (
               <div className={appMode === 'git' ? 'h-full' : 'hidden'}>
                 <GitManager onOpenTerminal={handleOpenGitTerminal} />
+              </div>
+            )}
+
+            {(hasQuestionBankMounted || appMode === 'question-bank') && (
+              <div className={appMode === 'question-bank' ? 'h-full' : 'hidden'}>
+                <QuestionBank />
               </div>
             )}
 

@@ -291,12 +291,12 @@ const saveDrawings = (drawings: DrawingFile[]) => {
 
 const normalizeCanvasCategory = (category?: string) => {
   const trimmed = category?.trim();
-  return trimmed || UNCATEGORIZED_CANVAS_CATEGORY;
+  return trimmed && trimmed !== UNCATEGORIZED_CANVAS_CATEGORY ? trimmed : '';
 };
 
 const toStoredCanvasCategory = (category: string) => {
   const normalized = normalizeCanvasCategory(category);
-  return normalized === UNCATEGORIZED_CANVAS_CATEGORY ? undefined : normalized;
+  return normalized || undefined;
 };
 
 const loadCanvasCategories = (): CanvasCategoryMeta[] => {
@@ -633,13 +633,14 @@ const CategoryPickerFields: React.FC<{
   customCategory: string;
   onSelectedCategoryChange: (category: string) => void;
   onCustomCategoryChange: (category: string) => void;
-}> = ({ categories, selectedCategory, customCategory, onSelectedCategoryChange, onCustomCategoryChange }) => (
+  allowCustom?: boolean;
+}> = ({ categories, selectedCategory, customCategory, onSelectedCategoryChange, onCustomCategoryChange, allowCustom = true }) => (
   <div className="space-y-2">
     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">分类</label>
     {categories.length > 0 && (
       <div className="grid max-h-36 grid-cols-2 gap-2 overflow-y-auto pr-1">
         {categories.map(category => {
-          const selected = selectedCategory === category.name && !customCategory;
+          const selected = selectedCategory === category.name && (!allowCustom || !customCategory);
           return (
             <button
               key={category.name}
@@ -666,15 +667,17 @@ const CategoryPickerFields: React.FC<{
         })}
       </div>
     )}
-    <input
-      value={customCategory}
-      onChange={event => {
-        onCustomCategoryChange(event.target.value);
-        onSelectedCategoryChange('');
-      }}
-      placeholder={categories.length > 0 ? '或输入新分类' : '输入新分类'}
-      className="h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 text-sm text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white"
-    />
+    {allowCustom && (
+      <input
+        value={customCategory}
+        onChange={event => {
+          onCustomCategoryChange(event.target.value);
+          onSelectedCategoryChange('');
+        }}
+        placeholder={categories.length > 0 ? '或输入新分类' : '输入新分类'}
+        className="h-10 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 text-sm text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white"
+      />
+    )}
   </div>
 );
 
@@ -689,19 +692,17 @@ const NewCanvasModal: React.FC<{
 }> = ({ isOpen, onClose, onCreate, categories, defaultCategory, defaultName }) => {
   const [name, setName] = useState(defaultName);
   const [selectedCategory, setSelectedCategory] = useState(defaultCategory);
-  const [customCategory, setCustomCategory] = useState('');
 
   useEffect(() => {
     if (isOpen) {
       setName(defaultName);
       setSelectedCategory(defaultCategory);
-      setCustomCategory('');
     }
   }, [defaultCategory, defaultName, isOpen]);
 
   if (!isOpen) return null;
 
-  const finalCategory = customCategory.trim() || selectedCategory.trim();
+  const finalCategory = selectedCategory.trim();
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50" onClick={onClose}>
@@ -730,9 +731,10 @@ const NewCanvasModal: React.FC<{
           <CategoryPickerFields
             categories={categories}
             selectedCategory={selectedCategory}
-            customCategory={customCategory}
+            customCategory=""
             onSelectedCategoryChange={setSelectedCategory}
-            onCustomCategoryChange={setCustomCategory}
+            onCustomCategoryChange={() => undefined}
+            allowCustom={false}
           />
           <div className="flex justify-end gap-2">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl">取消</button>
@@ -766,7 +768,7 @@ const CanvasEditModal: React.FC<{
   useEffect(() => {
     if (isOpen) {
       setName(currentName);
-      setSelectedCategory(currentCategory === UNCATEGORIZED_CANVAS_CATEGORY ? '' : currentCategory);
+      setSelectedCategory(currentCategory);
       setCustomCategory('');
     }
   }, [currentCategory, currentName, isOpen]);
@@ -951,7 +953,7 @@ const CanvasCategoryManagerModal: React.FC<{
                           onDelete(category.name);
                         }}
                         className="rounded-md p-1 text-gray-400 opacity-0 hover:bg-red-50 hover:text-red-500 group-hover:opacity-100 dark:hover:bg-red-900/20"
-                        title="删除分类，画布会移动到未分类"
+                        title="删除分类，画布会移动到其他分类"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </span>
@@ -961,19 +963,6 @@ const CanvasCategoryManagerModal: React.FC<{
               )}
             </div>
 
-            <div className="mt-2 border-t border-gray-100 pt-2 dark:border-gray-700">
-              <div className="flex items-center justify-between rounded-xl px-3 py-2 text-sm text-gray-500 hover:bg-white dark:text-gray-400 dark:hover:bg-gray-800">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-700">
-                    <Tag className="h-3.5 w-3.5 text-gray-400" />
-                  </span>
-                  <span className="truncate">{UNCATEGORIZED_CANVAS_CATEGORY}</span>
-                </div>
-                <span className="rounded-md bg-gray-100 px-2 py-0.5 text-xs text-gray-500 dark:bg-gray-700 dark:text-gray-300">
-                  {counts[UNCATEGORIZED_CANVAS_CATEGORY] || 0}
-                </span>
-              </div>
-            </div>
           </div>
 
           <form onSubmit={submitCategory} className="min-h-0 overflow-y-auto p-5">
@@ -1584,9 +1573,10 @@ export const ExcalidrawEditor: React.FC = () => {
   }, [drawings, activeId]);
 
   const canvasCategoryCounts = useMemo(() => {
-    const counts: Record<string, number> = { [UNCATEGORIZED_CANVAS_CATEGORY]: 0 };
+    const counts: Record<string, number> = {};
     for (const drawing of drawings) {
       const category = normalizeCanvasCategory(drawing.category);
+      if (!category) continue;
       counts[category] = (counts[category] || 0) + 1;
     }
     return counts;
@@ -1596,7 +1586,7 @@ export const ExcalidrawEditor: React.FC = () => {
     const storedByName = new Map(canvasCategories.map(category => [category.name, category]));
     const usedCategories = drawings
       .map(drawing => normalizeCanvasCategory(drawing.category))
-      .filter(category => category !== UNCATEGORIZED_CANVAS_CATEGORY);
+      .filter(Boolean);
     const merged = [...canvasCategories];
     for (const category of usedCategories) {
       if (!storedByName.has(category) && !merged.some(item => item.name === category)) {
@@ -1652,8 +1642,7 @@ export const ExcalidrawEditor: React.FC = () => {
 
   const handleNewDrawing = useCallback(() => {
     const defaultCategory =
-      canvasCategoryFilter !== ALL_CANVAS_CATEGORY &&
-      canvasCategoryFilter !== UNCATEGORIZED_CANVAS_CATEGORY
+      canvasCategoryFilter !== ALL_CANVAS_CATEGORY
         ? canvasCategoryFilter
         : '';
     setNewCanvasDefaultCategory(defaultCategory);
@@ -1664,7 +1653,7 @@ export const ExcalidrawEditor: React.FC = () => {
   // 创建画布
   const handleCreateDrawing = useCallback((name: string, category: string) => {
     const finalCategory = category.trim();
-    if (!finalCategory || finalCategory === UNCATEGORIZED_CANVAS_CATEGORY || finalCategory === '全部') {
+    if (isReservedCanvasCategory(finalCategory)) {
       showToast('新建画布必须选择分类', 'error');
       return;
     }
@@ -1834,7 +1823,7 @@ export const ExcalidrawEditor: React.FC = () => {
   const handleEditDrawing = useCallback((newName: string, newCategory: string) => {
     if (!renameTarget) return;
     const finalCategory = newCategory.trim();
-    if (!finalCategory || finalCategory === UNCATEGORIZED_CANVAS_CATEGORY || finalCategory === '全部') {
+    if (isReservedCanvasCategory(finalCategory)) {
       showToast('画布必须选择分类', 'error');
       return;
     }
@@ -1908,20 +1897,27 @@ export const ExcalidrawEditor: React.FC = () => {
   }, [activeId, canvasCategories, canvasCategoryFilter, drawings, getCurrentSceneSnapshot, showToast, updateCanvasCategories, visibleCanvasCategoryNames]);
 
   const handleDeleteCanvasCategory = useCallback((name: string) => {
+    const remainingCategories = visibleCanvasCategories.filter(category => category.name !== name);
+    const fallbackCategory = remainingCategories[0]?.name || '';
     const snapshot = getCurrentSceneSnapshot();
     const baseDrawings = snapshot && activeId
       ? drawings.map(d => d.id === activeId ? { ...d, data: snapshot, updatedAt: Date.now() } : d)
       : drawings;
+    const hasAffectedDrawings = baseDrawings.some(d => normalizeCanvasCategory(d.category) === name);
+    if (hasAffectedDrawings && !fallbackCategory) {
+      showToast('至少保留一个分类', 'error');
+      return;
+    }
     const updatedDrawings = baseDrawings.map(d =>
-      normalizeCanvasCategory(d.category) === name ? { ...d, category: undefined, updatedAt: Date.now() } : d,
+      normalizeCanvasCategory(d.category) === name ? { ...d, category: fallbackCategory, updatedAt: Date.now() } : d,
     );
 
     setDrawings(updatedDrawings);
     saveDrawings(updatedDrawings);
     updateCanvasCategories(canvasCategories.filter(category => category.name !== name));
-    if (canvasCategoryFilter === name) setCanvasCategoryFilter(UNCATEGORIZED_CANVAS_CATEGORY);
+    if (canvasCategoryFilter === name) setCanvasCategoryFilter(fallbackCategory || ALL_CANVAS_CATEGORY);
     showToast('分类已删除');
-  }, [activeId, canvasCategories, canvasCategoryFilter, drawings, getCurrentSceneSnapshot, showToast, updateCanvasCategories]);
+  }, [activeId, canvasCategories, canvasCategoryFilter, drawings, getCurrentSceneSnapshot, showToast, updateCanvasCategories, visibleCanvasCategories]);
 
   const handleDuplicateDrawing = useCallback((drawing: DrawingFile) => {
     const now = Date.now();
@@ -2436,22 +2432,6 @@ export const ExcalidrawEditor: React.FC = () => {
                       <span>{canvasCategoryCounts[category.name] || 0}</span>
                     </button>
                   ))}
-                  <button
-                    onClick={() => setCanvasCategoryFilter(UNCATEGORIZED_CANVAS_CATEGORY)}
-                    className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 dark:focus-visible:ring-blue-800 ${
-                      canvasCategoryFilter === UNCATEGORIZED_CANVAS_CATEGORY
-                        ? 'bg-white text-blue-600 shadow-sm dark:bg-gray-700 dark:text-blue-300'
-                        : 'text-gray-500 hover:bg-white hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200'
-                    }`}
-                  >
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-gray-100 dark:bg-gray-700">
-                        <Tag className="h-3 w-3 text-gray-400" />
-                      </span>
-                      <span className="truncate">{UNCATEGORIZED_CANVAS_CATEGORY}</span>
-                    </span>
-                    <span>{canvasCategoryCounts[UNCATEGORIZED_CANVAS_CATEGORY] || 0}</span>
-                  </button>
                 </div>
               </div>
             </div>
@@ -2466,9 +2446,9 @@ export const ExcalidrawEditor: React.FC = () => {
                   {filteredDrawings.map(drawing => {
                     const isActive = drawing.id === activeId;
                     const drawingCategory = normalizeCanvasCategory(drawing.category);
-                    const drawingCategoryMeta = drawingCategory === UNCATEGORIZED_CANVAS_CATEGORY
-                      ? { name: drawingCategory, icon: 'Tag', color: '#94a3b8' }
-                      : canvasCategoryMetaByName.get(drawingCategory) || createCanvasCategoryMeta(drawingCategory);
+                    const drawingCategoryMeta = drawingCategory
+                      ? canvasCategoryMetaByName.get(drawingCategory) || createCanvasCategoryMeta(drawingCategory)
+                      : null;
                     return (
                       <div
                         key={drawing.id}
@@ -2535,20 +2515,24 @@ export const ExcalidrawEditor: React.FC = () => {
                               {drawing.name}
                             </span>
                           </div>
-                          <div className="mt-2 flex min-w-0 items-center gap-2 text-[11px] text-gray-400 dark:text-gray-500">
-                            <span
-                              className="inline-flex min-w-0 max-w-[78px] shrink items-center gap-1 rounded-md px-2 py-1 shadow-sm dark:bg-gray-900"
-                              style={{
-                                backgroundColor: `${drawingCategoryMeta.color}14`,
-                                color: drawingCategoryMeta.color,
-                              }}
-                            >
-                              <CanvasCategoryIcon icon={drawingCategoryMeta.icon} color={drawingCategoryMeta.color} className="h-3 w-3 shrink-0" />
-                              <span className="truncate">{drawingCategory}</span>
-                            </span>
-                            <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap py-1">
-                              <Clock3 className="h-3 w-3" />
-                              {formatDrawingTime(drawing.updatedAt)}
+                          <div className="mt-2 flex h-6 min-w-0 items-center gap-2 text-[11px] text-gray-400 dark:text-gray-500">
+                            {drawingCategoryMeta && (
+                              <span
+                                className="inline-flex h-6 min-w-0 max-w-[86px] shrink items-center gap-1 rounded-md px-1.5 leading-none shadow-sm dark:bg-gray-900"
+                                style={{
+                                  backgroundColor: `${drawingCategoryMeta.color}14`,
+                                  color: drawingCategoryMeta.color,
+                                }}
+                              >
+                                <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                                  <CanvasCategoryIcon icon={drawingCategoryMeta.icon} color={drawingCategoryMeta.color} className="h-3.5 w-3.5 shrink-0" />
+                                </span>
+                                <span className="min-w-0 truncate leading-none">{drawingCategory}</span>
+                              </span>
+                            )}
+                            <span className="inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap leading-none">
+                              <Clock3 className="h-3.5 w-3.5 shrink-0" />
+                              <span className="leading-none">{formatDrawingTime(drawing.updatedAt)}</span>
                             </span>
                           </div>
                         </div>
