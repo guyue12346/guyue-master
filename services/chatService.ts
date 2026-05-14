@@ -65,6 +65,26 @@ export interface ChatToolRunResult {
   toolCalls: ChatToolCall[];
 }
 
+export interface ChatToolExecutionResult {
+  toolCall: ChatToolCall;
+  result: any;
+}
+
+export interface ChatToolSessionState {
+  provider: ChatConfig['provider'];
+  messages: any[];
+  allToolCalls: ChatToolCall[];
+  iteration: number;
+  maxIterations: number;
+}
+
+export interface ChatToolDecisionResult {
+  text: string;
+  toolCalls: ChatToolCall[];
+  rawMessage?: any;
+  session: ChatToolSessionState;
+}
+
 export interface ChatDebugEvent {
   stage: string;
   provider: ChatConfig['provider'];
@@ -216,6 +236,193 @@ export class ChatService {
 
   supportsNativeTools(): boolean {
     return ['openai', 'anthropic', 'gemini', 'zenmux', 'moonshot'].includes(this.config.provider);
+  }
+
+  supportsStepwiseNativeTools(): boolean {
+    return ['openai', 'zenmux', 'moonshot'].includes(this.config.provider);
+  }
+
+  createOpenAIToolSession(messages: ChatMessage[], maxIterations = 10): ChatToolSessionState {
+    if (!this.supportsStepwiseNativeTools()) {
+      throw new Error(`当前提供商不支持逐步工具决策：${this.config.provider}`);
+    }
+
+    this.abortController = new AbortController();
+    return {
+      provider: this.config.provider,
+      messages: this.toOpenAIMessages(messages),
+      allToolCalls: [],
+      iteration: 0,
+      maxIterations,
+    };
+  }
+
+  async requestOpenAIToolDecision(
+    session: ChatToolSessionState,
+    tools: ChatTool[],
+    options?: ChatRunOptions,
+  ): Promise<ChatToolDecisionResult> {
+    if (!this.supportsStepwiseNativeTools()) {
+      throw new Error(`当前提供商不支持逐步工具决策：${this.config.provider}`);
+    }
+
+    const emitDebug = (event: Omit<ChatDebugEvent, 'provider' | 'timestamp'>) => {
+      options?.onDebugEvent?.({
+        ...event,
+        provider: this.config.provider,
+        timestamp: Date.now(),
+      });
+    };
+
+    const baseUrl = this.getBaseUrl();
+    const headers = this.getRequestHeaders();
+    const formattedTools = tools.map(tool => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.inputSchema,
+      },
+    }));
+    const includeTools = tools.length > 0 && session.iteration < session.maxIterations - 1;
+    const isMoonshot = this.config.provider === 'moonshot';
+    const isKimiK25 = isMoonshot && this.config.model === 'kimi-k2.5';
+    const requestBody: any = {
+      model: this.config.model,
+      messages: session.messages,
+      stream: false,
+    };
+
+    if (isKimiK25) {
+      requestBody.thinking = { type: 'disabled' };
+    } else {
+      requestBody.temperature = this.config.temperature;
+      if (isMoonshot) {
+        requestBody.max_completion_tokens = this.config.maxTokens;
+      } else {
+        requestBody.max_tokens = this.config.maxTokens;
+      }
+    }
+
+    if (includeTools) {
+      requestBody.tools = formattedTools;
+      if (!isMoonshot) {
+        requestBody.tool_choice = 'auto';
+      }
+    }
+
+    emitDebug({
+      stage: session.iteration === 0 ? 'openai:first-request' : 'openai:second-request',
+      endpoint: `${baseUrl}/chat/completions`,
+      detail: session.iteration === 0
+        ? '发送工具决策请求'
+        : `提交工具结果后进行第 ${session.iteration + 1} 轮工具决策`,
+      request: requestBody,
+    });
+
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestBody),
+      signal: this.abortController?.signal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      if (response.status === 403 && this.config.provider === 'moonshot' && includeTools) {
+        emitDebug({
+          stage: 'openai:moonshot-403-fallback',
+          detail: '工具调用返回 403，尝试不带 tools 重新请求',
+          response: { status: 403, body: errorText },
+        });
+        const fallbackBody = { ...requestBody };
+        delete fallbackBody.tools;
+        delete fallbackBody.tool_choice;
+        const fallbackResp = await fetch(`${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(fallbackBody),
+          signal: this.abortController?.signal,
+        });
+        if (!fallbackResp.ok) {
+          const fbErr = await fallbackResp.text();
+          throw new Error(
+            fallbackResp.status === 403
+              ? `Kimi API 权限不足 (403)：请检查 API Key 是否有效，或尝试切换到 moonshot-v1-128k 模型。\n${fbErr}`
+              : `API Error: ${fallbackResp.status} - ${fbErr}`,
+          );
+        }
+        const fbData = await fallbackResp.json();
+        const fbMsg = fbData.choices?.[0]?.message;
+        return {
+          text: typeof fbMsg?.content === 'string' ? fbMsg.content : '',
+          toolCalls: [],
+          rawMessage: fbMsg,
+          session,
+        };
+      }
+      if (response.status === 403 && this.config.provider === 'moonshot') {
+        throw new Error(`Kimi API 权限不足 (403)：请检查 API Key 是否有效，或尝试切换到 moonshot-v1-128k 模型。\n${errorText}`);
+      }
+      throw new Error(`API Error: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    emitDebug({
+      stage: session.iteration === 0 ? 'openai:first-response' : 'openai:second-response',
+      detail: session.iteration === 0 ? '收到第一轮模型回复' : `收到第 ${session.iteration + 1} 轮模型回复`,
+      response: data,
+    });
+
+    const message = data.choices?.[0]?.message;
+    const toolCalls: ChatToolCall[] = (message?.tool_calls || []).map((tc: any) => ({
+      id: tc.id,
+      name: tc.function?.name,
+      arguments: this.safeParseJson(tc.function?.arguments),
+    }));
+
+    emitDebug({
+      stage: 'openai:tool-calls',
+      detail: toolCalls.length ? `模型返回 ${toolCalls.length} 个工具调用` : '模型未触发工具调用',
+      response: { toolCalls },
+    });
+
+    return {
+      text: typeof message?.content === 'string' ? message.content : '',
+      toolCalls,
+      rawMessage: message,
+      session,
+    };
+  }
+
+  appendOpenAIToolResults(
+    session: ChatToolSessionState,
+    decision: ChatToolDecisionResult,
+    toolResults: ChatToolExecutionResult[],
+  ): ChatToolSessionState {
+    const message = decision.rawMessage;
+    return {
+      ...session,
+      iteration: session.iteration + 1,
+      allToolCalls: [...session.allToolCalls, ...decision.toolCalls],
+      messages: [
+        ...session.messages,
+        {
+          role: 'assistant',
+          content: message?.content || '',
+          tool_calls: (message?.tool_calls || []).map((tc: any) => ({
+            id: tc.id,
+            type: tc.type,
+            function: tc.function,
+          })),
+        },
+        ...toolResults.map(({ toolCall, result }) => ({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(result),
+        })),
+      ],
+    };
   }
 
   async completeText(messages: ChatMessage[], options?: ChatRunOptions): Promise<string> {
@@ -464,7 +671,7 @@ export class ChatService {
     }));
 
     const MAX_ITERATIONS = 10;
-    let currentMessages = this.toOpenAIMessages(messages);
+    let currentMessages: any[] = this.toOpenAIMessages(messages);
     const allToolCalls: ChatToolCall[] = [];
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
@@ -656,7 +863,7 @@ export class ChatService {
     }));
 
     const MAX_ITERATIONS = 10;
-    let currentMessages = [...anthropicMessages];
+    let currentMessages: any[] = [...anthropicMessages];
     const allToolCalls: ChatToolCall[] = [];
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {

@@ -9,6 +9,7 @@ import rehypeRaw from 'rehype-raw';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Copy, Check } from 'lucide-react';
+import 'katex/dist/katex.min.css';
 
 type MdEngine = 'default' | 'github' | 'notion' | 'academic' | 'terminal';
 let _currentEngine: MdEngine = (localStorage.getItem('guyue_md_engine') as MdEngine) || 'default';

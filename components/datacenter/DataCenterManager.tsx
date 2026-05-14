@@ -107,8 +107,15 @@ const MODULE_DEFS: { key: DataCenterModuleKey; label: string; defaultColor: stri
   { key: 'kimiApi',         label: 'API Key',   defaultColor: '#0f766e', defaultIcon: 'KeyRound' },
 ];
 
-const getIconComponent = (iconName?: string) => {
-  const IconComp = (LucideIcons as Record<string, React.ComponentType<{ className?: string }>>)[iconName || 'Activity'];
+type DataCenterIconComponent = React.ComponentType<{
+  className?: string;
+  style?: React.CSSProperties;
+}>;
+
+const LUCIDE_ICON_MAP = LucideIcons as unknown as Record<string, DataCenterIconComponent>;
+
+const getIconComponent = (iconName?: string): DataCenterIconComponent => {
+  const IconComp = LUCIDE_ICON_MAP[iconName || 'Activity'];
   return IconComp || Activity;
 };
 

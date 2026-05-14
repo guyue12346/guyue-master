@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { AVAILABLE_ICONS } from '../../types';
+import { hasUnifiedFileStorage, loadLocalJson, loadUnifiedJson, saveUnifiedJson } from '../../utils/unifiedStorage';
 import '@excalidraw/excalidraw/index.css';
 
 declare global {
@@ -40,6 +41,12 @@ const STORAGE_KEY_DEFAULTS = 'guyue_excalidraw_defaults';
 const STORAGE_KEY_LIBRARY = 'guyue_excalidraw_library';
 const STORAGE_KEY_LATEX_MAP = 'guyue_excalidraw_latex_map';
 const STORAGE_KEY_CANVAS_CATEGORIES = 'guyue_excalidraw_categories';
+const STORE_KEY_DRAWINGS = 'excalidraw-drawings';
+const STORE_KEY_ACTIVE = 'excalidraw-active';
+const STORE_KEY_DEFAULTS = 'excalidraw-defaults';
+const STORE_KEY_LIBRARY = 'excalidraw-library';
+const STORE_KEY_LATEX_MAP = 'excalidraw-latex-map';
+const STORE_KEY_CANVAS_CATEGORIES = 'excalidraw-categories';
 const ALL_CANVAS_CATEGORY = '__all__';
 const UNCATEGORIZED_CANVAS_CATEGORY = '未分类';
 const DEFAULT_CANVAS_CATEGORY_ICON = 'Layers';
@@ -107,6 +114,11 @@ const normalizeCanvasCategoryMetas = (categories: unknown[]): CanvasCategoryMeta
   return normalized;
 };
 
+const normalizeRecord = (value: unknown): Record<string, any> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, any>) : {};
+
+const normalizeString = (value: unknown): string => (typeof value === 'string' ? value : '');
+
 // 需要持久化的 appState 属性（工具偏好设置）
 const PERSISTED_APP_STATE_KEYS = [
   'viewBackgroundColor',
@@ -136,14 +148,32 @@ const FONT_FAMILIES: Record<number, string> = {
 };
 
 const loadDefaults = (): Record<string, any> => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_DEFAULTS);
-    return raw ? JSON.parse(raw) : {};
-  } catch { return {}; }
+  return loadLocalJson({
+    localStorageKey: STORAGE_KEY_DEFAULTS,
+    defaultValue: () => ({}),
+    normalize: normalizeRecord,
+  });
+};
+
+const loadDefaultsFromStorage = () => {
+  return loadUnifiedJson({
+    appDataKey: STORE_KEY_DEFAULTS,
+    localStorageKey: STORAGE_KEY_DEFAULTS,
+    defaultValue: () => ({}),
+    normalize: normalizeRecord,
+  });
 };
 
 const saveDefaults = (defaults: Record<string, any>) => {
-  localStorage.setItem(STORAGE_KEY_DEFAULTS, JSON.stringify(defaults));
+  saveUnifiedJson(
+    {
+      appDataKey: STORE_KEY_DEFAULTS,
+      localStorageKey: STORAGE_KEY_DEFAULTS,
+      defaultValue: () => ({}),
+      normalize: normalizeRecord,
+    },
+    defaults,
+  );
 };
 
 const pickAppState = (appState: any): Record<string, any> => {
@@ -271,22 +301,69 @@ const sanitizeDrawing = (drawing: DrawingFile): DrawingFile => {
   return rest;
 };
 
+const normalizeDrawings = (value: unknown): DrawingFile[] => {
+  if (!Array.isArray(value)) return [];
+  return value.map(sanitizeDrawing);
+};
+
 const loadDrawings = (): DrawingFile[] => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_DRAWINGS);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    const sanitized = parsed.map(sanitizeDrawing);
-    if (JSON.stringify(parsed) !== JSON.stringify(sanitized)) {
-      saveDrawings(sanitized);
-    }
-    return sanitized;
-  } catch { return []; }
+  return loadLocalJson({
+    localStorageKey: STORAGE_KEY_DRAWINGS,
+    defaultValue: () => [],
+    normalize: normalizeDrawings,
+  });
+};
+
+const loadDrawingsFromStorage = () => {
+  return loadUnifiedJson({
+    appDataKey: STORE_KEY_DRAWINGS,
+    localStorageKey: STORAGE_KEY_DRAWINGS,
+    defaultValue: () => [],
+    normalize: normalizeDrawings,
+  });
 };
 
 const saveDrawings = (drawings: DrawingFile[]) => {
-  localStorage.setItem(STORAGE_KEY_DRAWINGS, JSON.stringify(drawings.map(sanitizeDrawing)));
+  saveUnifiedJson(
+    {
+      appDataKey: STORE_KEY_DRAWINGS,
+      localStorageKey: STORAGE_KEY_DRAWINGS,
+      defaultValue: () => [],
+      normalize: normalizeDrawings,
+    },
+    drawings.map(sanitizeDrawing),
+  );
+};
+
+const loadActiveId = () => {
+  return loadLocalJson({
+    localStorageKey: STORAGE_KEY_ACTIVE,
+    defaultValue: () => '',
+    normalize: normalizeString,
+  });
+};
+
+const loadActiveIdFromStorage = () => {
+  return loadUnifiedJson({
+    appDataKey: STORE_KEY_ACTIVE,
+    localStorageKey: STORAGE_KEY_ACTIVE,
+    defaultValue: () => '',
+    normalize: normalizeString,
+    localStorageMode: 'raw-string',
+  });
+};
+
+const saveActiveId = (id: string) => {
+  saveUnifiedJson(
+    {
+      appDataKey: STORE_KEY_ACTIVE,
+      localStorageKey: STORAGE_KEY_ACTIVE,
+      defaultValue: () => '',
+      normalize: normalizeString,
+      localStorageMode: 'raw-string',
+    },
+    id,
+  );
 };
 
 const normalizeCanvasCategory = (category?: string) => {
@@ -300,19 +377,33 @@ const toStoredCanvasCategory = (category: string) => {
 };
 
 const loadCanvasCategories = (): CanvasCategoryMeta[] => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_CANVAS_CATEGORIES);
-    const parsed = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(parsed)) return [];
-    return normalizeCanvasCategoryMetas(parsed);
-  } catch {
-    return [];
-  }
+  return loadLocalJson({
+    localStorageKey: STORAGE_KEY_CANVAS_CATEGORIES,
+    defaultValue: () => [],
+    normalize: value => (Array.isArray(value) ? normalizeCanvasCategoryMetas(value) : []),
+  });
+};
+
+const loadCanvasCategoriesFromStorage = () => {
+  return loadUnifiedJson({
+    appDataKey: STORE_KEY_CANVAS_CATEGORIES,
+    localStorageKey: STORAGE_KEY_CANVAS_CATEGORIES,
+    defaultValue: () => [],
+    normalize: value => (Array.isArray(value) ? normalizeCanvasCategoryMetas(value) : []),
+  });
 };
 
 const saveCanvasCategories = (categories: Array<CanvasCategoryMeta | string>) => {
   const normalized = normalizeCanvasCategoryMetas(categories);
-  localStorage.setItem(STORAGE_KEY_CANVAS_CATEGORIES, JSON.stringify(normalized));
+  saveUnifiedJson(
+    {
+      appDataKey: STORE_KEY_CANVAS_CATEGORIES,
+      localStorageKey: STORAGE_KEY_CANVAS_CATEGORIES,
+      defaultValue: () => [],
+      normalize: value => (Array.isArray(value) ? normalizeCanvasCategoryMetas(value) : []),
+    },
+    normalized,
+  );
 };
 
 const formatDrawingTime = (timestamp: number) => {
@@ -439,30 +530,62 @@ const CanvasCategoryIcon: React.FC<{
 };
 
 const loadLibrary = (): any[] => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_LIBRARY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+  return loadLocalJson({
+    localStorageKey: STORAGE_KEY_LIBRARY,
+    defaultValue: () => [],
+    normalize: value => (Array.isArray(value) ? value : []),
+  });
+};
+
+const loadLibraryFromStorage = () => {
+  return loadUnifiedJson({
+    appDataKey: STORE_KEY_LIBRARY,
+    localStorageKey: STORAGE_KEY_LIBRARY,
+    defaultValue: () => [],
+    normalize: value => (Array.isArray(value) ? value : []),
+  });
 };
 
 const saveLibrary = (items: any[]) => {
-  try {
-    localStorage.setItem(STORAGE_KEY_LIBRARY, JSON.stringify(items));
-  } catch (e) {
-    console.error('Failed to save library:', e);
-  }
+  saveUnifiedJson(
+    {
+      appDataKey: STORE_KEY_LIBRARY,
+      localStorageKey: STORAGE_KEY_LIBRARY,
+      defaultValue: () => [],
+      normalize: value => (Array.isArray(value) ? value : []),
+    },
+    items,
+  );
 };
 
 // LaTeX 源码映射: fileId -> latex string
 const loadLatexMap = (): Record<string, string> => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_LATEX_MAP);
-    return raw ? JSON.parse(raw) : {};
-  } catch { return {}; }
+  return loadLocalJson({
+    localStorageKey: STORAGE_KEY_LATEX_MAP,
+    defaultValue: () => ({}),
+    normalize: normalizeRecord,
+  });
+};
+
+const loadLatexMapFromStorage = () => {
+  return loadUnifiedJson({
+    appDataKey: STORE_KEY_LATEX_MAP,
+    localStorageKey: STORAGE_KEY_LATEX_MAP,
+    defaultValue: () => ({}),
+    normalize: normalizeRecord,
+  });
 };
 
 const saveLatexMap = (map: Record<string, string>) => {
-  localStorage.setItem(STORAGE_KEY_LATEX_MAP, JSON.stringify(map));
+  saveUnifiedJson(
+    {
+      appDataKey: STORE_KEY_LATEX_MAP,
+      localStorageKey: STORAGE_KEY_LATEX_MAP,
+      defaultValue: () => ({}),
+      normalize: normalizeRecord,
+    },
+    map,
+  );
 };
 
 // ======== MathJax 加载 ========
@@ -1290,9 +1413,8 @@ export const ExcalidrawEditor: React.FC = () => {
 
   // 文件管理
   const [drawings, setDrawings] = useState<DrawingFile[]>(loadDrawings);
-  const [activeId, setActiveId] = useState<string>(() => {
-    return localStorage.getItem(STORAGE_KEY_ACTIVE) || '';
-  });
+  const [activeId, setActiveId] = useState<string>(loadActiveId);
+  const [isCanvasStorageReady, setIsCanvasStorageReady] = useState(() => !hasUnifiedFileStorage());
 
   // UI 状态
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -1359,6 +1481,39 @@ export const ExcalidrawEditor: React.FC = () => {
   const latexMapRef = useRef<Record<string, string>>(loadLatexMap());
   const latexDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const processedLatexIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!hasUnifiedFileStorage()) return;
+    let cancelled = false;
+
+    Promise.all([
+      loadDrawingsFromStorage(),
+      loadActiveIdFromStorage(),
+      loadCanvasCategoriesFromStorage(),
+      loadLibraryFromStorage(),
+      loadLatexMapFromStorage(),
+      loadDefaultsFromStorage(),
+    ])
+      .then(([storedDrawings, storedActiveId, storedCategories, storedLibrary, storedLatexMap, storedDefaults]) => {
+        if (cancelled) return;
+        setDrawings(storedDrawings);
+        setActiveId(storedActiveId);
+        setCanvasCategories(storedCategories);
+        setLibraryItems(storedLibrary);
+        latexMapRef.current = storedLatexMap;
+        if (Object.keys(storedDefaults).length > 0) {
+          saveDefaults(storedDefaults);
+        }
+        setIsCanvasStorageReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setIsCanvasStorageReady(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // LaTeX 编辑弹窗状态
   const [latexEditTarget, setLatexEditTarget] = useState<{ elementId: string; fileId: string; latex: string } | null>(null);
@@ -1676,7 +1831,7 @@ export const ExcalidrawEditor: React.FC = () => {
     setDrawings(updated);
     saveDrawings(updated);
     setActiveId(newDrawing.id);
-    localStorage.setItem(STORAGE_KEY_ACTIVE, newDrawing.id);
+    saveActiveId(newDrawing.id);
     if (!visibleCanvasCategoryNames.includes(finalCategory)) {
       updateCanvasCategories([...canvasCategories, finalCategory]);
     }
@@ -1701,7 +1856,7 @@ export const ExcalidrawEditor: React.FC = () => {
     if (id === activeId) return;
     saveCurrentScene();
     setActiveId(id);
-    localStorage.setItem(STORAGE_KEY_ACTIVE, id);
+    saveActiveId(id);
   }, [activeId, saveCurrentScene]);
 
   // 手动保存
@@ -1813,7 +1968,7 @@ export const ExcalidrawEditor: React.FC = () => {
     if (activeId === drawing.id) {
       const nextId = updated.length > 0 ? updated[0].id : '';
       setActiveId(nextId);
-      localStorage.setItem(STORAGE_KEY_ACTIVE, nextId);
+      saveActiveId(nextId);
     }
     setDeleteTarget(null);
     showToast('画布已删除');
@@ -1946,7 +2101,7 @@ export const ExcalidrawEditor: React.FC = () => {
     setDrawings(updated);
     saveDrawings(updated);
     setActiveId(duplicated.id);
-    localStorage.setItem(STORAGE_KEY_ACTIVE, duplicated.id);
+    saveActiveId(duplicated.id);
     setIsCanvasManagerOpen(true);
     showToast('已复制画布');
   }, [activeId, drawings, getCurrentSceneSnapshot, showToast]);
@@ -2144,13 +2299,14 @@ export const ExcalidrawEditor: React.FC = () => {
 
   // 如果没有任何画布，自动创建一个
   useEffect(() => {
+    if (!isCanvasStorageReady) return;
     if (drawings.length === 0) {
       handleNewDrawing();
     } else if (!activeId || !drawings.find(d => d.id === activeId)) {
       setActiveId(drawings[0].id);
-      localStorage.setItem(STORAGE_KEY_ACTIVE, drawings[0].id);
+      saveActiveId(drawings[0].id);
     }
-  }, []);
+  }, [activeId, drawings, handleNewDrawing, isCanvasStorageReady]);
 
   // 设置面板
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);

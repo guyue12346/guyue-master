@@ -7,6 +7,13 @@ import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecor
 import { Plus, Search, Command, Loader2, ChevronRight, Upload, Edit3, Save, List, HelpCircle } from 'lucide-react';
 import type { VaultFileEntry } from './components/VaultImportModal';
 import { FloatingChatWindow } from './components/FloatingChatWindow';
+import {
+  appDataMirrorKeyForLocalStorageKey,
+  ensureLocalStorageSafetySnapshot,
+  hasUnifiedFileStorage,
+  loadUnifiedJson,
+  saveLocalStorageMirror,
+} from './utils/unifiedStorage';
 
 // Lazy load components to improve initial load performance
 const NoteList = React.lazy(() => import('./components/NoteList').then(m => ({ default: m.NoteList })));
@@ -191,9 +198,76 @@ const safeJSONParse = <T,>(data: string | null, defaultValue: T): T => {
   }
 };
 
+const STORAGE_RESCUE_MARKER_KEY = 'guyue_storage_rescue_20260513_v1';
+const SYSTEM_CATEGORY_NAMES = new Set(['全部', '未分类']);
+const DEFAULT_CATEGORY_NAMES = new Set(DEFAULT_CATEGORIES.map(category => category.name));
+
+const shouldRunOneTimeStorageRescue = () => {
+  if (typeof localStorage === 'undefined') return false;
+  return localStorage.getItem(STORAGE_RESCUE_MARKER_KEY) !== 'done';
+};
+
+const markOneTimeStorageRescueComplete = () => {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(STORAGE_RESCUE_MARKER_KEY, 'done');
+};
+
+const getCategoryNames = (categories: Category[]) =>
+  categories
+    .map(category => category?.name)
+    .filter((name): name is string => Boolean(name && !SYSTEM_CATEGORY_NAMES.has(name)));
+
+const isDefaultLikeCategoryList = (categories: Category[]) => {
+  const names = getCategoryNames(categories);
+  return names.length > 0 && names.every(name => DEFAULT_CATEGORY_NAMES.has(name));
+};
+
+const shouldPreferCategoryCandidate = (current: Category[], candidate: Category[]) => {
+  const candidateNames = getCategoryNames(candidate);
+  if (candidateNames.length === 0) return false;
+  if (!Array.isArray(current) || current.length === 0) return true;
+
+  const currentNames = getCategoryNames(current);
+  const currentDefaultLike = isDefaultLikeCategoryList(current);
+  const candidateDefaultLike = isDefaultLikeCategoryList(candidate);
+  if (currentDefaultLike && !candidateDefaultLike) return true;
+
+  const currentNameSet = new Set(currentNames);
+  const newCandidateNames = candidateNames.filter(name => !currentNameSet.has(name));
+  return candidateNames.length > currentNames.length && newCandidateNames.length > 0;
+};
+
+const recoverCategoriesMap = (current: any, candidates: any[]) => {
+  const recovered: Record<string, Category[]> = {
+    ...(current && typeof current === 'object' && !Array.isArray(current) ? current : {}),
+  };
+
+  candidates.forEach(candidateMap => {
+    if (!candidateMap || typeof candidateMap !== 'object' || Array.isArray(candidateMap)) return;
+    Object.entries(candidateMap).forEach(([mode, candidateList]) => {
+      if (!Array.isArray(candidateList)) return;
+      const currentList = Array.isArray(recovered[mode]) ? recovered[mode] : [];
+      if (shouldPreferCategoryCandidate(currentList, candidateList as Category[])) {
+        recovered[mode] = candidateList as Category[];
+      }
+    });
+  });
+
+  return recovered;
+};
+
+function recoverNonEmptyArray<T>(current: T[] | null | undefined, candidates: Array<T[] | null | undefined>) {
+  if (Array.isArray(current) && current.length > 0) return current;
+  const nonEmptyCandidates = candidates
+    .filter((candidate): candidate is T[] => Array.isArray(candidate) && candidate.length > 0)
+    .sort((a, b) => b.length - a.length);
+  return nonEmptyCandidates[0] || (Array.isArray(current) ? current : []);
+}
+
 const App: React.FC = () => {
   // Perform data migration on app start
   useEffect(() => {
+    void ensureLocalStorageSafetySnapshot('before-unified-storage-refactor');
     migrateStorageData();
   }, []);
 
@@ -219,6 +293,7 @@ const App: React.FC = () => {
   
   // Performance: Cache for loaded data to prevent re-parsing
   const [dataCache] = useState(() => new Map<string, any>());
+  const [isCoreStorageReady, setIsCoreStorageReady] = useState(false);
 
   const [appMode, setAppMode] = useState<AppMode>(() => {
     try {
@@ -554,7 +629,7 @@ const App: React.FC = () => {
 
   const handleUpdateRecurringCategories = (cats: RecurringCategory[]) => {
     setRecurringCategories(cats);
-    try { localStorage.setItem(STORAGE_KEY_RECURRING_CATS, JSON.stringify(cats)); } catch {}
+    try { saveLocalStorageMirror(STORAGE_KEY_RECURRING_CATS, cats); } catch {}
   };
 
   const handleAddCategory = useCallback((moduleKey: string, name: string) => {
@@ -594,11 +669,55 @@ const App: React.FC = () => {
 
   const saveMusicTracks = useCallback((tracks: MusicTrack[]) => {
     setMusicTracks(tracks);
-    try { localStorage.setItem(STORAGE_KEY_MUSIC_TRACKS, JSON.stringify(tracks)); } catch {}
+    try { saveLocalStorageMirror(STORAGE_KEY_MUSIC_TRACKS, tracks); } catch {}
   }, []);
   const saveMusicPlaylists = useCallback((pls: MusicPlaylist[]) => {
     setMusicPlaylists(pls);
-    try { localStorage.setItem(STORAGE_KEY_MUSIC_PLAYLISTS, JSON.stringify(pls)); } catch {}
+    try { saveLocalStorageMirror(STORAGE_KEY_MUSIC_PLAYLISTS, pls); } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (!hasUnifiedFileStorage()) return;
+    let cancelled = false;
+
+    Promise.all([
+      loadUnifiedJson({
+        appDataKey: appDataMirrorKeyForLocalStorageKey(STORAGE_KEY_RECURRING),
+        localStorageKey: STORAGE_KEY_RECURRING,
+        defaultValue: () => [] as RecurringEvent[],
+        normalize: value => (Array.isArray(value) ? value : []),
+      }),
+      loadUnifiedJson({
+        appDataKey: appDataMirrorKeyForLocalStorageKey(STORAGE_KEY_RECURRING_CATS),
+        localStorageKey: STORAGE_KEY_RECURRING_CATS,
+        defaultValue: () => DEFAULT_RECURRING_CATEGORIES,
+        normalize: value => (Array.isArray(value) ? value : DEFAULT_RECURRING_CATEGORIES),
+      }),
+      loadUnifiedJson({
+        appDataKey: appDataMirrorKeyForLocalStorageKey(STORAGE_KEY_MUSIC_TRACKS),
+        localStorageKey: STORAGE_KEY_MUSIC_TRACKS,
+        defaultValue: () => [] as MusicTrack[],
+        normalize: value => (Array.isArray(value) ? value : []),
+      }),
+      loadUnifiedJson({
+        appDataKey: appDataMirrorKeyForLocalStorageKey(STORAGE_KEY_MUSIC_PLAYLISTS),
+        localStorageKey: STORAGE_KEY_MUSIC_PLAYLISTS,
+        defaultValue: () => DEFAULT_MUSIC_PLAYLISTS,
+        normalize: value => Array.isArray(value) ? value.filter((playlist: MusicPlaylist) => playlist.id !== 'favorites') : DEFAULT_MUSIC_PLAYLISTS,
+      }),
+    ])
+      .then(([events, eventCategories, tracks, playlists]) => {
+        if (cancelled) return;
+        setRecurringEvents(events);
+        setRecurringCategories(eventCategories);
+        setMusicTracks(tracks);
+        setMusicPlaylists(playlists);
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const addMusicFilesHelper = useCallback(async (filePaths: string[]) => {
@@ -740,10 +859,9 @@ const App: React.FC = () => {
   const fileSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Agent shortcut: double-tap key detection
-  const agentShortcutKey = React.useRef<string>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_AGENT_SHORTCUT);
-    return saved || 'Meta';
-  });
+  const agentShortcutKey = React.useRef<string>(
+    localStorage.getItem(STORAGE_KEY_AGENT_SHORTCUT) || 'Meta',
+  );
   const lastAgentKeyTime = React.useRef<number>(0);
   const agentKeyWasUsedAsCombo = React.useRef<boolean>(false);
 
@@ -896,31 +1014,78 @@ const App: React.FC = () => {
 
   // Initial Load - Performance: Batch load all data
   useEffect(() => {
-    const loadAllData = () => {
+    const loadAllData = async () => {
       // Performance Optimization 1: Batch read from localStorage
       // 注意：图床数据（IMAGE_RECORDS 和 IMAGE_CONFIG）由单独的 useEffect 从文件存储加载
       // 不在这里加载，避免被空值覆盖
+      const storageRescueEnabled = shouldRunOneTimeStorageRescue();
       const storageKeys = [
-        { key: STORAGE_KEY_CATEGORIES, setter: (data: any) => setCategoriesMap(prev => ({ ...prev, ...data })), defaultValue: null },
+        {
+          key: STORAGE_KEY_CATEGORIES,
+          setter: (data: any) => setCategoriesMap(prev => ({ ...prev, ...data })),
+          defaultValue: null,
+          recover: storageRescueEnabled ? recoverCategoriesMap : undefined,
+        },
         { key: STORAGE_KEY_NOTES, setter: setNotes, defaultValue: [{id: '1', content: '欢迎使用 NoteMaster！\n在这里记录你的灵感。', color: 'bg-yellow-100', createdAt: Date.now()}]},
-        { key: STORAGE_KEY_SSH, setter: setSSHRecords, defaultValue: [] },
-        { key: STORAGE_KEY_API, setter: setApiRecords, defaultValue: [] },
-        { key: STORAGE_KEY_TODOS, setter: setTodos, defaultValue: [] },
-        { key: STORAGE_KEY_FILES, setter: setFileRecords, defaultValue: [] },
-        { key: STORAGE_KEY_PROMPTS, setter: setPrompts, defaultValue: [] },
+        {
+          key: STORAGE_KEY_SSH,
+          setter: setSSHRecords,
+          defaultValue: [],
+          recover: storageRescueEnabled ? recoverNonEmptyArray : undefined,
+        },
+        {
+          key: STORAGE_KEY_API,
+          setter: setApiRecords,
+          defaultValue: [],
+          recover: storageRescueEnabled ? recoverNonEmptyArray : undefined,
+        },
+        {
+          key: STORAGE_KEY_TODOS,
+          setter: setTodos,
+          defaultValue: [],
+          recover: storageRescueEnabled ? recoverNonEmptyArray : undefined,
+        },
+        {
+          key: STORAGE_KEY_FILES,
+          setter: setFileRecords,
+          defaultValue: [],
+          recover: storageRescueEnabled ? recoverNonEmptyArray : undefined,
+        },
+        {
+          key: STORAGE_KEY_PROMPTS,
+          setter: setPrompts,
+          defaultValue: [],
+          recover: storageRescueEnabled ? recoverNonEmptyArray : undefined,
+        },
         { key: STORAGE_KEY_MARKDOWN, setter: setMarkdownNotes, defaultValue: [] },
       ];
 
       // Load all data in batch
-      storageKeys.forEach(({ key, setter, defaultValue }) => {
+      for (const { key, setter, defaultValue, recover } of storageKeys) {
         // Performance Optimization 2: Use cache to avoid re-parsing
         if (dataCache.has(key)) {
           setter(dataCache.get(key) as any);
-          return;
+          continue;
+        }
+
+        if (hasUnifiedFileStorage()) {
+          const loaded = await loadUnifiedJson({
+            appDataKey: appDataMirrorKeyForLocalStorageKey(key),
+            localStorageKey: key,
+            defaultValue: () => defaultValue,
+            recover,
+          });
+
+          if (loaded !== null && loaded !== undefined) {
+            dataCache.set(key, loaded);
+            setter(loaded as any);
+          } else if (defaultValue) {
+            setter(defaultValue as any);
+          }
+          continue;
         }
 
         const savedData = localStorage.getItem(key);
-
         if (savedData) {
           const parsed = safeJSONParse(savedData, defaultValue);
           if (parsed !== defaultValue) {
@@ -932,10 +1097,35 @@ const App: React.FC = () => {
         } else if (defaultValue) {
           setter(defaultValue as any);
         }
-      });
+      }
+
+      if (hasUnifiedFileStorage()) {
+        const storedTodoPlan = await loadUnifiedJson({
+          appDataKey: appDataMirrorKeyForLocalStorageKey(STORAGE_KEY_TODO_PLAN),
+          localStorageKey: STORAGE_KEY_TODO_PLAN,
+          defaultValue: () => todoPlanContent,
+          localStorageMode: 'raw-string',
+        });
+        if (storedTodoPlan) setTodoPlanContent(String(storedTodoPlan));
+
+        const storedHeatmap = await loadUnifiedJson({
+          appDataKey: appDataMirrorKeyForLocalStorageKey(STORAGE_KEY_HEATMAP),
+          localStorageKey: STORAGE_KEY_HEATMAP,
+          defaultValue: () => heatmapData,
+        });
+        if (storedHeatmap) setHeatmapData(storedHeatmap as HeatmapData);
+      }
+
+      if (storageRescueEnabled) {
+        markOneTimeStorageRescueComplete();
+      }
+      setIsCoreStorageReady(true);
     };
 
-    loadAllData();
+    void loadAllData().catch(error => {
+      console.error('Failed to load unified core storage:', error);
+      setIsCoreStorageReady(true);
+    });
   }, [dataCache]);
 
   // 图床数据单独加载 - 优先从文件存储加载，确保更新后数据不丢失
@@ -1414,7 +1604,7 @@ const App: React.FC = () => {
       // Set new timeout
       const timeout = setTimeout(() => {
         try {
-          localStorage.setItem(key, JSON.stringify(data));
+          saveLocalStorageMirror(key, data);
           dataCache.set(key, data);
           timeouts.delete(key);
         } catch (e) {
@@ -1428,39 +1618,47 @@ const App: React.FC = () => {
 
   // Save on change - with debounce
   useEffect(() => {
+    if (!isCoreStorageReady) return;
     if (Object.keys(categoriesMap).length > 0) {
       saveToStorage(STORAGE_KEY_CATEGORIES, categoriesMap);
     }
-  }, [categoriesMap, saveToStorage]);
+  }, [categoriesMap, isCoreStorageReady, saveToStorage]);
 
   useEffect(() => {
+    if (!isCoreStorageReady) return;
     if (notes.length > 0) {
       saveToStorage(STORAGE_KEY_NOTES, notes);
     }
-  }, [notes, saveToStorage]);
+  }, [notes, isCoreStorageReady, saveToStorage]);
 
   useEffect(() => {
+    if (!isCoreStorageReady) return;
     saveToStorage(STORAGE_KEY_SSH, sshRecords);
-  }, [sshRecords, saveToStorage]);
+  }, [sshRecords, isCoreStorageReady, saveToStorage]);
 
   useEffect(() => {
+    if (!isCoreStorageReady) return;
     saveToStorage(STORAGE_KEY_API, apiRecords);
-  }, [apiRecords, saveToStorage]);
+  }, [apiRecords, isCoreStorageReady, saveToStorage]);
 
   useEffect(() => {
+    if (!isCoreStorageReady) return;
     saveToStorage(STORAGE_KEY_TODOS, todos);
-  }, [todos, saveToStorage]);
+  }, [todos, isCoreStorageReady, saveToStorage]);
 
   useEffect(() => {
+    if (!isCoreStorageReady) return;
     // 直接保存字符串，不需要JSON序列化
     if (todoPlanContent) {
       localStorage.setItem(STORAGE_KEY_TODO_PLAN, todoPlanContent);
+      saveLocalStorageMirror(STORAGE_KEY_TODO_PLAN, todoPlanContent);
     }
-  }, [todoPlanContent]);
+  }, [isCoreStorageReady, todoPlanContent]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_HEATMAP, JSON.stringify(heatmapData));
-  }, [heatmapData]);
+    if (!isCoreStorageReady) return;
+    saveLocalStorageMirror(STORAGE_KEY_HEATMAP, heatmapData);
+  }, [heatmapData, isCoreStorageReady]);
 
   useEffect(() => {
     // 只在数据加载完成后才保存，避免覆盖已有数据
@@ -1485,16 +1683,19 @@ const App: React.FC = () => {
   }, [resourceData, isResourceDataLoaded]);
 
   useEffect(() => {
+    if (!isCoreStorageReady) return;
     saveToStorage(STORAGE_KEY_FILES, fileRecords);
-  }, [fileRecords, saveToStorage]);
+  }, [fileRecords, isCoreStorageReady, saveToStorage]);
 
   useEffect(() => {
+    if (!isCoreStorageReady) return;
     saveToStorage(STORAGE_KEY_PROMPTS, prompts);
-  }, [prompts, saveToStorage]);
+  }, [prompts, isCoreStorageReady, saveToStorage]);
 
   useEffect(() => {
+    if (!isCoreStorageReady) return;
     saveToStorage(STORAGE_KEY_MARKDOWN, markdownNotes);
-  }, [markdownNotes, saveToStorage]);
+  }, [markdownNotes, isCoreStorageReady, saveToStorage]);
 
   useEffect(() => {
     // 只在初始加载完成后才保存，避免空数组覆盖已有数据
@@ -1796,28 +1997,36 @@ const App: React.FC = () => {
       });
     }
 
-    if (record.id) {
-      setSSHRecords(prev => prev.map(r => r.id === record.id ? { ...r, ...record } as SSHRecord : r));
-    } else {
-      const currentMaxPriority = sshRecords.length > 0 
-        ? Math.max(...sshRecords.map(r => r.priority || 0)) 
-        : 0;
+    const buildCommand = (next: Pick<SSHRecord, 'host' | 'username' | 'port'>) =>
+      `ssh -p ${next.port || '22'} ${next.username || 'root'}@${next.host}`;
 
+    setSSHRecords(prev => {
+      if (record.id && prev.some(r => r.id === record.id)) {
+        return prev.map(r => r.id === record.id ? { ...r, ...record } as SSHRecord : r);
+      }
+
+      const currentMaxPriority = prev.length > 0
+        ? Math.max(...prev.map(r => r.priority || 0))
+        : 0;
       const newRecord: SSHRecord = {
-        id: crypto.randomUUID(),
-        title: record.title!,
-        host: record.host!,
+        id: record.id || crypto.randomUUID(),
+        title: record.title || '未命名 SSH',
+        host: record.host || '',
         username: record.username || 'root',
         port: record.port || '22',
-        command: record.command!,
+        command: record.command || buildCommand({
+          host: record.host || '',
+          username: record.username || 'root',
+          port: record.port || '22',
+        }),
         category: catName,
         note: record.note || '',
         priority: record.priority ?? (currentMaxPriority + 1),
         networkType: record.networkType || '局域网',
-        createdAt: Date.now(),
+        createdAt: record.createdAt || Date.now(),
       };
-      setSSHRecords(prev => [newRecord, ...prev]);
-    }
+      return [newRecord, ...prev];
+    });
     setEditingSSH(null);
   };
 
@@ -1893,28 +2102,29 @@ const App: React.FC = () => {
       });
     }
 
-    if (record.id) {
-      setApiRecords(prev => prev.map(r => r.id === record.id ? { ...r, ...record } as APIRecord : r));
-    } else {
-      const currentMaxPriority = apiRecords.length > 0 
-        ? Math.max(...apiRecords.map(r => r.priority || 0)) 
-        : 0;
+    setApiRecords(prev => {
+      if (record.id && prev.some(r => r.id === record.id)) {
+        return prev.map(r => r.id === record.id ? { ...r, ...record } as APIRecord : r);
+      }
 
+      const currentMaxPriority = prev.length > 0
+        ? Math.max(...prev.map(r => r.priority || 0))
+        : 0;
       const newRecord: APIRecord = {
-        id: crypto.randomUUID(),
-        title: record.title!,
+        id: record.id || crypto.randomUUID(),
+        title: record.title || '未命名 API',
         baseUrl: record.baseUrl || '',
-        endpoint: record.endpoint!,
+        endpoint: record.endpoint || '',
         method: record.method || 'GET',
         apiKey: record.apiKey || '',
         usage: record.usage || '',
         category: catName,
         note: record.note || '',
         priority: record.priority ?? (currentMaxPriority + 1),
-        createdAt: Date.now(),
+        createdAt: record.createdAt || Date.now(),
       };
-      setApiRecords(prev => [newRecord, ...prev]);
-    }
+      return [newRecord, ...prev];
+    });
   };
 
   const handleUpdateAPICategories = (newCategories: Category[]) => {
@@ -2021,7 +2231,7 @@ const App: React.FC = () => {
     };
     setRecurringEvents(prev => {
       const next = [newEvent, ...prev];
-      try { localStorage.setItem(STORAGE_KEY_RECURRING, JSON.stringify(next)); } catch {}
+      try { saveLocalStorageMirror(STORAGE_KEY_RECURRING, next); } catch {}
       return next;
     });
   }, []);
@@ -2029,7 +2239,7 @@ const App: React.FC = () => {
   const handleUpdateRecurring = useCallback((id: string, data: Partial<RecurringEvent>) => {
     setRecurringEvents(prev => {
       const next = prev.map(e => e.id === id ? { ...e, ...data } : e);
-      try { localStorage.setItem(STORAGE_KEY_RECURRING, JSON.stringify(next)); } catch {}
+      try { saveLocalStorageMirror(STORAGE_KEY_RECURRING, next); } catch {}
       return next;
     });
   }, []);
@@ -2037,7 +2247,7 @@ const App: React.FC = () => {
   const handleDeleteRecurring = useCallback((id: string) => {
     setRecurringEvents(prev => {
       const next = prev.filter(e => e.id !== id);
-      try { localStorage.setItem(STORAGE_KEY_RECURRING, JSON.stringify(next)); } catch {}
+      try { saveLocalStorageMirror(STORAGE_KEY_RECURRING, next); } catch {}
       return next;
     });
   }, []);
@@ -2701,6 +2911,18 @@ const App: React.FC = () => {
               }));
             }}
             resourceData={resourceData}
+            sshRecords={sshRecords}
+            sshCategories={(categoriesMap['ssh'] || DEFAULT_CATEGORIES).filter(c => c.id !== 'all').map(c => c.name)}
+            onSaveSSH={handleSaveSSH}
+            onDeleteSSH={(id) => {
+              setSSHRecords(prev => prev.filter(record => record.id !== id));
+            }}
+            apiRecords={apiRecords}
+            apiCategories={(categoriesMap['api'] || DEFAULT_CATEGORIES).filter(c => c.id !== 'all').map(c => c.name)}
+            onSaveAPI={handleSaveAPI}
+            onDeleteAPI={(id) => {
+              setApiRecords(prev => prev.filter(record => record.id !== id));
+            }}
             fileRecords={fileRecords}
             fileCategories={(categoriesMap['files'] || []).filter(c => c.id !== 'all').map(c => c.name)}
             recurringEvents={recurringEvents}

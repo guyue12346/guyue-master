@@ -219,8 +219,6 @@ const getItemIcon = (item: WorkspaceItem) => {
   if (item.type === 'markdown') return FileText;
   if (item.icon) return getCategoryIcon(item.icon);
   switch (item.type) {
-    case 'markdown':
-      return FileText;
     case 'file':
       return Upload;
     case 'links':

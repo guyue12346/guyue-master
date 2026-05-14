@@ -8,7 +8,12 @@ import {
 } from 'lucide-react';
 
 // Icon options for playlists
-const PLAYLIST_ICONS: { id: string; Icon: React.FC<{ className?: string }> }[] = [
+type PlaylistIconComponent = React.ComponentType<{
+  className?: string;
+  style?: React.CSSProperties;
+}>;
+
+const PLAYLIST_ICONS: { id: string; Icon: PlaylistIconComponent }[] = [
   { id: 'ListMusic', Icon: ListMusic },
   { id: 'Music', Icon: Music },
   { id: 'Headphones', Icon: Headphones },
@@ -23,7 +28,7 @@ const PLAYLIST_ICONS: { id: string; Icon: React.FC<{ className?: string }> }[] =
   { id: 'Library', Icon: Library },
 ];
 
-const ICON_MAP: Record<string, React.FC<{ className?: string }>> = Object.fromEntries(PLAYLIST_ICONS.map(i => [i.id, i.Icon]));
+const ICON_MAP: Record<string, PlaylistIconComponent> = Object.fromEntries(PLAYLIST_ICONS.map(i => [i.id, i.Icon]));
 
 // Color presets
 const PLAYLIST_COLORS = [

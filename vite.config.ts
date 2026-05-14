@@ -19,14 +19,16 @@ export default defineConfig(({ mode }) => {
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),
+          '@braintree/sanitize-url': path.resolve(__dirname, 'utils/sanitizeUrlShim.ts'),
         }
       },
       build: {
         outDir: 'dist',
         emptyOutDir: true,
+        chunkSizeWarningLimit: 10000,
         rollupOptions: {
           output: {
-            manualChunks: undefined, // 避免分包问题
+            manualChunks: undefined, // Avoid unstable vendor chunk cycles in Electron production builds.
           }
         }
       }

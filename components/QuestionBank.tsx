@@ -25,6 +25,7 @@ import { MarkdownContent } from './MarkdownContent';
 import { exportReactNodeToPdf } from '../utils/markdownPdfExport';
 import { AVAILABLE_MODELS, ChatMessage, ChatService, ChatConfig } from '../services/chatService';
 import { API_PROVIDER_LABELS, loadProfiles } from '../utils/apiProfileService';
+import { hasUnifiedFileStorage, loadLocalJson, loadUnifiedJson, saveUnifiedJson } from '../utils/unifiedStorage';
 import type { ApiProfile } from '../types';
 
 interface QuestionCategory {
@@ -98,6 +99,19 @@ interface AiDraft {
   model: string;
 }
 
+interface QuestionBankUiState {
+  contentMode: ContentMode;
+  activeCategoryId: string;
+  activeQuestionId: string;
+  activeMethodCategoryId: string;
+  activeMethodId: string;
+  viewMode: ViewMode;
+  methodViewMode: MethodViewMode;
+  isSidebarCollapsed: boolean;
+  isQuestionActionsOpen: boolean;
+  search: string;
+}
+
 interface OcrImageSlot {
   file: File | null;
   preview: string;
@@ -119,9 +133,64 @@ type ConfirmDialogState =
 const STORAGE_KEY = 'guyue_question_bank_v1';
 const METHOD_STORAGE_KEY = 'guyue_method_library_v1';
 const AI_CONFIG_KEY = 'guyue_question_bank_ai_config_v1';
+const UI_STATE_KEY = 'guyue_question_bank_ui_state_v1';
+const STORE_KEY_QUESTION_BANK = 'question-bank';
+const STORE_KEY_METHOD_LIBRARY = 'question-bank-method-library';
+const STORE_KEY_AI_CONFIG = 'question-bank-ai-config';
+const STORE_KEY_UI_STATE = 'question-bank-ui-state';
 const SUPPORTED_AI_PROVIDERS = new Set(['zenmux', 'gemini', 'openai', 'anthropic', 'deepseek', 'zhipu', 'moonshot', 'minimax', 'ollama', 'custom']);
 
 const nowId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+const defaultUiState = (): QuestionBankUiState => ({
+  contentMode: 'questions',
+  activeCategoryId: '',
+  activeQuestionId: '',
+  activeMethodCategoryId: '',
+  activeMethodId: '',
+  viewMode: 'read',
+  methodViewMode: 'read',
+  isSidebarCollapsed: false,
+  isQuestionActionsOpen: true,
+  search: '',
+});
+
+const loadUiState = (): QuestionBankUiState => {
+  if (typeof window === 'undefined') return defaultUiState();
+  return loadLocalJson({
+    localStorageKey: UI_STATE_KEY,
+    defaultValue: defaultUiState,
+    normalize: normalizeUiState,
+  });
+};
+
+const saveUiState = (state: QuestionBankUiState) => {
+  saveUnifiedJson(
+    {
+      appDataKey: STORE_KEY_UI_STATE,
+      localStorageKey: UI_STATE_KEY,
+      defaultValue: defaultUiState,
+      normalize: normalizeUiState,
+    },
+    state,
+  );
+};
+
+function normalizeUiState(source: any): QuestionBankUiState {
+  const fallback = defaultUiState();
+  return {
+    contentMode: source?.contentMode === 'methods' ? 'methods' : fallback.contentMode,
+    activeCategoryId: typeof source?.activeCategoryId === 'string' ? source.activeCategoryId : '',
+    activeQuestionId: typeof source?.activeQuestionId === 'string' ? source.activeQuestionId : '',
+    activeMethodCategoryId: typeof source?.activeMethodCategoryId === 'string' ? source.activeMethodCategoryId : '',
+    activeMethodId: typeof source?.activeMethodId === 'string' ? source.activeMethodId : '',
+    viewMode: source?.viewMode === 'edit' || source?.viewMode === 'browse' ? source.viewMode : fallback.viewMode,
+    methodViewMode: source?.methodViewMode === 'edit' ? 'edit' : fallback.methodViewMode,
+    isSidebarCollapsed: Boolean(source?.isSidebarCollapsed),
+    isQuestionActionsOpen: typeof source?.isQuestionActionsOpen === 'boolean' ? source.isQuestionActionsOpen : fallback.isQuestionActionsOpen,
+    search: typeof source?.search === 'string' ? source.search : '',
+  };
+}
 
 const defaultData = (): QuestionBankData => ({
   categories: [
@@ -232,48 +301,96 @@ const normalizeMethodLibraryData = (source: any): MethodLibraryData => {
 };
 
 const loadData = (): QuestionBankData => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultData();
-    return normalizeQuestionBankData(JSON.parse(raw));
-  } catch {
-    return defaultData();
-  }
+  return loadLocalJson({
+    localStorageKey: STORAGE_KEY,
+    defaultValue: defaultData,
+    normalize: normalizeQuestionBankData,
+  });
+};
+
+const loadDataFromStorage = () => {
+  return loadUnifiedJson({
+    appDataKey: STORE_KEY_QUESTION_BANK,
+    localStorageKey: STORAGE_KEY,
+    defaultValue: defaultData,
+    normalize: normalizeQuestionBankData,
+  });
 };
 
 const saveData = (data: QuestionBankData) => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  saveUnifiedJson(
+    {
+      appDataKey: STORE_KEY_QUESTION_BANK,
+      localStorageKey: STORAGE_KEY,
+      defaultValue: defaultData,
+      normalize: normalizeQuestionBankData,
+    },
+    data,
+  );
 };
 
 const loadMethodData = (): MethodLibraryData => {
-  try {
-    const raw = localStorage.getItem(METHOD_STORAGE_KEY);
-    if (!raw) return defaultMethodData();
-    return normalizeMethodLibraryData(JSON.parse(raw));
-  } catch {
-    return defaultMethodData();
-  }
+  return loadLocalJson({
+    localStorageKey: METHOD_STORAGE_KEY,
+    defaultValue: defaultMethodData,
+    normalize: normalizeMethodLibraryData,
+  });
+};
+
+const loadMethodDataFromStorage = () => {
+  return loadUnifiedJson({
+    appDataKey: STORE_KEY_METHOD_LIBRARY,
+    localStorageKey: METHOD_STORAGE_KEY,
+    defaultValue: defaultMethodData,
+    normalize: normalizeMethodLibraryData,
+  });
 };
 
 const saveMethodData = (data: MethodLibraryData) => {
-  localStorage.setItem(METHOD_STORAGE_KEY, JSON.stringify(data));
+  saveUnifiedJson(
+    {
+      appDataKey: STORE_KEY_METHOD_LIBRARY,
+      localStorageKey: METHOD_STORAGE_KEY,
+      defaultValue: defaultMethodData,
+      normalize: normalizeMethodLibraryData,
+    },
+    data,
+  );
 };
 
 const loadAiDraft = (): AiDraft => {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(AI_CONFIG_KEY) || '{}');
-    return {
-      profileId: typeof parsed.profileId === 'string' ? parsed.profileId : '',
-      model: typeof parsed.model === 'string' ? parsed.model : '',
-    };
-  } catch {
-    return { profileId: '', model: '' };
-  }
+  return loadLocalJson({
+    localStorageKey: AI_CONFIG_KEY,
+    defaultValue: () => ({ profileId: '', model: '' }),
+    normalize: normalizeAiDraft,
+  });
+};
+
+const loadAiDraftFromStorage = () => {
+  return loadUnifiedJson({
+    appDataKey: STORE_KEY_AI_CONFIG,
+    localStorageKey: AI_CONFIG_KEY,
+    defaultValue: () => ({ profileId: '', model: '' }),
+    normalize: normalizeAiDraft,
+  });
 };
 
 const saveAiDraft = (draft: AiDraft) => {
-  localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(draft));
+  saveUnifiedJson(
+    {
+      appDataKey: STORE_KEY_AI_CONFIG,
+      localStorageKey: AI_CONFIG_KEY,
+      defaultValue: () => ({ profileId: '', model: '' }),
+      normalize: normalizeAiDraft,
+    },
+    draft,
+  );
 };
+
+const normalizeAiDraft = (source: any): AiDraft => ({
+  profileId: typeof source?.profileId === 'string' ? source.profileId : '',
+  model: typeof source?.model === 'string' ? source.model : '',
+});
 
 const formatDate = (timestamp: number) =>
   new Intl.DateTimeFormat('zh-CN', {
@@ -509,16 +626,52 @@ const categoryPath = (categories: QuestionCategory[], categoryId?: string) => {
   return names.join(' / ');
 };
 
-const SolutionPreview: React.FC<{ solutions: QuestionSolution[]; titleClassName?: string }> = ({ solutions, titleClassName = 'mb-2 text-sm font-semibold text-gray-500' }) => (
+const SolutionPreview: React.FC<{
+  solutions: QuestionSolution[];
+  titleClassName?: string;
+  titleMode?: 'all' | 'multiple' | 'none';
+}> = ({ solutions, titleClassName = 'mb-2 text-sm font-semibold text-gray-500', titleMode = 'all' }) => (
   <div className="space-y-5">
-    {solutions.map((solution, index) => (
-      <div key={solution.id} className={index > 0 ? 'border-t border-gray-100 pt-5' : ''}>
-        <div className={titleClassName}>{solutions.length > 1 ? `解答 ${index + 1}` : '解答'}</div>
-        {solution.note.trim() && <MarkdownContent content={toBlockquoteMarkdown(solution.note)} />}
-        <MarkdownContent content={solution.content || '（空）'} />
-      </div>
-    ))}
+    {solutions.map((solution, index) => {
+      const shouldShowTitle = titleMode === 'all' || (titleMode === 'multiple' && solutions.length > 1);
+      return (
+        <div key={solution.id} className={index > 0 ? 'border-t border-gray-100 pt-5' : ''}>
+          {shouldShowTitle && <div className={titleClassName}>{solutions.length > 1 ? `解答 ${index + 1}` : '解答'}</div>}
+          {solution.note.trim() && <MarkdownContent content={toBlockquoteMarkdown(solution.note)} />}
+          <MarkdownContent content={solution.content || '（空）'} />
+        </div>
+      );
+    })}
   </div>
+);
+
+const AnswerSection: React.FC<{
+  solutions: QuestionSolution[];
+  hidden: boolean;
+  onToggle: () => void;
+  className?: string;
+  titleClassName?: string;
+}> = ({ solutions, hidden, onToggle, className = '', titleClassName = 'text-sm font-semibold text-gray-500' }) => (
+  <section className={className}>
+    <div className="mb-3 flex items-center justify-between gap-3">
+      <div className={titleClassName}>解答</div>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex h-8 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 text-xs text-gray-600 hover:bg-gray-50"
+      >
+        {hidden ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        {hidden ? '展开解答' : '隐藏解答'}
+      </button>
+    </div>
+    {hidden ? (
+      <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm text-gray-400">
+        解答已隐藏
+      </div>
+    ) : (
+      <SolutionPreview solutions={solutions} titleClassName="mb-2 text-sm font-semibold text-gray-500" titleMode="multiple" />
+    )}
+  </section>
 );
 
 const PrintableSheet: React.FC<{
@@ -642,19 +795,23 @@ const CategoryTree: React.FC<{
 
 export const QuestionBank: React.FC = () => {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [contentMode, setContentMode] = useState<ContentMode>('questions');
+  const [uiStateSeed] = useState<QuestionBankUiState>(() => loadUiState());
+  const [contentMode, setContentMode] = useState<ContentMode>(() => uiStateSeed.contentMode);
   const [data, setData] = useState<QuestionBankData>(loadData);
   const [methodData, setMethodData] = useState<MethodLibraryData>(loadMethodData);
-  const [activeCategoryId, setActiveCategoryId] = useState<string>('');
-  const [activeQuestionId, setActiveQuestionId] = useState<string>('');
-  const [activeMethodCategoryId, setActiveMethodCategoryId] = useState<string>('');
-  const [activeMethodId, setActiveMethodId] = useState<string>('');
-  const [viewMode, setViewMode] = useState<ViewMode>('read');
-  const [methodViewMode, setMethodViewMode] = useState<MethodViewMode>('read');
+  const [isQuestionDataReady, setIsQuestionDataReady] = useState(() => !hasUnifiedFileStorage());
+  const [isMethodDataReady, setIsMethodDataReady] = useState(() => !hasUnifiedFileStorage());
+  const [activeCategoryId, setActiveCategoryId] = useState<string>(() => uiStateSeed.activeCategoryId);
+  const [activeQuestionId, setActiveQuestionId] = useState<string>(() => uiStateSeed.activeQuestionId);
+  const [activeMethodCategoryId, setActiveMethodCategoryId] = useState<string>(() => uiStateSeed.activeMethodCategoryId);
+  const [activeMethodId, setActiveMethodId] = useState<string>(() => uiStateSeed.activeMethodId);
+  const [viewMode, setViewMode] = useState<ViewMode>(() => uiStateSeed.viewMode);
+  const [methodViewMode, setMethodViewMode] = useState<MethodViewMode>(() => uiStateSeed.methodViewMode);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [isQuestionActionsOpen, setIsQuestionActionsOpen] = useState(true);
-  const [search, setSearch] = useState('');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => uiStateSeed.isSidebarCollapsed);
+  const [isQuestionActionsOpen, setIsQuestionActionsOpen] = useState(() => uiStateSeed.isQuestionActionsOpen);
+  const [hiddenAnswerQuestionIds, setHiddenAnswerQuestionIds] = useState<Set<string>>(() => new Set());
+  const [search, setSearch] = useState(() => uiStateSeed.search);
   const [isSheetPageOpen, setIsSheetPageOpen] = useState(false);
   const [sheetItems, setSheetItems] = useState<SheetItem[]>([]);
   const [sheetTitle, setSheetTitle] = useState('题单');
@@ -696,8 +853,94 @@ export const QuestionBank: React.FC = () => {
   const [questionImage, setQuestionImage] = useState<OcrImageSlot>({ file: null, preview: '', base64: '' });
   const [answerImage, setAnswerImage] = useState<OcrImageSlot>({ file: null, preview: '', base64: '' });
   const [isAiLoading, setIsAiLoading] = useState(false);
-  useEffect(() => saveData(data), [data]);
-  useEffect(() => saveMethodData(methodData), [methodData]);
+
+  useEffect(() => {
+    if (!hasUnifiedFileStorage()) return;
+    let cancelled = false;
+
+    loadDataFromStorage()
+      .then(next => {
+        if (cancelled) return;
+        setData(next);
+        setIsQuestionDataReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setIsQuestionDataReady(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hasUnifiedFileStorage()) return;
+    let cancelled = false;
+
+    loadMethodDataFromStorage()
+      .then(next => {
+        if (cancelled) return;
+        setMethodData(next);
+        setIsMethodDataReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setIsMethodDataReady(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hasUnifiedFileStorage()) return;
+    let cancelled = false;
+
+    loadAiDraftFromStorage()
+      .then(next => {
+        if (!cancelled) setAiDraft(next);
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isQuestionDataReady) return;
+    saveData(data);
+  }, [data, isQuestionDataReady]);
+
+  useEffect(() => {
+    if (!isMethodDataReady) return;
+    saveMethodData(methodData);
+  }, [methodData, isMethodDataReady]);
+  useEffect(() => {
+    saveUiState({
+      contentMode,
+      activeCategoryId,
+      activeQuestionId,
+      activeMethodCategoryId,
+      activeMethodId,
+      viewMode,
+      methodViewMode,
+      isSidebarCollapsed,
+      isQuestionActionsOpen,
+      search,
+    });
+  }, [
+    contentMode,
+    activeCategoryId,
+    activeQuestionId,
+    activeMethodCategoryId,
+    activeMethodId,
+    viewMode,
+    methodViewMode,
+    isSidebarCollapsed,
+    isQuestionActionsOpen,
+    search,
+  ]);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -921,6 +1164,15 @@ export const QuestionBank: React.FC = () => {
 
   const updateMethodData = (updater: (current: MethodLibraryData) => MethodLibraryData) => {
     setMethodData(current => updater(current));
+  };
+
+  const toggleAnswerVisibility = (questionId: string) => {
+    setHiddenAnswerQuestionIds(current => {
+      const next = new Set(current);
+      if (next.has(questionId)) next.delete(questionId);
+      else next.add(questionId);
+      return next;
+    });
   };
 
   const handleAddCategory = (parentId?: string) => {
@@ -1547,6 +1799,7 @@ export const QuestionBank: React.FC = () => {
         ) : (
           filteredQuestions.map((question, index) => {
             const linkedMethods = question.methodIds.map(id => methods.find(method => method.id === id)).filter((method): method is MethodItem => !!method);
+            const answerHidden = hiddenAnswerQuestionIds.has(question.id);
             return (
               <section key={question.id} className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
                 <div className="mb-5 flex items-start justify-between gap-4">
@@ -1594,9 +1847,12 @@ export const QuestionBank: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  <div className="border-t border-gray-100 pt-5">
-                    <SolutionPreview solutions={question.solutions} />
-                  </div>
+                  <AnswerSection
+                    solutions={question.solutions}
+                    hidden={answerHidden}
+                    onToggle={() => toggleAnswerVisibility(question.id)}
+                    className="border-t border-gray-100 pt-5"
+                  />
                 </div>
               </section>
             );
@@ -2016,9 +2272,9 @@ export const QuestionBank: React.FC = () => {
                 <Plus className="h-4 w-4" />
               </button>
               <button
-                onClick={() => handleAddCategory(contentMode === 'questions' ? activeCategoryId : activeMethodCategoryId)}
+                onClick={() => handleAddCategory()}
                 className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
-                title="新增子分类"
+                title="新增根分类"
               >
                 <FolderPlus className="h-4 w-4" />
               </button>
@@ -2071,16 +2327,14 @@ export const QuestionBank: React.FC = () => {
                   className={`flex w-full gap-2 rounded-xl border p-3 text-left transition-colors ${active ? 'border-blue-200 bg-blue-50' : 'border-transparent bg-white hover:border-gray-200'} ${selected ? 'ring-2 ring-blue-300' : ''}`}
                 >
                     <span className="min-w-0 flex-1">
-                      <span className="flex min-w-0 items-center gap-2">
-                        <span className="truncate text-sm font-medium text-gray-900">{question.title || '未命名题目'}</span>
-                        {question.tags.length > 0 && (
-                          <span className="flex shrink-0 flex-wrap gap-1">
-                            {question.tags.slice(0, 3).map(tag => <span key={tag} className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">{tag}</span>)}
-                            {question.tags.length > 3 && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">+{question.tags.length - 3}</span>}
-                          </span>
-                        )}
-                      </span>
-                    <span className="mt-1 block truncate text-xs text-gray-400">{categoryPath(categories, question.categoryId)} · 难度 {formatDifficulty(question.difficulty)} · {formatDate(question.updatedAt)}</span>
+                      <span className="block truncate text-sm font-medium text-gray-900">{question.title || '未命名题目'}</span>
+                      {question.tags.length > 0 && (
+                        <span className="mt-1 flex max-h-10 flex-wrap gap-1 overflow-hidden">
+                          {question.tags.slice(0, 6).map(tag => <span key={tag} className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] leading-4 text-gray-500">{tag}</span>)}
+                          {question.tags.length > 6 && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] leading-4 text-gray-500">+{question.tags.length - 6}</span>}
+                        </span>
+                      )}
+                    <span className="mt-1.5 block truncate text-xs text-gray-400">{categoryPath(categories, question.categoryId)} · 难度 {formatDifficulty(question.difficulty)} · {formatDate(question.updatedAt)}</span>
                     {question.summary.trim() && <span className="mt-1 block truncate text-xs text-gray-500">{question.summary}</span>}
                   </span>
                 </button>
@@ -2098,16 +2352,14 @@ export const QuestionBank: React.FC = () => {
                     className={`flex w-full gap-2 rounded-xl border p-3 text-left transition-colors ${active ? 'border-blue-200 bg-blue-50' : 'border-transparent bg-white hover:border-gray-200'}`}
                   >
                     <span className="min-w-0 flex-1">
-                      <span className="flex min-w-0 items-center gap-2">
-                        <span className="truncate text-sm font-medium text-gray-900">{method.title || '未命名方法'}</span>
-                        {method.tags.length > 0 && (
-                          <span className="flex shrink-0 flex-wrap gap-1">
-                            {method.tags.slice(0, 3).map(tag => <span key={tag} className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">{tag}</span>)}
-                            {method.tags.length > 3 && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">+{method.tags.length - 3}</span>}
-                          </span>
-                        )}
-                      </span>
-                      <span className="mt-1 block truncate text-xs text-gray-400">{categoryPath(methodCategories, method.categoryId)} · {formatDate(method.updatedAt)}</span>
+                      <span className="block truncate text-sm font-medium text-gray-900">{method.title || '未命名方法'}</span>
+                      {method.tags.length > 0 && (
+                        <span className="mt-1 flex max-h-10 flex-wrap gap-1 overflow-hidden">
+                          {method.tags.slice(0, 6).map(tag => <span key={tag} className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] leading-4 text-gray-500">{tag}</span>)}
+                          {method.tags.length > 6 && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] leading-4 text-gray-500">+{method.tags.length - 6}</span>}
+                        </span>
+                      )}
+                      <span className="mt-1.5 block truncate text-xs text-gray-400">{categoryPath(methodCategories, method.categoryId)} · {formatDate(method.updatedAt)}</span>
                       {method.summary.trim() && <span className="mt-1 block truncate text-xs text-gray-500">{method.summary}</span>}
                     </span>
                   </button>
@@ -2428,9 +2680,13 @@ export const QuestionBank: React.FC = () => {
                   )}
                 </section>
 
-                <section className="rounded-2xl border border-gray-200 bg-white p-6">
-                  <SolutionPreview solutions={activeQuestion.solutions} titleClassName="mb-4 text-base font-semibold text-gray-500" />
-                </section>
+                <AnswerSection
+                  solutions={activeQuestion.solutions}
+                  hidden={hiddenAnswerQuestionIds.has(activeQuestion.id)}
+                  onToggle={() => toggleAnswerVisibility(activeQuestion.id)}
+                  className="rounded-2xl border border-gray-200 bg-white p-6"
+                  titleClassName="text-base font-semibold text-gray-500"
+                />
             </div>
           )}
         </div>

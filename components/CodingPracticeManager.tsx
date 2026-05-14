@@ -58,6 +58,7 @@ interface PracticeCategory {
 }
 
 type PracticeFileId = 'input' | 'code' | 'output' | 'notes';
+type RunnablePracticeFileId = Exclude<PracticeFileId, 'notes'>;
 
 interface PracticeFile {
   id: PracticeFileId;
@@ -65,6 +66,9 @@ interface PracticeFile {
   editorLanguage: string;
   content: string;
 }
+
+const isRunnablePracticeFile = (file: PracticeFile): file is PracticeFile & { id: RunnablePracticeFileId } =>
+  file.id === 'input' || file.id === 'code' || file.id === 'output';
 
 interface LanguageMeta {
   label: string;
@@ -1337,7 +1341,7 @@ export const CodingPracticeManager: React.FC<CodingPracticeManagerProps> = ({ he
     try {
       const result = await window.electronAPI.codingPracticeRun({
         language: session.language,
-        files: session.files.filter(file => file.id === 'input' || file.id === 'code' || file.id === 'output').map(file => ({
+        files: session.files.filter(isRunnablePracticeFile).map(file => ({
           id: file.id,
           name: file.name,
           content: file.content,
@@ -1508,7 +1512,7 @@ export const CodingPracticeManager: React.FC<CodingPracticeManagerProps> = ({ he
       try {
         const result = await window.electronAPI.codingPracticeCheck({
           language: activeSession.language,
-          files: activeSession.files.filter(file => file.id === 'input' || file.id === 'code' || file.id === 'output').map(file => ({
+          files: activeSession.files.filter(isRunnablePracticeFile).map(file => ({
             id: file.id,
             name: file.name,
             content: file.content,

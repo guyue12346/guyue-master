@@ -1,5 +1,53 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+type RendererGlobal = typeof globalThis & {
+  location?: { href?: string };
+  addEventListener?: (type: string, listener: (event: any) => void) => void;
+};
+
+const rendererGlobal = globalThis as RendererGlobal;
+
+function sendRendererDiagnostic(type: string, payload?: Record<string, unknown>) {
+  try {
+    ipcRenderer.send('renderer-diagnostic', {
+      type,
+      href: rendererGlobal.location?.href,
+      timestamp: Date.now(),
+      ...payload,
+    });
+  } catch {
+    // Diagnostics must never affect renderer startup.
+  }
+}
+
+sendRendererDiagnostic('preload:start');
+
+rendererGlobal.addEventListener?.('DOMContentLoaded', () => {
+  sendRendererDiagnostic('dom-content-loaded');
+});
+
+rendererGlobal.addEventListener?.('load', () => {
+  sendRendererDiagnostic('window-load');
+});
+
+rendererGlobal.addEventListener?.('error', event => {
+  sendRendererDiagnostic('window-error', {
+    message: event.message,
+    filename: event.filename,
+    lineno: event.lineno,
+    colno: event.colno,
+    stack: event.error instanceof Error ? event.error.stack : undefined,
+  });
+});
+
+rendererGlobal.addEventListener?.('unhandledrejection', event => {
+  const reason = event.reason;
+  sendRendererDiagnostic('unhandled-rejection', {
+    message: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+  });
+});
+
 // 暴露安全的 API 给渲染进程
 contextBridge.exposeInMainWorld('electronAPI', {
   // 获取应用版本

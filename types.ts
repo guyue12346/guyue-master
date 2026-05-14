@@ -414,7 +414,7 @@ export interface ElectronAPI {
   deletePlugin: (id: string) => Promise<boolean>;
   // Terminal
   createTerminal: (options?: any) => Promise<string>; // returns terminal ID
-  onTerminalData: (callback: (event: any, payload: { id: string, data: string }) => void) => void;
+  onTerminalData: (callback: (event: any, payload: { id: string, data: string }) => void) => (() => void);
   writeTerminal: (id: string, data: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => void;
   closeTerminal: (id: string) => void;

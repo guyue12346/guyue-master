@@ -9,6 +9,7 @@ import {
   copyFileToDestination,
   deleteResourceFile,
   deleteModuleFolder,
+  getModulePath,
   SectionType,
   SECTION_NAMES
 } from '../utils/learningStorage';
@@ -524,7 +525,6 @@ export const LearningList: React.FC<LearningListProps> = ({
     const category = categories.find(c => c.id === course.categoryId);
 
     try {
-      const { getModulePath } = await import('../utils/learningStorage');
       const modulePath = await getModulePath(
         category?.id || course.categoryId,
         course.id,
@@ -702,7 +702,6 @@ export const LearningList: React.FC<LearningListProps> = ({
     const category = categories.find(c => c.id === course.categoryId);
 
     try {
-      const { getModulePath } = await import('../utils/learningStorage');
       // 用 moduleId 定位路径，与模块标题无关
       const modulePath = await getModulePath(
         category?.id || course.categoryId,

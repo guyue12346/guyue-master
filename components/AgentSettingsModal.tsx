@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { X, CheckCircle2, AlertCircle, Trash2, Sparkles, ChevronDown, ChevronRight, Plus, Pencil, Download } from 'lucide-react';
+import { X, CheckCircle2, AlertCircle, Trash2, Sparkles, ChevronDown, ChevronRight, Plus, Pencil, Mail, Server, Key, Edit3, BookUser, Send, Loader2 } from 'lucide-react';
 import { AGENT_AVAILABLE_MODELS, ChatConfig } from '../services/chatService';
+import type { AgentEmailConfig, Contact } from '../services/agent/agentStorage';
 import { loadProfiles } from '../utils/apiProfileService';
 import type { ApiProfile } from '../types';
 
@@ -14,16 +15,30 @@ interface AgentSettingsModalProps {
   onClose: () => void;
   config: ChatConfig;
   onChangeConfig: (config: ChatConfig) => void;
+  routerConfig: ChatConfig;
+  onChangeRouterConfig: (config: ChatConfig) => void;
   onClearHistory: () => void;
   modules: ModuleInfo[];
   modulePrompts: Record<string, string>;
   onChangeModulePrompts: (prompts: Record<string, string>) => void;
+  emailConfig: AgentEmailConfig;
+  onChangeEmailConfig: (config: AgentEmailConfig) => void;
+  onSaveEmailConfig: () => void;
+  onTestEmail: () => void;
+  emailTestStatus: 'idle' | 'loading' | 'success' | 'error';
+  emailTestError: string;
+  contacts: Contact[];
+  onSaveContact: (contact: Contact) => void;
+  onDeleteContact: (id: string) => void;
 }
 
 const NATIVE_TOOL_PROVIDERS = new Set(['openai', 'anthropic', 'gemini', 'zenmux', 'moonshot']);
 const STORAGE_KEY_AGENT_API_CONFIGS = 'guyue_agent_api_profiles_v1';
 
-type AgentProvider = keyof typeof AGENT_AVAILABLE_MODELS;
+type AgentProvider = ChatConfig['provider'];
+
+const isAgentProvider = (provider: string): provider is AgentProvider =>
+  provider in AGENT_AVAILABLE_MODELS;
 
 interface SavedAgentApiConfig {
   id: string;
@@ -44,7 +59,7 @@ const loadSavedApiConfigs = (): SavedAgentApiConfig[] => {
       typeof item.label === 'string' &&
       typeof item.provider === 'string' &&
       typeof item.apiKey === 'string' &&
-      item.provider in AGENT_AVAILABLE_MODELS
+      isAgentProvider(item.provider)
     ));
   } catch {
     return [];
@@ -72,16 +87,28 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   onClose,
   config,
   onChangeConfig,
+  routerConfig,
+  onChangeRouterConfig,
   onClearHistory,
   modules,
   modulePrompts,
   onChangeModulePrompts,
+  emailConfig,
+  onChangeEmailConfig,
+  onSaveEmailConfig,
+  onTestEmail,
+  emailTestStatus,
+  emailTestError,
+  contacts,
+  onSaveContact,
+  onDeleteContact,
 }) => {
   const [showModulePrompts, setShowModulePrompts] = useState(false);
   const [activeModuleTab, setActiveModuleTab] = useState<string | null>(null);
   const [savedApiConfigs, setSavedApiConfigs] = useState<SavedAgentApiConfig[]>([]);
   const [selectedApiConfigId, setSelectedApiConfigId] = useState<string>('');
   const [globalApiProfiles, setGlobalApiProfiles] = useState<ApiProfile[]>([]);
+  const [editingContact, setEditingContact] = useState<Contact | null>(null);
 
   // 新增表单状态
   const [formLabel, setFormLabel] = useState('');
@@ -106,6 +133,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   }, [isOpen, config.provider, config.apiKey, config.baseUrl]);
 
   const currentModels = AGENT_AVAILABLE_MODELS[config.provider] || [];
+  const routerModels = AGENT_AVAILABLE_MODELS[routerConfig.provider] || [];
   const supportsNativeTools = NATIVE_TOOL_PROVIDERS.has(config.provider);
 
   const applyConfig = (item: SavedAgentApiConfig) => {
@@ -114,6 +142,22 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
       : AGENT_AVAILABLE_MODELS[item.provider]?.[0]?.id || '';
     setSelectedApiConfigId(item.id);
     onChangeConfig({ ...config, provider: item.provider, model: nextModel, apiKey: item.apiKey, baseUrl: item.baseUrl || '' });
+  };
+
+  const applyRouterConfig = (item: SavedAgentApiConfig) => {
+    const nextModel = AGENT_AVAILABLE_MODELS[item.provider]?.some(m => m.id === routerConfig.model)
+      ? routerConfig.model
+      : AGENT_AVAILABLE_MODELS[item.provider]?.[0]?.id || '';
+    onChangeRouterConfig({
+      ...routerConfig,
+      provider: item.provider,
+      model: nextModel,
+      apiKey: item.apiKey,
+      baseUrl: item.baseUrl || '',
+      systemPrompt: '',
+      temperature: 0,
+      maxTokens: 1024,
+    });
   };
 
   const startEdit = (item: SavedAgentApiConfig) => {
@@ -174,6 +218,8 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   };
 
   const formNeedsBaseUrl = formProvider === 'custom' || formProvider === 'ollama';
+  const configNeedsBaseUrl = config.provider === 'custom' || config.provider === 'ollama';
+  const routerNeedsBaseUrl = routerConfig.provider === 'custom' || routerConfig.provider === 'ollama';
   const isEditing = editingId !== null;
 
   if (!isOpen) return null;
@@ -184,7 +230,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-xl rounded-3xl bg-white shadow-2xl border border-gray-200 overflow-hidden max-h-[90vh] flex flex-col"
+        className="w-full max-w-2xl rounded-3xl bg-white shadow-2xl border border-gray-200 overflow-hidden max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -201,7 +247,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
         <div className="overflow-y-auto min-h-0 flex-1">
           {/* ── API 配置列表 ── */}
           <div className="px-5 pt-4 pb-2">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">API 配置</p>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Agent API 配置列表</p>
             {/* 从全局配置快速导入 */}
             {globalApiProfiles.length > 0 && (
               <div className="mb-3">
@@ -212,14 +258,13 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
                     const profile = globalApiProfiles.find(p => p.id === e.target.value);
                     if (!profile) return;
                     const provider = profile.provider;
-                    if (!(provider in AGENT_AVAILABLE_MODELS)) return;
-                    const typedProvider = provider as ChatConfig['provider'];
+                    if (!isAgentProvider(provider)) return;
                     
                     // 导入到 savedApiConfigs 列表
                     const newItem: SavedAgentApiConfig = {
                       id: crypto.randomUUID(),
                       label: profile.name,
-                      provider: typedProvider,
+                      provider,
                       apiKey: profile.apiKey,
                       baseUrl: profile.baseUrl || '',
                     };
@@ -303,18 +348,164 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
             )}
           </div>
 
-          {/* ── 当前模型 ── */}
+          {/* ── Agent 本体 API ── */}
           <div className="px-5 pb-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">模型</p>
-            <select
-              value={config.model}
-              onChange={e => onChangeConfig({ ...config, model: e.target.value })}
-              className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-            >
-              {currentModels.map(m => (
-                <option key={m.id} value={m.id}>{m.name}{m.description ? ` — ${m.description}` : ''}</option>
-              ))}
-            </select>
+            <div className="rounded-xl border border-blue-100 bg-blue-50/30 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">Agent 本体 API</p>
+                <span className="text-[11px] text-blue-400">{config.apiKey ? '已配置' : '未配置'}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">提供商</label>
+                  <select
+                    value={config.provider}
+                    onChange={e => {
+                      const provider = e.target.value as AgentProvider;
+                      onChangeConfig({
+                        ...config,
+                        provider,
+                        model: AGENT_AVAILABLE_MODELS[provider]?.[0]?.id || '',
+                      });
+                    }}
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  >
+                    {Object.keys(AGENT_AVAILABLE_MODELS).map(p => (
+                      <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">模型</label>
+                  <select
+                    value={config.model}
+                    onChange={e => onChangeConfig({ ...config, model: e.target.value })}
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  >
+                    {currentModels.map(m => (
+                      <option key={m.id} value={m.id}>{m.name}{m.description ? ` — ${m.description}` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">API Key</label>
+                <input
+                  type="password"
+                  value={config.apiKey}
+                  onChange={e => onChangeConfig({ ...config, apiKey: e.target.value })}
+                  placeholder="Agent 主模型 API Key"
+                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
+              {configNeedsBaseUrl && (
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Base URL</label>
+                  <input
+                    type="text"
+                    value={config.baseUrl || ''}
+                    onChange={e => onChangeConfig({ ...config, baseUrl: e.target.value })}
+                    placeholder="https://api.example.com/v1"
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── 自动路由 API ── */}
+          <div className="px-5 pb-4">
+            <div className="rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">自动路由 API</p>
+                <button
+                  onClick={() => onChangeRouterConfig({ ...routerConfig, apiKey: '', baseUrl: '', systemPrompt: '', temperature: 0, maxTokens: 1024 })}
+                  className="text-[11px] text-gray-400 hover:text-gray-600"
+                >
+                  跟随主模型
+                </button>
+              </div>
+              <div className="p-4 space-y-3">
+                {savedApiConfigs.length > 0 && (
+                  <select
+                    className="w-full rounded-lg border border-dashed border-violet-200 bg-violet-50/40 px-3 py-2 text-xs text-gray-600 outline-none focus:border-violet-400"
+                    value=""
+                    onChange={e => {
+                      const item = savedApiConfigs.find(p => p.id === e.target.value);
+                      if (item) applyRouterConfig(item);
+                    }}
+                  >
+                    <option value="">选择已保存配置作为路由模型…</option>
+                    {savedApiConfigs.map(item => (
+                      <option key={item.id} value={item.id}>{item.label} ({PROVIDER_LABELS[item.provider] || item.provider})</option>
+                    ))}
+                  </select>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">提供商</label>
+                    <select
+                      value={routerConfig.provider}
+                      onChange={e => {
+                        const provider = e.target.value as AgentProvider;
+                        onChangeRouterConfig({
+                          ...routerConfig,
+                          provider,
+                          model: AGENT_AVAILABLE_MODELS[provider]?.[0]?.id || '',
+                          systemPrompt: '',
+                          temperature: 0,
+                          maxTokens: 1024,
+                        });
+                      }}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 bg-white"
+                    >
+                      {Object.keys(AGENT_AVAILABLE_MODELS).map(p => (
+                        <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">模型</label>
+                    <select
+                      value={routerConfig.model}
+                      onChange={e => onChangeRouterConfig({ ...routerConfig, model: e.target.value, systemPrompt: '', temperature: 0, maxTokens: 1024 })}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 bg-white"
+                    >
+                      {routerModels.map(m => (
+                        <option key={m.id} value={m.id}>{m.name}{m.description ? ` — ${m.description}` : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">API Key</label>
+                  <input
+                    type="password"
+                    value={routerConfig.apiKey}
+                    onChange={e => onChangeRouterConfig({ ...routerConfig, apiKey: e.target.value, systemPrompt: '', temperature: 0, maxTokens: 1024 })}
+                    placeholder="留空则跟随主模型"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                  />
+                </div>
+                {routerNeedsBaseUrl && (
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Base URL</label>
+                    <input
+                      type="text"
+                      value={routerConfig.baseUrl || ''}
+                      onChange={e => onChangeRouterConfig({ ...routerConfig, baseUrl: e.target.value, systemPrompt: '', temperature: 0, maxTokens: 1024 })}
+                      placeholder="https://api.example.com/v1"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                    />
+                  </div>
+                )}
+                <p className="text-[11px] text-gray-400">
+                  {routerConfig.apiKey
+                    ? `路由使用 ${PROVIDER_LABELS[routerConfig.provider] || routerConfig.provider} · ${routerConfig.model}`
+                    : '当前未单独配置，自动路由会使用主 Agent 模型。'}
+                </p>
+              </div>
+            </div>
           </div>
 
           {/* ── 添加 / 编辑表单 ── */}
@@ -409,6 +600,199 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
               rows={4}
               className="w-full resize-y rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
             />
+          </div>
+
+          {/* ── 邮件与通讯录 ── */}
+          <div className="px-5 pb-4">
+            <div className="rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">邮件与通讯录</p>
+              </div>
+              <div className="p-4 space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1"><Server className="w-3 h-3" />SMTP 服务器</label>
+                    <input
+                      type="text"
+                      value={emailConfig.smtp.host}
+                      onChange={e => onChangeEmailConfig({ ...emailConfig, smtp: { ...emailConfig.smtp, host: e.target.value } })}
+                      placeholder="smtp.163.com"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">端口</label>
+                    <input
+                      type="number"
+                      value={emailConfig.smtp.port}
+                      onChange={e => onChangeEmailConfig({ ...emailConfig, smtp: { ...emailConfig.smtp, port: parseInt(e.target.value) || 465 } })}
+                      placeholder="465"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                </div>
+                <label className="inline-flex items-center gap-2 text-xs text-gray-500">
+                  <input
+                    type="checkbox"
+                    checked={emailConfig.smtp.secure}
+                    onChange={e => onChangeEmailConfig({ ...emailConfig, smtp: { ...emailConfig.smtp, secure: e.target.checked } })}
+                    className="rounded border-gray-300"
+                  />
+                  使用 SSL/TLS
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1"><Mail className="w-3 h-3" />发件邮箱</label>
+                    <input
+                      type="email"
+                      value={emailConfig.smtp.user}
+                      onChange={e => onChangeEmailConfig({ ...emailConfig, smtp: { ...emailConfig.smtp, user: e.target.value } })}
+                      placeholder="your-email@example.com"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1"><Edit3 className="w-3 h-3" />发件人名称</label>
+                    <input
+                      type="text"
+                      value={emailConfig.senderName ?? '古月的Agent助理'}
+                      onChange={e => onChangeEmailConfig({ ...emailConfig, senderName: e.target.value })}
+                      placeholder="古月的Agent助理"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1"><Key className="w-3 h-3" />SMTP 授权码</label>
+                    <input
+                      type="password"
+                      value={emailConfig.smtp.pass}
+                      onChange={e => onChangeEmailConfig({ ...emailConfig, smtp: { ...emailConfig.smtp, pass: e.target.value } })}
+                      placeholder="授权码"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1"><Mail className="w-3 h-3" />默认收件邮箱</label>
+                    <input
+                      type="email"
+                      value={emailConfig.recipient}
+                      onChange={e => onChangeEmailConfig({ ...emailConfig, recipient: e.target.value })}
+                      placeholder="receive@example.com"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={onTestEmail}
+                    disabled={emailTestStatus === 'loading'}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-700 hover:bg-gray-200 disabled:opacity-50 transition-colors"
+                  >
+                    {emailTestStatus === 'loading' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                    测试
+                  </button>
+                  <button
+                    onClick={onSaveEmailConfig}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 transition-colors"
+                  >
+                    保存邮件配置
+                  </button>
+                  {emailTestStatus === 'success' && <span className="inline-flex items-center gap-1 text-xs text-green-600"><CheckCircle2 className="w-3.5 h-3.5" />测试成功</span>}
+                  {emailTestStatus === 'error' && <span className="inline-flex items-center gap-1 text-xs text-red-500"><AlertCircle className="w-3.5 h-3.5" />{emailTestError}</span>}
+                </div>
+
+                <div className="border-t border-gray-100 pt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-700"><BookUser className="w-3.5 h-3.5" />通讯录</label>
+                    <button
+                      onClick={() => setEditingContact({ id: '', nickname: '', email: '', note: '' })}
+                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 transition-colors"
+                    >
+                      <Plus className="w-3 h-3" />添加
+                    </button>
+                  </div>
+                  {editingContact && (
+                    <div className="mb-3 rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          value={editingContact.nickname}
+                          onChange={e => setEditingContact(prev => prev ? { ...prev, nickname: e.target.value } : prev)}
+                          placeholder="简称"
+                          className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400"
+                        />
+                        <input
+                          type="email"
+                          value={editingContact.email}
+                          onChange={e => setEditingContact(prev => prev ? { ...prev, email: e.target.value } : prev)}
+                          placeholder="邮箱"
+                          className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400"
+                        />
+                      </div>
+                      <input
+                        type="text"
+                        value={editingContact.note}
+                        onChange={e => setEditingContact(prev => prev ? { ...prev, note: e.target.value } : prev)}
+                        placeholder="备注"
+                        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400"
+                      />
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            if (!editingContact.nickname.trim() || !editingContact.email.trim()) return;
+                            onSaveContact(editingContact);
+                            setEditingContact(null);
+                          }}
+                          className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 transition-colors"
+                        >
+                          保存
+                        </button>
+                        <button
+                          onClick={() => setEditingContact(null)}
+                          className="rounded-lg bg-white border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  <div className="max-h-44 overflow-y-auto space-y-1">
+                    {contacts.length === 0 && !editingContact && (
+                      <p className="rounded-xl border border-dashed border-gray-200 py-4 text-center text-xs text-gray-400">暂无联系人</p>
+                    )}
+                    {contacts.map(contact => (
+                      <div key={contact.id} className="flex items-center gap-2 rounded-xl px-3 py-2 hover:bg-gray-50 group transition-colors">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-gray-800 truncate">{contact.nickname}</span>
+                            <span className="text-xs text-gray-400 truncate">{contact.email}</span>
+                          </div>
+                          {contact.note && <p className="text-xs text-gray-400 truncate">{contact.note}</p>}
+                        </div>
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => setEditingContact({ ...contact })}
+                            className="w-7 h-7 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 flex items-center justify-center transition-colors"
+                            title="编辑联系人"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => onDeleteContact(contact.id)}
+                            className="w-7 h-7 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 flex items-center justify-center transition-colors"
+                            title="删除联系人"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* ── 模块专属提示词 ── */}

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, session, net } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import { fileURLToPath } from 'url';
 import pty from 'node-pty';
 import os from 'os';
@@ -16,12 +17,41 @@ const __dirname = path.dirname(__filename);
 const isDev = process.env.NODE_ENV === 'development';
 const DEV_SERVER_URL = 'http://localhost:3001';
 
+if (isDev) {
+  app.setPath('userData', path.join(app.getPath('appData'), 'Guyue Master Dev'));
+}
+
 let mainWindow: BrowserWindow | null = null;
 const codexUsageWindows = new Map<string, BrowserWindow>();
 let aiStudioWindow: BrowserWindow | null = null;
 
 const isMac = process.platform === 'darwin';
 const isWin = process.platform === 'win32';
+
+function writeDiagnosticLog(message: string, payload?: unknown) {
+  const suffix = payload === undefined
+    ? ''
+    : ` ${typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)}`;
+  const line = `[${new Date().toISOString()}] ${message}${suffix}\n`;
+
+  try {
+    console.log(line.trim());
+  } catch {
+    // Ignore console write failures in packaged apps launched from Finder.
+  }
+
+  try {
+    const logPath = path.join(app.getPath('userData'), 'diagnostics.log');
+    fsSync.mkdirSync(path.dirname(logPath), { recursive: true });
+    fsSync.appendFileSync(logPath, line);
+  } catch {
+    // Diagnostics must never break app startup.
+  }
+}
+
+ipcMain.on('renderer-diagnostic', (_event, payload) => {
+  writeDiagnosticLog('renderer:diagnostic', payload);
+});
 
 // ── GPU 渲染稳定性修复 ──────────────────────────────────────────────────────
 // macOS 上 Chromium 自动选图形后端时偶发 GPU 进程崩溃，导致彩虹干涉纹。
@@ -33,6 +63,13 @@ if (isMac) {
 }
 
 function createWindow() {
+  writeDiagnosticLog('createWindow:start', {
+    isDev,
+    userData: app.getPath('userData'),
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+  });
+
   const windowOptions: Electron.BrowserWindowConstructorOptions = {
     width: 1400,
     height: 900,
@@ -61,12 +98,30 @@ function createWindow() {
 
   // 当页面准备好显示时再展示窗口，避免白屏/黑屏闪烁
   mainWindow.once('ready-to-show', () => {
+    writeDiagnosticLog('window:ready-to-show');
     mainWindow?.show();
   });
 
+  mainWindow.webContents.on('did-start-loading', () => {
+    writeDiagnosticLog('webContents:did-start-loading', mainWindow?.webContents.getURL());
+  });
+
+  mainWindow.webContents.on('dom-ready', () => {
+    writeDiagnosticLog('webContents:dom-ready', mainWindow?.webContents.getURL());
+  });
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    writeDiagnosticLog('webContents:did-finish-load', mainWindow?.webContents.getURL());
+  });
+
   // 加载失败时的处理
-  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-    console.error('Page failed to load:', errorCode, errorDescription);
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    writeDiagnosticLog('webContents:did-fail-load', {
+      errorCode,
+      errorDescription,
+      validatedURL,
+      isMainFrame,
+    });
     // 开发环境下可能是 Vite 还没启动，尝试重新加载
     if (isDev && errorCode === -102) { // ERR_CONNECTION_REFUSED
       setTimeout(() => {
@@ -76,26 +131,49 @@ function createWindow() {
   });
 
   // 渲染进程崩溃时的处理
-  mainWindow.webContents.on('render-process-gone', (event, details) => {
-    console.error('Render process gone:', details.reason);
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    writeDiagnosticLog('webContents:render-process-gone', details);
     if (details.reason === 'crashed') {
       // 尝试重新加载页面
       mainWindow?.reload();
     }
   });
 
+  mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
+    writeDiagnosticLog('webContents:preload-error', {
+      preloadPath,
+      message: error.message,
+      stack: error.stack,
+    });
+  });
+
+  mainWindow.on('unresponsive', () => {
+    writeDiagnosticLog('window:unresponsive');
+  });
+
   mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
     const type = level >= 2 ? 'error' : 'log';
     console[type](`[renderer:${level}] ${message} (${sourceId}:${line})`);
+    if (level >= 2) {
+      writeDiagnosticLog('renderer:console-message', {
+        level,
+        message,
+        line,
+        sourceId,
+      });
+    }
   });
 
   // 开发环境加载 Vite 开发服务器
   if (isDev) {
+    writeDiagnosticLog('loadURL', DEV_SERVER_URL);
     mainWindow.loadURL(DEV_SERVER_URL);
     mainWindow.webContents.openDevTools(); // 自动打开开发者工具
   } else {
     // 生产环境加载打包后的文件
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    const indexPath = path.join(__dirname, '../dist/index.html');
+    writeDiagnosticLog('loadFile', indexPath);
+    mainWindow.loadFile(indexPath);
   }
 
   // 处理新窗口打开请求（例如 window.open）
@@ -109,6 +187,7 @@ function createWindow() {
   });
 
   mainWindow.on('closed', () => {
+    writeDiagnosticLog('window:closed');
     mainWindow = null;
   });
 }

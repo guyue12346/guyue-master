@@ -113,10 +113,11 @@ function normalizeEmbeddingConfig(embeddingConfig: EmbeddingConfig | string, bas
   }
 
   const { provider, model } = inferProvider(baseUrl);
+  const apiKey = typeof embeddingConfig === 'string' ? embeddingConfig : embeddingConfig.apiKey;
   return {
     provider,
     model,
-    apiKey: embeddingConfig,
+    apiKey,
     ...(baseUrl ? { baseUrl } : {}),
   };
 }

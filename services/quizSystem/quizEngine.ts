@@ -11,7 +11,7 @@ import type {
 } from './types';
 import { buildQuestionPrompt, buildFollowUpPrompt, buildSessionSummaryPrompt } from './prompts';
 import type { PromptChunk, StudentProfile, StorePromptContext, GenerationPhase, HistoryExample } from './prompts';
-import { calculateQuestionPriorities, createTagMastery } from './scheduler';
+import { calculateQuestionPriorities, createTagMastery, updateMastery } from './scheduler';
 import { loadMastery, saveMastery, loadQuestionCache, addCachedQuestion } from './storageService';
 import { getEmbedding } from '../ragLlamaIndex/embedding';
 import type { EmbeddingConfig, SearchResult } from '../ragLlamaIndex';
@@ -603,7 +603,6 @@ export async function updateMasteryAfterAnswer(
   score: number,
   categoryId?: string,
 ): Promise<void> {
-  const { updateMastery } = await import('./scheduler');
   const mastery = await loadMastery(categoryId);
 
   // 为题目的每个标签独立更新掌握度
