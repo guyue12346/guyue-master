@@ -8,6 +8,7 @@ import {
   AGENT_AVAILABLE_MODELS,
   ChatMessage,
   ChatAttachment,
+  ChatTool,
   ChatToolCall,
   ChatDebugEvent,
 } from '../services/chatService';
@@ -19,7 +20,7 @@ import {
   AGENT_MODULES,
   ENABLED_AGENT_MODULES,
   getModuleById,
-  isNativeProvider,
+  isStepwiseNativeProvider,
   type AgentModule,
 } from '../services/agent/agentModules';
 import {
@@ -27,8 +28,10 @@ import {
   AGENT_EMAIL_CONFIG_KEY,
   loadAgentConfig,
   loadAgentRouterConfig,
+  loadAgentSearchConfig,
   saveAgentConfig,
   saveAgentRouterConfig,
+  saveAgentSearchConfig,
   loadAgentHistory,
   saveAgentHistory,
   clearAgentHistory,
@@ -39,6 +42,7 @@ import {
   loadModulePrompts as loadStoredModulePrompts,
   saveModulePrompts,
   type AgentEmailConfig,
+  type AgentSearchConfig,
   type Contact,
 } from '../services/agent/agentStorage';
 import {
@@ -57,13 +61,17 @@ import {
   executeToolRegistration,
   findToolRegistration,
   generateToolCallSummary,
-  getAllNativeTools,
+  getNativeToolRegistrations,
   getModuleByToolName,
   getToolPermissionCapabilities,
   getToolPermissionTarget,
   hasFullToolAccess,
+  SPECIALIZED_SEARCH_TOOL,
+  WEB_SEARCH_TOOL_REGISTRATION,
+  SPECIALIZED_SEARCH_TOOL_REGISTRATION,
   type ToolExecutionContext,
 } from '../services/agent/toolRegistry';
+import { toStrictTool } from '../services/agent/toolSchema';
 import { TOOL_REGISTRY } from '../services/agent/tools';
 import {
   normalizeTodoPayload,
@@ -72,6 +80,7 @@ import {
 } from '../services/agent/tools/todoHelpers';
 import {
   createAgentRuntime,
+  createAgentToolExecutionEnvelope,
   type AgentCompletionEvaluation,
   type AgentTraceEvent,
 } from '../services/agent/runtime';
@@ -83,17 +92,26 @@ import {
   finishAgentToolTransaction,
   startAgentToolTransaction,
 } from '../services/agent/executionLog';
+import {
+  needsHumanConfirmation,
+  type AgentPendingConfirmation,
+  type AgentUndoSnapshot,
+} from '../services/agent/safety';
+import {
+  createAgentUndoSnapshotForTool,
+  restoreAgentUndoSnapshot,
+} from '../services/agent/snapshots';
+import {
+  detectModuleScopeLocally,
+  getModuleScopeLabel,
+  getRouterSignature,
+  normalizeModuleScope,
+} from '../services/agent/router';
 
 /* ─── 类型定义 ─── */
 
 /** 待确认操作（如发送邮件），需要用户手动批准 */
-interface PendingConfirmation {
-  id: string;
-  type: 'send_email' | 'agent_tool';
-  status: 'pending' | 'confirmed' | 'cancelled';
-  data: Record<string, any>;
-  summary: string;
-}
+type PendingConfirmation = AgentPendingConfirmation;
 
 interface AgentMessage {
   id: string;
@@ -109,13 +127,7 @@ interface AgentMessage {
 }
 
 /** 修改/删除操作前的数据快照，用于一键回退 */
-interface UndoSnapshot {
-  type: 'todo' | 'note' | 'resource' | 'ssh' | 'api' | 'recurring' | 'latex_file' | 'latex_template';
-  action: 'update' | 'delete';
-  id: string;
-  data: Record<string, any>;
-  label: string;
-}
+type UndoSnapshot = AgentUndoSnapshot;
 
 interface AgentAction {
   type: string;
@@ -189,10 +201,31 @@ interface AgentPromptOptions {
 
 interface AgentRouteResult {
   modules: string[];
-  source: 'manual' | 'local' | 'llm' | 'all' | 'none';
+  source: 'manual' | 'local' | 'llm' | 'cache' | 'search-only' | 'none';
   confidence: number;
   reason: string;
   useTools: boolean;
+}
+
+interface AgentSupplementalRouteResult {
+  addModules: string[];
+  needContinue: boolean;
+  source: 'llm' | 'cache' | 'none';
+  confidence: number;
+  reason: string;
+}
+
+interface AgentRouteCacheEntry {
+  key: string;
+  kind: 'initial' | 'supplemental';
+  modules: string[];
+  useTools: boolean;
+  confidence: number;
+  reason: string;
+  routerSignature: string;
+  createdAt: number;
+  updatedAt: number;
+  hitCount: number;
 }
 
 interface AgentDebugItem {
@@ -219,6 +252,10 @@ interface AgentRuntimeToolVisualEvent {
 const MAX_DEBUG_ITEMS = 200;
 const MAX_RUNTIME_VISUAL_EVENTS = 120;
 const MAX_RUNTIME_TOOL_EVENTS = 80;
+const AGENT_ROUTE_CACHE_KEY = 'guyue_agent_route_cache_v1';
+const AGENT_ROUTE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const AGENT_ROUTE_CACHE_MAX_ENTRIES = 100;
+const AGENT_ROUTE_CACHE_MIN_CONFIDENCE = 0.75;
 
 /* ─── 调试阶段中文标签映射 ─── */
 const STAGE_DISPLAY: Record<string, string> = {
@@ -237,8 +274,14 @@ const STAGE_DISPLAY: Record<string, string> = {
   'langgraph:error': '❌ Agent 错误',
   'router:selected-scope': '📌 手动作用域',
   'router:local-intent': '🔍 本地意图匹配',
+  'router:cache-hit': '⚡ 路由缓存命中',
   'router:llm-request': '🤖 LLM 路由请求',
   'router:llm-response': '📨 LLM 路由结果',
+  'router:supplement-request': '🔄 补充路由请求',
+  'router:supplement-response': '📨 补充路由结果',
+  'router:supplement-cache-hit': '⚡ 补充路由缓存',
+  'router:supplement-applied': '✅ 补充作用域应用',
+  'router:supplement-skip': '⏭️ 跳过补充路由',
   'router:skip': '⏭️ 跳过路由',
   'router:error': '❌ 路由失败',
   'native:request-context': '📋 构建请求上下文',
@@ -611,6 +654,59 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
 3. 如果用户指定的分类不存在，先 create_latex_file_category 或 create_latex_template_category 创建。
 4. 操作流程：先 query_latex_file_categories → query_latex_files → read_latex_file / edit_latex_file。
 5. 编辑文件时需提供完整的文件内容，不能只传部分内容。`,
+
+  'question-bank': `## 题库模块
+
+### 核心能力
+管理题库、解题方法和多级分类。题目由题面、多个解答、概述、难度、标签、备注和关联解题方法组成，内容均支持 Markdown/LaTeX。
+
+### 可用工具
+- **query_question_categories** — 查询题库或解题方法分类，创建题目/方法前先调用获取 categoryId。
+- **create_question_category** — 创建题库或解题方法分类，可在 parentId 下创建子分类。
+- **query_questions** — 查询题目，支持分类、关键词、标签过滤；includeContent=true 返回完整题面和解答。
+- **create_question** — 创建题目，必须指定已有分类，solutions 支持多个解答。
+- **update_question / delete_question** — 修改或删除题目，会进入确认和快照回退流程。
+- **query_solution_methods / create_solution_method / update_solution_method** — 查询、创建、修改解题方法。
+
+### 工作流程规范
+1. 创建题目或方法前必须先 query_question_categories，使用返回的 categoryId，不要猜测分类。
+2. 标签可以多个，用数组或分号分隔；难度系数控制在 0 到 1，一位小数。
+3. 修改/删除前先 query_questions 或 query_solution_methods 确认 id。
+4. 如果用户要求“整理成题库”，保留原题关键信息，不要自行补不存在的条件。`,
+
+  canvas: `## 画布模块
+
+### 核心能力
+管理 Excalidraw 画布库的分类和画布元数据，可创建空白画布、重命名、改分类和删除。
+
+### 可用工具
+- **query_canvas_categories** — 查询画布分类和数量。
+- **create_canvas_category** — 创建画布分类，可指定图标和颜色。
+- **query_canvases** — 查询画布元数据，不返回完整绘图内容。
+- **create_canvas** — 创建空白画布，必须指定已有分类。
+- **update_canvas_meta / delete_canvas** — 修改画布名称/分类或删除画布，会进入确认和快照回退流程。
+
+### 工作流程规范
+1. 创建画布前先 query_canvas_categories，分类不存在则先 create_canvas_category。
+2. 画布工具只管理画布库结构，不直接编辑 Excalidraw 元素内容。
+3. 修改/删除前先 query_canvases 确认 id。`,
+
+  git: `## Git 管理模块
+
+### 核心能力
+查询本地 Git 管理中心登记的仓库、查看状态/日志/diff，并执行暂存、取消暂存、提交、fetch、pull、push。
+
+### 可用工具
+- **query_git_repositories** — 查询已登记仓库，refresh=true 可同步状态。
+- **query_git_status** — 查询仓库分支、远程、ahead/behind 和工作区文件。
+- **query_git_diff** — 查看指定文件 diff。
+- **git_stage_files / git_unstage_files** — 暂存或取消暂存明确文件列表。
+- **git_commit / git_fetch / git_pull / git_push** — 执行提交和远程同步操作。
+
+### 工作流程规范
+1. 先 query_git_repositories 或 query_git_status 确认仓库、分支、远程和变更列表。
+2. 暂存/提交/拉取/推送都属于修改操作，会进入用户确认流程；不要在用户只问状态时执行。
+3. commit 前应确认已暂存文件和提交信息。pull 使用 ff-only，遇到冲突要提示用户手动处理。`,
 };
 
 const createAgentWelcomeMessage = (content?: string): AgentMessage => ({
@@ -622,20 +718,110 @@ const createAgentWelcomeMessage = (content?: string): AgentMessage => ({
 
 /* ─── Agent System Prompt ─── */
 
-const normalizeModuleScope = (moduleIds?: Array<string | null | undefined>): string[] => {
-  const enabledIds = new Set(ENABLED_AGENT_MODULES.map(module => module.id));
-  const normalized: string[] = [];
-  (moduleIds || []).forEach(moduleId => {
-    if (!moduleId || !enabledIds.has(moduleId) || normalized.includes(moduleId)) return;
-    normalized.push(moduleId);
-  });
-  return normalized;
+const normalizeRouteCacheText = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 1200);
+
+const hashRouteCacheKey = (value: string) => {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
 };
 
-const getModuleScopeLabel = (moduleIds: string[]): string =>
-  moduleIds
-    .map(moduleId => getModuleById(moduleId)?.name || moduleId)
-    .join('、');
+const loadRouteCacheEntries = (): AgentRouteCacheEntry[] => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(AGENT_ROUTE_CACHE_KEY) || '[]');
+    if (!Array.isArray(parsed)) return [];
+    const now = Date.now();
+    return parsed.filter((entry): entry is AgentRouteCacheEntry => (
+      entry &&
+      typeof entry.key === 'string' &&
+      (entry.kind === 'initial' || entry.kind === 'supplemental') &&
+      Array.isArray(entry.modules) &&
+      typeof entry.useTools === 'boolean' &&
+      typeof entry.confidence === 'number' &&
+      typeof entry.routerSignature === 'string' &&
+      typeof entry.updatedAt === 'number' &&
+      now - entry.updatedAt <= AGENT_ROUTE_CACHE_TTL_MS
+    ));
+  } catch {
+    return [];
+  }
+};
+
+const saveRouteCacheEntries = (entries: AgentRouteCacheEntry[]) => {
+  const now = Date.now();
+  const next = entries
+    .filter(entry => now - entry.updatedAt <= AGENT_ROUTE_CACHE_TTL_MS)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, AGENT_ROUTE_CACHE_MAX_ENTRIES);
+  localStorage.setItem(AGENT_ROUTE_CACHE_KEY, JSON.stringify(next));
+};
+
+const getRouteCacheEntry = (
+  key: string,
+  routerSignature: string,
+): AgentRouteCacheEntry | null => {
+  const entries = loadRouteCacheEntries();
+  const found = entries.find(entry => entry.key === key && entry.routerSignature === routerSignature);
+  if (!found) {
+    saveRouteCacheEntries(entries);
+    return null;
+  }
+  const updated = {
+    ...found,
+    hitCount: found.hitCount + 1,
+    updatedAt: Date.now(),
+  };
+  saveRouteCacheEntries(entries.map(entry => entry.key === key ? updated : entry));
+  return updated;
+};
+
+const setRouteCacheEntry = (entry: Omit<AgentRouteCacheEntry, 'createdAt' | 'updatedAt' | 'hitCount'>) => {
+  const entries = loadRouteCacheEntries();
+  const existing = entries.find(item => item.key === entry.key && item.routerSignature === entry.routerSignature);
+  const now = Date.now();
+  const nextEntry: AgentRouteCacheEntry = {
+    ...entry,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    hitCount: existing?.hitCount || 0,
+  };
+  saveRouteCacheEntries([
+    nextEntry,
+    ...entries.filter(item => !(item.key === entry.key && item.routerSignature === entry.routerSignature)),
+  ]);
+};
+
+const makeInitialRouteCacheKey = (input: string, routingConfig: ChatConfig) =>
+  `initial:${hashRouteCacheKey(`${getRouterSignature(routingConfig)}|${normalizeRouteCacheText(input)}`)}`;
+
+const makeSupplementalRouteCacheKey = (input: {
+  goal: string;
+  currentModules: string[];
+  finalText: string;
+  evaluationMessage: string;
+  failedTools: string[];
+}, routingConfig: ChatConfig) =>
+  `supplemental:${hashRouteCacheKey([
+    getRouterSignature(routingConfig),
+    normalizeRouteCacheText(input.goal),
+    input.currentModules.slice().sort().join(','),
+    normalizeRouteCacheText(input.evaluationMessage),
+    normalizeRouteCacheText(input.finalText).slice(0, 500),
+    input.failedTools.slice().sort().join(','),
+  ].join('|'))}`;
+
+const shouldCacheRouteResult = (routeResult: AgentRouteResult) =>
+  routeResult.source === 'llm' &&
+  routeResult.confidence >= AGENT_ROUTE_CACHE_MIN_CONFIDENCE &&
+  (!routeResult.useTools || routeResult.modules.length > 0);
 
 const getActiveModuleScope = (options: Pick<AgentPromptOptions, 'selectedModule' | 'selectedModules' | 'routedModule' | 'routedModules'>): string[] => {
   const routedScope = normalizeModuleScope([
@@ -662,32 +848,6 @@ const buildModulePromptSection = (moduleIds: string[], modulePrompts?: Record<st
     .join('');
 };
 
-const detectModuleScopeLocally = (input: string): string[] => {
-  const text = input.toLowerCase();
-  const modules: string[] = [];
-  const add = (moduleId: string) => {
-    if (!modules.includes(moduleId)) modules.push(moduleId);
-  };
-
-  if (/待办|任务|事项|日程|提醒|子任务|循环|重复/.test(text)) add('todo');
-  if (/oj|洛谷|acwing|leetcode|刷题记录|做题记录|提交记录/.test(text)) add('dc-oj');
-  if (/资源|订阅|云盘|服务器|域名|到期|续费|容量/.test(text)) add('dc-resources');
-  if (/ssh|终端|主机|连接|端口|服务器登录/.test(text)) add('dc-ssh');
-  if (/api key|apikey|api记录|接口记录|密钥|余额|deepseek|kimi|moonshot|gemini|zenmux|openai|anthropic/.test(text)) add('dc-api');
-  if (/课程|学习|讲义|练习|知识点|学习中心/.test(text)) add('learning');
-  if (/题单|leetcode|算法题|刷题计划/.test(text)) add('leetcode');
-  if (/文件|目录|路径|读取|打开|配置文件|\.env|\.json|\.md|\.tex|\.ya?ml/.test(text)) add('files');
-  if (/知识库|语义检索|rag|向量索引|检索文件|基于文件回答/.test(text)) add('knowledge');
-  if (/prompt|提示词|skill|技能卡|模板/.test(text)) add('prompts');
-  if (/便签|备忘|随手记/.test(text)) add('notes');
-  if (/图床|图片链接|上传图片|markdown链接/.test(text)) add('image');
-  if (/markdown|md笔记|长文|日记|文章/.test(text)) add('markdown');
-  if (/latex|tex|模板|论文|公式/.test(text)) add('latex');
-  if (/邮件|邮箱|发信|联系人|通讯录/.test(text)) add('email');
-
-  return normalizeModuleScope(modules);
-};
-
 const buildModuleRouterPrompt = (input: string) => {
   const moduleList = ENABLED_AGENT_MODULES
     .map(module => `- ${module.id}: ${module.name}，${module.description}`)
@@ -709,6 +869,52 @@ const buildModuleRouterPrompt = (input: string) => {
   ].join('\n');
 };
 
+const buildSupplementalRouterPrompt = (input: {
+  goal: string;
+  currentModules: string[];
+  finalText: string;
+  toolCalls: ChatToolCall[];
+  toolResults: Array<{ toolCall: ChatToolCall; result: any }>;
+  evaluation: AgentCompletionEvaluation;
+}) => {
+  const currentSet = new Set(input.currentModules);
+  const moduleList = ENABLED_AGENT_MODULES
+    .filter(module => !currentSet.has(module.id))
+    .map(module => `- ${module.id}: ${module.name}，${module.description}`)
+    .join('\n') || '无';
+  const compactResults = input.toolResults.slice(-8).map(item => ({
+    tool: item.toolCall.name,
+    success: item.result?.success !== false,
+    message: item.result?.message || item.result?.error || item.result?.summary,
+  }));
+
+  return [
+    '你是 Guyue Master Agent 的补充作用域路由器。',
+    '当前 Agent 已执行一轮，但验收节点认为任务没有完成。你的任务是判断是否需要追加开放新的应用模块。',
+    '只返回 JSON，不要输出 Markdown，不要解释。',
+    'JSON 格式：{"addModules":["email"],"needContinue":true,"confidence":0.82,"reason":"一句话理由"}',
+    '规则：',
+    '1. addModules 只能选择尚未开放的模块，最多 3 个；不要返回当前已开放模块。',
+    '2. 如果失败原因是权限未开启、用户信息不足、API 错误、模型回答质量问题，返回 {"addModules":[],"needContinue":false,...}。',
+    '3. 如果任务缺少发送邮件、写待办、读文件、查询数据中心等跨模块能力，返回需要追加的模块。',
+    '4. 不要为了保险返回全部模块，只返回真正能补齐任务的模块。',
+    '',
+    `当前已开放模块：${input.currentModules.length > 0 ? getModuleScopeLabel(input.currentModules) : '仅搜索 / 无应用模块'}`,
+    '',
+    '可追加模块：',
+    moduleList,
+    '',
+    '执行上下文：',
+    JSON.stringify({
+      goal: input.goal,
+      finalText: input.finalText,
+      evaluation: input.evaluation,
+      toolCalls: input.toolCalls.map(call => ({ name: call.name, arguments: call.arguments })),
+      recentToolResults: compactResults,
+    }).slice(0, 16000),
+  ].join('\n');
+};
+
 const parseModuleRouterResponse = (text: string): AgentRouteResult => {
   const jsonText = text.match(/\{[\s\S]*\}/)?.[0] || text;
   const parsed = JSON.parse(jsonText);
@@ -716,10 +922,30 @@ const parseModuleRouterResponse = (text: string): AgentRouteResult => {
   const useTools = parsed.useTools !== false;
   return {
     modules,
-    source: useTools ? (modules.length > 0 ? 'llm' : 'all') : 'none',
+    source: useTools ? (modules.length > 0 ? 'llm' : 'search-only') : 'none',
     confidence: typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0.5,
     reason: typeof parsed.reason === 'string' ? parsed.reason : 'LLM 路由完成',
     useTools,
+  };
+};
+
+const parseSupplementalRouterResponse = (
+  text: string,
+  currentModules: string[],
+): AgentSupplementalRouteResult => {
+  const jsonText = text.match(/\{[\s\S]*\}/)?.[0] || text;
+  const parsed = JSON.parse(jsonText);
+  const currentSet = new Set(currentModules);
+  const addModules = normalizeModuleScope(Array.isArray(parsed.addModules) ? parsed.addModules.map(String) : [])
+    .filter(moduleId => !currentSet.has(moduleId))
+    .slice(0, 3);
+  const needContinue = parsed.needContinue !== false && addModules.length > 0;
+  return {
+    addModules,
+    needContinue,
+    source: needContinue ? 'llm' : 'none',
+    confidence: typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0.5,
+    reason: typeof parsed.reason === 'string' ? parsed.reason : '补充路由完成',
   };
 };
 
@@ -759,6 +985,8 @@ const getAgentSystemPrompt = ({
 5. 如果工具执行返回了错误信息，请根据错误原因调整参数后重试，最多重试一次。
 6. 你可以进行多轮工具调用。例如先 query_files 查询文件列表，再逐个 read_file 读取内容。不要在只完成第一步后就停止。
 7. 当前作用域：${activeModuleIds.length > 0 ? getModuleScopeLabel(activeModuleIds) : '自动路由 / 未限定'}。不要请求未提供的工具，也不要声称调用了不可见工具。
+8. 如果验收节点补充开放了新的模块工具，你会收到一条继续执行提示；以最新提示和当前可见工具为准，不要重复已经成功完成的创建、修改、删除操作。
+9. 如果本轮工具列表包含 web_search 或 specialized_search，说明你已获得联网权限，可以检索网页、GitHub、npm、StackOverflow、arXiv 等信息；不要再声称无法访问互联网或 GitHub。
 
 ## 任务分解
 - 如果用户的请求包含多个子任务（如「帮我创建三个待办」「查一下文件然后把内容总结发邮件」），你必须逐个完成每个子任务，依次调用对应的工具。
@@ -1286,6 +1514,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [config, setConfig] = useState<ChatConfig>(() => loadAgentConfig());
   const [routerConfig, setRouterConfig] = useState<ChatConfig>(() => loadAgentRouterConfig());
+  const [searchConfig, setSearchConfig] = useState<AgentSearchConfig>(() => loadAgentSearchConfig());
   const [modulePrompts, setModulePrompts] = useState<Record<string, string>>(() => loadStoredModulePrompts(DEFAULT_MODULE_PROMPTS));
   const [selectedModules, setSelectedModules] = useState<string[]>([]);
   const [storedAgentPermissions] = useState(() => loadAgentPermissions());
@@ -1319,11 +1548,13 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const [enableWebSearch, setEnableWebSearch] = useState(() =>
     localStorage.getItem('guyue_agent_web_search') === 'true'
   );
+  const webSearchPermissionEnabled = Boolean(toolPermissions.web?.read);
+  const effectiveWebSearchEnabled = enableWebSearch && webSearchPermissionEnabled;
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const chatServiceRef = useRef<ChatService | null>(null);
-  const supportsNativeTools = useMemo(() => isNativeProvider(config.provider), [config.provider]);
+  const supportsNativeTools = useMemo(() => isStepwiseNativeProvider(config.provider), [config.provider]);
   const currentModels = AGENT_AVAILABLE_MODELS[config.provider] || [];
   const toolPermissionCapabilities = useMemo(
     () => getToolPermissionCapabilities(TOOL_REGISTRY, ENABLED_AGENT_MODULES),
@@ -1365,13 +1596,22 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     [fullAccessPermissions, isSupportedToolPermission, toolPermissions],
   );
   const allowedActionTypes = useMemo(
-    () => TOOL_REGISTRY
+    () => {
+      const names = TOOL_REGISTRY
       .filter(registration => canUseToolRegistration(registration, toolPermissions))
-      .map(registration => registration.name),
-    [toolPermissions],
+      .map(registration => registration.name);
+      if (effectiveWebSearchEnabled) {
+        names.push('web_search');
+        if ((searchConfig.specialized?.enabledSources?.length || 0) > 0) {
+          names.push(SPECIALIZED_SEARCH_TOOL.name);
+        }
+      }
+      return names;
+    },
+    [effectiveWebSearchEnabled, searchConfig.specialized?.enabledSources?.length, toolPermissions],
   );
   const effectiveFilePermissions = useMemo(
-    () => toolPermissions.files?.read ? ['全部'] : [],
+    () => (toolPermissions.files?.read || toolPermissions.files?.update) ? ['全部'] : [],
     [toolPermissions],
   );
   const effectiveLatexFileReadPermissions = useMemo(
@@ -1431,6 +1671,59 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       level: event.stage.includes('error') ? 'error' : 'info',
     });
   }, [pushDebugItem]);
+
+  const handleSaveEmailConfig = useCallback(() => {
+    localStorage.setItem(AGENT_EMAIL_CONFIG_KEY, JSON.stringify(emailConfig));
+    setEmailTestStatus('idle');
+    setEmailTestError('');
+    pushDebugItem({
+      stage: 'settings:email',
+      summary: '已保存 Agent 邮件配置',
+      payload: { smtpHost: emailConfig.smtp.host, recipient: emailConfig.recipient },
+      level: 'success',
+    });
+  }, [emailConfig, pushDebugItem]);
+
+  const handleTestEmail = useCallback(async () => {
+    setEmailTestStatus('loading');
+    setEmailTestError('');
+    try {
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.testEmailConfig) throw new Error('邮件测试接口不可用。');
+      const result = await electronAPI.testEmailConfig(emailConfig);
+      if (!result?.success) throw new Error(result?.error || '邮件测试失败。');
+      setEmailTestStatus('success');
+    } catch (error) {
+      setEmailTestStatus('error');
+      setEmailTestError(error instanceof Error ? error.message : String(error));
+    }
+  }, [emailConfig]);
+
+  const handleSaveContact = useCallback((contact: Contact) => {
+    const normalized: Contact = {
+      ...contact,
+      id: contact.id || crypto.randomUUID(),
+      nickname: contact.nickname.trim(),
+      email: contact.email.trim(),
+      note: contact.note?.trim() || '',
+    };
+    setContacts(prev => {
+      const exists = prev.some(item => item.id === normalized.id);
+      const next = exists
+        ? prev.map(item => item.id === normalized.id ? normalized : item)
+        : [normalized, ...prev];
+      saveContacts(next);
+      return next;
+    });
+  }, []);
+
+  const handleDeleteContact = useCallback((id: string) => {
+    setContacts(prev => {
+      const next = prev.filter(item => item.id !== id);
+      saveContacts(next);
+      return next;
+    });
+  }, []);
 
   const handleModuleClick = (moduleId: string) => {
     const module = getModuleById(moduleId);
@@ -1541,6 +1834,24 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     latexTemplatePermissions: effectiveLatexTemplatePermissions,
     onAutoAuthLatexFileCategory: () => undefined,
     onAutoAuthLatexTemplateCategory: () => undefined,
+    executeWebSearch: async (args: Record<string, any>) => {
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.agentWebSearch) return { success: false, error: '联网搜索功能不可用（非桌面端）。' };
+      return electronAPI.agentWebSearch({
+        ...searchConfig,
+        ...args,
+      });
+    },
+    executeSpecializedSearch: async (args: Record<string, any>) => {
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.agentSpecializedSearch) return { success: false, error: '专用搜索功能不可用（非桌面端）。' };
+      return electronAPI.agentSpecializedSearch({
+        ...args,
+        language: searchConfig.language,
+        country: searchConfig.country,
+        specialized: searchConfig.specialized,
+      });
+    },
   }), [
     apiCategories,
     apiRecords,
@@ -1579,143 +1890,25 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     recurringCategories,
     recurringEvents,
     resourceData,
+    searchConfig,
     sshCategories,
     sshRecords,
     todoCategories,
     todos,
   ]);
 
-  const createUndoSnapshotForTool = useCallback(async (
+  const createUndoSnapshotForTool = useCallback((
     toolName: string,
     args: Record<string, any>,
-  ): Promise<UndoSnapshot | undefined> => {
-    if (['update_todo', 'delete_todo'].includes(toolName)) {
-      const match = resolveTodoMatch(todos, args);
-      const todo = args.id ? todos.find(t => t.id === args.id) : match.todo;
-      if (todo) {
-        return {
-          type: 'todo',
-          action: toolName.startsWith('delete') ? 'delete' : 'update',
-          id: todo.id,
-          data: { ...todo },
-          label: `${toolName === 'delete_todo' ? '删除' : '修改'}待办「${todo.content}」`,
-        };
-      }
-    }
-
-    if (['update_subtask', 'delete_subtask'].includes(toolName)) {
-      const todo = todos.find(t => t.id === args.todoId);
-      if (todo) {
-        return {
-          type: 'todo',
-          action: 'update',
-          id: todo.id,
-          data: { ...todo },
-          label: `${toolName === 'delete_subtask' ? '删除' : '修改'}子任务（${todo.content}）`,
-        };
-      }
-    }
-
-    if (['update_note', 'delete_note'].includes(toolName)) {
-      const note = notes.find(n => n.id === args.id);
-      if (note) {
-        return {
-          type: 'note',
-          action: toolName.startsWith('delete') ? 'delete' : 'update',
-          id: note.id,
-          data: { ...note },
-          label: `${toolName === 'delete_note' ? '删除' : '修改'}便签`,
-        };
-      }
-    }
-
-    if (['update_resource', 'delete_resource'].includes(toolName)) {
-      const item = args.id
-        ? resourceData.items.find(i => i.id === args.id)
-        : resourceData.items.find(i => i.name === args.name);
-      if (item) {
-        return {
-          type: 'resource',
-          action: toolName.startsWith('delete') ? 'delete' : 'update',
-          id: item.id,
-          data: { ...item },
-          label: `${toolName === 'delete_resource' ? '删除' : '修改'}资源「${item.name}」`,
-        };
-      }
-    }
-
-    if (['update_ssh_record', 'delete_ssh_record'].includes(toolName)) {
-      const record = sshRecords.find(item => item.id === args.id);
-      if (record) {
-        return {
-          type: 'ssh',
-          action: toolName.startsWith('delete') ? 'delete' : 'update',
-          id: record.id,
-          data: { ...record },
-          label: `${toolName === 'delete_ssh_record' ? '删除' : '修改'} SSH 记录「${record.title}」`,
-        };
-      }
-    }
-
-    if (['update_api_record', 'delete_api_record'].includes(toolName)) {
-      const record = apiRecords.find(item => item.id === args.id);
-      if (record) {
-        return {
-          type: 'api',
-          action: toolName.startsWith('delete') ? 'delete' : 'update',
-          id: record.id,
-          data: { ...record },
-          label: `${toolName === 'delete_api_record' ? '删除' : '修改'} API 记录「${record.title}」`,
-        };
-      }
-    }
-
-    if (['update_recurring_event', 'delete_recurring_event'].includes(toolName)) {
-      const event = recurringEvents.find(item => item.id === args.id);
-      if (event) {
-        return {
-          type: 'recurring',
-          action: toolName.startsWith('delete') ? 'delete' : 'update',
-          id: event.id,
-          data: { ...event },
-          label: `${toolName === 'delete_recurring_event' ? '删除' : '修改'}重复事件「${event.title}」`,
-        };
-      }
-    }
-
-    if (toolName === 'edit_latex_file') {
-      const electronAPI = (window as any).electronAPI;
-      if (!electronAPI?.latexOpenManagedFile || typeof args.filePath !== 'string') return undefined;
-      const result = await electronAPI.latexOpenManagedFile(args.filePath);
-      if (result?.content !== undefined) {
-        return {
-          type: 'latex_file',
-          action: 'update',
-          id: args.filePath,
-          data: { filePath: args.filePath, content: result.content },
-          label: `修改 LaTeX 文件「${args.filePath}」`,
-        };
-      }
-    }
-
-    if (toolName === 'edit_latex_template') {
-      const electronAPI = (window as any).electronAPI;
-      if (!electronAPI?.latexGetTemplates || typeof args.templateId !== 'string') return undefined;
-      const templates = await electronAPI.latexGetTemplates();
-      const template = Array.isArray(templates) ? templates.find((item: any) => item.id === args.templateId) : undefined;
-      if (template) {
-        return {
-          type: 'latex_template',
-          action: 'update',
-          id: template.id,
-          data: { ...template },
-          label: `修改 LaTeX 模板「${template.name || template.id}」`,
-        };
-      }
-    }
-
-    return undefined;
-  }, [apiRecords, notes, recurringEvents, resourceData.items, sshRecords, todos]);
+  ): Promise<UndoSnapshot | undefined> => createAgentUndoSnapshotForTool(toolName, args, {
+    todos,
+    notes,
+    resourceData,
+    sshRecords,
+    apiRecords,
+    recurringEvents,
+    fileRecords,
+  }), [apiRecords, fileRecords, notes, recurringEvents, resourceData, sshRecords, todos]);
 
   const buildToolConfirmation = useCallback((
     toolName: string,
@@ -1741,7 +1934,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     options: { confirmed?: boolean } = {},
   ): Promise<{ result: any; undoSnapshot?: UndoSnapshot; pendingConfirmation?: PendingConfirmation; executed: boolean }> => {
     const target = getToolPermissionTarget(registration);
-    const needsSafety = target.action === 'update' || target.action === 'delete';
+    const needsSafety = needsHumanConfirmation(target.action);
     const snapshot = needsSafety ? await createUndoSnapshotForTool(registration.name, args) : undefined;
     const requiresConfirmation = needsSafety && !options.confirmed && !hasFullToolAccess(registration, fullAccessPermissions);
 
@@ -1758,7 +1951,6 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
           message: `${snapshot?.label || registration.name} 等待确认。`,
           toolName: registration.name,
           arguments: args,
-          snapshot,
         },
       };
     }
@@ -1904,6 +2096,10 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   }, [routerConfig]);
 
   useEffect(() => {
+    saveAgentSearchConfig(searchConfig);
+  }, [searchConfig]);
+
+  useEffect(() => {
     saveAgentHistory(messages.filter(m => m.id !== 'welcome'));
   }, [messages]);
 
@@ -1967,11 +2163,34 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     if (!routingConfig.apiKey) {
       return {
         modules: [],
-        source: 'all',
+        source: 'search-only',
         confidence: 0.2,
-        reason: '路由模型未配置，保留全部已授权工具',
+        reason: '路由模型未配置，仅开放搜索工具；应用工具需要手动选择作用域或配置路由模型',
         useTools: true,
       };
+    }
+
+    const routerSignature = getRouterSignature(routingConfig);
+    const cacheKey = makeInitialRouteCacheKey(input, routingConfig);
+    const cached = getRouteCacheEntry(cacheKey, routerSignature);
+    if (cached) {
+      const routeResult: AgentRouteResult = {
+        modules: normalizeModuleScope(cached.modules),
+        source: 'cache',
+        confidence: cached.confidence,
+        reason: `${cached.reason}（路由缓存命中）`,
+        useTools: cached.useTools,
+      };
+      pushDebugItem({
+        stage: 'router:cache-hit',
+        summary: routeResult.useTools
+          ? routeResult.modules.length > 0
+            ? `路由缓存命中：${getModuleScopeLabel(routeResult.modules)}`
+            : '路由缓存命中：无需应用工具'
+          : '路由缓存命中：无需工具',
+        payload: { routeResult, cacheKey, hitCount: cached.hitCount },
+      });
+      return routeResult;
     }
 
     try {
@@ -1996,12 +2215,23 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         { id: 'agent-router-system', role: 'system', content: routerPrompt, timestamp: 0 },
       ], { onDebugEvent: pushServiceDebugEvent });
       const routeResult = parseModuleRouterResponse(text);
+      if (shouldCacheRouteResult(routeResult)) {
+        setRouteCacheEntry({
+          key: cacheKey,
+          kind: 'initial',
+          modules: routeResult.modules,
+          useTools: routeResult.useTools,
+          confidence: routeResult.confidence,
+          reason: routeResult.reason,
+          routerSignature,
+        });
+      }
       pushDebugItem({
         stage: 'router:llm-response',
         summary: routeResult.useTools
           ? routeResult.modules.length > 0
             ? `LLM 路由：${getModuleScopeLabel(routeResult.modules)}`
-            : 'LLM 路由：未限定作用域'
+            : 'LLM 路由：仅开放搜索工具'
           : 'LLM 路由：无需工具',
         payload: { text, routeResult },
       });
@@ -2010,20 +2240,138 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       const message = error instanceof Error ? error.message : String(error);
       const routeResult: AgentRouteResult = {
         modules: [],
-        source: 'all',
+        source: 'search-only',
         confidence: 0.1,
-        reason: `自动路由失败，保留全部已授权工具：${message}`,
+        reason: `自动路由失败，仅开放搜索工具：${message}`,
         useTools: true,
       };
       pushDebugItem({
         stage: 'router:llm-response',
-        summary: '自动路由失败，回退到全部已授权工具',
+        summary: '自动路由失败，回退到搜索工具',
         payload: routeResult,
         level: 'info',
       });
       return routeResult;
     }
   }, [config, pushDebugItem, pushServiceDebugEvent, routerConfig, selectedModules]);
+
+  const detectSupplementalModuleScope = useCallback(async (input: {
+    goal: string;
+    currentModules: string[];
+    finalText: string;
+    toolCalls: ChatToolCall[];
+    toolResults: Array<{ toolCall: ChatToolCall; result: any }>;
+    evaluation: AgentCompletionEvaluation;
+  }): Promise<AgentSupplementalRouteResult> => {
+    const currentModules = normalizeModuleScope(input.currentModules);
+    const routingConfig = routerConfig.apiKey ? routerConfig : config;
+    if (!routingConfig.apiKey) {
+      return {
+        addModules: [],
+        needContinue: false,
+        source: 'none',
+        confidence: 0,
+        reason: '路由模型未配置，无法补充作用域',
+      };
+    }
+
+    const failedTools = input.toolResults
+      .filter(item => item.result?.success === false)
+      .map(item => item.toolCall.name);
+    const routerSignature = getRouterSignature(routingConfig);
+    const cacheKey = makeSupplementalRouteCacheKey({
+      goal: input.goal,
+      currentModules,
+      finalText: input.finalText,
+      evaluationMessage: input.evaluation.message,
+      failedTools,
+    }, routingConfig);
+    const cached = getRouteCacheEntry(cacheKey, routerSignature);
+    if (cached) {
+      const addModules = normalizeModuleScope(cached.modules).filter(moduleId => !currentModules.includes(moduleId));
+      const result: AgentSupplementalRouteResult = {
+        addModules,
+        needContinue: cached.useTools && addModules.length > 0,
+        source: 'cache',
+        confidence: cached.confidence,
+        reason: `${cached.reason}（补充路由缓存命中）`,
+      };
+      pushDebugItem({
+        stage: 'router:supplement-cache-hit',
+        summary: result.needContinue
+          ? `补充路由缓存命中：${getModuleScopeLabel(result.addModules)}`
+          : '补充路由缓存命中：无需追加模块',
+        payload: { result, cacheKey, hitCount: cached.hitCount },
+      });
+      return result;
+    }
+
+    try {
+      const routerPrompt = buildSupplementalRouterPrompt({
+        ...input,
+        currentModules,
+      });
+      const routerService = new ChatService({
+        ...routingConfig,
+        systemPrompt: '',
+        temperature: 0,
+        maxTokens: Math.min(routingConfig.maxTokens || 1024, 1024),
+      });
+      pushDebugItem({
+        stage: 'router:supplement-request',
+        summary: '请求 LLM 补充任务作用域',
+        payload: {
+          prompt: routerPrompt,
+          provider: routingConfig.provider,
+          model: routingConfig.model,
+          currentModules,
+        },
+      });
+      const text = await routerService.completeText([
+        { id: 'agent-supplement-router-system', role: 'system', content: routerPrompt, timestamp: 0 },
+      ], { onDebugEvent: pushServiceDebugEvent });
+      const result = parseSupplementalRouterResponse(text, currentModules);
+      if (
+        result.needContinue &&
+        result.confidence >= AGENT_ROUTE_CACHE_MIN_CONFIDENCE &&
+        result.addModules.length > 0
+      ) {
+        setRouteCacheEntry({
+          key: cacheKey,
+          kind: 'supplemental',
+          modules: result.addModules,
+          useTools: result.needContinue,
+          confidence: result.confidence,
+          reason: result.reason,
+          routerSignature,
+        });
+      }
+      pushDebugItem({
+        stage: 'router:supplement-response',
+        summary: result.needContinue
+          ? `补充路由：${getModuleScopeLabel(result.addModules)}`
+          : '补充路由：无需追加模块',
+        payload: { text, result },
+      });
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const result: AgentSupplementalRouteResult = {
+        addModules: [],
+        needContinue: false,
+        source: 'none',
+        confidence: 0,
+        reason: `补充路由失败：${message}`,
+      };
+      pushDebugItem({
+        stage: 'router:supplement-response',
+        summary: result.reason,
+        payload: result,
+        level: 'error',
+      });
+      return result;
+    }
+  }, [config, pushDebugItem, pushServiceDebugEvent, routerConfig]);
 
   const runFallbackConversation = useCallback(async (
     assistantId: string,
@@ -2035,14 +2383,14 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       {
         id: 'system',
         role: 'system',
-        content: getAgentSystemPrompt({
-          selectedModules,
-          routedModules,
-          promptMode: 'fallback',
-          customSystemPrompt: config.systemPrompt,
-          modulePrompts,
-          allowedActionTypes,
-        }),
+        content: [
+          '你是「Guyue-Master-Agent」，Guyue Master 应用的内置智能助理。',
+          '当前模型不支持本应用的逐步 Function Calling runtime，本轮只能进行自然语言回复，不会执行本地应用工具。',
+          '不要输出 ```action``` JSON 块，不要声称已经创建、修改、删除、发送或读取了应用内数据。',
+          '如果用户要求执行本地操作，请明确说明需要切换到支持逐步 Function Calling 的模型（OpenAI / ZenMux / Moonshot）并开启对应权限后再执行。',
+          `当前参考作用域：${routedModules.length > 0 ? getModuleScopeLabel(routedModules) : '未限定'}`,
+          config.systemPrompt?.trim() ? `\n## 用户自定义系统提示\n${config.systemPrompt.trim()}` : '',
+        ].filter(Boolean).join('\n'),
         timestamp: 0,
       },
       ...messages.filter(m => m.role !== 'system' && m.id !== 'welcome').slice(-6).map(m => ({
@@ -2080,6 +2428,15 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
           summary: '兼容模式流式回复完成',
           payload: { text },
         });
+
+        const plainFallbackContent = text || fullResponse || '...';
+        setMessages(prev => prev.map(message =>
+          message.id === assistantId
+            ? { ...message, content: plainFallbackContent, targetModule: primaryModule, targetModules: routedModules }
+            : message
+        ));
+        setIsProcessing(false);
+        return;
 
         const actionFromModel = parseAgentAction(text);
         const localIntent = !actionFromModel && routedModules.includes('todo')
@@ -2663,13 +3020,36 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       }
 
       const routeResult = await detectModuleScope(userMessage.content);
-      const routedScope = routeResult.useTools ? routeResult.modules : [];
-      const toolScope = routeResult.useTools ? routedScope : ['__no_tools__'];
+      let activeRoutedScope = routeResult.useTools ? routeResult.modules : [];
+      const getNativeToolScope = (scope: string[], useTools: boolean) =>
+        useTools
+          ? (scope.length === 0 ? ['__search_only__'] : scope)
+          : ['__no_tools__'];
+      const searchOnlyScope = routeResult.useTools && activeRoutedScope.length === 0;
+      const toolScope = getNativeToolScope(activeRoutedScope, routeResult.useTools);
+      const enableSpecializedSearch = effectiveWebSearchEnabled && (searchConfig.specialized?.enabledSources?.length || 0) > 0;
+      const runtimeToolRegistry = [
+        ...TOOL_REGISTRY,
+        WEB_SEARCH_TOOL_REGISTRATION,
+        SPECIALIZED_SEARCH_TOOL_REGISTRATION,
+      ];
+      const buildNativeRegistrationsForScope = (scope: string[], useTools: boolean) =>
+        supportsNativeTools && useTools
+          ? getNativeToolRegistrations(
+              TOOL_REGISTRY,
+              ENABLED_AGENT_MODULES,
+              getNativeToolScope(scope, useTools),
+              effectiveWebSearchEnabled,
+              toolPermissions,
+              enableSpecializedSearch,
+            )
+          : [];
+      const buildNativeToolsForScope = (scope: string[], useTools: boolean): ChatTool[] =>
+        buildNativeRegistrationsForScope(scope, useTools).map(registration => toStrictTool(registration.tool));
 
-      // 原生模式：按作用域注册已授权工具。未限定作用域时保留所有授权工具。
-      const nativeTools = supportsNativeTools && routeResult.useTools
-        ? getAllNativeTools(TOOL_REGISTRY, ENABLED_AGENT_MODULES, toolScope.length > 0 ? toolScope : null, enableWebSearch, toolPermissions)
-        : [];
+      // 原生模式：按作用域注册已授权工具。自动路由未命中模块时只开放搜索工具，避免全量工具暴露。
+      const nativeRegistrations = buildNativeRegistrationsForScope(activeRoutedScope, routeResult.useTools);
+      const nativeTools = nativeRegistrations.map(registration => toStrictTool(registration.tool));
       const toolExecContext = buildToolExecContext(currentAttachments);
 
       pushDebugItem({
@@ -2678,7 +3058,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         payload: {
           selectedModules: manualScope,
           routeResult,
-          routedScope,
+          routedScope: activeRoutedScope,
+          toolScope,
+          searchOnlyScope,
           nativeToolCount: nativeTools.length,
           nativeToolNames: nativeTools.map(t => t.name),
           mode: supportsNativeTools && nativeTools.length > 0 ? 'native-tools (self-route)' : 'fallback',
@@ -2698,7 +3080,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             role: 'system',
             content: getAgentSystemPrompt({
               selectedModules: manualScope,
-              routedModules: routedScope,
+              routedModules: activeRoutedScope,
               promptMode: 'native-tools',
               customSystemPrompt: config.systemPrompt || '',
               modulePrompts,
@@ -2718,8 +3100,6 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
         {
           let executedAction: AgentAction | undefined;
-          let lastUndoSnapshot: UndoSnapshot | undefined;
-          let lastPendingConfirmation: PendingConfirmation | undefined;
 
           const executeNativeToolCall = async (toolCall: ChatToolCall) => {
             const txId = startAgentToolTransaction(agentRunLogId, toolCall.name, toolCall.arguments || {});
@@ -2751,46 +3131,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               },
             });
 
-            if (toolCall.name === 'web_search') {
-              try {
-                const electronAPI = (window as any).electronAPI;
-                const query = typeof toolCall.arguments.query === 'string' ? toolCall.arguments.query.trim() : '';
-                if (!query) throw new Error('搜索词不能为空');
-                const result = await electronAPI.agentWebSearch({ query });
-                const resultSummary = result.success
-                  ? `${result.directAnswer ? '直答卡 + ' : ''}${result.results?.length || 0} 条结果`
-                  : result.error;
-                pushDebugItem({
-                  stage: 'web:search',
-                  summary: `搜索「${query}」→ ${resultSummary}`,
-                  payload: result,
-                  level: result.success ? 'success' : 'error',
-                });
-                finishAgentToolTransaction(agentRunLogId, txId, {
-                  status: result.success ? 'success' : 'failed',
-                  result,
-                  error: result.success ? undefined : result.error,
-                });
-                markToolEvent({
-                  moduleName: '网络搜索',
-                  status: result.success ? 'success' : 'error',
-                  summary: result.success ? resultSummary : result.error || '网络搜索失败',
-                });
-                return result;
-              } catch (e) {
-                const err = (e as Error).message;
-                pushDebugItem({ stage: 'web:search', summary: `网络搜索失败：${err}`, level: 'error' });
-                finishAgentToolTransaction(agentRunLogId, txId, { status: 'failed', error: err });
-                markToolEvent({
-                  moduleName: '网络搜索',
-                  status: 'error',
-                  summary: err,
-                });
-                return { success: false, error: err };
-              }
-            }
-
-            const registration = findToolRegistration(TOOL_REGISTRY, toolCall.name);
+            const registration = findToolRegistration(runtimeToolRegistry, toolCall.name);
             if (!registration) {
               markToolEvent({
                 status: 'error',
@@ -2805,11 +3146,13 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               finishAgentToolTransaction(agentRunLogId, txId, { status: 'failed', error: `未知工具: ${toolCall.name}` });
               return { success: false, error: `未知工具: ${toolCall.name}` };
             }
-            const registrationModuleName = getModuleById(registration.module)?.name || registration.module;
+            const registrationModuleName = registration.module === 'web'
+              ? '联网搜索'
+              : getModuleById(registration.module)?.name || registration.module;
             markToolEvent({ moduleName: registrationModuleName, summary: '校验工具权限' });
-            if (routedScope.length > 0 && !routedScope.includes(registration.module)) {
+            if (registration.module !== 'web' && activeRoutedScope.length > 0 && !activeRoutedScope.includes(registration.module)) {
               const moduleName = getModuleById(registration.module)?.name || registration.module;
-              const error = `工具 ${toolCall.name} 属于「${moduleName}」，不在当前作用域「${getModuleScopeLabel(routedScope)}」内。`;
+              const error = `工具 ${toolCall.name} 属于「${moduleName}」，不在当前作用域「${getModuleScopeLabel(activeRoutedScope)}」内。`;
               markToolEvent({
                 moduleName,
                 status: 'error',
@@ -2818,7 +3161,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               pushDebugItem({
                 stage: 'native:tool-result',
                 summary: error,
-                payload: { toolCall, routedScope },
+                payload: { toolCall, routedScope: activeRoutedScope },
                 level: 'error',
               });
               finishAgentToolTransaction(agentRunLogId, txId, { status: 'failed', error });
@@ -2843,24 +3186,25 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             try {
               const execution = await executeRegisteredToolWithSafety(registration, toolCall.arguments, toolExecContext);
               const result = execution.result;
-              const moduleName = getModuleById(registration.module)?.name || registration.module;
+              const moduleName = registration.module === 'web'
+                ? '联网搜索'
+                : getModuleById(registration.module)?.name || registration.module;
               executedAction = { type: toolCall.name, status: execution.executed ? 'success' : 'pending', data: execution.executed ? toolCall.arguments : result };
-              if (execution.undoSnapshot) lastUndoSnapshot = execution.undoSnapshot;
-              if (execution.pendingConfirmation) lastPendingConfirmation = execution.pendingConfirmation;
-
-              if (result?.pendingConfirmation && result?.confirmationId) {
-                lastPendingConfirmation = {
-                  id: result.confirmationId,
-                  type: result.confirmationType || 'send_email',
-                  status: 'pending',
-                  data: result,
-                  summary: result.message || '操作待确认',
-                };
-              }
+              const pendingConfirmation = execution.pendingConfirmation || (
+                result?.pendingConfirmation && result?.confirmationId
+                  ? {
+                      id: result.confirmationId,
+                      type: result.confirmationType || 'send_email',
+                      status: 'pending' as const,
+                      data: result,
+                      summary: result.message || '操作待确认',
+                    }
+                  : undefined
+              );
 
               markToolEvent({
                 moduleName,
-                status: execution.pendingConfirmation || result?.pendingConfirmation ? 'waiting' : result?.success === false ? 'error' : 'success',
+                status: pendingConfirmation ? 'waiting' : result?.success === false ? 'error' : 'success',
                 summary: summarizeRuntimeToolResult(result),
               });
               pushDebugItem({
@@ -2870,13 +3214,16 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                 level: 'success',
               });
               finishAgentToolTransaction(agentRunLogId, txId, {
-                status: execution.pendingConfirmation ? 'waiting_approval' : result?.success === false ? 'failed' : 'success',
+                status: pendingConfirmation ? 'waiting_approval' : result?.success === false ? 'failed' : 'success',
                 result,
                 error: result?.success === false ? result.error : undefined,
                 snapshot: execution.undoSnapshot as any,
-                confirmationId: execution.pendingConfirmation?.id || result?.confirmationId,
+                confirmationId: pendingConfirmation?.id || result?.confirmationId,
               });
-              return result;
+              return createAgentToolExecutionEnvelope(result, {
+                undoSnapshot: execution.undoSnapshot,
+                pendingConfirmation,
+              });
             } catch (error) {
               const errMsg = error instanceof Error ? error.message : String(error);
               markToolEvent({
@@ -2952,6 +3299,93 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             },
           });
 
+          const supplementTools = async (input: {
+            goal: string;
+            finalText: string;
+            toolCalls: ChatToolCall[];
+            toolResults: Array<{ toolCall: ChatToolCall; result: any }>;
+            currentTools: ChatTool[];
+            evaluation: AgentCompletionEvaluation;
+            supplementCount: number;
+          }) => {
+            if (manualScope.length > 0) {
+              pushDebugItem({
+                stage: 'router:supplement-skip',
+                summary: '手动作用域已启用，跳过补充路由',
+                payload: { manualScope, evaluation: input.evaluation },
+              });
+              return null;
+            }
+
+            setAgentRuntimeStatus({
+              stage: 'reflection',
+              status: 'started',
+              title: '正在补充任务作用域',
+              active: true,
+            });
+            setMessages(prev => prev.map(message =>
+              message.id === assistantId
+                ? { ...message, content: '正在补充任务作用域...' }
+                : message
+            ));
+
+            const supplementalRoute = await detectSupplementalModuleScope({
+              goal: input.goal,
+              currentModules: activeRoutedScope,
+              finalText: input.finalText,
+              toolCalls: input.toolCalls,
+              toolResults: input.toolResults,
+              evaluation: input.evaluation,
+            });
+            if (!supplementalRoute.needContinue || supplementalRoute.addModules.length === 0) {
+              return null;
+            }
+
+            const nextScope = normalizeModuleScope([...activeRoutedScope, ...supplementalRoute.addModules]);
+            const nextTools = buildNativeToolsForScope(nextScope, true);
+            const currentToolNames = new Set(input.currentTools.map(tool => tool.name));
+            const addedToolNames = nextTools
+              .map(tool => tool.name)
+              .filter(toolName => !currentToolNames.has(toolName));
+            if (addedToolNames.length === 0) {
+              pushDebugItem({
+                stage: 'router:supplement-skip',
+                summary: '补充模块没有新增可用工具',
+                payload: { supplementalRoute, nextScope, nextToolNames: nextTools.map(tool => tool.name) },
+              });
+              return null;
+            }
+
+            activeRoutedScope = nextScope;
+            pushDebugItem({
+              stage: 'router:supplement-applied',
+              summary: `补充作用域已应用：${getModuleScopeLabel(supplementalRoute.addModules)}`,
+              payload: {
+                supplementalRoute,
+                activeRoutedScope,
+                addedToolNames,
+                supplementCount: input.supplementCount + 1,
+              },
+              level: 'success',
+            });
+            appendAgentExecutionEntry(agentRunLogId, {
+              stage: 'router:supplement-applied',
+              level: 'info',
+              message: `补充作用域：${getModuleScopeLabel(supplementalRoute.addModules)}`,
+              payload: { supplementalRoute, activeRoutedScope, addedToolNames },
+            });
+
+            return {
+              tools: nextTools,
+              addedModules: supplementalRoute.addModules,
+              message: [
+                `新增作用域：${getModuleScopeLabel(supplementalRoute.addModules)}`,
+                `当前完整作用域：${getModuleScopeLabel(activeRoutedScope)}`,
+                `原因：${supplementalRoute.reason}`,
+              ].join('\n'),
+            };
+          };
+
           const runtime = createAgentRuntime({
             chatService: chatServiceRef.current,
             messages: chatMessages,
@@ -2960,7 +3394,14 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             runId: agentRunLogId,
             maxIterations: 10,
             executeToolCall: executeNativeToolCall,
+            getToolRisk: (toolCall: ChatToolCall) => {
+              const registration = findToolRegistration(runtimeToolRegistry, toolCall.name);
+              if (!registration) return 'write';
+              return getToolPermissionTarget(registration).action === 'read' ? 'read' : 'write';
+            },
             evaluateCompletion: evaluateAgentCompletion,
+            supplementTools,
+            maxSupplementRoutes: 2,
             onTrace: handleRuntimeTrace,
             onDebugEvent: pushServiceDebugEvent,
           });
@@ -2976,7 +3417,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             level: runtimeResult.status === 'failed' ? 'error' : 'success',
           });
           finalizeAgentExecutionLog(agentRunLogId, {
-            status: lastPendingConfirmation || runtimeResult.status === 'needs_user' ? 'needs_user' : runtimeResult.status === 'failed' ? 'failed' : 'completed',
+            status: (runtimeResult.pendingConfirmations?.length || 0) > 0 || runtimeResult.status === 'needs_user' ? 'needs_user' : runtimeResult.status === 'failed' ? 'failed' : 'completed',
             finalText: runtimeResult.text,
             error: runtimeResult.error,
           });
@@ -2984,7 +3425,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
           const inferredModules = normalizeModuleScope(runtimeResult.toolCalls
             .map(call => getModuleByToolName(TOOL_REGISTRY, call.name))
             .filter(Boolean));
-          const displayModules = inferredModules.length > 0 ? inferredModules : routedScope;
+          const displayModules = inferredModules.length > 0 ? inferredModules : activeRoutedScope;
+          const runtimePendingConfirmation = runtimeResult.pendingConfirmations?.[runtimeResult.pendingConfirmations.length - 1] as PendingConfirmation | undefined;
+          const runtimeUndoSnapshot = runtimeResult.undoSnapshots?.[runtimeResult.undoSnapshots.length - 1] as UndoSnapshot | undefined;
 
           setMessages(prev => prev.map(message =>
             message.id === assistantId
@@ -2994,16 +3437,16 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                   action: executedAction,
                   targetModule: displayModules[0],
                   targetModules: displayModules.length > 0 ? displayModules : undefined,
-                  undoSnapshot: lastUndoSnapshot,
-                  pendingConfirmation: lastPendingConfirmation,
+                  undoSnapshot: runtimeUndoSnapshot,
+                  pendingConfirmation: runtimePendingConfirmation,
                 }
               : message
           ));
           setAgentRuntimeStatus({
-            stage: lastPendingConfirmation || runtimeResult.status === 'needs_user' ? 'approval' : runtimeResult.status === 'failed' ? 'error' : 'reporting',
-            status: lastPendingConfirmation || runtimeResult.status === 'needs_user' ? 'waiting' : runtimeResult.status === 'failed' ? 'error' : 'success',
-            title: lastPendingConfirmation || runtimeResult.status === 'needs_user' ? '等待用户确认或补充' : runtimeResult.status === 'failed' ? 'Agent 执行失败' : 'Agent 执行完成',
-            active: Boolean(lastPendingConfirmation || runtimeResult.status === 'needs_user'),
+            stage: runtimePendingConfirmation || runtimeResult.status === 'needs_user' ? 'approval' : runtimeResult.status === 'failed' ? 'error' : 'reporting',
+            status: runtimePendingConfirmation || runtimeResult.status === 'needs_user' ? 'waiting' : runtimeResult.status === 'failed' ? 'error' : 'success',
+            title: runtimePendingConfirmation || runtimeResult.status === 'needs_user' ? '等待用户确认或补充' : runtimeResult.status === 'failed' ? 'Agent 执行失败' : 'Agent 执行完成',
+            active: Boolean(runtimePendingConfirmation || runtimeResult.status === 'needs_user'),
           });
           setIsProcessing(false);
           return;
@@ -3011,8 +3454,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       }
 
       // Fallback 模式沿用同一作用域结果
-      const fallbackScope = routedScope.length > 0
-        ? routedScope
+      const fallbackScope = activeRoutedScope.length > 0
+        ? activeRoutedScope
         : normalizeModuleScope([parseIntentLocally(trimmedInput).suggestedModule]);
       setAgentRuntimeStatus({
         stage: 'execution',
@@ -3063,8 +3506,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     config.provider,
     config.systemPrompt,
     detectModuleScope,
+    detectSupplementalModuleScope,
     effectiveDataPermissions,
-    enableWebSearch,
+    effectiveWebSearchEnabled,
     evaluateAgentCompletion,
     executeRegisteredToolWithSafety,
     fileRecords,
@@ -3099,6 +3543,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     recurringEvents,
     resourceData,
     runFallbackConversation,
+    searchConfig,
     selectedModules,
     supportsNativeTools,
     todoCategories,
@@ -3192,49 +3637,18 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     if (!msg?.undoSnapshot) return;
     const snap = msg.undoSnapshot;
     try {
-      if (snap.type === 'todo') {
-        if (snap.action === 'delete') {
-          onCreateTodo(snap.data as Partial<TodoItem>);
-        } else {
-          onUpdateTodo(snap.id, snap.data as Partial<TodoItem>);
-        }
-      } else if (snap.type === 'note') {
-        if (snap.action === 'delete') {
-          onCreateNote(snap.data as Partial<Note>);
-        } else {
-          onUpdateNote(snap.id, snap.data as Partial<Note>);
-        }
-      } else if (snap.type === 'resource') {
-        if (snap.action === 'delete') {
-          onCreateResource(snap.data as Partial<ResourceItem>);
-        } else {
-          onUpdateResource(snap.id, snap.data as Partial<ResourceItem>);
-        }
-      } else if (snap.type === 'ssh') {
-        onSaveSSH(snap.data as Partial<SSHRecord>);
-      } else if (snap.type === 'api') {
-        onSaveAPI(snap.data as Partial<APIRecord>);
-      } else if (snap.type === 'recurring') {
-        if (snap.action === 'delete') {
-          onCreateRecurring(snap.data as Partial<RecurringEvent>);
-        } else {
-          onUpdateRecurring(snap.id, snap.data as Partial<RecurringEvent>);
-        }
-      } else if (snap.type === 'latex_file') {
-        const electronAPI = (window as any).electronAPI;
-        if (!electronAPI?.latexSaveManagedFile) throw new Error('LaTeX 文件写入接口不可用。');
-        const ok = await electronAPI.latexSaveManagedFile({
-          filePath: snap.data.filePath,
-          content: snap.data.content,
-        });
-        if (!ok) throw new Error('LaTeX 文件回退失败。');
-      } else if (snap.type === 'latex_template') {
-        const electronAPI = (window as any).electronAPI;
-        if (!electronAPI?.latexSaveTemplate) throw new Error('LaTeX 模板写入接口不可用。');
-        const ok = await electronAPI.latexSaveTemplate(snap.data);
-        if (!ok) throw new Error('LaTeX 模板回退失败。');
-      }
-      // 标记已回退，移除 undoSnapshot
+      await restoreAgentUndoSnapshot(snap, {
+        onCreateTodo,
+        onUpdateTodo,
+        onCreateNote,
+        onUpdateNote,
+        onCreateResource,
+        onUpdateResource,
+        onSaveSSH,
+        onSaveAPI,
+        onCreateRecurring,
+        onUpdateRecurring,
+      });
       setMessages(prev => prev.map(m =>
         m.id === messageId
           ? { ...m, content: m.content + '\n\n↩️ 已回退此操作。', undoSnapshot: undefined }
@@ -3246,69 +3660,35 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         payload: snap,
         level: 'info',
       });
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
       setMessages(prev => prev.map(m =>
         m.id === messageId
-          ? { ...m, content: `${m.content}\n\n❌ 回退失败：${errMsg}` }
+          ? { ...m, content: m.content + `\n\n⚠️ 回退失败：${errMsg}` }
           : m
       ));
       pushDebugItem({
         stage: 'undo:error',
-        summary: `回退失败: ${snap.label}`,
-        payload: { snap, error: errMsg },
+        summary: `回退失败: ${errMsg}`,
+        payload: snap,
         level: 'error',
       });
     }
-  }, [messages, onCreateNote, onCreateRecurring, onCreateResource, onCreateTodo, onSaveAPI, onSaveSSH, onUpdateNote, onUpdateRecurring, onUpdateResource, onUpdateTodo, pushDebugItem]);
+  }, [
+    messages,
+    onCreateTodo,
+    onUpdateTodo,
+    onCreateNote,
+    onUpdateNote,
+    onCreateResource,
+    onUpdateResource,
+    onSaveSSH,
+    onSaveAPI,
+    onCreateRecurring,
+    onUpdateRecurring,
+    pushDebugItem,
+  ]);
 
-  const handleSaveEmailConfig = () => {
-    const next = { ...emailConfig, enabled: true };
-    setEmailConfig(next);
-    localStorage.setItem(AGENT_EMAIL_CONFIG_KEY, JSON.stringify(next));
-    setEmailTestStatus('idle');
-    setEmailTestError('');
-  };
-
-  const handleTestEmail = async () => {
-    if (!emailConfig.smtp.host || !emailConfig.smtp.user || !emailConfig.smtp.pass || !emailConfig.recipient) {
-      setEmailTestStatus('error'); setEmailTestError('请填写完整的邮件配置'); return;
-    }
-    setEmailTestStatus('loading'); setEmailTestError('');
-    try {
-      if ((window as any).electronAPI?.testEmailConfig) {
-        const result = await (window as any).electronAPI.testEmailConfig(emailConfig);
-        if (result.success) { setEmailTestStatus('success'); }
-        else { setEmailTestStatus('error'); setEmailTestError(result.error || '发送失败'); }
-      } else { setEmailTestStatus('error'); setEmailTestError('邮件功能仅在桌面端可用'); }
-    } catch (err) { setEmailTestStatus('error'); setEmailTestError((err as Error).message); }
-  };
-
-  // ─── 通讯录管理 ───
-  const handleSaveContact = (contact: Contact) => {
-    setContacts(prev => {
-      const isNew = !contact.id;
-      if (isNew) {
-        const withId = { ...contact, id: `contact_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` };
-        const updated = [...prev, withId];
-        saveContacts(updated);
-        return updated;
-      }
-      const updated = prev.map(c => c.id === contact.id ? contact : c);
-      saveContacts(updated);
-      return updated;
-    });
-  };
-
-  const handleDeleteContact = (id: string) => {
-    setContacts(prev => {
-      const updated = prev.filter(c => c.id !== id);
-      saveContacts(updated);
-      return updated;
-    });
-  };
-
-  // ─── 二次确认操作 ───
   const handleConfirmAction = useCallback(async (messageId: string) => {
     const msg = messages.find(m => m.id === messageId);
     if (!msg?.pendingConfirmation || msg.pendingConfirmation.status !== 'pending') return;
@@ -3837,15 +4217,38 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               </button>
               {/* 网络搜索 */}
               <button
-                onClick={() => setEnableWebSearch(v => !v)}
+                onClick={() => {
+                  if (!webSearchPermissionEnabled) {
+                    setToolPermissions(prev => ({
+                      ...prev,
+                      web: {
+                        ...(prev.web || DEFAULT_AGENT_TOOL_PERMISSIONS.web),
+                        read: true,
+                      },
+                    }));
+                    setEnableWebSearch(true);
+                    return;
+                  }
+                  setEnableWebSearch(v => !v);
+                }}
                 className={`relative w-8 h-8 flex items-center justify-center rounded-xl transition-colors ${
-                  enableWebSearch ? 'text-blue-600 bg-blue-50' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
+                  effectiveWebSearchEnabled
+                    ? 'text-blue-600 bg-blue-50'
+                    : enableWebSearch && !webSearchPermissionEnabled
+                      ? 'text-amber-500 bg-amber-50'
+                      : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
                 }`}
-                title={enableWebSearch ? '关闭网络搜索' : '开启网络搜索'}
+                title={
+                  effectiveWebSearchEnabled
+                    ? '关闭网络搜索'
+                    : webSearchPermissionEnabled
+                      ? '开启网络搜索'
+                      : '联网搜索未授权，点击会同时开启联网权限'
+                }
               >
                 <Globe className="w-4 h-4" />
-                {enableWebSearch && (
-                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500" />
+                {(effectiveWebSearchEnabled || (enableWebSearch && !webSearchPermissionEnabled)) && (
+                  <span className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${effectiveWebSearchEnabled ? 'bg-blue-500' : 'bg-amber-500'}`} />
                 )}
               </button>
               <div className="w-5 h-px bg-slate-200 my-1" />
@@ -4026,6 +4429,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         onChangeConfig={setConfig}
         routerConfig={routerConfig}
         onChangeRouterConfig={setRouterConfig}
+        searchConfig={searchConfig}
+        onChangeSearchConfig={setSearchConfig}
         onClearHistory={handleClearHistory}
         modules={ENABLED_AGENT_MODULES.map(m => ({ id: m.id, name: m.name }))}
         modulePrompts={modulePrompts}

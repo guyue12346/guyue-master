@@ -2880,13 +2880,310 @@ ipcMain.handle('test-email-config', async (_, config: EmailConfig) => {
   }
 });
 
-// Agent 网络搜索：用隐藏 BrowserWindow 加载 Bing 搜索页，渲染完毕后提取真实结果
-// 相比 net.fetch RSS 方案，这种方式能拿到 Bing 渲染后的 JS 结果，包括天气直答卡等
-ipcMain.handle('agent-web-search', async (_, { query }: { query: string }) => {
+type AgentSearchProvider = 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser';
+type AgentSearchMode = 'fast' | 'balanced' | 'deep';
+type AgentSpecializedSearchSource = 'github' | 'npm' | 'stackoverflow' | 'arxiv';
+
+interface AgentWebSearchParams {
+  query: string;
+  provider?: AgentSearchProvider;
+  fallbackProviders?: AgentSearchProvider[];
+  mode?: AgentSearchMode;
+  searchMode?: AgentSearchMode;
+  maxResults?: number;
+  includeAnswer?: boolean;
+  includeRawContent?: boolean;
+  apiKeys?: {
+    tavily?: string;
+    exa?: string;
+    brave?: string;
+  };
+  searxngBaseUrl?: string;
+  language?: string;
+  country?: string;
+  timeRange?: 'day' | 'week' | 'month' | 'year';
+  topic?: 'general' | 'news' | 'finance';
+  includeDomains?: string[];
+  excludeDomains?: string[];
+}
+
+interface AgentSpecializedSearchParams {
+  source: AgentSpecializedSearchSource;
+  query: string;
+  maxResults?: number;
+  githubType?: 'repositories' | 'code' | 'issues' | 'pull_requests' | 'users';
+  owner?: string;
+  repo?: string;
+  language?: string;
+  sort?: string;
+  order?: 'asc' | 'desc';
+  tags?: string[];
+  arxivCategory?: string;
+  specialized?: {
+    enabledSources?: AgentSpecializedSearchSource[];
+    maxResults?: number;
+    apiKeys?: {
+      github?: string;
+      stackExchange?: string;
+    };
+  };
+}
+
+interface AgentWebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+  source?: string;
+  publishedDate?: string;
+  score?: number;
+  content?: string;
+  meta?: Record<string, any>;
+}
+
+const AGENT_SEARCH_PROVIDERS = new Set<AgentSearchProvider>(['tavily', 'exa', 'brave', 'searxng', 'bing-browser']);
+const AGENT_SPECIALIZED_SEARCH_SOURCES = new Set<AgentSpecializedSearchSource>(['github', 'npm', 'stackoverflow', 'arxiv']);
+
+const normalizeAgentSearchProvider = (value: unknown, fallback: AgentSearchProvider): AgentSearchProvider =>
+  typeof value === 'string' && AGENT_SEARCH_PROVIDERS.has(value as AgentSearchProvider)
+    ? value as AgentSearchProvider
+    : fallback;
+
+const normalizeAgentSearchMode = (value: unknown): AgentSearchMode =>
+  value === 'fast' || value === 'deep' || value === 'balanced' ? value : 'balanced';
+
+const normalizeSpecializedSearchSource = (value: unknown): AgentSpecializedSearchSource | null =>
+  typeof value === 'string' && AGENT_SPECIALIZED_SEARCH_SOURCES.has(value as AgentSpecializedSearchSource)
+    ? value as AgentSpecializedSearchSource
+    : null;
+
+const normalizeSearchMaxResults = (value: unknown) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 8;
+  return Math.min(Math.max(Math.floor(parsed), 3), 20);
+};
+
+const providerNeedsApiKey = (provider: AgentSearchProvider) =>
+  provider === 'tavily' || provider === 'exa' || provider === 'brave';
+
+const withDomainOperators = (query: string, includeDomains?: string[], excludeDomains?: string[]) => {
+  const include = Array.isArray(includeDomains)
+    ? includeDomains.map(item => item.trim()).filter(Boolean)
+    : [];
+  const exclude = Array.isArray(excludeDomains)
+    ? excludeDomains.map(item => item.trim()).filter(Boolean)
+    : [];
+  const includePrefix = include.length > 0
+    ? `(${include.map(domain => `site:${domain}`).join(' OR ')}) `
+    : '';
+  const excludeSuffix = exclude.length > 0
+    ? ` ${exclude.map(domain => `-site:${domain}`).join(' ')}`
+    : '';
+  return `${includePrefix}${query}${excludeSuffix}`.trim();
+};
+
+const fetchJson = async (url: string, options?: RequestInit & { bypassCustomProtocolHandlers?: boolean }): Promise<any> => {
+  const response = await net.fetch(url, options);
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`${response.status} ${response.statusText}${text ? `: ${text.slice(0, 240)}` : ''}`);
+  }
+  return response.json();
+};
+
+const fetchText = async (url: string, options?: RequestInit & { bypassCustomProtocolHandlers?: boolean }): Promise<string> => {
+  const response = await net.fetch(url, options);
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`${response.status} ${response.statusText}${text ? `: ${text.slice(0, 240)}` : ''}`);
+  }
+  return response.text();
+};
+
+const decodeHtmlEntity = (value: string): string =>
+  value
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCharCode(parseInt(code, 16)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+
+const stripMarkup = (value: unknown): string =>
+  decodeHtmlEntity(String(value || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
+
+const getXmlTag = (xml: string, tagName: string): string => {
+  const match = xml.match(new RegExp(`<${tagName}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tagName}>`, 'i'));
+  return match ? stripMarkup(match[1]) : '';
+};
+
+const normalizeSpecializedSearchMaxResults = (value: unknown, fallback?: unknown) => {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed)) return 8;
+  return Math.min(Math.max(Math.floor(parsed), 3), 20);
+};
+
+const searchWithTavily = async (params: AgentWebSearchParams): Promise<{ directAnswer: string | null; results: AgentWebSearchResult[] }> => {
+  const apiKey = params.apiKeys?.tavily?.trim();
+  if (!apiKey) throw new Error('Tavily API Key 未配置');
+  const mode = normalizeAgentSearchMode(params.searchMode || params.mode);
+  const body: Record<string, unknown> = {
+    query: params.query,
+    search_depth: mode === 'deep' ? 'advanced' : mode === 'fast' ? 'fast' : 'basic',
+    topic: params.topic || 'general',
+    max_results: normalizeSearchMaxResults(params.maxResults),
+    include_answer: params.includeAnswer ? (mode === 'deep' ? 'advanced' : 'basic') : false,
+    include_raw_content: params.includeRawContent ? 'markdown' : false,
+  };
+  if (params.timeRange) {
+    body.time_range = ({ day: 'day', week: 'week', month: 'month', year: 'year' } as const)[params.timeRange];
+  }
+  if (Array.isArray(params.includeDomains) && params.includeDomains.length > 0) {
+    body.include_domains = params.includeDomains;
+  }
+  if (Array.isArray(params.excludeDomains) && params.excludeDomains.length > 0) {
+    body.exclude_domains = params.excludeDomains;
+  }
+  if (params.country && params.topic !== 'news' && params.topic !== 'finance') {
+    body.country = params.country.toLowerCase();
+  }
+
+  const data = await fetchJson('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const results = Array.isArray(data.results) ? data.results : [];
+  return {
+    directAnswer: typeof data.answer === 'string' && data.answer.trim() ? data.answer.trim() : null,
+    results: results.map((item: any): AgentWebSearchResult => ({
+      title: String(item.title || item.url || '').trim(),
+      url: String(item.url || '').trim(),
+      snippet: String(item.content || item.snippet || '').trim(),
+      source: 'tavily',
+      publishedDate: item.published_date || item.publishedDate,
+      score: typeof item.score === 'number' ? item.score : undefined,
+      content: typeof item.raw_content === 'string' ? item.raw_content : undefined,
+    })).filter((item: AgentWebSearchResult) => item.title && item.url),
+  };
+};
+
+const searchWithExa = async (params: AgentWebSearchParams): Promise<{ directAnswer: string | null; results: AgentWebSearchResult[] }> => {
+  const apiKey = params.apiKeys?.exa?.trim();
+  if (!apiKey) throw new Error('Exa API Key 未配置');
+  const mode = normalizeAgentSearchMode(params.searchMode || params.mode);
+  const body: Record<string, unknown> = {
+    query: params.query,
+    type: mode === 'deep' ? 'deep' : mode === 'fast' ? 'fast' : 'auto',
+    numResults: normalizeSearchMaxResults(params.maxResults),
+    userLocation: params.country || 'CN',
+  };
+  if (params.includeRawContent) {
+    body.text = true;
+  } else {
+    body.highlights = true;
+  }
+  if (Array.isArray(params.includeDomains) && params.includeDomains.length > 0) {
+    body.includeDomains = params.includeDomains;
+  }
+  if (Array.isArray(params.excludeDomains) && params.excludeDomains.length > 0) {
+    body.excludeDomains = params.excludeDomains;
+  }
+
+  const data = await fetchJson('https://api.exa.ai/search', {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const results = Array.isArray(data.results) ? data.results : [];
+  return {
+    directAnswer: typeof data.context === 'string' && data.context.trim() ? data.context.trim().slice(0, 1200) : null,
+    results: results.map((item: any): AgentWebSearchResult => {
+      const highlights = Array.isArray(item.highlights) ? item.highlights.join(' ') : '';
+      return {
+        title: String(item.title || item.url || '').trim(),
+        url: String(item.url || '').trim(),
+        snippet: String(item.text || highlights || item.summary || '').trim().slice(0, 1200),
+        source: 'exa',
+        publishedDate: item.publishedDate,
+        score: typeof item.score === 'number' ? item.score : undefined,
+        content: typeof item.text === 'string' ? item.text : undefined,
+      };
+    }).filter((item: AgentWebSearchResult) => item.title && item.url),
+  };
+};
+
+const searchWithBrave = async (params: AgentWebSearchParams): Promise<{ directAnswer: string | null; results: AgentWebSearchResult[] }> => {
+  const apiKey = params.apiKeys?.brave?.trim();
+  if (!apiKey) throw new Error('Brave Search API Key 未配置');
+  const url = new URL('https://api.search.brave.com/res/v1/web/search');
+  url.searchParams.set('q', withDomainOperators(params.query, params.includeDomains, params.excludeDomains));
+  url.searchParams.set('count', String(normalizeSearchMaxResults(params.maxResults)));
+  url.searchParams.set('search_lang', (params.language || 'zh-CN').split('-')[0]);
+  url.searchParams.set('country', params.country || 'CN');
+  url.searchParams.set('safesearch', 'moderate');
+  const data = await fetchJson(url.toString(), {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/json',
+      'X-Subscription-Token': apiKey,
+    },
+  });
+  const webResults = Array.isArray(data.web?.results) ? data.web.results : [];
+  const directAnswer = data.query?.summary || data.infobox?.description || null;
+  return {
+    directAnswer: typeof directAnswer === 'string' && directAnswer.trim() ? directAnswer.trim() : null,
+    results: webResults.map((item: any): AgentWebSearchResult => ({
+      title: String(item.title || item.url || '').replace(/<[^>]+>/g, '').trim(),
+      url: String(item.url || '').trim(),
+      snippet: String(item.description || item.extra_snippets?.join(' ') || '').replace(/<[^>]+>/g, '').trim(),
+      source: 'brave',
+      publishedDate: item.age,
+    })).filter((item: AgentWebSearchResult) => item.title && item.url),
+  };
+};
+
+const searchWithSearxng = async (params: AgentWebSearchParams): Promise<{ directAnswer: string | null; results: AgentWebSearchResult[] }> => {
+  const baseUrl = params.searxngBaseUrl?.trim().replace(/\/+$/, '');
+  if (!baseUrl) throw new Error('SearXNG Base URL 未配置');
+  const url = new URL(`${baseUrl}/search`);
+  url.searchParams.set('q', withDomainOperators(params.query, params.includeDomains, params.excludeDomains));
+  url.searchParams.set('format', 'json');
+  url.searchParams.set('language', params.language || 'zh-CN');
+  url.searchParams.set('categories', params.topic === 'news' ? 'news' : 'general');
+  const data = await fetchJson(url.toString(), {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+  const results = Array.isArray(data.results) ? data.results : [];
+  return {
+    directAnswer: typeof data.answer === 'string' && data.answer.trim() ? data.answer.trim() : null,
+    results: results.slice(0, normalizeSearchMaxResults(params.maxResults)).map((item: any): AgentWebSearchResult => ({
+      title: String(item.title || item.url || '').trim(),
+      url: String(item.url || '').trim(),
+      snippet: String(item.content || item.snippet || '').trim(),
+      source: item.engine || 'searxng',
+      publishedDate: item.publishedDate || item.published_date,
+      score: typeof item.score === 'number' ? item.score : undefined,
+    })).filter((item: AgentWebSearchResult) => item.title && item.url),
+  };
+};
+
+// Agent 网络搜索：旧兜底方案。用隐藏 BrowserWindow 加载 Bing 搜索页，渲染完毕后提取真实结果。
+const searchWithBingBrowser = async (params: AgentWebSearchParams): Promise<{ directAnswer: string | null; results: AgentWebSearchResult[] }> => {
   let searchWin: BrowserWindow | null = null;
   try {
-    const encoded = encodeURIComponent(query);
-    const searchUrl = `https://www.bing.com/search?q=${encoded}&setlang=zh-CN&cc=CN&count=10`;
+    const encoded = encodeURIComponent(withDomainOperators(params.query, params.includeDomains, params.excludeDomains));
+    const searchUrl = `https://www.bing.com/search?q=${encoded}&setlang=${encodeURIComponent(params.language || 'zh-CN')}&cc=${encodeURIComponent(params.country || 'CN')}&count=${normalizeSearchMaxResults(params.maxResults)}`;
 
     searchWin = new BrowserWindow({
       width: 1280,
@@ -2949,13 +3246,364 @@ ipcMain.handle('agent-web-search', async (_, { query }: { query: string }) => {
     const { directAnswer, results } = extracted as { directAnswer: string | null; results: Array<{ title: string; url: string; snippet: string }> };
 
     if (!directAnswer && results.length === 0) {
-      return { success: false, error: '未获得搜索结果，请检查网络或代理设置', results: [] };
+      throw new Error('未获得搜索结果，请检查网络或代理设置');
     }
 
-    return { success: true, directAnswer, results, query };
+    return { directAnswer, results: results.map(item => ({ ...item, source: 'bing-browser' })) };
   } catch (e) {
     searchWin?.destroy();
-    return { success: false, error: (e as Error).message, results: [] };
+    throw e;
+  }
+};
+
+const buildGitHubSearchQuery = (params: AgentSpecializedSearchParams) => {
+  const parts = [params.query.trim()];
+  const owner = params.owner?.trim();
+  const repo = params.repo?.trim();
+  if (owner && repo) {
+    parts.push(`repo:${owner}/${repo}`);
+  } else if (owner) {
+    parts.push(`user:${owner}`);
+  }
+  if (params.language?.trim()) {
+    parts.push(`language:${params.language.trim()}`);
+  }
+  if (params.githubType === 'issues') parts.push('is:issue');
+  if (params.githubType === 'pull_requests') parts.push('is:pr');
+  return parts.join(' ');
+};
+
+const searchWithGitHub = async (params: AgentSpecializedSearchParams): Promise<AgentWebSearchResult[]> => {
+  const githubType = params.githubType || 'repositories';
+  const endpointType = githubType === 'pull_requests' ? 'issues' : githubType;
+  const url = new URL(`https://api.github.com/search/${endpointType}`);
+  url.searchParams.set('q', buildGitHubSearchQuery(params));
+  url.searchParams.set('per_page', String(normalizeSpecializedSearchMaxResults(params.maxResults, params.specialized?.maxResults)));
+  if (params.sort?.trim()) url.searchParams.set('sort', params.sort.trim());
+  if (params.order === 'asc' || params.order === 'desc') url.searchParams.set('order', params.order);
+
+  const headers: Record<string, string> = {
+    'Accept': 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'Guyue-Master-Agent',
+  };
+  const token = params.specialized?.apiKeys?.github?.trim();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const data = await fetchJson(url.toString(), { method: 'GET', headers });
+  const items = Array.isArray(data.items) ? data.items : [];
+
+  return items.map((item: any): AgentWebSearchResult => {
+    if (githubType === 'repositories') {
+      return {
+        title: String(item.full_name || item.name || '').trim(),
+        url: String(item.html_url || '').trim(),
+        snippet: [
+          stripMarkup(item.description || ''),
+          item.language ? `语言: ${item.language}` : '',
+          Number.isFinite(item.stargazers_count) ? `Stars: ${item.stargazers_count}` : '',
+          item.updated_at ? `更新: ${item.updated_at}` : '',
+        ].filter(Boolean).join(' · '),
+        source: 'github',
+        publishedDate: item.updated_at,
+        score: typeof item.score === 'number' ? item.score : undefined,
+        meta: {
+          type: githubType,
+          fullName: item.full_name,
+          defaultBranch: item.default_branch,
+          stars: item.stargazers_count,
+          forks: item.forks_count,
+        },
+      };
+    }
+    if (githubType === 'code') {
+      return {
+        title: `${item.repository?.full_name || 'repository'} / ${item.path || item.name || 'file'}`,
+        url: String(item.html_url || '').trim(),
+        snippet: [
+          item.name ? `文件: ${item.name}` : '',
+          item.path ? `路径: ${item.path}` : '',
+          item.repository?.description ? stripMarkup(item.repository.description) : '',
+        ].filter(Boolean).join(' · '),
+        source: 'github',
+        score: typeof item.score === 'number' ? item.score : undefined,
+        meta: {
+          type: githubType,
+          repository: item.repository?.full_name,
+          path: item.path,
+          sha: item.sha,
+        },
+      };
+    }
+    if (githubType === 'users') {
+      return {
+        title: String(item.login || '').trim(),
+        url: String(item.html_url || '').trim(),
+        snippet: [item.type ? `类型: ${item.type}` : '', Number.isFinite(item.score) ? `Score: ${item.score}` : ''].filter(Boolean).join(' · '),
+        source: 'github',
+        score: typeof item.score === 'number' ? item.score : undefined,
+        meta: { type: githubType, login: item.login },
+      };
+    }
+    return {
+      title: `#${item.number || ''} ${stripMarkup(item.title || '')}`.trim(),
+      url: String(item.html_url || '').trim(),
+      snippet: [
+        item.state ? `状态: ${item.state}` : '',
+        item.user?.login ? `作者: ${item.user.login}` : '',
+        item.updated_at ? `更新: ${item.updated_at}` : '',
+        stripMarkup(item.body || '').slice(0, 500),
+      ].filter(Boolean).join(' · '),
+      source: 'github',
+      publishedDate: item.updated_at || item.created_at,
+      score: typeof item.score === 'number' ? item.score : undefined,
+      meta: {
+        type: githubType,
+        number: item.number,
+        repositoryUrl: item.repository_url,
+      },
+    };
+  }).filter((item: AgentWebSearchResult) => item.title && item.url);
+};
+
+const searchWithNpm = async (params: AgentSpecializedSearchParams): Promise<AgentWebSearchResult[]> => {
+  const url = new URL('https://registry.npmjs.org/-/v1/search');
+  url.searchParams.set('text', params.query);
+  url.searchParams.set('size', String(normalizeSpecializedSearchMaxResults(params.maxResults, params.specialized?.maxResults)));
+  const data = await fetchJson(url.toString(), {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+  const objects = Array.isArray(data.objects) ? data.objects : [];
+  return objects.map((item: any): AgentWebSearchResult => {
+    const pkg = item.package || {};
+    return {
+      title: String(pkg.name || '').trim(),
+      url: String(pkg.links?.npm || `https://www.npmjs.com/package/${pkg.name || ''}`).trim(),
+      snippet: [
+        stripMarkup(pkg.description || ''),
+        pkg.version ? `版本: ${pkg.version}` : '',
+        pkg.date ? `更新: ${pkg.date}` : '',
+      ].filter(Boolean).join(' · '),
+      source: 'npm',
+      publishedDate: pkg.date,
+      score: typeof item.score?.final === 'number' ? item.score.final : undefined,
+      meta: {
+        version: pkg.version,
+        keywords: pkg.keywords,
+        publisher: pkg.publisher?.username,
+      },
+    };
+  }).filter((item: AgentWebSearchResult) => item.title && item.url);
+};
+
+const searchWithStackOverflow = async (params: AgentSpecializedSearchParams): Promise<AgentWebSearchResult[]> => {
+  const url = new URL('https://api.stackexchange.com/2.3/search/advanced');
+  url.searchParams.set('order', params.order || 'desc');
+  url.searchParams.set('sort', params.sort || 'relevance');
+  url.searchParams.set('q', params.query);
+  url.searchParams.set('site', 'stackoverflow');
+  url.searchParams.set('pagesize', String(normalizeSpecializedSearchMaxResults(params.maxResults, params.specialized?.maxResults)));
+  const tags = Array.isArray(params.tags) ? params.tags.map(tag => tag.trim()).filter(Boolean) : [];
+  if (tags.length > 0) url.searchParams.set('tagged', tags.join(';'));
+  const key = params.specialized?.apiKeys?.stackExchange?.trim();
+  if (key) url.searchParams.set('key', key);
+
+  const data = await fetchJson(url.toString(), {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+  const items = Array.isArray(data.items) ? data.items : [];
+  return items.map((item: any): AgentWebSearchResult => ({
+    title: stripMarkup(item.title || ''),
+    url: String(item.link || '').trim(),
+    snippet: [
+      Number.isFinite(item.score) ? `Score: ${item.score}` : '',
+      Number.isFinite(item.answer_count) ? `Answers: ${item.answer_count}` : '',
+      Array.isArray(item.tags) && item.tags.length ? `Tags: ${item.tags.join(', ')}` : '',
+      item.is_answered ? '已回答' : '未标记已回答',
+    ].filter(Boolean).join(' · '),
+    source: 'stackoverflow',
+    publishedDate: item.creation_date ? new Date(item.creation_date * 1000).toISOString() : undefined,
+    score: typeof item.score === 'number' ? item.score : undefined,
+    meta: {
+      questionId: item.question_id,
+      answerCount: item.answer_count,
+      tags: item.tags,
+      isAnswered: item.is_answered,
+    },
+  })).filter((item: AgentWebSearchResult) => item.title && item.url);
+};
+
+const searchWithArxiv = async (params: AgentSpecializedSearchParams): Promise<AgentWebSearchResult[]> => {
+  const maxResults = normalizeSpecializedSearchMaxResults(params.maxResults, params.specialized?.maxResults);
+  const category = params.arxivCategory?.trim() || params.language?.trim();
+  const searchQuery = `${category ? `cat:${category} AND ` : ''}all:${params.query}`;
+  const url = new URL('https://export.arxiv.org/api/query');
+  url.searchParams.set('search_query', searchQuery);
+  url.searchParams.set('start', '0');
+  url.searchParams.set('max_results', String(maxResults));
+  url.searchParams.set('sortBy', params.sort === 'submittedDate' ? 'submittedDate' : 'relevance');
+  url.searchParams.set('sortOrder', params.order === 'asc' ? 'ascending' : 'descending');
+
+  const xml = await fetchText(url.toString(), {
+    method: 'GET',
+    headers: { 'Accept': 'application/atom+xml, application/xml, text/xml' },
+  });
+  const entries = Array.from(xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)).map(match => match[1]);
+  return entries.map((entry): AgentWebSearchResult => {
+    const id = getXmlTag(entry, 'id');
+    const authors = Array.from(entry.matchAll(/<author>[\s\S]*?<name>([\s\S]*?)<\/name>[\s\S]*?<\/author>/g))
+      .map(match => stripMarkup(match[1]))
+      .filter(Boolean)
+      .slice(0, 5);
+    const title = getXmlTag(entry, 'title');
+    return {
+      title,
+      url: id,
+      snippet: [
+        authors.length ? `作者: ${authors.join(', ')}` : '',
+        getXmlTag(entry, 'summary').slice(0, 900),
+      ].filter(Boolean).join(' · '),
+      source: 'arxiv',
+      publishedDate: getXmlTag(entry, 'published') || undefined,
+      meta: {
+        updated: getXmlTag(entry, 'updated') || undefined,
+        authors,
+        primaryCategory: entry.match(/<arxiv:primary_category[^>]*term="([^"]+)"/)?.[1] || entry.match(/<category[^>]*term="([^"]+)"/)?.[1],
+      },
+    };
+  }).filter((item: AgentWebSearchResult) => item.title && item.url);
+};
+
+const runSpecializedSearch = async (params: AgentSpecializedSearchParams): Promise<AgentWebSearchResult[]> => {
+  switch (params.source) {
+    case 'github':
+      return searchWithGitHub(params);
+    case 'npm':
+      return searchWithNpm(params);
+    case 'stackoverflow':
+      return searchWithStackOverflow(params);
+    case 'arxiv':
+      return searchWithArxiv(params);
+    default:
+      throw new Error('不支持的专用搜索源');
+  }
+};
+
+const runAgentSearchProvider = async (provider: AgentSearchProvider, params: AgentWebSearchParams) => {
+  switch (provider) {
+    case 'tavily':
+      return searchWithTavily(params);
+    case 'exa':
+      return searchWithExa(params);
+    case 'brave':
+      return searchWithBrave(params);
+    case 'searxng':
+      return searchWithSearxng(params);
+    case 'bing-browser':
+    default:
+      return searchWithBingBrowser(params);
+  }
+};
+
+ipcMain.handle('agent-web-search', async (_, rawParams: AgentWebSearchParams) => {
+  const query = typeof rawParams.query === 'string' ? rawParams.query.trim() : '';
+  if (!query) return { success: false, error: '搜索词不能为空', results: [] };
+
+  const primary = normalizeAgentSearchProvider(rawParams.provider, 'tavily');
+  const fallbackProviders = Array.isArray(rawParams.fallbackProviders)
+    ? rawParams.fallbackProviders.map(item => normalizeAgentSearchProvider(item, 'bing-browser'))
+    : ['exa', 'brave', 'bing-browser'] as AgentSearchProvider[];
+  const providerOrder = [primary, ...fallbackProviders].filter((provider, index, arr) => arr.indexOf(provider) === index);
+  const params: AgentWebSearchParams = {
+    ...rawParams,
+    query,
+    provider: primary,
+    mode: normalizeAgentSearchMode(rawParams.searchMode || rawParams.mode),
+    maxResults: normalizeSearchMaxResults(rawParams.maxResults),
+  };
+  const errors: string[] = [];
+
+  for (const provider of providerOrder) {
+    try {
+      if (providerNeedsApiKey(provider)) {
+        const key = params.apiKeys?.[provider]?.trim();
+        if (!key) {
+          errors.push(`${provider}: API Key 未配置`);
+          continue;
+        }
+      }
+      const result = await runAgentSearchProvider(provider, params);
+      if (result.directAnswer || result.results.length > 0) {
+        return {
+          success: true,
+          provider,
+          usedFallback: provider !== primary,
+          attemptedProviders: providerOrder.slice(0, providerOrder.indexOf(provider) + 1),
+          directAnswer: result.directAnswer,
+          results: result.results.slice(0, params.maxResults),
+          query,
+        };
+      }
+      errors.push(`${provider}: 未返回结果`);
+    } catch (error) {
+      errors.push(`${provider}: ${(error as Error).message}`);
+    }
+  }
+
+  return {
+    success: false,
+    provider: primary,
+    attemptedProviders: providerOrder,
+    error: errors.join('；') || '未获得搜索结果，请检查网络、代理或搜索配置',
+    results: [],
+    query,
+  };
+});
+
+ipcMain.handle('agent-specialized-search', async (_, rawParams: AgentSpecializedSearchParams) => {
+  const query = typeof rawParams.query === 'string' ? rawParams.query.trim() : '';
+  const source = normalizeSpecializedSearchSource(rawParams.source);
+  if (!query) return { success: false, error: '搜索词不能为空', results: [] };
+  if (!source) return { success: false, error: '不支持的专用搜索源', results: [], query };
+
+  const enabledSources = Array.isArray(rawParams.specialized?.enabledSources)
+    ? rawParams.specialized.enabledSources.map(normalizeSpecializedSearchSource).filter(Boolean) as AgentSpecializedSearchSource[]
+    : ['github', 'npm', 'stackoverflow', 'arxiv'] as AgentSpecializedSearchSource[];
+  if (!enabledSources.includes(source)) {
+    return {
+      success: false,
+      source,
+      query,
+      results: [],
+      error: `${source} 专用搜索未启用，请在 Agent 设置的专用搜索配置中开启`,
+    };
+  }
+
+  const params: AgentSpecializedSearchParams = {
+    ...rawParams,
+    source,
+    query,
+    maxResults: normalizeSpecializedSearchMaxResults(rawParams.maxResults, rawParams.specialized?.maxResults),
+  };
+
+  try {
+    const results = await runSpecializedSearch(params);
+    return {
+      success: true,
+      source,
+      query,
+      results: results.slice(0, params.maxResults),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      source,
+      query,
+      results: [],
+      error: (error as Error).message,
+    };
   }
 });
 

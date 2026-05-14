@@ -1090,7 +1090,7 @@ const OCR_PROVIDER_DEFAULTS: Record<OcrProvider, { url: string; model: string; l
   gemini:    { url: '',                                       model: 'gemini-2.5-flash',  label: 'Gemini' },
   openai:    { url: 'https://api.openai.com/v1',              model: 'gpt-4o',            label: 'OpenAI' },
   anthropic: { url: 'https://api.anthropic.com/v1',           model: 'claude-sonnet-4-6', label: 'Anthropic' },
-  deepseek:  { url: 'https://api.deepseek.com/v1',            model: 'deepseek-chat',     label: 'DeepSeek' },
+  deepseek:  { url: 'https://api.deepseek.com',               model: 'deepseek-v4-flash', label: 'DeepSeek' },
   zhipu:     { url: 'https://open.bigmodel.cn/api/paas/v4',   model: 'glm-4-plus',        label: '智谱 AI' },
   moonshot:  { url: 'https://api.moonshot.cn/v1',              model: 'kimi-k2.5',         label: 'Moonshot' },
   minimax:   { url: 'https://api.minimax.chat/v1',             model: 'MiniMax-M2.5',      label: 'MiniMax' },

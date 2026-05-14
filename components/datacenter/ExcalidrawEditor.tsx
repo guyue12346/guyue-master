@@ -1515,6 +1515,27 @@ export const ExcalidrawEditor: React.FC = () => {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const refreshFromAgent = async () => {
+      const [storedDrawings, storedActiveId, storedCategories] = await Promise.all([
+        loadDrawingsFromStorage(),
+        loadActiveIdFromStorage(),
+        loadCanvasCategoriesFromStorage(),
+      ]);
+      if (cancelled) return;
+      setDrawings(storedDrawings);
+      setActiveId(storedActiveId);
+      setCanvasCategories(storedCategories);
+      setIsCanvasStorageReady(true);
+    };
+    window.addEventListener('guyue-canvas-updated', refreshFromAgent);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('guyue-canvas-updated', refreshFromAgent);
+    };
+  }, []);
+
   // LaTeX 编辑弹窗状态
   const [latexEditTarget, setLatexEditTarget] = useState<{ elementId: string; fileId: string; latex: string } | null>(null);
   const [isLatexProcessing, setIsLatexProcessing] = useState(false);

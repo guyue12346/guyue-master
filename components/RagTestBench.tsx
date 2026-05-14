@@ -520,22 +520,31 @@ const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void; label
 // ── LLM Model options per provider (for KG / pre-retrieval API config) ──
 const LLM_MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
   gemini: [
+    { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite' },
+    { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro' },
     { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
     { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
     { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
   ],
   openai: [
+    { value: 'gpt-5.5', label: 'GPT-5.5' },
+    { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
+    { value: 'gpt-5.2', label: 'GPT-5.2' },
     { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
     { value: 'gpt-4.1', label: 'GPT-4.1' },
     { value: 'gpt-4o', label: 'GPT-4o' },
   ],
   anthropic: [
+    { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
+    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
     { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
     { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
   ],
   deepseek: [
-    { value: 'deepseek-chat', label: 'DeepSeek Chat' },
-    { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner' },
+    { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+    { value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+    { value: 'deepseek-chat', label: 'DeepSeek Chat (兼容名)' },
+    { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner (兼容名)' },
   ],
   zhipu: [
     { value: 'glm-4-flash-250414', label: 'GLM-4 Flash (免费)' },

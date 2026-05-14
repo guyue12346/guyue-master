@@ -33,6 +33,9 @@ interface NativeToolsAgentRuntimeState {
   trace: AgentTraceEvent[];
   error?: string;
   maxIterations: number;
+  supplementCount: number;
+  pendingConfirmations: any[];
+  undoSnapshots: any[];
 }
 
 export interface NativeToolsAgentRuntimeOptions {
@@ -43,12 +46,23 @@ export interface NativeToolsAgentRuntimeOptions {
   runId?: string;
   maxIterations?: number;
   executeToolCall: (toolCall: ChatToolCall) => Promise<any>;
+  getToolRisk?: (toolCall: ChatToolCall) => 'read' | 'write';
   evaluateCompletion?: (input: {
     goal: string;
     finalText: string;
     toolCalls: ChatToolCall[];
     toolResults: ChatToolExecutionResult[];
   }) => Promise<AgentCompletionEvaluation>;
+  supplementTools?: (input: {
+    goal: string;
+    finalText: string;
+    toolCalls: ChatToolCall[];
+    toolResults: ChatToolExecutionResult[];
+    currentTools: ChatTool[];
+    evaluation: AgentCompletionEvaluation;
+    supplementCount: number;
+  }) => Promise<{ tools: ChatTool[]; message: string; addedModules?: string[] } | null>;
+  maxSupplementRoutes?: number;
   onTrace?: (event: AgentTraceEvent) => void;
   onDebugEvent?: (event: ChatDebugEvent) => void;
 }
@@ -61,7 +75,36 @@ export interface NativeToolsAgentRuntimeResult {
   toolResults: ChatToolExecutionResult[];
   trace: AgentTraceEvent[];
   error?: string;
+  pendingConfirmations: any[];
+  undoSnapshots: any[];
 }
+
+export interface NativeToolExecutionEnvelope {
+  __agentToolExecutionEnvelope: true;
+  result: any;
+  pendingConfirmation?: any;
+  undoSnapshot?: any;
+}
+
+export const createAgentToolExecutionEnvelope = (
+  result: any,
+  sideEffect: Omit<NativeToolExecutionEnvelope, '__agentToolExecutionEnvelope' | 'result'> = {},
+): NativeToolExecutionEnvelope => ({
+  __agentToolExecutionEnvelope: true,
+  result,
+  ...sideEffect,
+});
+
+const unwrapToolExecutionResult = (value: any) => {
+  if (value && typeof value === 'object' && value.__agentToolExecutionEnvelope === true) {
+    return {
+      result: value.result,
+      pendingConfirmation: value.pendingConfirmation,
+      undoSnapshot: value.undoSnapshot,
+    };
+  }
+  return { result: value, pendingConfirmation: undefined, undoSnapshot: undefined };
+};
 
 const NativeToolsAgentRuntimeAnnotation = Annotation.Root({
   runId: Annotation<string>(),
@@ -78,6 +121,9 @@ const NativeToolsAgentRuntimeAnnotation = Annotation.Root({
   trace: Annotation<AgentTraceEvent[]>(),
   error: Annotation<string | undefined>(),
   maxIterations: Annotation<number>(),
+  supplementCount: Annotation<number>(),
+  pendingConfirmations: Annotation<any[]>(),
+  undoSnapshots: Annotation<any[]>(),
 });
 
 type GraphState = typeof NativeToolsAgentRuntimeAnnotation.State;
@@ -107,7 +153,32 @@ const createInitialState = (options: NativeToolsAgentRuntimeOptions): GraphState
   trace: [],
   error: undefined,
   maxIterations: options.maxIterations ?? 10,
+  supplementCount: 0,
+  pendingConfirmations: [],
+  undoSnapshots: [],
 });
+
+const hasNewTool = (currentTools: ChatTool[], nextTools: ChatTool[]) => {
+  const currentNames = new Set(currentTools.map(tool => tool.name));
+  return nextTools.some(tool => !currentNames.has(tool.name));
+};
+
+const appendSupplementMessage = (
+  session: ChatToolSessionState | undefined,
+  message: string,
+): ChatToolSessionState | undefined => {
+  if (!session) return session;
+  return {
+    ...session,
+    messages: [
+      ...session.messages,
+      {
+        role: 'user',
+        content: message,
+      },
+    ],
+  };
+};
 
 export const createNativeToolsAgentRuntime = (options: NativeToolsAgentRuntimeOptions) => {
   const withTrace = (
@@ -263,12 +334,44 @@ export const createNativeToolsAgentRuntime = (options: NativeToolsAgentRuntimeOp
     }
 
     try {
-      const toolResults = await Promise.all(
-        runtimeState.pendingToolCalls.map(async toolCall => ({
-          toolCall,
-          result: await options.executeToolCall(toolCall),
-        })),
+      const hasWriteTool = runtimeState.pendingToolCalls.some(toolCall =>
+        (options.getToolRisk?.(toolCall) || 'write') !== 'read',
       );
+      const executeOne = async (toolCall: ChatToolCall) => {
+        const rawResult = await options.executeToolCall(toolCall);
+        const unwrapped = unwrapToolExecutionResult(rawResult);
+        return {
+          toolCall,
+          result: unwrapped.result,
+          pendingConfirmation: unwrapped.pendingConfirmation,
+          undoSnapshot: unwrapped.undoSnapshot,
+        };
+      };
+      const wrappedResults: Array<{
+        toolCall: ChatToolCall;
+        result: any;
+        pendingConfirmation: any;
+        undoSnapshot: any;
+      }> = [];
+      if (hasWriteTool) {
+        for (const toolCall of runtimeState.pendingToolCalls) {
+          const result = await executeOne(toolCall);
+          wrappedResults.push(result);
+          if (result.pendingConfirmation) break;
+        }
+      } else {
+        wrappedResults.push(...await Promise.all(runtimeState.pendingToolCalls.map(executeOne)));
+      }
+      const toolResults: ChatToolExecutionResult[] = wrappedResults.map(item => ({
+        toolCall: item.toolCall,
+        result: item.result,
+      }));
+      const pendingConfirmations = wrappedResults
+        .map(item => item.pendingConfirmation)
+        .filter(Boolean);
+      const undoSnapshots = wrappedResults
+        .map(item => item.undoSnapshot)
+        .filter(Boolean);
       const nextSession = options.chatService.appendOpenAIToolResults(
         runtimeState.session,
         runtimeState.decision,
@@ -278,15 +381,22 @@ export const createNativeToolsAgentRuntime = (options: NativeToolsAgentRuntimeOp
         stage: 'execution',
         title: '工具执行完成',
         status: 'success',
-        payload: { toolResults },
+        payload: {
+          executionMode: hasWriteTool ? 'sequential' : 'parallel',
+          toolResults,
+          pendingConfirmationCount: pendingConfirmations.length,
+          undoSnapshotCount: undoSnapshots.length,
+        },
       });
 
       return {
-        status: 'verifying' as AgentRunStatus,
+        status: pendingConfirmations.length > 0 ? 'needs_user' as AgentRunStatus : 'verifying' as AgentRunStatus,
         session: nextSession,
         pendingToolCalls: [],
         toolResults: [...runtimeState.toolResults, ...toolResults],
         allToolCalls: nextSession.allToolCalls,
+        pendingConfirmations: [...runtimeState.pendingConfirmations, ...pendingConfirmations],
+        undoSnapshots: [...runtimeState.undoSnapshots, ...undoSnapshots],
         trace: [...runtimeState.trace, traceStart, traceDone],
       };
     } catch (error) {
@@ -451,6 +561,51 @@ export const createNativeToolsAgentRuntime = (options: NativeToolsAgentRuntimeOp
           payload: evaluation as any,
         });
         if (!passed) {
+          const maxSupplementRoutes = options.maxSupplementRoutes ?? 2;
+          if (
+            evaluation.status === 'failed' &&
+            evaluation.retryable !== false &&
+            options.supplementTools &&
+            runtimeState.supplementCount < maxSupplementRoutes
+          ) {
+            const supplement = await options.supplementTools({
+              goal: runtimeState.goal,
+              finalText: runtimeState.finalText,
+              toolCalls: runtimeState.allToolCalls,
+              toolResults: runtimeState.toolResults,
+              currentTools: runtimeState.tools,
+              evaluation,
+              supplementCount: runtimeState.supplementCount,
+            });
+            if (supplement && hasNewTool(runtimeState.tools, supplement.tools)) {
+              const traceSupplement = withTrace(runtimeState, {
+                stage: 'reflection',
+                title: '补充路由已扩展工具作用域',
+                detail: supplement.message,
+                status: 'success',
+                payload: {
+                  addedModules: supplement.addedModules,
+                  toolCount: supplement.tools.length,
+                  supplementCount: runtimeState.supplementCount + 1,
+                },
+              });
+              return {
+                status: 'executing' as AgentRunStatus,
+                tools: supplement.tools,
+                session: appendSupplementMessage(
+                  runtimeState.session,
+                  [
+                    '验收节点判定上一轮未完成，系统已补充开放新的模块工具。',
+                    supplement.message,
+                    '请继续完成原始目标；不要重复已经成功完成的创建、修改、删除类操作，只在必要时复用查询结果或补充查询。',
+                  ].filter(Boolean).join('\n'),
+                ),
+                error: undefined,
+                supplementCount: runtimeState.supplementCount + 1,
+                trace: [...runtimeState.trace, traceStart, traceEvaluation, traceSupplement],
+              };
+            }
+          }
           return {
             status: evaluation.status === 'needs_user' ? 'needs_user' as AgentRunStatus : 'failed' as AgentRunStatus,
             error: evaluation.status === 'failed' ? evaluation.message : runtimeState.error,
@@ -526,7 +681,7 @@ export const createNativeToolsAgentRuntime = (options: NativeToolsAgentRuntimeOp
   });
 
   const routeAfterPlanning = (state: GraphState) =>
-    state.status === 'failed' ? 'reporting' : 'decision';
+    state.status === 'failed' ? 'reporting' : 'tool_decision';
 
   const routeAfterDecision = (state: GraphState) => {
     if (state.status === 'failed') return 'reporting';
@@ -535,24 +690,26 @@ export const createNativeToolsAgentRuntime = (options: NativeToolsAgentRuntimeOp
   };
 
   const routeAfterExecution = (state: GraphState) =>
-    state.status === 'failed' ? 'reporting' : 'verification';
+    state.status === 'failed' || state.status === 'needs_user' ? 'reporting' : 'verification';
 
   const routeAfterVerification = (state: GraphState) =>
-    state.status === 'failed' ? 'reporting' : 'decision';
+    state.status === 'failed' ? 'reporting' : 'tool_decision';
 
   const routeAfterInspection = (state: GraphState) =>
-    state.status === 'failed' || state.status === 'needs_user' ? 'reporting' : 'reporting';
+    state.status === 'executing'
+      ? 'tool_decision'
+      : 'reporting';
 
   const runtimeGraph = new StateGraph(NativeToolsAgentRuntimeAnnotation)
     .addNode('planning', planningNode)
-    .addNode('decision', decisionNode)
+    .addNode('tool_decision', decisionNode)
     .addNode('execution', executionNode)
     .addNode('verification', verificationNode)
     .addNode('inspection', inspectionNode)
     .addNode('reporting', reportingNode)
     .addEdge(START, 'planning')
     .addConditionalEdges('planning', routeAfterPlanning)
-    .addConditionalEdges('decision', routeAfterDecision)
+    .addConditionalEdges('tool_decision', routeAfterDecision)
     .addConditionalEdges('execution', routeAfterExecution)
     .addConditionalEdges('verification', routeAfterVerification)
     .addConditionalEdges('inspection', routeAfterInspection)
@@ -608,6 +765,8 @@ export const createNativeToolsAgentRuntime = (options: NativeToolsAgentRuntimeOp
         toolResults: state.toolResults,
         trace: state.trace,
         error: state.error,
+        pendingConfirmations: state.pendingConfirmations,
+        undoSnapshots: state.undoSnapshots,
       };
     },
   };

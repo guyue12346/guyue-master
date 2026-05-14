@@ -1,5 +1,5 @@
 // Zenmux 支持的所有模型列表
-// 更新时间: 2026-03-02
+// 更新时间: 2026-05-14
 
 export interface ModelInfo {
   id: string;
@@ -11,6 +11,8 @@ export interface ModelInfo {
 
 export const ZENMUX_MODELS: ModelInfo[] = [
   // === Anthropic Claude 系列 ===
+  { id: 'anthropic/claude-opus-4.7', name: 'Claude Opus 4.7', provider: 'zenmux', category: 'Claude', description: '最强智能' },
+  { id: 'anthropic/claude-sonnet-4.6', name: 'Claude Sonnet 4.6', provider: 'zenmux', category: 'Claude', description: '平衡性能与成本' },
   { id: 'anthropic/claude-opus-4.6', name: 'Claude Opus 4.6', provider: 'zenmux', category: 'Claude', description: '最强推理能力' },
   { id: 'anthropic/claude-opus-4.5', name: 'Claude Opus 4.5', provider: 'zenmux', category: 'Claude', description: '顶级智能' },
   { id: 'anthropic/claude-sonnet-4.5', name: 'Claude Sonnet 4.5', provider: 'zenmux', category: 'Claude', description: '平衡性能与成本' },
@@ -23,6 +25,10 @@ export const ZENMUX_MODELS: ModelInfo[] = [
   { id: 'anthropic/claude-3.5-haiku', name: 'Claude 3.5 Haiku', provider: 'zenmux', category: 'Claude' },
   
   // === OpenAI GPT 系列 ===
+  { id: 'openai/gpt-5.5', name: 'GPT-5.5', provider: 'zenmux', category: 'GPT', description: '旗舰模型' },
+  { id: 'openai/gpt-5.4', name: 'GPT-5.4', provider: 'zenmux', category: 'GPT', description: '高性能' },
+  { id: 'openai/gpt-5.4-mini', name: 'GPT-5.4 Mini', provider: 'zenmux', category: 'GPT', description: '轻量高效' },
+  { id: 'openai/gpt-5.4-nano', name: 'GPT-5.4 Nano', provider: 'zenmux', category: 'GPT', description: '超快响应' },
   { id: 'openai/gpt-5.2', name: 'GPT-5.2', provider: 'zenmux', category: 'GPT', description: '最新旗舰模型' },
   { id: 'openai/gpt-5.2-chat', name: 'GPT-5.2 Chat', provider: 'zenmux', category: 'GPT' },
   { id: 'openai/gpt-5.2-codex', name: 'GPT-5.2 Codex', provider: 'zenmux', category: 'GPT', description: '编程专用' },
@@ -43,6 +49,9 @@ export const ZENMUX_MODELS: ModelInfo[] = [
   { id: 'openai/o4-mini', name: 'o4 Mini', provider: 'zenmux', category: 'GPT' },
   
   // === Google Gemini/Gemma 系列 ===
+  { id: 'google/gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview', provider: 'zenmux', category: 'Gemini', description: 'Agent 预览版' },
+  { id: 'google/gemini-3.1-pro-preview-customtools', name: 'Gemini 3.1 Pro Custom Tools', provider: 'zenmux', category: 'Gemini', description: '自定义工具优化' },
+  { id: 'google/gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', provider: 'zenmux', category: 'Gemini', description: '低延迟' },
   { id: 'google/gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'zenmux', category: 'Gemini', description: '快速响应' },
   { id: 'google/gemini-2.0-flash-lite-001', name: 'Gemini 2.0 Flash Lite', provider: 'zenmux', category: 'Gemini' },
   { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'zenmux', category: 'Gemini' },
@@ -71,6 +80,8 @@ export const ZENMUX_MODELS: ModelInfo[] = [
   { id: 'z-ai/glm-4.5-air', name: 'GLM 4.5 Air', provider: 'zenmux', category: 'GLM', description: '轻量版' },
   
   // === DeepSeek 系列 ===
+  { id: 'deepseek/deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'zenmux', category: 'DeepSeek', description: '支持思考/非思考' },
+  { id: 'deepseek/deepseek-v4-pro', name: 'DeepSeek V4 Pro', provider: 'zenmux', category: 'DeepSeek', description: '高能力' },
   { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', provider: 'zenmux', category: 'DeepSeek', description: '对话模型' },
   { id: 'deepseek/deepseek-chat-v3.1', name: 'DeepSeek Chat V3.1', provider: 'zenmux', category: 'DeepSeek' },
   { id: 'deepseek/deepseek-v3.2', name: 'DeepSeek V3.2', provider: 'zenmux', category: 'DeepSeek' },
@@ -147,10 +158,10 @@ export const GROUPED_ZENMUX_MODELS = ZENMUX_MODELS.reduce((acc, model) => {
 
 // 获取推荐模型
 export const RECOMMENDED_MODELS = [
-  'anthropic/claude-sonnet-4.5',
-  'openai/gpt-4o',
-  'google/gemini-2.5-pro',
-  'deepseek/deepseek-reasoner',
+  'anthropic/claude-sonnet-4.6',
+  'openai/gpt-5.4-mini',
+  'google/gemini-3.1-pro-preview-customtools',
+  'deepseek/deepseek-v4-flash',
   'qwen/qwen3-max',
 ];
 
@@ -159,7 +170,6 @@ export const RECOMMENDED_MODELS = [
 const TOOL_CALLING_CATEGORIES = new Set(['Claude', 'GPT', 'Gemini', 'Grok', 'GLM', 'DeepSeek', 'Qwen', 'Kimi', 'MiniMax', 'Mistral', 'Doubao', 'ERNIE', 'StepFun', 'KAT']);
 const TOOL_CALLING_EXCLUDE_IDS = new Set([
   'deepseek/deepseek-r1-0528',
-  'deepseek/deepseek-reasoner',
   'google/gemma-3-12b-it',
   'google/gemini-2.5-flash-image',
   'google/gemini-3-pro-image-preview',

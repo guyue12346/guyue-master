@@ -110,6 +110,7 @@ export const AVAILABLE_MODELS: Record<string, { id: string; name: string; provid
     { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', provider: 'gemini', description: '旗舰·推荐' },
     { id: 'gemini-3.1-pro-preview-customtools', name: 'Gemini 3.1 Pro (Custom Tools)', provider: 'gemini', description: '自定义工具优化' },
     { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', provider: 'gemini', description: '强大且快速' },
+    { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', provider: 'gemini', description: '低延迟·轻量 Agent' },
     // Gemini 2.5 系列（稳定版）
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini', description: '稳定旗舰' },
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini', description: '性价比' },
@@ -119,6 +120,15 @@ export const AVAILABLE_MODELS: Record<string, { id: string; name: string; provid
     { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: 'gemini' },
   ],
   openai: [
+    // GPT-5 系列（当前推荐）
+    { id: 'gpt-5.5', name: 'GPT-5.5', provider: 'openai', description: '旗舰·复杂推理与编码' },
+    { id: 'gpt-5.4', name: 'GPT-5.4', provider: 'openai', description: '高性能' },
+    { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini', provider: 'openai', description: '低延迟·高性价比' },
+    { id: 'gpt-5.4-nano', name: 'GPT-5.4 Nano', provider: 'openai', description: '最快最省' },
+    { id: 'gpt-5.2', name: 'GPT-5.2', provider: 'openai', description: '智能与编码' },
+    { id: 'gpt-5.2-pro', name: 'GPT-5.2 Pro', provider: 'openai', description: '更高精度' },
+    { id: 'gpt-5.1', name: 'GPT-5.1', provider: 'openai' },
+    { id: 'gpt-5', name: 'GPT-5', provider: 'openai' },
     // GPT-4.1 系列（2025 年 4 月发布）
     { id: 'gpt-4.1', name: 'GPT-4.1', provider: 'openai', description: '旗舰模型' },
     { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini', provider: 'openai', description: '高性价比' },
@@ -132,6 +142,9 @@ export const AVAILABLE_MODELS: Record<string, { id: string; name: string; provid
     { id: 'o3-mini', name: 'o3-mini', provider: 'openai' },
   ],
   anthropic: [
+    // Claude 4.7 / 4.6 系列
+    { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', provider: 'anthropic', description: '最强智能' },
+    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'anthropic', description: '速度与智能' },
     // Claude 4.5 系列（2025 年下半年发布）
     { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', provider: 'anthropic', description: '最强智能' },
     { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', provider: 'anthropic', description: '速度与智能' },
@@ -148,8 +161,10 @@ export const AVAILABLE_MODELS: Record<string, { id: string; name: string; provid
     { id: 'gemma3', name: 'Gemma 3', provider: 'ollama' },
   ],
   deepseek: [
-    { id: 'deepseek-chat', name: 'DeepSeek-V3', provider: 'deepseek', description: '对话模型' },
-    { id: 'deepseek-reasoner', name: 'DeepSeek-R1', provider: 'deepseek', description: '推理模型' },
+    { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'deepseek', description: '默认·支持思考/非思考' },
+    { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', provider: 'deepseek', description: '高能力·支持工具调用' },
+    { id: 'deepseek-chat', name: 'DeepSeek Chat', provider: 'deepseek', description: '兼容名，将于 2026-07-24 废弃' },
+    { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', provider: 'deepseek', description: '兼容名，将于 2026-07-24 废弃' },
   ],
   zhipu: [
     { id: 'glm-4-plus', name: 'GLM-4-Plus', provider: 'zhipu', description: '旗舰' },
@@ -181,12 +196,21 @@ export const AGENT_AVAILABLE_MODELS: Record<string, { id: string; name: string; 
     { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', provider: 'gemini', description: '旗舰·推荐' },
     { id: 'gemini-3.1-pro-preview-customtools', name: 'Gemini 3.1 Pro (Custom Tools)', provider: 'gemini', description: '自定义工具优化' },
     { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', provider: 'gemini', description: '强大且快速' },
+    { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', provider: 'gemini', description: '低延迟·路由/轻量工具' },
     // Gemini 2.5 系列（稳定版，支持函数调用）
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini', description: '稳定旗舰' },
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini', description: '性价比' },
     { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: 'gemini', description: '最快最省' },
   ],
   openai: [
+    { id: 'gpt-5.5', name: 'GPT-5.5', provider: 'openai', description: '旗舰·复杂推理与编码' },
+    { id: 'gpt-5.4', name: 'GPT-5.4', provider: 'openai', description: '高性能' },
+    { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini', provider: 'openai', description: '低延迟·高性价比' },
+    { id: 'gpt-5.4-nano', name: 'GPT-5.4 Nano', provider: 'openai', description: '最快最省' },
+    { id: 'gpt-5.2', name: 'GPT-5.2', provider: 'openai', description: '智能与编码' },
+    { id: 'gpt-5.2-pro', name: 'GPT-5.2 Pro', provider: 'openai', description: '更高精度' },
+    { id: 'gpt-5.1', name: 'GPT-5.1', provider: 'openai' },
+    { id: 'gpt-5', name: 'GPT-5', provider: 'openai' },
     { id: 'gpt-4.1', name: 'GPT-4.1', provider: 'openai', description: '旗舰模型' },
     { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini', provider: 'openai', description: '高性价比' },
     { id: 'gpt-4.1-nano', name: 'GPT-4.1 Nano', provider: 'openai', description: '超快响应' },
@@ -194,6 +218,8 @@ export const AGENT_AVAILABLE_MODELS: Record<string, { id: string; name: string; 
     { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' },
   ],
   anthropic: [
+    { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', provider: 'anthropic', description: '最强智能' },
+    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'anthropic', description: '速度与智能' },
     { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', provider: 'anthropic', description: '最强智能' },
     { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', provider: 'anthropic', description: '速度与智能' },
     { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', provider: 'anthropic', description: '最快' },
@@ -206,6 +232,12 @@ export const AGENT_AVAILABLE_MODELS: Record<string, { id: string; name: string; 
     { id: 'kimi-k2-thinking', name: 'Kimi K2 Thinking', provider: 'moonshot', description: '推理' },
     { id: 'moonshot-v1-128k', name: 'Moonshot V1 (128k)', provider: 'moonshot', description: '长文本' },
     { id: 'moonshot-v1-32k', name: 'Moonshot V1 (32k)', provider: 'moonshot', description: '通用' },
+  ],
+  deepseek: [
+    { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'deepseek', description: '默认·支持工具调用' },
+    { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', provider: 'deepseek', description: '高能力·支持工具调用' },
+    { id: 'deepseek-chat', name: 'DeepSeek Chat', provider: 'deepseek', description: '兼容名，将于 2026-07-24 废弃' },
+    { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', provider: 'deepseek', description: '兼容名，将于 2026-07-24 废弃' },
   ],
 };
 
@@ -235,11 +267,11 @@ export class ChatService {
   }
 
   supportsNativeTools(): boolean {
-    return ['openai', 'anthropic', 'gemini', 'zenmux', 'moonshot'].includes(this.config.provider);
+    return ['openai', 'anthropic', 'gemini', 'zenmux', 'moonshot', 'deepseek'].includes(this.config.provider);
   }
 
   supportsStepwiseNativeTools(): boolean {
-    return ['openai', 'zenmux', 'moonshot'].includes(this.config.provider);
+    return ['openai', 'zenmux', 'moonshot', 'deepseek'].includes(this.config.provider);
   }
 
   createOpenAIToolSession(messages: ChatMessage[], maxIterations = 10): ChatToolSessionState {
@@ -558,7 +590,7 @@ export class ChatService {
       case 'ollama':
         return 'http://localhost:11434/v1';
       case 'deepseek':
-        return 'https://api.deepseek.com/v1';
+        return 'https://api.deepseek.com';
       case 'zhipu':
         return 'https://open.bigmodel.cn/api/paas/v4';
       case 'moonshot':

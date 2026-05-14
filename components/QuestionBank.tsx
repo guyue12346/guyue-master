@@ -499,6 +499,7 @@ const normalizeBaseUrl = (profile: ApiProfile) => {
   const raw = profile.baseUrl?.trim();
   if (!raw) return undefined;
   if (profile.provider === 'gemini') return undefined;
+  if (profile.provider === 'deepseek') return raw.replace(/\/(?:v1|beta)\/?$/, '').replace(/\/$/, '');
   if (profile.provider === 'custom' || profile.provider === 'zenmux') return raw;
   if (/\/(v1|v4|api\/paas\/v4)\/?$/.test(raw)) return raw.replace(/\/$/, '');
   if (profile.provider === 'zhipu') return `${raw.replace(/\/$/, '')}/api/paas/v4`;
@@ -916,6 +917,27 @@ export const QuestionBank: React.FC = () => {
     if (!isMethodDataReady) return;
     saveMethodData(methodData);
   }, [methodData, isMethodDataReady]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshFromAgent = async () => {
+      const [nextQuestions, nextMethods] = await Promise.all([
+        loadDataFromStorage(),
+        loadMethodDataFromStorage(),
+      ]);
+      if (cancelled) return;
+      setData(nextQuestions);
+      setMethodData(nextMethods);
+      setIsQuestionDataReady(true);
+      setIsMethodDataReady(true);
+    };
+    window.addEventListener('guyue-question-bank-updated', refreshFromAgent);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('guyue-question-bank-updated', refreshFromAgent);
+    };
+  }, []);
+
   useEffect(() => {
     saveUiState({
       contentMode,

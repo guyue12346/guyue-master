@@ -1,7 +1,6 @@
 import {
   executeToolRegistration,
   findToolRegistration,
-  normalizeToolResult,
 } from '../toolRegistry';
 import type {
   AgentPlanStep,
@@ -15,6 +14,7 @@ export const createToolRegistryExecutor = ({
   registry,
   context,
   executeWebSearch,
+  executeSpecializedSearch,
 }: ToolRegistryExecutorOptions): AgentToolExecutor => ({
   async execute(step: AgentPlanStep, _state: AgentRuntimeState): Promise<AgentToolObservation> {
     if (!step.toolName) {
@@ -27,12 +27,15 @@ export const createToolRegistryExecutor = ({
     }
 
     try {
+      const executionContext = {
+        ...context,
+        executeWebSearch: context.executeWebSearch || executeWebSearch,
+        executeSpecializedSearch: context.executeSpecializedSearch || executeSpecializedSearch,
+      };
       const registration = findToolRegistration(registry, step.toolName);
-      const result = step.toolName === 'web_search'
-        ? normalizeToolResult(await executeWebSearch?.(step.args || {}))
-        : registration
-          ? await executeToolRegistration(registration, step.args || {}, context)
-          : undefined;
+      const result = registration
+        ? await executeToolRegistration(registration, step.args || {}, executionContext)
+        : undefined;
 
       if (result === undefined) {
         return {

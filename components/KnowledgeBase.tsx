@@ -183,7 +183,7 @@ const PROVIDER_OPTIONS: { value: string; label: string; defaultUrl: string }[] =
   { value: 'gemini', label: 'Gemini', defaultUrl: 'https://generativelanguage.googleapis.com' },
   { value: 'openai', label: 'OpenAI', defaultUrl: 'https://api.openai.com/v1' },
   { value: 'anthropic', label: 'Anthropic', defaultUrl: 'https://api.anthropic.com/v1' },
-  { value: 'deepseek', label: 'DeepSeek', defaultUrl: 'https://api.deepseek.com/v1' },
+  { value: 'deepseek', label: 'DeepSeek', defaultUrl: 'https://api.deepseek.com' },
   { value: 'zhipu', label: '智谱 GLM', defaultUrl: 'https://open.bigmodel.cn/api/paas/v4' },
   { value: 'moonshot', label: 'Moonshot', defaultUrl: 'https://api.moonshot.cn/v1' },
   { value: 'minimax', label: 'MiniMax', defaultUrl: 'https://api.minimax.chat/v1' },
@@ -193,12 +193,18 @@ const PROVIDER_OPTIONS: { value: string; label: string; defaultUrl: string }[] =
 const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
   gemini: [
     { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (旗舰·推荐)' },
+    { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite' },
     { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash' },
     { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
     { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
     { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
   ],
   openai: [
+    { value: 'gpt-5.5', label: 'GPT-5.5' },
+    { value: 'gpt-5.4', label: 'GPT-5.4' },
+    { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
+    { value: 'gpt-5.4-nano', label: 'GPT-5.4 Nano' },
+    { value: 'gpt-5.2', label: 'GPT-5.2' },
     { value: 'gpt-4.1', label: 'GPT-4.1' },
     { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
     { value: 'gpt-4o', label: 'GPT-4o' },
@@ -206,13 +212,17 @@ const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
     { value: 'o4-mini', label: 'o4 Mini (推理)' },
   ],
   anthropic: [
+    { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
+    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
     { value: 'claude-opus-4-5', label: 'Claude Opus 4.5' },
     { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
     { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
   ],
   deepseek: [
-    { value: 'deepseek-chat', label: 'DeepSeek Chat' },
-    { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner' },
+    { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+    { value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+    { value: 'deepseek-chat', label: 'DeepSeek Chat (兼容名)' },
+    { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner (兼容名)' },
   ],
   zhipu: [
     { value: 'glm-4-plus', label: 'GLM-4 Plus' },

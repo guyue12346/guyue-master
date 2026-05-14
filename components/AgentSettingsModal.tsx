@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { X, CheckCircle2, AlertCircle, Trash2, Sparkles, ChevronDown, ChevronRight, Plus, Pencil, Mail, Server, Key, Edit3, BookUser, Send, Loader2 } from 'lucide-react';
+import { X, CheckCircle2, AlertCircle, Trash2, Sparkles, ChevronDown, ChevronRight, Plus, Pencil, Mail, Server, Key, Edit3, BookUser, Send, Loader2, Globe2, Search } from 'lucide-react';
 import { AGENT_AVAILABLE_MODELS, ChatConfig } from '../services/chatService';
-import type { AgentEmailConfig, Contact } from '../services/agent/agentStorage';
+import type { AgentEmailConfig, AgentSearchConfig, AgentSearchMode, AgentSearchProvider, AgentSpecializedSearchSource, Contact } from '../services/agent/agentStorage';
 import { loadProfiles } from '../utils/apiProfileService';
 import type { ApiProfile } from '../types';
 
@@ -17,6 +17,8 @@ interface AgentSettingsModalProps {
   onChangeConfig: (config: ChatConfig) => void;
   routerConfig: ChatConfig;
   onChangeRouterConfig: (config: ChatConfig) => void;
+  searchConfig: AgentSearchConfig;
+  onChangeSearchConfig: (config: AgentSearchConfig) => void;
   onClearHistory: () => void;
   modules: ModuleInfo[];
   modulePrompts: Record<string, string>;
@@ -82,6 +84,28 @@ const PROVIDER_LABELS: Record<string, string> = {
   ollama: 'Ollama', custom: '自定义',
 };
 
+const SEARCH_PROVIDER_LABELS: Record<AgentSearchProvider, string> = {
+  tavily: 'Tavily',
+  exa: 'Exa',
+  brave: 'Brave',
+  searxng: 'SearXNG',
+  'bing-browser': 'Bing Browser',
+};
+
+const SEARCH_PROVIDERS: AgentSearchProvider[] = ['tavily', 'exa', 'brave', 'searxng', 'bing-browser'];
+const SEARCH_MODES: Array<{ key: AgentSearchMode; label: string }> = [
+  { key: 'fast', label: '快速' },
+  { key: 'balanced', label: '均衡' },
+  { key: 'deep', label: '深入' },
+];
+const SPECIALIZED_SEARCH_SOURCE_LABELS: Record<AgentSpecializedSearchSource, string> = {
+  github: 'GitHub',
+  npm: 'npm',
+  stackoverflow: 'StackOverflow',
+  arxiv: 'arXiv',
+};
+const SPECIALIZED_SEARCH_SOURCES: AgentSpecializedSearchSource[] = ['github', 'npm', 'stackoverflow', 'arxiv'];
+
 export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   isOpen,
   onClose,
@@ -89,6 +113,8 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   onChangeConfig,
   routerConfig,
   onChangeRouterConfig,
+  searchConfig,
+  onChangeSearchConfig,
   onClearHistory,
   modules,
   modulePrompts,
@@ -107,6 +133,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   const [activeModuleTab, setActiveModuleTab] = useState<string | null>(null);
   const [savedApiConfigs, setSavedApiConfigs] = useState<SavedAgentApiConfig[]>([]);
   const [selectedApiConfigId, setSelectedApiConfigId] = useState<string>('');
+  const [selectedRouterApiConfigId, setSelectedRouterApiConfigId] = useState<string>('');
   const [globalApiProfiles, setGlobalApiProfiles] = useState<ApiProfile[]>([]);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
 
@@ -129,8 +156,14 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
       item.apiKey === config.apiKey &&
       (item.baseUrl || '') === (config.baseUrl || '')
     ));
+    const matchedRouter = saved.find(item => (
+      item.provider === routerConfig.provider &&
+      item.apiKey === routerConfig.apiKey &&
+      (item.baseUrl || '') === (routerConfig.baseUrl || '')
+    ));
     setSelectedApiConfigId(matched?.id || '');
-  }, [isOpen, config.provider, config.apiKey, config.baseUrl]);
+    setSelectedRouterApiConfigId(matchedRouter?.id || '');
+  }, [isOpen, config.provider, config.apiKey, config.baseUrl, routerConfig.provider, routerConfig.apiKey, routerConfig.baseUrl]);
 
   const currentModels = AGENT_AVAILABLE_MODELS[config.provider] || [];
   const routerModels = AGENT_AVAILABLE_MODELS[routerConfig.provider] || [];
@@ -148,6 +181,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
     const nextModel = AGENT_AVAILABLE_MODELS[item.provider]?.some(m => m.id === routerConfig.model)
       ? routerConfig.model
       : AGENT_AVAILABLE_MODELS[item.provider]?.[0]?.id || '';
+    setSelectedRouterApiConfigId(item.id);
     onChangeRouterConfig({
       ...routerConfig,
       provider: item.provider,
@@ -206,6 +240,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
     setSavedApiConfigs(next);
     persistSavedApiConfigs(next);
     if (selectedApiConfigId === editingId) applyConfig(updated);
+    if (selectedRouterApiConfigId === editingId) applyRouterConfig(updated);
     cancelEdit();
   };
 
@@ -214,13 +249,44 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
     setSavedApiConfigs(next);
     persistSavedApiConfigs(next);
     if (selectedApiConfigId === id) setSelectedApiConfigId('');
+    if (selectedRouterApiConfigId === id) {
+      setSelectedRouterApiConfigId('');
+      onChangeRouterConfig({ ...routerConfig, apiKey: '', baseUrl: '', systemPrompt: '', temperature: 0, maxTokens: 1024 });
+    }
     if (editingId === id) cancelEdit();
   };
 
   const formNeedsBaseUrl = formProvider === 'custom' || formProvider === 'ollama';
   const configNeedsBaseUrl = config.provider === 'custom' || config.provider === 'ollama';
-  const routerNeedsBaseUrl = routerConfig.provider === 'custom' || routerConfig.provider === 'ollama';
+  const selectedRouterConfig = savedApiConfigs.find(item => item.id === selectedRouterApiConfigId);
+  const hasUnlistedRouterConfig = Boolean(routerConfig.apiKey && !selectedRouterConfig);
   const isEditing = editingId !== null;
+  const updateSearchConfig = (patch: Partial<AgentSearchConfig>) => onChangeSearchConfig({ ...searchConfig, ...patch });
+  const updateSearchApiKey = (provider: keyof AgentSearchConfig['apiKeys'], apiKey: string) => {
+    updateSearchConfig({ apiKeys: { ...searchConfig.apiKeys, [provider]: apiKey } });
+  };
+  const updateSpecializedSearchConfig = (patch: Partial<AgentSearchConfig['specialized']>) => {
+    updateSearchConfig({ specialized: { ...searchConfig.specialized, ...patch } });
+  };
+  const updateSpecializedSearchApiKey = (provider: keyof AgentSearchConfig['specialized']['apiKeys'], apiKey: string) => {
+    updateSpecializedSearchConfig({ apiKeys: { ...searchConfig.specialized.apiKeys, [provider]: apiKey } });
+  };
+  const toggleSpecializedSearchSource = (source: AgentSpecializedSearchSource) => {
+    const current = searchConfig.specialized.enabledSources || [];
+    updateSpecializedSearchConfig({
+      enabledSources: current.includes(source)
+        ? current.filter(item => item !== source)
+        : [...current, source],
+    });
+  };
+  const toggleFallbackProvider = (provider: AgentSearchProvider) => {
+    const current = searchConfig.fallbackProviders || [];
+    updateSearchConfig({
+      fallbackProviders: current.includes(provider)
+        ? current.filter(item => item !== provider)
+        : [...current, provider],
+    });
+  };
 
   if (!isOpen) return null;
 
@@ -419,51 +485,46 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
               <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">自动路由 API</p>
                 <button
-                  onClick={() => onChangeRouterConfig({ ...routerConfig, apiKey: '', baseUrl: '', systemPrompt: '', temperature: 0, maxTokens: 1024 })}
+                  onClick={() => {
+                    setSelectedRouterApiConfigId('');
+                    onChangeRouterConfig({ ...routerConfig, apiKey: '', baseUrl: '', systemPrompt: '', temperature: 0, maxTokens: 1024 });
+                  }}
                   className="text-[11px] text-gray-400 hover:text-gray-600"
                 >
                   跟随主模型
                 </button>
               </div>
               <div className="p-4 space-y-3">
-                {savedApiConfigs.length > 0 && (
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">配置来源</label>
                   <select
-                    className="w-full rounded-lg border border-dashed border-violet-200 bg-violet-50/40 px-3 py-2 text-xs text-gray-600 outline-none focus:border-violet-400"
-                    value=""
+                    className="w-full rounded-lg border border-violet-200 bg-violet-50/40 px-3 py-2 text-sm text-gray-700 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                    value={selectedRouterApiConfigId}
                     onChange={e => {
-                      const item = savedApiConfigs.find(p => p.id === e.target.value);
+                      const nextId = e.target.value;
+                      if (!nextId) {
+                        setSelectedRouterApiConfigId('');
+                        onChangeRouterConfig({ ...routerConfig, apiKey: '', baseUrl: '', systemPrompt: '', temperature: 0, maxTokens: 1024 });
+                        return;
+                      }
+                      const item = savedApiConfigs.find(p => p.id === nextId);
                       if (item) applyRouterConfig(item);
                     }}
                   >
-                    <option value="">选择已保存配置作为路由模型…</option>
+                    <option value="">跟随主 Agent 模型</option>
                     {savedApiConfigs.map(item => (
                       <option key={item.id} value={item.id}>{item.label} ({PROVIDER_LABELS[item.provider] || item.provider})</option>
                     ))}
                   </select>
-                )}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">提供商</label>
-                    <select
-                      value={routerConfig.provider}
-                      onChange={e => {
-                        const provider = e.target.value as AgentProvider;
-                        onChangeRouterConfig({
-                          ...routerConfig,
-                          provider,
-                          model: AGENT_AVAILABLE_MODELS[provider]?.[0]?.id || '',
-                          systemPrompt: '',
-                          temperature: 0,
-                          maxTokens: 1024,
-                        });
-                      }}
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 bg-white"
-                    >
-                      {Object.keys(AGENT_AVAILABLE_MODELS).map(p => (
-                        <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>
-                      ))}
-                    </select>
-                  </div>
+                  {savedApiConfigs.length === 0 && (
+                    <p className="mt-1 text-[11px] text-gray-400">先在上方保存 API 配置后，可选择其中一个作为路由模型。</p>
+                  )}
+                  {hasUnlistedRouterConfig && (
+                    <p className="mt-1 text-[11px] text-amber-500">当前路由配置不在已保存列表中，建议从上方配置列表重新选择。</p>
+                  )}
+                </div>
+
+                {(selectedRouterConfig || hasUnlistedRouterConfig) && (
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">模型</label>
                     <select
@@ -476,34 +537,223 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
                       ))}
                     </select>
                   </div>
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">API Key</label>
-                  <input
-                    type="password"
-                    value={routerConfig.apiKey}
-                    onChange={e => onChangeRouterConfig({ ...routerConfig, apiKey: e.target.value, systemPrompt: '', temperature: 0, maxTokens: 1024 })}
-                    placeholder="留空则跟随主模型"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                  />
-                </div>
-                {routerNeedsBaseUrl && (
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">Base URL</label>
-                    <input
-                      type="text"
-                      value={routerConfig.baseUrl || ''}
-                      onChange={e => onChangeRouterConfig({ ...routerConfig, baseUrl: e.target.value, systemPrompt: '', temperature: 0, maxTokens: 1024 })}
-                      placeholder="https://api.example.com/v1"
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                    />
-                  </div>
                 )}
                 <p className="text-[11px] text-gray-400">
                   {routerConfig.apiKey
-                    ? `路由使用 ${PROVIDER_LABELS[routerConfig.provider] || routerConfig.provider} · ${routerConfig.model}`
+                    ? `路由使用 ${selectedRouterConfig?.label ? `${selectedRouterConfig.label} · ` : ''}${PROVIDER_LABELS[routerConfig.provider] || routerConfig.provider} · ${routerConfig.model}`
                     : '当前未单独配置，自动路由会使用主 Agent 模型。'}
                 </p>
+              </div>
+            </div>
+          </div>
+
+          {/* ── 联网搜索 ── */}
+          <div className="px-5 pb-4">
+            <div className="rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                <p className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  <Globe2 className="w-3.5 h-3.5" />
+                  联网搜索
+                </p>
+                <span className="text-[11px] text-gray-400">{SEARCH_PROVIDER_LABELS[searchConfig.provider]}</span>
+              </div>
+              <div className="p-4 space-y-3">
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">默认引擎</label>
+                    <select
+                      value={searchConfig.provider}
+                      onChange={e => updateSearchConfig({ provider: e.target.value as AgentSearchProvider })}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    >
+                      {SEARCH_PROVIDERS.map(provider => (
+                        <option key={provider} value={provider}>{SEARCH_PROVIDER_LABELS[provider]}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">模式</label>
+                    <select
+                      value={searchConfig.mode}
+                      onChange={e => updateSearchConfig({ mode: e.target.value as AgentSearchMode })}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    >
+                      {SEARCH_MODES.map(mode => (
+                        <option key={mode.key} value={mode.key}>{mode.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">结果数</label>
+                    <input
+                      type="number"
+                      min={3}
+                      max={20}
+                      value={searchConfig.maxResults}
+                      onChange={e => updateSearchConfig({ maxResults: Math.min(Math.max(parseInt(e.target.value, 10) || 8, 3), 20) })}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={searchConfig.includeAnswer}
+                      onChange={e => updateSearchConfig({ includeAnswer: e.target.checked })}
+                      className="rounded border-gray-300"
+                    />
+                    返回直答
+                  </label>
+                  <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={searchConfig.includeRawContent}
+                      onChange={e => updateSearchConfig({ includeRawContent: e.target.checked })}
+                      className="rounded border-gray-300"
+                    />
+                    抓取正文
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">语言</label>
+                    <input
+                      type="text"
+                      value={searchConfig.language}
+                      onChange={e => updateSearchConfig({ language: e.target.value })}
+                      placeholder="zh-CN"
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">地区</label>
+                    <input
+                      type="text"
+                      value={searchConfig.country}
+                      onChange={e => updateSearchConfig({ country: e.target.value })}
+                      placeholder="CN"
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-xs text-gray-500">API Key</label>
+                  <input
+                    type="password"
+                    value={searchConfig.apiKeys.tavily}
+                    onChange={e => updateSearchApiKey('tavily', e.target.value)}
+                    placeholder="Tavily API Key"
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  />
+                  <input
+                    type="password"
+                    value={searchConfig.apiKeys.exa}
+                    onChange={e => updateSearchApiKey('exa', e.target.value)}
+                    placeholder="Exa API Key"
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  />
+                  <input
+                    type="password"
+                    value={searchConfig.apiKeys.brave}
+                    onChange={e => updateSearchApiKey('brave', e.target.value)}
+                    placeholder="Brave Search API Key"
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  />
+                  <input
+                    type="text"
+                    value={searchConfig.searxngBaseUrl}
+                    onChange={e => updateSearchConfig({ searxngBaseUrl: e.target.value })}
+                    placeholder="SearXNG Base URL，例如 https://search.example.com"
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">失败回退</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SEARCH_PROVIDERS.map(provider => (
+                      <button
+                        key={provider}
+                        type="button"
+                        onClick={() => toggleFallbackProvider(provider)}
+                        className={`rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                          searchConfig.fallbackProviders.includes(provider)
+                            ? 'border-blue-200 bg-blue-50 text-blue-700'
+                            : 'border-gray-200 bg-white text-gray-400 hover:text-gray-600'
+                        }`}
+                      >
+                        {SEARCH_PROVIDER_LABELS[provider]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+                  <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                    <p className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-500">
+                      <Search className="w-3.5 h-3.5" />
+                      专用搜索配置
+                    </p>
+                    <span className="text-[11px] text-gray-400">
+                      {searchConfig.specialized.enabledSources.length} 个来源
+                    </span>
+                  </div>
+                  <div className="p-3 space-y-3">
+                    <div className="grid grid-cols-[1fr_96px] gap-3">
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">启用来源</label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {SPECIALIZED_SEARCH_SOURCES.map(source => (
+                            <button
+                              key={source}
+                              type="button"
+                              onClick={() => toggleSpecializedSearchSource(source)}
+                              className={`rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                                searchConfig.specialized.enabledSources.includes(source)
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                  : 'border-gray-200 bg-white text-gray-400 hover:text-gray-600'
+                              }`}
+                            >
+                              {SPECIALIZED_SEARCH_SOURCE_LABELS[source]}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">结果数</label>
+                        <input
+                          type="number"
+                          min={3}
+                          max={20}
+                          value={searchConfig.specialized.maxResults}
+                          onChange={e => updateSpecializedSearchConfig({ maxResults: Math.min(Math.max(parseInt(e.target.value, 10) || 8, 3), 20) })}
+                          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="password"
+                        value={searchConfig.specialized.apiKeys.github}
+                        onChange={e => updateSpecializedSearchApiKey('github', e.target.value)}
+                        placeholder="GitHub Token，可选"
+                        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                      />
+                      <input
+                        type="password"
+                        value={searchConfig.specialized.apiKeys.stackExchange}
+                        onChange={e => updateSpecializedSearchApiKey('stackExchange', e.target.value)}
+                        placeholder="StackExchange Key，可选"
+                        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

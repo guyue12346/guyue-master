@@ -16,6 +16,7 @@ import { loadLocalJson, saveLocalJson, saveUnifiedJson } from '../../utils/unifi
 
 export const STORAGE_KEY_AGENT_CONFIG = 'guyue_agent_config';
 export const STORAGE_KEY_AGENT_ROUTER_CONFIG = 'guyue_agent_router_config';
+export const STORAGE_KEY_AGENT_SEARCH_CONFIG = 'guyue_agent_search_config';
 export const STORAGE_KEY_AGENT_HISTORY = 'guyue_agent_history';
 export const STORAGE_KEY_AGENT_PERMISSIONS = 'guyue_agent_permissions';
 export const STORAGE_KEY_MODULE_PROMPTS = 'guyue_agent_module_prompts';
@@ -24,6 +25,7 @@ export const AGENT_EMAIL_CONFIG_KEY = 'linkmaster_email_config';
 
 const STORE_KEY_AGENT_CONFIG = 'agent-config';
 const STORE_KEY_AGENT_ROUTER_CONFIG = 'agent-router-config';
+const STORE_KEY_AGENT_SEARCH_CONFIG = 'agent-search-config';
 const STORE_KEY_AGENT_HISTORY = 'agent-history';
 const STORE_KEY_AGENT_PERMISSIONS = 'agent-permissions';
 const STORE_KEY_MODULE_PROMPTS = 'agent-module-prompts';
@@ -38,6 +40,62 @@ export const DEFAULT_AGENT_EMAIL_CONFIG = {
 
 export type AgentEmailConfig = typeof DEFAULT_AGENT_EMAIL_CONFIG;
 
+export type AgentSearchProvider = 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser';
+export type AgentSearchMode = 'fast' | 'balanced' | 'deep';
+export type AgentSpecializedSearchSource = 'github' | 'npm' | 'stackoverflow' | 'arxiv';
+
+export interface AgentSpecializedSearchConfig {
+  enabledSources: AgentSpecializedSearchSource[];
+  maxResults: number;
+  apiKeys: {
+    github: string;
+    stackExchange: string;
+  };
+}
+
+export interface AgentSearchConfig {
+  provider: AgentSearchProvider;
+  fallbackProviders: AgentSearchProvider[];
+  mode: AgentSearchMode;
+  maxResults: number;
+  includeAnswer: boolean;
+  includeRawContent: boolean;
+  apiKeys: {
+    tavily: string;
+    exa: string;
+    brave: string;
+  };
+  searxngBaseUrl: string;
+  language: string;
+  country: string;
+  specialized: AgentSpecializedSearchConfig;
+}
+
+export const DEFAULT_AGENT_SEARCH_CONFIG: AgentSearchConfig = {
+  provider: 'tavily',
+  fallbackProviders: ['exa', 'brave', 'bing-browser'],
+  mode: 'balanced',
+  maxResults: 8,
+  includeAnswer: true,
+  includeRawContent: false,
+  apiKeys: {
+    tavily: '',
+    exa: '',
+    brave: '',
+  },
+  searxngBaseUrl: '',
+  language: 'zh-CN',
+  country: 'CN',
+  specialized: {
+    enabledSources: ['github', 'npm', 'stackoverflow', 'arxiv'],
+    maxResults: 8,
+    apiKeys: {
+      github: '',
+      stackExchange: '',
+    },
+  },
+};
+
 export interface Contact {
   id: string;
   nickname: string;
@@ -50,6 +108,66 @@ const normalizeConfig = (value: any): ChatConfig => ({
   ...(value && typeof value === 'object' ? value : {}),
   systemPrompt: typeof value?.systemPrompt === 'string' ? value.systemPrompt : '',
 });
+
+const AGENT_SEARCH_PROVIDERS = new Set<AgentSearchProvider>(['tavily', 'exa', 'brave', 'searxng', 'bing-browser']);
+const AGENT_SEARCH_MODES = new Set<AgentSearchMode>(['fast', 'balanced', 'deep']);
+const AGENT_SPECIALIZED_SEARCH_SOURCES = new Set<AgentSpecializedSearchSource>(['github', 'npm', 'stackoverflow', 'arxiv']);
+
+const normalizeSearchProvider = (value: any, fallback: AgentSearchProvider): AgentSearchProvider =>
+  AGENT_SEARCH_PROVIDERS.has(value) ? value : fallback;
+
+const normalizeSpecializedSearchSource = (value: any): AgentSpecializedSearchSource | null =>
+  AGENT_SPECIALIZED_SEARCH_SOURCES.has(value) ? value : null;
+
+const normalizeSpecializedSearchConfig = (value: any): AgentSpecializedSearchConfig => {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const apiKeys = source.apiKeys && typeof source.apiKeys === 'object' ? source.apiKeys : {};
+  const enabledSources = Array.isArray(source.enabledSources)
+    ? source.enabledSources
+        .map(normalizeSpecializedSearchSource)
+        .filter((item: AgentSpecializedSearchSource | null): item is AgentSpecializedSearchSource => Boolean(item))
+        .filter((item: AgentSpecializedSearchSource, index: number, arr: AgentSpecializedSearchSource[]) => arr.indexOf(item) === index)
+    : DEFAULT_AGENT_SEARCH_CONFIG.specialized.enabledSources;
+  const maxResults = Number(source.maxResults);
+
+  return {
+    enabledSources,
+    maxResults: Number.isFinite(maxResults) ? Math.min(Math.max(Math.floor(maxResults), 3), 20) : DEFAULT_AGENT_SEARCH_CONFIG.specialized.maxResults,
+    apiKeys: {
+      github: typeof apiKeys.github === 'string' ? apiKeys.github : '',
+      stackExchange: typeof apiKeys.stackExchange === 'string' ? apiKeys.stackExchange : '',
+    },
+  };
+};
+
+const normalizeSearchConfig = (value: any): AgentSearchConfig => {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const apiKeys = source.apiKeys && typeof source.apiKeys === 'object' ? source.apiKeys : {};
+  const fallbackProviders = Array.isArray(source.fallbackProviders)
+    ? source.fallbackProviders
+        .map((item: any) => normalizeSearchProvider(item, 'bing-browser'))
+        .filter((item: AgentSearchProvider, index: number, arr: AgentSearchProvider[]) => arr.indexOf(item) === index)
+    : DEFAULT_AGENT_SEARCH_CONFIG.fallbackProviders;
+  const maxResults = Number(source.maxResults);
+
+  return {
+    provider: normalizeSearchProvider(source.provider, DEFAULT_AGENT_SEARCH_CONFIG.provider),
+    fallbackProviders,
+    mode: AGENT_SEARCH_MODES.has(source.mode) ? source.mode : DEFAULT_AGENT_SEARCH_CONFIG.mode,
+    maxResults: Number.isFinite(maxResults) ? Math.min(Math.max(Math.floor(maxResults), 3), 20) : DEFAULT_AGENT_SEARCH_CONFIG.maxResults,
+    includeAnswer: source.includeAnswer !== false,
+    includeRawContent: Boolean(source.includeRawContent),
+    apiKeys: {
+      tavily: typeof apiKeys.tavily === 'string' ? apiKeys.tavily : '',
+      exa: typeof apiKeys.exa === 'string' ? apiKeys.exa : '',
+      brave: typeof apiKeys.brave === 'string' ? apiKeys.brave : '',
+    },
+    searxngBaseUrl: typeof source.searxngBaseUrl === 'string' ? source.searxngBaseUrl : '',
+    language: typeof source.language === 'string' && source.language.trim() ? source.language : DEFAULT_AGENT_SEARCH_CONFIG.language,
+    country: typeof source.country === 'string' && source.country.trim() ? source.country : DEFAULT_AGENT_SEARCH_CONFIG.country,
+    specialized: normalizeSpecializedSearchConfig(source.specialized),
+  };
+};
 
 export interface StoredAgentPermissions {
   data: DataPermissions;
@@ -205,6 +323,25 @@ export const saveAgentRouterConfig = (config: ChatConfig): void => {
       }),
     },
     { ...config, systemPrompt: '', temperature: config.temperature ?? 0, maxTokens: config.maxTokens ?? 1024 },
+  );
+};
+
+export const loadAgentSearchConfig = (): AgentSearchConfig =>
+  loadLocalJson({
+    localStorageKey: STORAGE_KEY_AGENT_SEARCH_CONFIG,
+    defaultValue: () => ({ ...DEFAULT_AGENT_SEARCH_CONFIG }),
+    normalize: normalizeSearchConfig,
+  });
+
+export const saveAgentSearchConfig = (config: AgentSearchConfig): void => {
+  saveUnifiedJson(
+    {
+      appDataKey: STORE_KEY_AGENT_SEARCH_CONFIG,
+      localStorageKey: STORAGE_KEY_AGENT_SEARCH_CONFIG,
+      defaultValue: () => ({ ...DEFAULT_AGENT_SEARCH_CONFIG }),
+      normalize: normalizeSearchConfig,
+    },
+    config,
   );
 };
 

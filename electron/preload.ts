@@ -139,7 +139,42 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testEmailConfig: (config: any) => ipcRenderer.invoke('test-email-config', config),
 
   // Agent 网络搜索
-  agentWebSearch: (params: { query: string }) => ipcRenderer.invoke('agent-web-search', params),
+  agentWebSearch: (params: {
+    query: string;
+    provider?: 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser';
+    fallbackProviders?: Array<'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser'>;
+    mode?: 'fast' | 'balanced' | 'deep';
+    searchMode?: 'fast' | 'balanced' | 'deep';
+    maxResults?: number;
+    includeAnswer?: boolean;
+    includeRawContent?: boolean;
+    apiKeys?: { tavily?: string; exa?: string; brave?: string };
+    searxngBaseUrl?: string;
+    language?: string;
+    country?: string;
+    timeRange?: 'day' | 'week' | 'month' | 'year';
+    topic?: 'general' | 'news' | 'finance';
+    includeDomains?: string[];
+    excludeDomains?: string[];
+  }) => ipcRenderer.invoke('agent-web-search', params),
+  agentSpecializedSearch: (params: {
+    source: 'github' | 'npm' | 'stackoverflow' | 'arxiv';
+    query: string;
+    maxResults?: number;
+    githubType?: 'repositories' | 'code' | 'issues' | 'pull_requests' | 'users';
+    owner?: string;
+    repo?: string;
+    language?: string;
+    sort?: string;
+    order?: 'asc' | 'desc';
+    tags?: string[];
+    arxivCategory?: string;
+    specialized?: {
+      enabledSources?: Array<'github' | 'npm' | 'stackoverflow' | 'arxiv'>;
+      maxResults?: number;
+      apiKeys?: { github?: string; stackExchange?: string };
+    };
+  }) => ipcRenderer.invoke('agent-specialized-search', params),
 
   // 代理设置
   setProxy: (port: number | null) => ipcRenderer.invoke('set-proxy', port),
@@ -309,7 +344,42 @@ export interface ElectronAPI {
   sendEmail: (params: { config: any; subject: string; content: string }) => Promise<{ success: boolean; error?: string }>;
   testEmailConfig: (config: any) => Promise<{ success: boolean; error?: string }>;
   // Agent 网络搜索
-  agentWebSearch: (params: { query: string }) => Promise<{ success: boolean; results: Array<{ title: string; url: string; snippet: string }>; error?: string; query?: string }>;
+  agentWebSearch: (params: {
+    query: string;
+    provider?: 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser';
+    fallbackProviders?: Array<'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser'>;
+    mode?: 'fast' | 'balanced' | 'deep';
+    searchMode?: 'fast' | 'balanced' | 'deep';
+    maxResults?: number;
+    includeAnswer?: boolean;
+    includeRawContent?: boolean;
+    apiKeys?: { tavily?: string; exa?: string; brave?: string };
+    searxngBaseUrl?: string;
+    language?: string;
+    country?: string;
+    timeRange?: 'day' | 'week' | 'month' | 'year';
+    topic?: 'general' | 'news' | 'finance';
+    includeDomains?: string[];
+    excludeDomains?: string[];
+  }) => Promise<{ success: boolean; provider?: string; usedFallback?: boolean; directAnswer?: string | null; results: Array<{ title: string; url: string; snippet: string; source?: string; publishedDate?: string; score?: number; content?: string }>; error?: string; query?: string }>;
+  agentSpecializedSearch: (params: {
+    source: 'github' | 'npm' | 'stackoverflow' | 'arxiv';
+    query: string;
+    maxResults?: number;
+    githubType?: 'repositories' | 'code' | 'issues' | 'pull_requests' | 'users';
+    owner?: string;
+    repo?: string;
+    language?: string;
+    sort?: string;
+    order?: 'asc' | 'desc';
+    tags?: string[];
+    arxivCategory?: string;
+    specialized?: {
+      enabledSources?: Array<'github' | 'npm' | 'stackoverflow' | 'arxiv'>;
+      maxResults?: number;
+      apiKeys?: { github?: string; stackExchange?: string };
+    };
+  }) => Promise<{ success: boolean; source?: string; results: Array<{ title: string; url: string; snippet: string; source?: string; publishedDate?: string; score?: number; content?: string; meta?: Record<string, any> }>; error?: string; query?: string }>;
   // 代理设置
   setProxy: (port: number | null) => Promise<{ success: boolean; error?: string }>;
   extractPdfText: (filePath: string) => Promise<string | null>;
