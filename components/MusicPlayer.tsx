@@ -659,6 +659,30 @@ const AddToPlaylistPopover: React.FC<{
 };
 
 // ── Main Export ──
+export interface MusicRuntimeControls {
+  togglePlay: () => void;
+  playNext: () => void;
+  playPrev: () => void;
+  seekTo: (time: number) => void;
+  openLyrics: () => void;
+}
+
+export interface MusicRuntimeSnapshot {
+  currentTrack: MusicTrack | null;
+  cover?: string;
+  isPlaying: boolean;
+  progress: number;
+  duration: number;
+  hasLyrics: boolean;
+  currentLyric: string;
+  nextLyric: string;
+  lyricIndex: number;
+  lyricLineProgress: number;
+  repeatMode: MusicRepeatMode;
+  isShuffled: boolean;
+  controls: MusicRuntimeControls;
+}
+
 export interface MusicPlayerProps {
   tracks: MusicTrack[];
   playlists: MusicPlaylist[];
@@ -673,12 +697,16 @@ export interface MusicPlayerProps {
   onAddFiles: () => void;
   onAddFolder: () => void;
   onReorderTracksInPlaylist: (playlistId: string, trackIds: string[]) => void;
+  onRuntimeChange?: (snapshot: MusicRuntimeSnapshot) => void;
+  globalHotkeysEnabled?: boolean;
 }
 
 export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   tracks, playlists, selectedPlaylist, coverCache, coverVersion,
   onUpdateTrack, onDeleteTrack, onToggleInPlaylist, onLoadCover, onSetCover,
   onAddFiles, onAddFolder, onReorderTracksInPlaylist,
+  onRuntimeChange,
+  globalHotkeysEnabled = true,
 }) => {
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -704,6 +732,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   const progressTimer = useRef<number>(0);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const seekingRef = useRef(false);
+  const runtimeEmitRef = useRef({ at: 0, trackId: '', isPlaying: false, lyricIndex: -1 });
 
   // Check file existence for visible tracks
   useEffect(() => {
@@ -758,6 +787,33 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
     const lines = parseLrc(currentTrack.lyrics);
     return lines.length > 0 ? lines : null;
   }, [currentTrack?.lyrics]);
+
+  const lyricRuntime = useMemo(() => {
+    if (!currentTrack?.lyrics) {
+      return { current: '', next: '', index: -1, lineProgress: 0 };
+    }
+
+    if (!parsedLyrics || parsedLyrics.length === 0) {
+      const firstLine = currentTrack.lyrics.split('\n').map(line => line.trim()).find(Boolean) || '';
+      return { current: firstLine, next: '', index: 0, lineProgress: duration ? Math.min(1, Math.max(0, progress / duration)) : 0 };
+    }
+
+    const index = Math.max(0, parsedLyrics.findIndex((line, i) => {
+      const next = parsedLyrics[i + 1];
+      return progress >= line.time && (!next || progress < next.time);
+    }));
+    const activeLine = parsedLyrics[index] || parsedLyrics[0];
+    const nextLine = parsedLyrics[index + 1];
+    const end = nextLine?.time ?? duration;
+    const span = Math.max(0.5, end - activeLine.time);
+    const lineProgress = Math.min(1, Math.max(0, (progress - activeLine.time) / span));
+    return {
+      current: activeLine.text,
+      next: nextLine?.text || '',
+      index,
+      lineProgress,
+    };
+  }, [currentTrack?.lyrics, parsedLyrics, progress, duration]);
 
   const isInPlaylist = useCallback((plId: string, trackId: string) => {
     const pl = playlists.find(p => p.id === plId);
@@ -942,6 +998,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
 
   // Keyboard
   useEffect(() => {
+    if (!globalHotkeysEnabled) return;
     const handler = (e: KeyboardEvent) => {
       const target = e.target instanceof HTMLElement ? e.target : null;
       if (
@@ -956,12 +1013,68 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  });
+  }, [globalHotkeysEnabled, showFullscreenLyrics, togglePlay]);
 
   useEffect(() => () => { howlRef.current?.unload(); clearInterval(progressTimer.current); }, []);
 
   const curCover = currentTrack ? (currentTrack.customCover || coverCache.get(currentTrack.id)) : undefined;
   const getCover = (t: MusicTrack) => t.customCover || coverCache.get(t.id);
+
+  useEffect(() => {
+    if (!onRuntimeChange) return;
+    const now = performance.now();
+    const previous = runtimeEmitRef.current;
+    const trackId = currentTrack?.id || '';
+    const mustEmit =
+      previous.trackId !== trackId ||
+      previous.isPlaying !== isPlaying ||
+      previous.lyricIndex !== lyricRuntime.index ||
+      !isPlaying;
+    if (!mustEmit && now - previous.at < 450) return;
+
+    runtimeEmitRef.current = {
+      at: now,
+      trackId,
+      isPlaying,
+      lyricIndex: lyricRuntime.index,
+    };
+    onRuntimeChange({
+      currentTrack: currentTrack || null,
+      cover: curCover,
+      isPlaying,
+      progress,
+      duration,
+      hasLyrics: Boolean(currentTrack?.lyrics),
+      currentLyric: lyricRuntime.current,
+      nextLyric: lyricRuntime.next,
+      lyricIndex: lyricRuntime.index,
+      lyricLineProgress: lyricRuntime.lineProgress,
+      repeatMode,
+      isShuffled,
+      controls: {
+        togglePlay,
+        playNext,
+        playPrev,
+        seekTo,
+        openLyrics: () => {
+          if (currentTrack?.lyrics) setShowFullscreenLyrics(true);
+        },
+      },
+    });
+  }, [
+    onRuntimeChange,
+    currentTrack,
+    curCover,
+    isPlaying,
+    progress,
+    duration,
+    lyricRuntime,
+    repeatMode,
+    isShuffled,
+    togglePlay,
+    playNext,
+    playPrev,
+  ]);
 
   // ── Empty state ──
   if (tracks.length === 0) {

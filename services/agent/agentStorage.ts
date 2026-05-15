@@ -44,7 +44,16 @@ export const DEFAULT_AGENT_EMAIL_CONFIG = {
 
 export type AgentEmailConfig = typeof DEFAULT_AGENT_EMAIL_CONFIG;
 
-export type AgentSearchProvider = 'openai-web-search' | 'bing-web-search' | 'google-cse';
+export type AgentSearchProvider =
+  | 'duckduckgo-browser'
+  | 'openai-web-search'
+  | 'searxng'
+  | 'brave'
+  | 'tavily'
+  | 'exa'
+  | 'firecrawl'
+  | 'bing-web-search'
+  | 'google-cse';
 export type AgentSearchMode = 'fast' | 'balanced' | 'deep';
 export type AgentSpecializedSearchSource = 'github' | 'npm' | 'stackoverflow' | 'arxiv';
 
@@ -68,16 +77,22 @@ export interface AgentSearchConfig {
     openai: string;
     bing: string;
     google: string;
+    brave: string;
+    tavily: string;
+    exa: string;
+    firecrawl: string;
   };
   bingEndpoint: string;
   googleCx: string;
+  searxngBaseUrl: string;
+  firecrawlBaseUrl: string;
   language: string;
   country: string;
   specialized: AgentSpecializedSearchConfig;
 }
 
 export const DEFAULT_AGENT_SEARCH_CONFIG: AgentSearchConfig = {
-  provider: 'openai-web-search',
+  provider: 'duckduckgo-browser',
   fallbackProviders: [],
   mode: 'balanced',
   maxResults: 8,
@@ -87,9 +102,15 @@ export const DEFAULT_AGENT_SEARCH_CONFIG: AgentSearchConfig = {
     openai: '',
     bing: '',
     google: '',
+    brave: '',
+    tavily: '',
+    exa: '',
+    firecrawl: '',
   },
   bingEndpoint: 'https://api.bing.microsoft.com/v7.0/search',
   googleCx: '',
+  searxngBaseUrl: '',
+  firecrawlBaseUrl: 'https://api.firecrawl.dev',
   language: 'zh-CN',
   country: 'CN',
   specialized: {
@@ -116,7 +137,17 @@ const normalizeConfig = (value: any): ChatConfig => ({
 });
 
 const AGENT_SEARCH_MODES = new Set<AgentSearchMode>(['fast', 'balanced', 'deep']);
-const AGENT_SEARCH_PROVIDERS = new Set<AgentSearchProvider>(['openai-web-search', 'bing-web-search', 'google-cse']);
+const AGENT_SEARCH_PROVIDERS = new Set<AgentSearchProvider>([
+  'duckduckgo-browser',
+  'openai-web-search',
+  'searxng',
+  'brave',
+  'tavily',
+  'exa',
+  'firecrawl',
+  'bing-web-search',
+  'google-cse',
+]);
 
 const normalizeSearchProvider = (value: unknown): AgentSearchProvider => {
   if (typeof value === 'string' && AGENT_SEARCH_PROVIDERS.has(value as AgentSearchProvider)) {
@@ -125,16 +156,51 @@ const normalizeSearchProvider = (value: unknown): AgentSearchProvider => {
   return DEFAULT_AGENT_SEARCH_CONFIG.provider;
 };
 
+const hasProviderConfig = (
+  provider: AgentSearchProvider,
+  source: Record<string, any>,
+  apiKeys: AgentSearchConfig['apiKeys'],
+): boolean => {
+  switch (provider) {
+    case 'duckduckgo-browser':
+      return true;
+    case 'openai-web-search':
+      return Boolean(apiKeys.openai.trim());
+    case 'bing-web-search':
+      return Boolean(apiKeys.bing.trim());
+    case 'google-cse':
+      return Boolean(apiKeys.google.trim() && typeof source.googleCx === 'string' && source.googleCx.trim());
+    case 'brave':
+      return Boolean(apiKeys.brave.trim());
+    case 'tavily':
+      return Boolean(apiKeys.tavily.trim());
+    case 'exa':
+      return Boolean(apiKeys.exa.trim());
+    case 'firecrawl':
+      return Boolean(apiKeys.firecrawl.trim());
+    case 'searxng':
+      return Boolean(typeof source.searxngBaseUrl === 'string' && source.searxngBaseUrl.trim());
+    default:
+      return true;
+  }
+};
+
 const normalizeSpecializedSearchConfig = (value: any): AgentSpecializedSearchConfig => {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const maxResults = Number(source.maxResults);
+  const apiKeys = source.apiKeys && typeof source.apiKeys === 'object' ? source.apiKeys : {};
+  const enabledSources = Array.isArray(source.enabledSources)
+    ? source.enabledSources.filter((item: unknown): item is AgentSpecializedSearchSource => (
+      item === 'github' || item === 'npm' || item === 'stackoverflow' || item === 'arxiv'
+    ))
+    : DEFAULT_AGENT_SEARCH_CONFIG.specialized.enabledSources;
 
   return {
-    enabledSources: DEFAULT_AGENT_SEARCH_CONFIG.specialized.enabledSources,
+    enabledSources: enabledSources.length > 0 ? enabledSources : DEFAULT_AGENT_SEARCH_CONFIG.specialized.enabledSources,
     maxResults: Number.isFinite(maxResults) ? Math.min(Math.max(Math.floor(maxResults), 3), 20) : DEFAULT_AGENT_SEARCH_CONFIG.specialized.maxResults,
     apiKeys: {
-      github: '',
-      stackExchange: '',
+      github: typeof apiKeys.github === 'string' ? apiKeys.github : '',
+      stackExchange: typeof apiKeys.stackExchange === 'string' ? apiKeys.stackExchange : '',
     },
   };
 };
@@ -143,25 +209,42 @@ const normalizeSearchConfig = (value: any): AgentSearchConfig => {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const apiKeys = source.apiKeys && typeof source.apiKeys === 'object' ? source.apiKeys : {};
   const maxResults = Number(source.maxResults);
+  const normalizedApiKeys = {
+    openai: typeof apiKeys.openai === 'string' ? apiKeys.openai : '',
+    bing: typeof apiKeys.bing === 'string' ? apiKeys.bing : '',
+    google: typeof apiKeys.google === 'string' ? apiKeys.google : '',
+    brave: typeof apiKeys.brave === 'string' ? apiKeys.brave : '',
+    tavily: typeof apiKeys.tavily === 'string' ? apiKeys.tavily : '',
+    exa: typeof apiKeys.exa === 'string' ? apiKeys.exa : '',
+    firecrawl: typeof apiKeys.firecrawl === 'string' ? apiKeys.firecrawl : '',
+  };
+  const savedProvider = normalizeSearchProvider(source.provider);
+  const provider = hasProviderConfig(savedProvider, source, normalizedApiKeys)
+    ? savedProvider
+    : DEFAULT_AGENT_SEARCH_CONFIG.provider;
+  const fallbackProviders = Array.isArray(source.fallbackProviders)
+    ? source.fallbackProviders.map(normalizeSearchProvider).filter((item, index, array) => array.indexOf(item) === index)
+    : DEFAULT_AGENT_SEARCH_CONFIG.fallbackProviders;
+  if (provider !== 'duckduckgo-browser' && !fallbackProviders.includes('duckduckgo-browser')) {
+    fallbackProviders.push('duckduckgo-browser');
+  }
 
   return {
-    provider: normalizeSearchProvider(source.provider),
-    fallbackProviders: Array.isArray(source.fallbackProviders)
-      ? source.fallbackProviders.map(normalizeSearchProvider).filter((provider, index, array) => array.indexOf(provider) === index)
-      : DEFAULT_AGENT_SEARCH_CONFIG.fallbackProviders,
+    provider,
+    fallbackProviders,
     mode: AGENT_SEARCH_MODES.has(source.mode) ? source.mode : DEFAULT_AGENT_SEARCH_CONFIG.mode,
     maxResults: Number.isFinite(maxResults) ? Math.min(Math.max(Math.floor(maxResults), 3), 20) : DEFAULT_AGENT_SEARCH_CONFIG.maxResults,
     includeAnswer: source.includeAnswer !== false,
     includeRawContent: Boolean(source.includeRawContent),
-    apiKeys: {
-      openai: typeof apiKeys.openai === 'string' ? apiKeys.openai : '',
-      bing: typeof apiKeys.bing === 'string' ? apiKeys.bing : '',
-      google: typeof apiKeys.google === 'string' ? apiKeys.google : '',
-    },
+    apiKeys: normalizedApiKeys,
     bingEndpoint: typeof source.bingEndpoint === 'string' && source.bingEndpoint.trim()
       ? source.bingEndpoint.trim()
       : DEFAULT_AGENT_SEARCH_CONFIG.bingEndpoint,
     googleCx: typeof source.googleCx === 'string' ? source.googleCx.trim() : '',
+    searxngBaseUrl: typeof source.searxngBaseUrl === 'string' ? source.searxngBaseUrl.trim() : '',
+    firecrawlBaseUrl: typeof source.firecrawlBaseUrl === 'string' && source.firecrawlBaseUrl.trim()
+      ? source.firecrawlBaseUrl.trim()
+      : DEFAULT_AGENT_SEARCH_CONFIG.firecrawlBaseUrl,
     language: typeof source.language === 'string' && source.language.trim() ? source.language : DEFAULT_AGENT_SEARCH_CONFIG.language,
     country: typeof source.country === 'string' && source.country.trim() ? source.country : DEFAULT_AGENT_SEARCH_CONFIG.country,
     specialized: normalizeSpecializedSearchConfig(source.specialized),

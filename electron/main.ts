@@ -10,6 +10,7 @@ import dns from 'dns';
 import { spawn, exec, execFile } from 'child_process';
 import { createHash, createSign } from 'crypto';
 import { gzipSync, gunzipSync } from 'zlib';
+import { runAgentSpecializedSearch, runAgentWebOpen, runAgentWebSearch } from './agentSearch.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -4506,74 +4507,15 @@ const runAgentSearchProvider = async (provider: AgentSearchProvider, params: Age
 };
 
 ipcMain.handle('agent-web-search', async (_, rawParams: AgentWebSearchParams) => {
-  const query = typeof rawParams.query === 'string' ? rawParams.query.trim() : '';
-  if (!query) return { success: false, error: '搜索词不能为空', results: [] };
+  return runAgentWebSearch(rawParams as any);
+});
 
-  const primary = normalizeAgentSearchProvider(rawParams.provider);
-  const fallbackProviders = Array.isArray(rawParams.fallbackProviders)
-    ? rawParams.fallbackProviders.map(normalizeAgentSearchProvider)
-    : [];
-  const providerOrder = [primary, ...fallbackProviders]
-    .filter((provider, index, array) => ACTIVE_AGENT_SEARCH_PROVIDERS.has(provider) && array.indexOf(provider) === index);
-  const params: AgentWebSearchParams = {
-    ...rawParams,
-    query,
-    provider: primary,
-    mode: normalizeAgentSearchMode(rawParams.searchMode || rawParams.mode),
-    maxResults: normalizeSearchMaxResults(rawParams.maxResults),
-  };
-  const errors: string[] = [];
-
-  for (const provider of providerOrder) {
-    try {
-      if (providerNeedsApiKey(provider)) {
-        const keyName = searchProviderApiKeyName(provider);
-        const key = keyName ? params.apiKeys?.[keyName]?.trim() : '';
-        if (!key) {
-          errors.push(`${provider}: API Key 未配置`);
-          continue;
-        }
-      }
-      const result = ensureRelevantSearchResults(await runAgentSearchProvider(provider, params), params, provider);
-      if (result.directAnswer || result.results.length > 0) {
-        return {
-          success: true,
-          provider,
-          usedFallback: provider !== primary,
-          attemptedProviders: providerOrder.slice(0, providerOrder.indexOf(provider) + 1),
-          directAnswer: result.directAnswer,
-          results: result.results.slice(0, params.maxResults),
-          query,
-        };
-      }
-      errors.push(`${provider}: 未返回结果`);
-    } catch (error) {
-      errors.push(`${provider}: ${(error as Error).message}`);
-    }
-  }
-
-  return {
-    success: false,
-    provider: primary,
-    attemptedProviders: providerOrder,
-    error: errors.join('；') || '未获得搜索结果，请检查网络、代理或搜索配置',
-    results: [],
-    query,
-  };
+ipcMain.handle('agent-web-open', async (_, rawParams: { url: string; query?: string; maxChars?: number; includeHtml?: boolean }) => {
+  return runAgentWebOpen(rawParams as any);
 });
 
 ipcMain.handle('agent-specialized-search', async (_, rawParams: AgentSpecializedSearchParams) => {
-  const query = typeof rawParams.query === 'string' ? rawParams.query.trim() : '';
-  const source = normalizeSpecializedSearchSource(rawParams.source);
-  if (!query) return { success: false, error: '搜索词不能为空', results: [] };
-  if (!source) return { success: false, error: '不支持的专用搜索源', results: [], query };
-  return {
-    success: false,
-    source,
-    query,
-    results: [],
-    error: '专用搜索的独立外部引擎已停用。请通过 web_search 使用 OpenAI web_search 与域名过滤。',
-  };
+  return runAgentSpecializedSearch(rawParams as any);
 });
 
 // 代理设置：供渲染进程配置 HTTP 代理

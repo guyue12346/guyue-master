@@ -244,11 +244,28 @@ export const AGENT_AVAILABLE_MODELS: Record<string, { id: string; name: string; 
   ],
 };
 
+export const AGENT_DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ChatConfig['provider'], string>> = {
+  zenmux: 'deepseek/deepseek-v4-flash',
+  openai: 'gpt-4o-mini',
+  gemini: 'gemini-2.5-flash',
+  anthropic: 'claude-3-5-sonnet-20241022',
+  moonshot: 'moonshot-v1-32k',
+  deepseek: 'deepseek-chat',
+};
+
+export const getDefaultAgentModel = (provider: ChatConfig['provider'], preferredModel?: string): string => {
+  const models = AGENT_AVAILABLE_MODELS[provider] || [];
+  if (preferredModel && models.some(model => model.id === preferredModel)) return preferredModel;
+  const stableDefault = AGENT_DEFAULT_MODEL_BY_PROVIDER[provider];
+  if (stableDefault && models.some(model => model.id === stableDefault)) return stableDefault;
+  return models[0]?.id || '';
+};
+
 export const DEFAULT_CHAT_CONFIG: ChatConfig = {
   provider: 'zenmux',
   apiKey: '',
   baseUrl: 'https://zenmux.ai/api/v1',
-  model: 'anthropic/claude-sonnet-4.5',
+  model: AGENT_DEFAULT_MODEL_BY_PROVIDER.zenmux || 'deepseek/deepseek-v4-flash',
   temperature: 0.7,
   maxTokens: 4096,
   systemPrompt: '你是一个有帮助的AI助手。',
@@ -384,7 +401,7 @@ export class ChatService {
           throw new Error(
             fallbackResp.status === 403
               ? `Kimi API 权限不足 (403)：请检查 API Key 是否有效，或尝试切换到 moonshot-v1-128k 模型。\n${fbErr}`
-              : `API Error: ${fallbackResp.status} - ${fbErr}`,
+              : this.formatApiError(fallbackResp.status, fbErr, 'Kimi 无工具降级请求').message,
           );
         }
         const fbData = await fallbackResp.json();
@@ -399,7 +416,7 @@ export class ChatService {
       if (response.status === 403 && this.config.provider === 'moonshot') {
         throw new Error(`Kimi API 权限不足 (403)：请检查 API Key 是否有效，或尝试切换到 moonshot-v1-128k 模型。\n${errorText}`);
       }
-      throw new Error(`API Error: ${response.status} - ${errorText}`);
+      throw this.formatApiError(response.status, errorText, '工具决策请求');
     }
 
     const data = await response.json();
@@ -620,6 +637,25 @@ export class ChatService {
     return headers;
   }
 
+  private formatApiError(status: number, errorText: string, operation = '模型请求', endpoint = `${this.getBaseUrl()}/chat/completions`): Error {
+    const context = `provider=${this.config.provider}, model=${this.config.model}, endpoint=${endpoint}`;
+    const raw = errorText || '无错误正文';
+
+    if (status === 401) {
+      return new Error(`${operation}失败：API Key 无效或未被服务端接受 (401)。\n当前请求：${context}\n请检查 API Key 是否填到了对应提供商，Base URL 是否正确。\n原始错误：${raw}`);
+    }
+
+    if (status === 403) {
+      return new Error(`${operation}失败：当前 API Key 没有访问该模型或资源的权限 (403)。\n当前请求：${context}\n常见原因：1. API Key 和提供商不匹配；2. Base URL 填错；3. 所选模型未对该账号开放；4. 网关侧未开通该模型。\n处理建议：在 Agent 设置里确认 provider/baseUrl/API Key 是同一家服务；先切到该账号确定可用的低权限模型再测试。\n原始错误：${raw}`);
+    }
+
+    if (status === 404) {
+      return new Error(`${operation}失败：模型或接口不存在 (404)。\n当前请求：${context}\n请检查模型 ID 和 Base URL。\n原始错误：${raw}`);
+    }
+
+    return new Error(`${operation}失败：API Error ${status}。\n当前请求：${context}\n原始错误：${raw}`);
+  }
+
   private toOpenAIMessages(messages: ChatMessage[]) {
     const formattedMessages = messages.map(m => {
       const images = (m.attachments || []).filter(a => a.type === 'image');
@@ -778,7 +814,7 @@ export class ChatService {
             throw new Error(
               fallbackResp.status === 403
                 ? `Kimi API 权限不足 (403)：请检查 API Key 是否有效，或尝试切换到 moonshot-v1-128k 模型。\n${fbErr}`
-                : `API Error: ${fallbackResp.status} - ${fbErr}`
+                : this.formatApiError(fallbackResp.status, fbErr, 'Kimi 无工具降级请求').message
             );
           }
           const fbData = await fallbackResp.json();
@@ -791,7 +827,7 @@ export class ChatService {
         if (response.status === 403 && this.config.provider === 'moonshot') {
           throw new Error(`Kimi API 权限不足 (403)：请检查 API Key 是否有效，或尝试切换到 moonshot-v1-128k 模型。\n${errorText}`);
         }
-        throw new Error(`API Error: ${response.status} - ${errorText}`);
+        throw this.formatApiError(response.status, errorText, '工具调用请求');
       }
 
       const data = await response.json();
@@ -864,7 +900,7 @@ export class ChatService {
       signal: this.abortController?.signal,
     });
     if (!finalResponse.ok) {
-      throw new Error(`API Error: ${finalResponse.status} - ${await finalResponse.text()}`);
+      throw this.formatApiError(finalResponse.status, await finalResponse.text(), '工具调用最终总结请求');
     }
     const finalData = await finalResponse.json();
     return {
@@ -932,7 +968,7 @@ export class ChatService {
       });
 
       if (!response.ok) {
-        throw new Error(`API Error: ${response.status} - ${await response.text()}`);
+        throw this.formatApiError(response.status, await response.text(), 'Claude 工具调用请求', `${baseUrl}/messages`);
       }
 
       const data = await response.json();
@@ -1003,7 +1039,7 @@ export class ChatService {
       signal: this.abortController?.signal,
     });
     if (!finalResponse.ok) {
-      throw new Error(`API Error: ${finalResponse.status} - ${await finalResponse.text()}`);
+      throw this.formatApiError(finalResponse.status, await finalResponse.text(), 'Claude 工具调用最终总结请求', `${baseUrl}/messages`);
     }
     const finalData = await finalResponse.json();
     return {
@@ -1288,7 +1324,7 @@ export class ChatService {
       if (response.status === 403 && this.config.provider === 'moonshot') {
         throw new Error(`Kimi API 权限不足 (403)：请检查 API Key 是否正确（需从 platform.moonshot.cn 获取），或尝试切换到 moonshot-v1-128k 模型。\n${errorText}`);
       }
-      throw new Error(`API Error: ${response.status} - ${errorText}`);
+      throw this.formatApiError(response.status, errorText, '流式对话请求');
     }
 
     const reader = response.body?.getReader();

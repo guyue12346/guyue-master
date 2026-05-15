@@ -72,6 +72,7 @@ import {
   getToolPermissionTarget,
   hasFullToolAccess,
   SPECIALIZED_SEARCH_TOOL,
+  WEB_OPEN_TOOL_REGISTRATION,
   WEB_SEARCH_TOOL_REGISTRATION,
   SPECIALIZED_SEARCH_TOOL_REGISTRATION,
   type ToolRegistration,
@@ -212,6 +213,7 @@ interface AgentPromptOptions {
   customSystemPrompt?: string;
   modulePrompts?: Record<string, string>;
   allowedActionTypes?: string[];
+  visibleTools?: ChatTool[];
 }
 
 interface AgentRouteResult {
@@ -296,7 +298,7 @@ const getToolVisualMeta = (registration: ToolRegistration) => {
     permissionLabel: `${getModuleDisplayName(permissionTarget.module)} · ${permissionTarget.action}`,
   };
 };
-const AGENT_ROUTE_CACHE_KEY = 'guyue_agent_route_cache_v1';
+const AGENT_ROUTE_CACHE_KEY = 'guyue_agent_route_cache_v2';
 const AGENT_ROUTE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const AGENT_ROUTE_CACHE_MAX_ENTRIES = 100;
 const AGENT_ROUTE_CACHE_MIN_CONFIDENCE = 0.75;
@@ -307,7 +309,6 @@ interface AgentPageState {
   selectedModules: string[];
   isDebugCollapsed: boolean;
   isExecutionVizCollapsed: boolean;
-  enableWebSearch: boolean;
 }
 
 const normalizeAgentPageState = (value: any): AgentPageState => {
@@ -321,9 +322,6 @@ const normalizeAgentPageState = (value: any): AgentPageState => {
       : [],
     isDebugCollapsed: typeof value?.isDebugCollapsed === 'boolean' ? value.isDebugCollapsed : true,
     isExecutionVizCollapsed: typeof value?.isExecutionVizCollapsed === 'boolean' ? value.isExecutionVizCollapsed : false,
-    enableWebSearch: typeof value?.enableWebSearch === 'boolean'
-      ? value.enableWebSearch
-      : localStorage.getItem('guyue_agent_web_search') === 'true',
   };
 };
 
@@ -338,7 +336,6 @@ const loadAgentPageState = (): AgentPageState => {
 const saveAgentPageState = (state: AgentPageState) => {
   try {
     localStorage.setItem(AGENT_PAGE_STATE_KEY, JSON.stringify(state));
-    localStorage.setItem('guyue_agent_web_search', state.enableWebSearch ? 'true' : 'false');
   } catch {}
 };
 
@@ -1037,10 +1034,77 @@ const buildModulePromptSection = (moduleIds: string[], modulePrompts?: Record<st
     .join('');
 };
 
-const buildModuleRouterPrompt = (input: string, modules: AgentModule[] = getEnabledAgentModules()) => {
-  const moduleList = modules
-    .map(module => `- ${module.id}: ${module.name}，${module.description}`)
+const WEB_ROUTER_SCOPE = {
+  id: 'web',
+  name: '联网搜索',
+  description: '网页搜索、实时信息、天气、新闻、官方文档、GitHub/npm/StackOverflow/arXiv 等外部信息检索',
+};
+
+interface RouterPromptOptions {
+  toolRegistry?: ToolRegistration[];
+  toolPermissions?: AgentToolPermissions;
+  includeWebSearch?: boolean;
+  includeSpecializedSearch?: boolean;
+}
+
+const summarizeToolNames = (toolNames: string[]) => {
+  const uniqueNames = Array.from(new Set(toolNames)).filter(Boolean);
+  if (uniqueNames.length === 0) return '当前没有已授权函数';
+  const visible = uniqueNames.slice(0, 24);
+  return `函数：${visible.join(', ')}${uniqueNames.length > visible.length ? ` 等 ${uniqueNames.length} 个` : ''}`;
+};
+
+const buildRouterModuleList = (
+  modules: AgentModule[] = getEnabledAgentModules(),
+  options: RouterPromptOptions = {},
+  excludedModuleIds: string[] = [],
+) => {
+  const excludedSet = new Set(excludedModuleIds);
+  const moduleRows = [
+    ...modules.map(module => ({
+      id: module.id,
+      name: module.name,
+      description: module.description,
+    })),
+    WEB_ROUTER_SCOPE,
+  ].filter((module, index, list) => (
+    !excludedSet.has(module.id) &&
+    list.findIndex(item => item.id === module.id) === index
+  ));
+
+  return moduleRows
+    .map(module => {
+      const toolNames = (options.toolRegistry || [])
+        .filter(registration => registration.module === module.id)
+        .filter(registration => canUseToolRegistration(registration, options.toolPermissions))
+        .map(registration => registration.name);
+      if (module.id === 'web') {
+        if (options.includeWebSearch) toolNames.unshift(WEB_SEARCH_TOOL_REGISTRATION.name);
+        if (options.includeWebSearch) toolNames.splice(1, 0, WEB_OPEN_TOOL_REGISTRATION.name);
+        if (options.includeSpecializedSearch) toolNames.push(SPECIALIZED_SEARCH_TOOL.name);
+      }
+      const webStatus = module.id === 'web'
+        ? `；状态：${options.includeWebSearch ? '联网搜索工具已启用' : '联网搜索工具未启用或未授权'}`
+        : '';
+      return `- ${module.id}: ${module.name}，${module.description}${webStatus}；${summarizeToolNames(toolNames)}`;
+    })
     .join('\n');
+};
+
+const buildVisibleToolSection = (tools?: ChatTool[]) => {
+  if (!tools || tools.length === 0) return '';
+  const rows = tools
+    .map(tool => `- ${tool.name}: ${tool.description || '无描述'}`)
+    .join('\n');
+  return `\n\n## 本轮实际可调用函数\n${rows}`;
+};
+
+const buildModuleRouterPrompt = (
+  input: string,
+  modules: AgentModule[] = getEnabledAgentModules(),
+  options: RouterPromptOptions = {},
+) => {
+  const moduleList = buildRouterModuleList(modules, options);
   return [
     '你是 Guyue Master Agent 的作用域路由器。你的任务是根据用户请求选择需要开放给 Agent 的应用模块。',
     '只返回 JSON，不要输出 Markdown，不要解释。',
@@ -1050,8 +1114,10 @@ const buildModuleRouterPrompt = (input: string, modules: AgentModule[] = getEnab
     '2. 如果用户只是闲聊、解释概念、问设计方案且无需调用应用数据，返回 {"modules":[],"useTools":false,...}。',
     '3. 如果不确定但可能需要应用能力，返回最可能的 1-3 个模块，不要为了保险返回全部模块。',
     '4. 只能从可用模块 ID 中选择。',
+    '5. 如果用户询问天气、新闻、最新资料、实时数据、官方文档、网页内容、GitHub/npm/StackOverflow/arXiv 等外部信息，必须包含 "web" 且 useTools=true。',
+    '6. 如果用户同时要求联网检索和操作本地应用数据，返回 "web" 加对应本地模块。',
     '',
-    '可用模块：',
+    '可用模块与函数：',
     moduleList,
     '',
     `用户请求：${input}`,
@@ -1065,12 +1131,8 @@ const buildSupplementalRouterPrompt = (input: {
   toolCalls: ChatToolCall[];
   toolResults: Array<{ toolCall: ChatToolCall; result: any }>;
   evaluation: AgentCompletionEvaluation;
-}, modules: AgentModule[] = getEnabledAgentModules()) => {
-  const currentSet = new Set(input.currentModules);
-  const moduleList = modules
-    .filter(module => !currentSet.has(module.id))
-    .map(module => `- ${module.id}: ${module.name}，${module.description}`)
-    .join('\n') || '无';
+}, modules: AgentModule[] = getEnabledAgentModules(), options: RouterPromptOptions = {}) => {
+  const moduleList = buildRouterModuleList(modules, options, input.currentModules) || '无';
   const compactResults = input.toolResults.slice(-8).map(item => ({
     tool: item.toolCall.name,
     success: item.result?.success !== false,
@@ -1087,6 +1149,7 @@ const buildSupplementalRouterPrompt = (input: {
     '2. 如果失败原因是权限未开启、用户信息不足、API 错误、模型回答质量问题，返回 {"addModules":[],"needContinue":false,...}。',
     '3. 如果任务缺少发送邮件、写待办、读文件、查询数据中心等跨模块能力，返回需要追加的模块。',
     '4. 不要为了保险返回全部模块，只返回真正能补齐任务的模块。',
+    '5. 如果任务失败是因为缺少联网搜索、实时网页信息、GitHub/npm/论文搜索能力，追加 "web"。',
     '',
     `当前已开放模块：${input.currentModules.length > 0 ? getModuleScopeLabel(input.currentModules) : '仅搜索 / 无应用模块'}`,
     '',
@@ -1147,6 +1210,7 @@ const getAgentSystemPrompt = ({
   customSystemPrompt,
   modulePrompts,
   allowedActionTypes,
+  visibleTools,
 }: AgentPromptOptions = {}) => {
   const customPromptSection = customSystemPrompt?.trim()
     ? `\n\n## 用户自定义系统提示\n${customSystemPrompt.trim()}`
@@ -1157,6 +1221,7 @@ const getAgentSystemPrompt = ({
 
   const activeModuleIds = getActiveModuleScope({ selectedModule, selectedModules, routedModule, routedModules });
   const modulePrompt = buildModulePromptSection(activeModuleIds, modulePrompts);
+  const visibleToolSection = buildVisibleToolSection(visibleTools);
 
   const moduleInfo = activeModuleIds.length > 0
     ? `\n\n## 当前任务作用域\n当前任务作用域为：${getModuleScopeLabel(activeModuleIds)}。你只能优先使用该作用域内被授权的工具；跨模块任务需要按模块顺序完成。${modulePrompt}`
@@ -1175,7 +1240,8 @@ const getAgentSystemPrompt = ({
 6. 你可以进行多轮工具调用。例如先 query_files 查询文件列表，再逐个 read_file 读取内容。不要在只完成第一步后就停止。
 7. 当前作用域：${activeModuleIds.length > 0 ? getModuleScopeLabel(activeModuleIds) : '自动路由 / 未限定'}。不要请求未提供的工具，也不要声称调用了不可见工具。
 8. 如果验收节点补充开放了新的模块工具，你会收到一条继续执行提示；以最新提示和当前可见工具为准，不要重复已经成功完成的创建、修改、删除操作。
-9. 如果本轮工具列表包含 web_search 或 specialized_search，说明你已获得联网权限，可以检索网页、GitHub、npm、StackOverflow、arXiv 等信息；不要再声称无法访问互联网或 GitHub。
+9. 如果本轮工具列表包含 web_search、web_open 或 specialized_search，说明你已获得联网权限，可以检索并打开网页、GitHub、npm、StackOverflow、arXiv 等信息；不要再声称无法访问互联网或 GitHub。搜索结果只有摘要时，应继续调用 web_open 打开最相关来源再回答。
+${visibleToolSection}
 
 ## 任务分解
 - 如果用户的请求包含多个子任务（如「帮我创建三个待办」「查一下文件然后把内容总结发邮件」），你必须逐个完成每个子任务，依次调用对应的工具。
@@ -1752,9 +1818,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     onRuntimeStatusChange?.({ ...agentRuntimeStatus, isProcessing });
   }, [agentRuntimeStatus, isProcessing, onRuntimeStatusChange]);
 
-  const [enableWebSearch, setEnableWebSearch] = useState(() => initialPageState.enableWebSearch);
-  const webSearchPermissionEnabled = Boolean(toolPermissions.web?.read);
-  const effectiveWebSearchEnabled = enableWebSearch && webSearchPermissionEnabled;
+  const effectiveWebSearchEnabled = Boolean(toolPermissions.web?.read);
+  const effectiveSpecializedSearchEnabled = effectiveWebSearchEnabled && (searchConfig.specialized?.enabledSources?.length || 0) > 0;
 
   useEffect(() => {
     const bumpRegistryVersion = () => setRegistryVersion(version => version + 1);
@@ -1826,17 +1891,18 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const allowedActionTypes = useMemo(
     () => {
       const names = toolRegistry
-      .filter(registration => canUseToolRegistration(registration, toolPermissions))
-      .map(registration => registration.name);
+        .filter(registration => canUseToolRegistration(registration, toolPermissions))
+        .map(registration => registration.name);
       if (effectiveWebSearchEnabled) {
         names.push('web_search');
-        if ((searchConfig.specialized?.enabledSources?.length || 0) > 0) {
+        names.push('web_open');
+        if (effectiveSpecializedSearchEnabled) {
           names.push(SPECIALIZED_SEARCH_TOOL.name);
         }
       }
       return names;
     },
-    [effectiveWebSearchEnabled, searchConfig.specialized?.enabledSources?.length, toolPermissions, toolRegistry],
+    [effectiveSpecializedSearchEnabled, effectiveWebSearchEnabled, toolPermissions, toolRegistry],
   );
   const effectiveFilePermissions = useMemo(
     () => (toolPermissions.files?.read || toolPermissions.files?.update) ? ['全部'] : [],
@@ -2127,8 +2193,19 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         fallbackProviders: Array.isArray(args.fallbackProviders) ? args.fallbackProviders : searchConfig.fallbackProviders,
       });
     },
+    executeWebOpen: async (args: Record<string, any>) => {
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.agentWebOpen) return { success: false, error: '网页打开功能不可用（非桌面端）。' };
+      return electronAPI.agentWebOpen(args);
+    },
     executeSpecializedSearch: async (args: Record<string, any>) => {
       const electronAPI = (window as any).electronAPI;
+      if (electronAPI?.agentSpecializedSearch) {
+        return electronAPI.agentSpecializedSearch({
+          ...args,
+          specialized: searchConfig.specialized,
+        });
+      }
       if (!electronAPI?.agentWebSearch) return { success: false, error: '联网搜索功能不可用（非桌面端）。' };
       const source = typeof args.source === 'string' ? args.source : '';
       const domainMap: Record<string, string[]> = {
@@ -2373,9 +2450,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       selectedModules,
       isDebugCollapsed,
       isExecutionVizCollapsed,
-      enableWebSearch,
     });
-  }, [enableWebSearch, inputValue, isDebugCollapsed, isExecutionVizCollapsed, selectedModules]);
+  }, [inputValue, isDebugCollapsed, isExecutionVizCollapsed, selectedModules]);
 
   useEffect(() => {
     saveAgentConfig(config);
@@ -2505,7 +2581,12 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     }
 
     try {
-      const routerPrompt = buildModuleRouterPrompt(input, enabledAgentModules);
+      const routerPrompt = buildModuleRouterPrompt(input, enabledAgentModules, {
+        toolRegistry,
+        toolPermissions,
+        includeWebSearch: effectiveWebSearchEnabled,
+        includeSpecializedSearch: effectiveSpecializedSearchEnabled,
+      });
       const routerService = new ChatService({
         ...routingConfig,
         systemPrompt: '',
@@ -2564,7 +2645,18 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       });
       return routeResult;
     }
-  }, [config, enabledAgentModules, pushDebugItem, pushServiceDebugEvent, routerConfig, selectedModules]);
+  }, [
+    config,
+    effectiveSpecializedSearchEnabled,
+    effectiveWebSearchEnabled,
+    enabledAgentModules,
+    pushDebugItem,
+    pushServiceDebugEvent,
+    routerConfig,
+    selectedModules,
+    toolPermissions,
+    toolRegistry,
+  ]);
 
   const detectSupplementalModuleScope = useCallback(async (input: {
     goal: string;
@@ -2621,7 +2713,12 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       const routerPrompt = buildSupplementalRouterPrompt({
         ...input,
         currentModules,
-      }, enabledAgentModules);
+      }, enabledAgentModules, {
+        toolRegistry,
+        toolPermissions,
+        includeWebSearch: effectiveWebSearchEnabled,
+        includeSpecializedSearch: effectiveSpecializedSearchEnabled,
+      });
       const routerService = new ChatService({
         ...routingConfig,
         systemPrompt: '',
@@ -2682,7 +2779,17 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       });
       return result;
     }
-  }, [config, enabledAgentModules, pushDebugItem, pushServiceDebugEvent, routerConfig]);
+  }, [
+    config,
+    effectiveSpecializedSearchEnabled,
+    effectiveWebSearchEnabled,
+    enabledAgentModules,
+    pushDebugItem,
+    pushServiceDebugEvent,
+    routerConfig,
+    toolPermissions,
+    toolRegistry,
+  ]);
 
   const runFallbackConversation = useCallback(async (
     assistantId: string,
@@ -2709,8 +2816,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         role: 'system',
         content: [
           '你是「Guyue-Master-Agent」，Guyue Master 应用的内置智能助理。',
-          '本轮没有进入逐步 Function Calling runtime，只能进行自然语言回复，不会执行本地应用工具。',
+          '本轮没有获得可执行工具，因此只能进行自然语言回复，不会执行本地应用工具。',
           `原因：${fallbackReason}`,
+          '不要把这解释成“你永久不支持联网”或“本应用没有联网能力”；只说明本轮没有拿到相应工具，并给出需要打开的设置或权限。',
           '不要输出 ```action``` JSON 块，不要声称已经创建、修改、删除、发送或读取了应用内数据。',
           '如果用户要求执行本地操作，请提醒用户检查 Agent 模型配置、作用域、联网开关和权限中心授权后再执行。',
           `当前参考作用域：${routedModules.length > 0 ? getModuleScopeLabel(routedModules) : '未限定'}`,
@@ -3373,20 +3481,22 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
       const routeResult = await detectModuleScope(userMessage.content);
       let activeRoutedScope = routeResult.useTools ? routeResult.modules : [];
+      const routeRequiresWeb = routeResult.useTools && activeRoutedScope.includes('web');
       const getNativeToolScope = (scope: string[], useTools: boolean) =>
         useTools
           ? (scope.length === 0 ? ['__search_only__'] : scope)
           : ['__no_tools__'];
       const searchOnlyScope = routeResult.useTools && activeRoutedScope.length === 0;
       const toolScope = getNativeToolScope(activeRoutedScope, routeResult.useTools);
-      const enableSpecializedSearch = effectiveWebSearchEnabled && (searchConfig.specialized?.enabledSources?.length || 0) > 0;
+      const enableSpecializedSearch = effectiveSpecializedSearchEnabled;
       const runtimeToolRegistry = [
         ...toolRegistry,
         WEB_SEARCH_TOOL_REGISTRATION,
+        WEB_OPEN_TOOL_REGISTRATION,
         SPECIALIZED_SEARCH_TOOL_REGISTRATION,
       ];
       const buildNativeRegistrationsForScope = (scope: string[], useTools: boolean) =>
-        supportsNativeTools && useTools
+        supportsNativeTools && useTools && !(scope.includes('web') && !effectiveWebSearchEnabled)
           ? getNativeToolRegistrations(
               toolRegistry,
               enabledAgentModules,
@@ -3449,6 +3559,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               customSystemPrompt: config.systemPrompt || '',
               modulePrompts,
               allowedActionTypes,
+              visibleTools: nativeTools,
             }),
             timestamp: 0,
           },
@@ -3823,9 +3934,11 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         : nativeTools.length === 0
           ? [
               '本轮没有可用工具。',
-              effectiveWebSearchEnabled
+              routeRequiresWeb && !effectiveWebSearchEnabled
+                ? '本轮路由已识别为联网搜索任务，但权限中心没有开启「联网搜索 / 读取」。'
+                : effectiveWebSearchEnabled
                 ? '可能是自动路由未命中可执行模块，或权限中心没有开启对应工具。'
-                : '如果需要联网搜索，请同时打开右侧联网开关，并在权限中心开启「联网 / 读取」。',
+                : '如果需要联网搜索，请在权限中心开启「联网搜索 / 读取」。',
             ].join('')
           : '逐步工具 runtime 未启动。';
       await runFallbackConversation(assistantId, userMessage, fallbackScope, fallbackReason);
@@ -4708,42 +4821,6 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                 title="API 设置"
               >
                 <Settings className="w-4 h-4" />
-              </button>
-              {/* 网络搜索 */}
-              <button
-                onClick={() => {
-                  if (!webSearchPermissionEnabled) {
-                    setToolPermissions(prev => ({
-                      ...prev,
-                      web: {
-                        ...(prev.web || DEFAULT_AGENT_TOOL_PERMISSIONS.web),
-                        read: true,
-                      },
-                    }));
-                    setEnableWebSearch(true);
-                    return;
-                  }
-                  setEnableWebSearch(v => !v);
-                }}
-                className={`relative w-8 h-8 flex items-center justify-center rounded-xl transition-colors ${
-                  effectiveWebSearchEnabled
-                    ? 'text-blue-600 bg-blue-50'
-                    : enableWebSearch && !webSearchPermissionEnabled
-                      ? 'text-amber-500 bg-amber-50'
-                      : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
-                }`}
-                title={
-                  effectiveWebSearchEnabled
-                    ? '关闭网络搜索'
-                    : webSearchPermissionEnabled
-                      ? '开启网络搜索'
-                      : '联网搜索未授权，点击会同时开启联网权限'
-                }
-              >
-                <Globe className="w-4 h-4" />
-                {(effectiveWebSearchEnabled || (enableWebSearch && !webSearchPermissionEnabled)) && (
-                  <span className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${effectiveWebSearchEnabled ? 'bg-blue-500' : 'bg-amber-500'}`} />
-                )}
               </button>
               <div className="w-5 h-px bg-slate-200 my-1" />
               {/* ── 权限组 ── */}

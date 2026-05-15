@@ -153,5 +153,6 @@ export interface ToolRegistryExecutorOptions {
   registry: ToolRegistration[];
   context: ToolExecutionContext;
   executeWebSearch?: (args: Record<string, any>) => Promise<any>;
+  executeWebOpen?: (args: Record<string, any>) => Promise<any>;
   executeSpecializedSearch?: (args: Record<string, any>) => Promise<any>;
 }

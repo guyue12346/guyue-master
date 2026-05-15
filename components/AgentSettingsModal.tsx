@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { X, CheckCircle2, AlertCircle, Trash2, Sparkles, ChevronDown, ChevronRight, Plus, Pencil, Mail, Server, Key, Edit3, BookUser, Send, Loader2, Globe2 } from 'lucide-react';
-import { AGENT_AVAILABLE_MODELS, ChatConfig } from '../services/chatService';
+import { AGENT_AVAILABLE_MODELS, ChatConfig, getDefaultAgentModel } from '../services/chatService';
 import type { AgentEmailConfig, AgentSearchConfig, AgentSearchMode, AgentSearchProvider, Contact } from '../services/agent/agentStorage';
 import { isStepwiseNativeProvider } from '../services/agent/agentModules';
 import { loadProfiles } from '../utils/apiProfileService';
@@ -85,12 +85,28 @@ const PROVIDER_LABELS: Record<string, string> = {
 };
 
 const SEARCH_PROVIDER_LABELS: Record<AgentSearchProvider, string> = {
+  'duckduckgo-browser': 'DuckDuckGo（免 API）',
   'openai-web-search': 'OpenAI Web Search',
+  searxng: 'SearXNG',
+  brave: 'Brave Search',
+  tavily: 'Tavily',
+  exa: 'Exa',
+  firecrawl: 'Firecrawl',
   'bing-web-search': 'Bing Web Search',
   'google-cse': 'Google Custom Search',
 };
 
-const SEARCH_PROVIDERS: AgentSearchProvider[] = ['openai-web-search', 'bing-web-search', 'google-cse'];
+const SEARCH_PROVIDERS: AgentSearchProvider[] = [
+  'duckduckgo-browser',
+  'openai-web-search',
+  'searxng',
+  'brave',
+  'tavily',
+  'exa',
+  'firecrawl',
+  'bing-web-search',
+  'google-cse',
+];
 const SEARCH_MODES: Array<{ key: AgentSearchMode; label: string }> = [
   { key: 'fast', label: '快速' },
   { key: 'balanced', label: '均衡' },
@@ -160,17 +176,13 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   const supportsNativeTools = isStepwiseNativeProvider(config.provider);
 
   const applyConfig = (item: SavedAgentApiConfig) => {
-    const nextModel = AGENT_AVAILABLE_MODELS[item.provider]?.some(m => m.id === config.model)
-      ? config.model
-      : AGENT_AVAILABLE_MODELS[item.provider]?.[0]?.id || '';
+    const nextModel = getDefaultAgentModel(item.provider, config.model);
     setSelectedApiConfigId(item.id);
     onChangeConfig({ ...config, provider: item.provider, model: nextModel, apiKey: item.apiKey, baseUrl: item.baseUrl || '' });
   };
 
   const applyRouterConfig = (item: SavedAgentApiConfig) => {
-    const nextModel = AGENT_AVAILABLE_MODELS[item.provider]?.some(m => m.id === routerConfig.model)
-      ? routerConfig.model
-      : AGENT_AVAILABLE_MODELS[item.provider]?.[0]?.id || '';
+    const nextModel = getDefaultAgentModel(item.provider, routerConfig.model);
     setSelectedRouterApiConfigId(item.id);
     onChangeRouterConfig({
       ...routerConfig,
@@ -254,6 +266,12 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   const updateSearchConfig = (patch: Partial<AgentSearchConfig>) => onChangeSearchConfig({ ...searchConfig, ...patch });
   const updateSearchApiKey = (provider: keyof AgentSearchConfig['apiKeys'], apiKey: string) => {
     updateSearchConfig({ apiKeys: { ...searchConfig.apiKeys, [provider]: apiKey } });
+  };
+  const updateSpecializedSearchConfig = (patch: Partial<AgentSearchConfig['specialized']>) => {
+    updateSearchConfig({ specialized: { ...searchConfig.specialized, ...patch } });
+  };
+  const updateSpecializedApiKey = (provider: keyof AgentSearchConfig['specialized']['apiKeys'], apiKey: string) => {
+    updateSpecializedSearchConfig({ apiKeys: { ...searchConfig.specialized.apiKeys, [provider]: apiKey } });
   };
   const toggleSearchFallbackProvider = (provider: AgentSearchProvider) => {
     const current = searchConfig.fallbackProviders || [];
@@ -407,7 +425,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
                       onChangeConfig({
                         ...config,
                         provider,
-                        model: AGENT_AVAILABLE_MODELS[provider]?.[0]?.id || '',
+                        model: getDefaultAgentModel(provider),
                       });
                     }}
                     className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
@@ -624,6 +642,111 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
                     placeholder="OpenAI API Key（Responses web_search）"
                     className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">SearXNG Base URL</label>
+                  <input
+                    type="text"
+                    value={searchConfig.searxngBaseUrl}
+                    onChange={e => updateSearchConfig({ searxngBaseUrl: e.target.value })}
+                    placeholder="https://searx.example.com"
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Brave API Key</label>
+                    <input
+                      type="password"
+                      value={searchConfig.apiKeys.brave}
+                      onChange={e => updateSearchApiKey('brave', e.target.value)}
+                      placeholder="Brave Search API Key"
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Tavily API Key</label>
+                    <input
+                      type="password"
+                      value={searchConfig.apiKeys.tavily}
+                      onChange={e => updateSearchApiKey('tavily', e.target.value)}
+                      placeholder="Tavily API Key"
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Exa API Key</label>
+                    <input
+                      type="password"
+                      value={searchConfig.apiKeys.exa}
+                      onChange={e => updateSearchApiKey('exa', e.target.value)}
+                      placeholder="Exa API Key"
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Firecrawl API Key</label>
+                    <input
+                      type="password"
+                      value={searchConfig.apiKeys.firecrawl}
+                      onChange={e => updateSearchApiKey('firecrawl', e.target.value)}
+                      placeholder="Firecrawl API Key"
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Firecrawl Base URL</label>
+                  <input
+                    type="text"
+                    value={searchConfig.firecrawlBaseUrl}
+                    onChange={e => updateSearchConfig({ firecrawlBaseUrl: e.target.value })}
+                    placeholder="https://api.firecrawl.dev"
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  />
+                </div>
+
+                <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-gray-500">专用搜索</label>
+                    <input
+                      type="number"
+                      min={3}
+                      max={20}
+                      value={searchConfig.specialized.maxResults}
+                      onChange={e => updateSpecializedSearchConfig({ maxResults: Math.min(Math.max(parseInt(e.target.value, 10) || 8, 3), 20) })}
+                      className="w-20 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                      title="专用搜索结果数"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">GitHub Token</label>
+                      <input
+                        type="password"
+                        value={searchConfig.specialized.apiKeys.github}
+                        onChange={e => updateSpecializedApiKey('github', e.target.value)}
+                        placeholder="可选，提高 GitHub 搜索限额"
+                        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">StackExchange Key</label>
+                      <input
+                        type="password"
+                        value={searchConfig.specialized.apiKeys.stackExchange}
+                        onChange={e => updateSpecializedApiKey('stackExchange', e.target.value)}
+                        placeholder="可选，提高 StackOverflow 限额"
+                        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">

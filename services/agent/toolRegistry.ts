@@ -93,12 +93,13 @@ export interface ToolExecutionContext {
   onAutoAuthLatexFileCategory: (catId: string) => void;
   onAutoAuthLatexTemplateCategory: (catName: string) => void;
   executeWebSearch?: (args: Record<string, any>) => Promise<any>;
+  executeWebOpen?: (args: Record<string, any>) => Promise<any>;
   executeSpecializedSearch?: (args: Record<string, any>) => Promise<any>;
 }
 
 export const WEB_SEARCH_TOOL: ChatTool = {
   name: 'web_search',
-  description: '使用 Agent 设置中的联网搜索引擎检索互联网实时信息。当需要最新资讯、官方文档、新闻、事实核验、价格或时效性内容时使用。',
+  description: '使用 Agent 设置中的联网搜索引擎检索互联网实时信息。支持 OpenAI Web Search、SearXNG、Brave、Tavily、Exa、Firecrawl、Bing、Google；当需要最新资讯、官方文档、新闻、事实核验、价格或时效性内容时使用。',
   inputSchema: {
     type: 'object',
     properties: {
@@ -114,9 +115,24 @@ export const WEB_SEARCH_TOOL: ChatTool = {
   },
 };
 
+export const WEB_OPEN_TOOL: ChatTool = {
+  name: 'web_open',
+  description: '打开一个网页 URL，抽取标题、描述、正文和与查询相关的片段。通常在 web_search 返回候选页面后使用，用于获得页面里的具体事实、数字、天气、价格、文档内容等。',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: '要打开的 http/https URL，通常来自 web_search 的 results.url。' },
+      query: { type: 'string', description: '可选。原始问题或需要在页面中聚焦查找的关键词。' },
+      maxChars: { type: 'number', description: '最多返回正文字符数，默认 12000，最大 50000。' },
+      includeHtml: { type: 'boolean', description: '是否返回原始 HTML 片段。通常不要开启。' },
+    },
+    required: ['url'],
+  },
+};
+
 export const SPECIALIZED_SEARCH_TOOL: ChatTool = {
   name: 'specialized_search',
-  description: '使用 Agent 设置中的联网搜索引擎做垂直搜索，并通过域名过滤限定 GitHub、npm、StackOverflow、arXiv 等来源；不要用它做普通网页搜索。',
+  description: '使用专用搜索 API 检索 GitHub、npm、StackOverflow、arXiv。需要查仓库、代码、包、问答或论文时优先使用；不要用它做普通网页搜索。',
   inputSchema: {
     type: 'object',
     properties: {
@@ -198,6 +214,21 @@ const buildWebSearchToolMessage = (query: string, result: any) => {
   ].filter(Boolean).join('\n\n');
 };
 
+const buildWebOpenToolMessage = (result: any) => {
+  if (!result || result.success === false) {
+    return `网页打开失败：${result?.error || result?.message || '未知错误'}`;
+  }
+  const title = compactText(result.title || result.finalUrl || result.url || '网页', 160);
+  const description = compactText(result.description || '', 500);
+  const excerpt = compactText(result.excerpt || result.content || '', 2400);
+  return [
+    `网页：${title}`,
+    `URL：${result.finalUrl || result.url || ''}`,
+    description ? `描述：${description}` : '',
+    excerpt ? `内容摘录：\n${excerpt}` : '内容摘录：页面没有提取到可读正文。',
+  ].filter(Boolean).join('\n\n');
+};
+
 export const WEB_SEARCH_TOOL_REGISTRATION: ToolRegistration = {
   name: WEB_SEARCH_TOOL.name,
   module: 'web',
@@ -218,19 +249,51 @@ export const WEB_SEARCH_TOOL_REGISTRATION: ToolRegistration = {
   },
 };
 
+export const WEB_OPEN_TOOL_REGISTRATION: ToolRegistration = {
+  name: WEB_OPEN_TOOL.name,
+  module: 'web',
+  permission: { module: 'web', action: 'read' },
+  tool: WEB_OPEN_TOOL,
+  execute: async (args, ctx) => {
+    if (!ctx.executeWebOpen) {
+      return { success: false, error: '网页打开执行器未配置。' };
+    }
+    const url = typeof args.url === 'string' ? args.url.trim() : '';
+    if (!url) return { success: false, error: 'URL 不能为空。' };
+    const result = await ctx.executeWebOpen({ ...args, url });
+    return {
+      ...result,
+      success: result?.success !== false,
+      message: buildWebOpenToolMessage(result),
+    };
+  },
+};
+
 export const SPECIALIZED_SEARCH_TOOL_REGISTRATION: ToolRegistration = {
   name: SPECIALIZED_SEARCH_TOOL.name,
   module: 'web',
   permission: { module: 'web', action: 'read' },
   tool: SPECIALIZED_SEARCH_TOOL,
   execute: async (args, ctx) => {
-    if (!ctx.executeWebSearch) {
-      return { success: false, error: '联网搜索执行器未配置。' };
-    }
     const query = typeof args.query === 'string' ? args.query.trim() : '';
     const source = typeof args.source === 'string' ? args.source.trim() : '';
     if (!query) return { success: false, error: '搜索词不能为空。' };
     if (!source) return { success: false, error: '专用搜索源不能为空。' };
+    if (ctx.executeSpecializedSearch) {
+      const result = await ctx.executeSpecializedSearch({ ...args, query, source });
+      return {
+        ...result,
+        success: result?.success !== false,
+        message: buildWebSearchToolMessage(`${source}: ${query}`, result),
+        source,
+        query,
+        provider: result?.provider || result?.engine || source,
+        engine: result?.engine || source,
+      };
+    }
+    if (!ctx.executeWebSearch) {
+      return { success: false, error: '联网搜索执行器未配置。' };
+    }
     const includeDomains = SPECIALIZED_SEARCH_DOMAINS[source] || [];
     if (includeDomains.length === 0) return { success: false, error: `不支持的专用搜索源：${source}` };
     const routedQuery = buildSpecializedSearchQuery(args, source, query);
@@ -382,6 +445,7 @@ export const getNativeToolRegistrations = (
   const canSearchWeb = !permissions || Boolean(permissions.web?.read);
   const searchRegistrations = [
     ...(enableWebSearch && canSearchWeb ? [WEB_SEARCH_TOOL_REGISTRATION] : []),
+    ...(enableWebSearch && canSearchWeb ? [WEB_OPEN_TOOL_REGISTRATION] : []),
     ...(enableSpecializedSearch && canSearchWeb ? [SPECIALIZED_SEARCH_TOOL_REGISTRATION] : []),
   ];
   const allRegistrations = [...registry, ...searchRegistrations];

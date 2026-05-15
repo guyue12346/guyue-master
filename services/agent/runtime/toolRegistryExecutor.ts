@@ -14,6 +14,7 @@ export const createToolRegistryExecutor = ({
   registry,
   context,
   executeWebSearch,
+  executeWebOpen,
   executeSpecializedSearch,
 }: ToolRegistryExecutorOptions): AgentToolExecutor => ({
   async execute(step: AgentPlanStep, _state: AgentRuntimeState): Promise<AgentToolObservation> {
@@ -30,6 +31,7 @@ export const createToolRegistryExecutor = ({
       const executionContext = {
         ...context,
         executeWebSearch: context.executeWebSearch || executeWebSearch,
+        executeWebOpen: context.executeWebOpen || executeWebOpen,
         executeSpecializedSearch: context.executeSpecializedSearch || executeSpecializedSearch,
       };
       const registration = findToolRegistration(registry, step.toolName);

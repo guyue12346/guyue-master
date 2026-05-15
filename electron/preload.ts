@@ -152,16 +152,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Agent 网络搜索
   agentWebSearch: (params: {
     query: string;
-    provider?: 'openai-web-search' | 'bing-web-search' | 'google-cse';
-    fallbackProviders?: Array<'openai-web-search' | 'bing-web-search' | 'google-cse'>;
+    provider?: 'duckduckgo-browser' | 'openai-web-search' | 'searxng' | 'brave' | 'tavily' | 'exa' | 'firecrawl' | 'bing-web-search' | 'google-cse';
+    fallbackProviders?: Array<'duckduckgo-browser' | 'openai-web-search' | 'searxng' | 'brave' | 'tavily' | 'exa' | 'firecrawl' | 'bing-web-search' | 'google-cse'>;
     mode?: 'fast' | 'balanced' | 'deep';
     searchMode?: 'fast' | 'balanced' | 'deep';
     maxResults?: number;
     includeAnswer?: boolean;
     includeRawContent?: boolean;
-    apiKeys?: { openai?: string; bing?: string; google?: string };
+    apiKeys?: { openai?: string; bing?: string; google?: string; brave?: string; tavily?: string; exa?: string; firecrawl?: string };
     bingEndpoint?: string;
     googleCx?: string;
+    searxngBaseUrl?: string;
+    firecrawlBaseUrl?: string;
     language?: string;
     country?: string;
     timeRange?: 'day' | 'week' | 'month' | 'year';
@@ -169,6 +171,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     includeDomains?: string[];
     excludeDomains?: string[];
   }) => ipcRenderer.invoke('agent-web-search', params),
+  agentWebOpen: (params: {
+    url: string;
+    query?: string;
+    maxChars?: number;
+    includeHtml?: boolean;
+  }) => ipcRenderer.invoke('agent-web-open', params),
   agentSpecializedSearch: (params: {
     source: 'github' | 'npm' | 'stackoverflow' | 'arxiv';
     query: string;
@@ -386,16 +394,18 @@ export interface ElectronAPI {
   // Agent 网络搜索
   agentWebSearch: (params: {
     query: string;
-    provider?: 'openai-web-search' | 'bing-web-search' | 'google-cse';
-    fallbackProviders?: Array<'openai-web-search' | 'bing-web-search' | 'google-cse'>;
+    provider?: 'duckduckgo-browser' | 'openai-web-search' | 'searxng' | 'brave' | 'tavily' | 'exa' | 'firecrawl' | 'bing-web-search' | 'google-cse';
+    fallbackProviders?: Array<'duckduckgo-browser' | 'openai-web-search' | 'searxng' | 'brave' | 'tavily' | 'exa' | 'firecrawl' | 'bing-web-search' | 'google-cse'>;
     mode?: 'fast' | 'balanced' | 'deep';
     searchMode?: 'fast' | 'balanced' | 'deep';
     maxResults?: number;
     includeAnswer?: boolean;
     includeRawContent?: boolean;
-    apiKeys?: { openai?: string; bing?: string; google?: string };
+    apiKeys?: { openai?: string; bing?: string; google?: string; brave?: string; tavily?: string; exa?: string; firecrawl?: string };
     bingEndpoint?: string;
     googleCx?: string;
+    searxngBaseUrl?: string;
+    firecrawlBaseUrl?: string;
     language?: string;
     country?: string;
     timeRange?: 'day' | 'week' | 'month' | 'year';
@@ -403,6 +413,12 @@ export interface ElectronAPI {
     includeDomains?: string[];
     excludeDomains?: string[];
   }) => Promise<{ success: boolean; provider?: string; usedFallback?: boolean; directAnswer?: string | null; results: Array<{ title: string; url: string; snippet: string; source?: string; publishedDate?: string; score?: number; content?: string }>; error?: string; query?: string }>;
+  agentWebOpen: (params: {
+    url: string;
+    query?: string;
+    maxChars?: number;
+    includeHtml?: boolean;
+  }) => Promise<{ success: boolean; url: string; finalUrl?: string; title?: string; description?: string; content?: string; excerpt?: string; html?: string; contentType?: string; error?: string }>;
   agentSpecializedSearch: (params: {
     source: 'github' | 'npm' | 'stackoverflow' | 'arxiv';
     query: string;

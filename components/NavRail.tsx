@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
-import { LayoutGrid, StickyNote, Settings, Terminal, Webhook, ListTodo, FolderOpen, FileText, CheckSquare, Sparkles, Lightbulb, BookOpen, Book, Bot } from 'lucide-react';
+import { LayoutGrid, StickyNote, Settings, Terminal, Webhook, ListTodo, FolderOpen, FileText, CheckSquare, Sparkles, Lightbulb, BookOpen, Book, Bot, Music, Pause, Play, SkipBack, SkipForward } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { AppMode, ModuleConfig } from '../types';
 
@@ -16,6 +16,23 @@ interface NavRailProps {
     active: boolean;
     isProcessing?: boolean;
   };
+  statusIsland?: {
+    kind: 'music' | 'agent' | 'generic';
+    active: boolean;
+    open: boolean;
+    progress: number;
+    title: string;
+    subtitle?: string;
+    lyricLines?: string[];
+    accent?: string;
+    isPlaying?: boolean;
+    disabled?: boolean;
+    onOpen?: () => void;
+    onTogglePlay?: () => void;
+    onPrev?: () => void;
+    onNext?: () => void;
+  };
+  onToggleStatusIsland?: () => void;
   moduleConfig: ModuleConfig[];
   onReorderModules?: (reordered: ModuleConfig[]) => void;
 }
@@ -43,6 +60,8 @@ export const NavRail: React.FC<NavRailProps> = ({
   onOpenAgent,
   isAgentOpen = false,
   agentActivity,
+  statusIsland,
+  onToggleStatusIsland,
   moduleConfig,
   onReorderModules
 }) => {
@@ -70,6 +89,15 @@ export const NavRail: React.FC<NavRailProps> = ({
     if (stage.includes('routing') || stage.includes('planning') || stage.includes('decision')) return '#8b5cf6';
     return isAgentOpen ? '#6366f1' : '#94a3b8';
   })();
+  const clampProgress = (value: number) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+  const statusProgress = clampProgress(statusIsland?.progress || 0);
+  const statusAccent = statusIsland?.accent || '#22d3ee';
+  const isStatusRailOpen = Boolean(statusIsland?.open && statusIsland.active);
+  const StatusIcon = statusIsland?.kind === 'agent' ? Bot : statusIsland?.kind === 'music' ? Music : Sparkles;
+  const statusLyricLines = (statusIsland?.lyricLines || [])
+    .map(line => line.trim())
+    .filter(Boolean)
+    .slice(0, 2);
 
   // Pointer-based vertical-only drag reorder with threshold
   const DRAG_THRESHOLD = 8;
@@ -204,37 +232,110 @@ export const NavRail: React.FC<NavRailProps> = ({
     );
   };
 
+  const StatusRailContent = () => (
+    <>
+      <div
+        className="flex-1 min-h-0 w-full flex flex-col items-center gap-3"
+        style={{ WebkitAppRegion: 'no-drag', '--status-progress': `${statusProgress * 100}%`, '--status-accent': statusAccent } as React.CSSProperties}
+      >
+        <button
+          onClick={statusIsland?.onOpen}
+          className="theme-rail-status-cover"
+          title={statusIsland?.title || '打开状态模块'}
+        >
+          <StatusIcon className="w-5 h-5" />
+        </button>
+
+        <div className="theme-rail-status-pipe" title={`${Math.round(statusProgress * 100)}%`}>
+          <div className="theme-rail-status-pipe-fill">
+            <span className="theme-rail-status-pipe-wave" />
+            <span className="theme-rail-status-pipe-stream" />
+          </div>
+        </div>
+
+        <div className="theme-rail-status-caption" title={statusIsland?.title || ''}>
+          <span>{statusIsland?.title || '状态'}</span>
+        </div>
+
+        {statusLyricLines.length > 0 && (
+          <div className="theme-rail-status-lyrics" aria-label="当前歌词">
+            {statusLyricLines.map((line, index) => (
+              <span
+                key={`${index}-${line}`}
+                className={index === 0 ? 'is-current' : ''}
+                title={line}
+              >
+                {line}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div className="theme-rail-status-controls">
+          <button onClick={statusIsland?.onPrev} disabled={!statusIsland?.onPrev} title="上一首">
+            <SkipBack className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={statusIsland?.onTogglePlay} disabled={!statusIsland?.onTogglePlay} title={statusIsland?.isPlaying ? '暂停' : '播放'}>
+            {statusIsland?.isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 ml-0.5" />}
+          </button>
+          <button onClick={statusIsland?.onNext} disabled={!statusIsland?.onNext} title="下一首">
+            <SkipForward className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+    </>
+  );
+
   return (
     <div className="theme-rail-shell h-full flex-shrink-0 flex flex-col items-center py-6 z-30 transition-all duration-300"
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
-      {/* Top Logo — completely outside drag system */}
-      <button 
-        onClick={() => agentIsActive || isAgentOpen ? onOpenAgent() : onModeChange(sortedModules[0]?.id as AppMode || 'todo')}
-        className="mb-6 relative cursor-pointer hover:scale-105 active:scale-95 transition-transform duration-200"
-        style={{ WebkitAppRegion: 'no-drag', '--agent-glow-color': agentGlowColor } as React.CSSProperties}
-        title={agentIsActive || isAgentOpen ? (agentActivity?.title || '打开 Agent') : '返回首页'}
-      >
-        <div className={`theme-logo-mark ${agentIsActive ? 'agent-logo-active' : isAgentOpen ? 'agent-logo-open' : ''}`}>
-          <div className="theme-logo-glyph text-sm">
-            <span>古</span>
-            <span>月</span>
-          </div>
-        </div>
-      </button>
+      {isStatusRailOpen ? (
+        <StatusRailContent />
+      ) : (
+        <>
+          {/* Top Logo — completely outside drag system */}
+          <button
+            onClick={() => agentIsActive || isAgentOpen ? onOpenAgent() : onModeChange(sortedModules[0]?.id as AppMode || 'todo')}
+            className="mb-6 relative cursor-pointer hover:scale-105 active:scale-95 transition-transform duration-200"
+            style={{ WebkitAppRegion: 'no-drag', '--agent-glow-color': agentGlowColor } as React.CSSProperties}
+            title={agentIsActive || isAgentOpen ? (agentActivity?.title || '打开 Agent') : '返回首页'}
+          >
+            <div className={`theme-logo-mark ${agentIsActive ? 'agent-logo-active' : isAgentOpen ? 'agent-logo-open' : ''}`}>
+              <div className="theme-logo-glyph text-sm">
+                <span>古</span>
+                <span>月</span>
+              </div>
+            </div>
+          </button>
 
-      {/* Main Nav Items */}
-      <div className="flex-1 flex flex-col gap-2 w-full items-center overflow-y-auto overflow-x-hidden min-h-0" style={{ WebkitAppRegion: 'no-drag', scrollbarWidth: 'none', msOverflowStyle: 'none' } as React.CSSProperties}>
-        {sortedModules.map((module, idx) => {
-          const Icon = getIcon(module.icon);
-          return (
-            <NavItem key={module.id} mode={module.id as AppMode} icon={Icon} label={module.name} idx={idx} />
-          );
-        })}
-      </div>
+          {/* Main Nav Items */}
+          <div className="flex-1 flex flex-col gap-2 w-full items-center overflow-y-auto overflow-x-hidden min-h-0" style={{ WebkitAppRegion: 'no-drag', scrollbarWidth: 'none', msOverflowStyle: 'none' } as React.CSSProperties}>
+            {sortedModules.map((module, idx) => {
+              const Icon = getIcon(module.icon);
+              return (
+                <NavItem key={module.id} mode={module.id as AppMode} icon={Icon} label={module.name} idx={idx} />
+              );
+            })}
+          </div>
+        </>
+      )}
 
       {/* Bottom Actions */}
       <div className="mt-auto flex flex-col gap-4 pt-4 shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        {statusIsland && onToggleStatusIsland && (
+          <button
+            onClick={onToggleStatusIsland}
+            disabled={statusIsland.disabled}
+            className={`theme-rail-status-island ${statusIsland.open ? 'is-open' : ''} ${statusIsland.active ? 'is-live' : ''}`}
+            style={{ '--status-progress': `${Math.max(0, Math.min(1, statusIsland.progress || 0)) * 100}%` } as React.CSSProperties}
+            title={statusIsland.open ? '收起状态岛' : statusIsland.title}
+          >
+            <span className="theme-rail-status-glow" />
+            {statusIsland.open ? <LayoutGrid className="w-4 h-4 relative z-10" /> : <StatusIcon className="w-4 h-4 relative z-10" />}
+            <span className="theme-rail-status-level" />
+          </button>
+        )}
         <button onClick={onOpenSettings} className="theme-rail-item transition-all duration-300" title="设置">
           <Settings className="w-5 h-5" />
         </button>

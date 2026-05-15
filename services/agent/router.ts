@@ -1,6 +1,8 @@
 import type { ChatConfig } from '../chatService';
 import { getEnabledAgentModules, getModuleById } from './agentModules';
 
+const ROUTER_SIGNATURE_VERSION = 'scope-router-v2-web';
+
 const VIRTUAL_AGENT_SCOPE_LABELS: Record<string, string> = {
   web: '联网搜索',
 };
@@ -24,6 +26,7 @@ export const getModuleScopeLabel = (moduleIds: string[]): string =>
     .join('、');
 
 export const getRouterSignature = (routingConfig: ChatConfig) => [
+  ROUTER_SIGNATURE_VERSION,
   routingConfig.provider,
   routingConfig.model,
   routingConfig.baseUrl || '',
@@ -38,6 +41,7 @@ export const detectModuleScopeLocally = (input: string): string[] => {
   };
 
   if (/当前时间|现在几点|今天|明天|昨天|后天|前天|本周|下周|日期|时间|几点|几号|timezone|time zone/.test(text)) add('system');
+  if (/(联网|搜索|搜一下|查一下|浏览网页|网页|官网|官方文档|实时|最新|新闻|天气|气温|预报|股价|汇率|价格|github|npm|stackoverflow|stack overflow|arxiv|论文搜索|仓库搜索|代码搜索)/.test(text)) add('web');
   if (/待办|任务|事项|日程|提醒|子任务|循环|重复/.test(text)) add('todo');
   if (/oj|洛谷|acwing|leetcode|刷题记录|做题记录|提交记录/.test(text)) add('dc-oj');
   if (/资源|订阅|云盘|服务器|域名|到期|续费|容量/.test(text)) add('dc-resources');

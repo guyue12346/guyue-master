@@ -15,6 +15,7 @@ import {
   saveLocalStorageMirror,
 } from './utils/unifiedStorage';
 import { moduleManifestToModuleConfig, normalizePluginManifest } from './services/modules';
+import type { MusicRuntimeControls, MusicRuntimeSnapshot } from './components/MusicPlayer';
 
 // Lazy load components to improve initial load performance
 const NoteList = React.lazy(() => import('./components/NoteList').then(m => ({ default: m.NoteList })));
@@ -90,6 +91,8 @@ const STORAGE_KEY_TODO_SUBMODE = 'guyue_todo_submode';
 const STORAGE_KEY_MODE_SNAPSHOTS = 'guyue_mode_snapshots';
 const STORAGE_KEY_MODULE_SIDEBARS = 'guyue_module_sidebar_visibility_v1';
 
+type StatusRailMode = 'music' | null;
+
 interface AgentActivityState {
   stage: string;
   status: string;
@@ -97,6 +100,23 @@ interface AgentActivityState {
   active: boolean;
   isProcessing: boolean;
 }
+
+type MusicRuntimeView = Omit<MusicRuntimeSnapshot, 'controls'>;
+
+const EMPTY_MUSIC_RUNTIME: MusicRuntimeView = {
+  currentTrack: null,
+  cover: undefined,
+  isPlaying: false,
+  progress: 0,
+  duration: 0,
+  hasLyrics: false,
+  currentLyric: '',
+  nextLyric: '',
+  lyricIndex: -1,
+  lyricLineProgress: 0,
+  repeatMode: 'off',
+  isShuffled: false,
+};
 
 const getAgentActivityGlowColor = (activity?: Partial<AgentActivityState>, isOpen = false) => {
   const stage = String(activity?.stage || '').toLowerCase();
@@ -946,6 +966,9 @@ const App: React.FC = () => {
   const [selectedMusicPlaylist, setSelectedMusicPlaylist] = useState('all');
   const musicCoverCache = useRef(new Map<string, string>());
   const [musicCoverVersion, setMusicCoverVersion] = useState(0);
+  const musicRuntimeControlsRef = useRef<MusicRuntimeControls | null>(null);
+  const [musicRuntime, setMusicRuntime] = useState<MusicRuntimeView>(EMPTY_MUSIC_RUNTIME);
+  const [activeStatusRail, setActiveStatusRail] = useState<StatusRailMode>(null);
 
   const saveMusicTracks = useCallback((tracks: MusicTrack[]) => {
     setMusicTracks(tracks);
@@ -1123,6 +1146,30 @@ const App: React.FC = () => {
   const handleMusicReorderTracks = useCallback((playlistId: string, trackIds: string[]) => {
     saveMusicPlaylists(musicPlaylists.map(p => p.id === playlistId ? { ...p, trackIds } : p));
   }, [musicPlaylists, saveMusicPlaylists]);
+
+  const handleMusicRuntimeChange = useCallback((snapshot: MusicRuntimeSnapshot) => {
+    const { controls, ...view } = snapshot;
+    musicRuntimeControlsRef.current = controls;
+    setMusicRuntime(prev => {
+      const sameTrack = prev.currentTrack?.id === view.currentTrack?.id;
+      const sameText =
+        prev.currentTrack?.title === view.currentTrack?.title &&
+        prev.currentTrack?.artist === view.currentTrack?.artist &&
+        prev.currentLyric === view.currentLyric &&
+        prev.nextLyric === view.nextLyric;
+      const samePlayback =
+        prev.isPlaying === view.isPlaying &&
+        prev.duration === view.duration &&
+        prev.hasLyrics === view.hasLyrics &&
+        prev.repeatMode === view.repeatMode &&
+        prev.isShuffled === view.isShuffled &&
+        prev.cover === view.cover &&
+        prev.lyricIndex === view.lyricIndex &&
+        Math.abs(prev.progress - view.progress) < 0.35 &&
+        Math.abs(prev.lyricLineProgress - view.lyricLineProgress) < 0.025;
+      return sameTrack && sameText && samePlayback ? prev : view;
+    });
+  }, []);
 
   // LaTeX: ref bridges so LatexSidebar can inject content/files into LatexEditor
   const latexEditTemplateRef = useRef<((template: any) => void) | null>(null);
@@ -3042,6 +3089,32 @@ const App: React.FC = () => {
     );
   };
 
+  useEffect(() => {
+    if (appMode === 'music' || !musicRuntime.currentTrack) {
+      setActiveStatusRail(null);
+    }
+  }, [appMode, musicRuntime.currentTrack?.id]);
+
+  const isMusicStatusRailOpen =
+    Boolean(musicRuntime.currentTrack) &&
+    activeStatusRail === 'music' &&
+    appMode !== 'music' &&
+    !isRendererFullscreen &&
+    !isMarkdownFullscreen &&
+    !isTerminalFullscreen &&
+    !isBrowserFullscreen &&
+    !isLatexFullscreen &&
+    isSidebarVisible;
+  const musicStatusProgress = musicRuntime.duration ? musicRuntime.progress / musicRuntime.duration : 0;
+  const handleToggleStatusIsland = useCallback(() => {
+    if (appMode === 'music' || !musicRuntime.currentTrack) return;
+    setActiveStatusRail(prev => (prev === 'music' ? null : 'music'));
+  }, [appMode, musicRuntime.currentTrack]);
+  const handleOpenMusicFromStatusRail = useCallback(() => {
+    setActiveStatusRail(null);
+    handleAppModeChange('music');
+  }, [handleAppModeChange]);
+
   const isAgentPageOpen = appMode === 'agent';
   const shouldMountAgentHost = hasAgentMounted || isAgentPageOpen;
   const agentUiGlowColor = getAgentActivityGlowColor(agentActivity, isAgentPageOpen || isAgentFloatingOpen);
@@ -3079,6 +3152,25 @@ const App: React.FC = () => {
               onOpenAgent={openFloatingAgent}
               isAgentOpen={appMode === 'agent' || isAgentFloatingOpen}
               agentActivity={agentActivity}
+              statusIsland={{
+                kind: 'music',
+                active: Boolean(musicRuntime.currentTrack && appMode !== 'music'),
+                open: isMusicStatusRailOpen,
+                progress: musicStatusProgress,
+                title: musicRuntime.currentTrack?.title || '暂无正在播放',
+                subtitle: musicRuntime.currentTrack?.artist || '',
+                lyricLines: musicRuntime.hasLyrics
+                  ? [musicRuntime.currentLyric, musicRuntime.nextLyric].filter(Boolean)
+                  : [],
+                accent: '#22d3ee',
+                isPlaying: musicRuntime.isPlaying,
+                disabled: appMode === 'music' || !musicRuntime.currentTrack,
+                onOpen: handleOpenMusicFromStatusRail,
+                onTogglePlay: () => musicRuntimeControlsRef.current?.togglePlay(),
+                onPrev: () => musicRuntimeControlsRef.current?.playPrev(),
+                onNext: () => musicRuntimeControlsRef.current?.playNext(),
+              }}
+              onToggleStatusIsland={handleToggleStatusIsland}
               moduleConfig={moduleConfig}
               onReorderModules={setModuleConfig}
             />
@@ -3805,6 +3897,8 @@ const App: React.FC = () => {
                   onAddFiles={handleMusicAddFiles}
                   onAddFolder={handleMusicAddFolder}
                   onReorderTracksInPlaylist={handleMusicReorderTracks}
+                  onRuntimeChange={handleMusicRuntimeChange}
+                  globalHotkeysEnabled={appMode === 'music' || isMusicStatusRailOpen}
                 />
               </div>
             )}
