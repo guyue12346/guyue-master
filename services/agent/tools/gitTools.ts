@@ -1,5 +1,5 @@
 import type { ToolRegistration } from '../toolRegistry';
-import { findAgentGitRepo, loadAgentGitRepositories } from './localData';
+import { findAgentGitRepo, GIT_REPOSITORIES_STORAGE_KEY, loadAgentGitRepositories } from './localData';
 
 const normalizeLimit = (value: unknown, fallback = 20, max = 100) => {
   const limit = Number(value);
@@ -7,8 +7,64 @@ const normalizeLimit = (value: unknown, fallback = 20, max = 100) => {
   return Math.min(Math.floor(limit), max);
 };
 
+const saveAgentGitRepositories = (repositories: Array<{ path: string; name: string; addedAt?: number; lastOpenedAt?: number }>) => {
+  localStorage.setItem(GIT_REPOSITORIES_STORAGE_KEY, JSON.stringify(repositories));
+  window.dispatchEvent(new CustomEvent('guyue-git-repositories-updated', { detail: { repositories } }));
+};
+
+const resolveGitRepoForTool = (args: Record<string, any>) => {
+  const repo = findAgentGitRepo(args);
+  if (!repo) throw new Error('未找到仓库。请先在 Git 管理中心添加仓库，或传 repoPath/repoName。');
+  return repo;
+};
+
 export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
   // ─── Git 管理工具 ───
+  {
+    name: 'git_add_repository',
+    module: 'git',
+    permission: { module: 'git', action: 'create' },
+    tool: {
+      name: 'git_add_repository',
+      description: '把一个本地 Git 仓库路径加入 Git 管理中心。repoPath 必须是已有本地路径。',
+      inputSchema: { type: 'object', properties: { repoPath: { type: 'string' }, name: { type: 'string' } }, required: ['repoPath'] },
+    },
+    execute: async (args) => {
+      const repoPath = String(args.repoPath || '').trim();
+      if (!repoPath) return { success: false, error: 'repoPath 不能为空。' };
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.gitStatus) return { success: false, error: 'Git API 不可用。' };
+      const status = await electronAPI.gitStatus(repoPath);
+      const repositories = loadAgentGitRepositories();
+      const record = {
+        path: status.path,
+        name: typeof args.name === 'string' && args.name.trim() ? args.name.trim() : status.name,
+        addedAt: Date.now(),
+        lastOpenedAt: Date.now(),
+      };
+      const next = repositories.some(repo => repo.path === status.path)
+        ? repositories.map(repo => repo.path === status.path ? { ...repo, ...record } : repo)
+        : [record, ...repositories];
+      saveAgentGitRepositories(next);
+      return { success: true, message: `仓库「${record.name}」已加入 Git 管理中心`, repository: record, status };
+    },
+  },
+  {
+    name: 'git_remove_repository',
+    module: 'git',
+    permission: { module: 'git', action: 'delete' },
+    tool: {
+      name: 'git_remove_repository',
+      description: '从 Git 管理中心移除一个仓库记录。只移除 App 记录，不删除磁盘文件。',
+      inputSchema: { type: 'object', properties: { repoPath: { type: 'string' }, repoName: { type: 'string' } } },
+    },
+    execute: async (args) => {
+      const repo = resolveGitRepoForTool(args);
+      const repositories = loadAgentGitRepositories();
+      saveAgentGitRepositories(repositories.filter(item => item.path !== repo.path));
+      return { success: true, message: `仓库「${repo.name}」已从 Git 管理中心移除`, repository: repo };
+    },
+  },
   {
     name: 'query_git_repositories',
     module: 'git',
@@ -93,6 +149,40 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
     },
   },
   {
+    name: 'query_git_branches',
+    module: 'git',
+    tool: {
+      name: 'query_git_branches',
+      description: '查询 Git 仓库的本地分支和远程分支，以及当前分支状态。只有一个仓库时可不传 repoPath/repoName。',
+      inputSchema: { type: 'object', properties: { repoPath: { type: 'string' }, repoName: { type: 'string' } } },
+    },
+    execute: async (args) => {
+      const repo = resolveGitRepoForTool(args);
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.gitBranches) return { success: false, error: 'Git branches API 不可用。' };
+      const result = await electronAPI.gitBranches(repo.path);
+      return { success: true, repository: repo, ...result };
+    },
+  },
+  {
+    name: 'query_git_commit',
+    module: 'git',
+    tool: {
+      name: 'query_git_commit',
+      description: '查看一个 Git 提交的详情和文件统计。需要 commit hash。',
+      inputSchema: { type: 'object', properties: { repoPath: { type: 'string' }, repoName: { type: 'string' }, hash: { type: 'string' } }, required: ['hash'] },
+    },
+    execute: async (args) => {
+      const repo = resolveGitRepoForTool(args);
+      const hash = String(args.hash || '').trim();
+      if (!hash) return { success: false, error: 'hash 不能为空。' };
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.gitShowCommit) return { success: false, error: 'Git show API 不可用。' };
+      const detail = await electronAPI.gitShowCommit({ repoPath: repo.path, hash });
+      return { success: true, repository: repo, hash, detail };
+    },
+  },
+  {
     name: 'git_stage_files',
     module: 'git',
     permission: { module: 'git', action: 'update' },
@@ -130,6 +220,25 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
       if (!electronAPI?.gitUnstage) return { success: false, error: 'Git unstage API 不可用。' };
       const status = await electronAPI.gitUnstage({ repoPath: repo.path, paths });
       return { success: true, message: `已取消暂存 ${paths.length} 个文件。`, status };
+    },
+  },
+  {
+    name: 'git_discard_file',
+    module: 'git',
+    permission: { module: 'git', action: 'delete' },
+    tool: {
+      name: 'git_discard_file',
+      description: '丢弃一个文件的本地更改，或删除未跟踪文件。该操作不可逆，会触发确认。',
+      inputSchema: { type: 'object', properties: { repoPath: { type: 'string' }, repoName: { type: 'string' }, filePath: { type: 'string' }, untracked: { type: 'boolean' } }, required: ['filePath'] },
+    },
+    execute: async (args) => {
+      const repo = resolveGitRepoForTool(args);
+      const filePath = String(args.filePath || '').trim();
+      if (!filePath) return { success: false, error: 'filePath 不能为空。' };
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.gitDiscard) return { success: false, error: 'Git discard API 不可用。' };
+      const status = await electronAPI.gitDiscard({ repoPath: repo.path, filePath, untracked: Boolean(args.untracked) });
+      return { success: true, message: `已丢弃 ${filePath} 的本地更改。`, status };
     },
   },
   {
@@ -204,6 +313,117 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
       if (!electronAPI?.gitPush) return { success: false, error: 'Git push API 不可用。' };
       const result = await electronAPI.gitPush(repo.path);
       return { success: true, message: 'Push 完成。', ...result };
+    },
+  },
+  {
+    name: 'git_checkout_branch',
+    module: 'git',
+    permission: { module: 'git', action: 'update' },
+    tool: {
+      name: 'git_checkout_branch',
+      description: '切换到指定 Git 分支。也可 create=true 创建并切换到新分支。',
+      inputSchema: { type: 'object', properties: { repoPath: { type: 'string' }, repoName: { type: 'string' }, branch: { type: 'string' }, create: { type: 'boolean' }, startPoint: { type: 'string' } }, required: ['branch'] },
+    },
+    execute: async (args) => {
+      const repo = resolveGitRepoForTool(args);
+      const branch = String(args.branch || '').trim();
+      if (!branch) return { success: false, error: 'branch 不能为空。' };
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.gitCheckout) return { success: false, error: 'Git checkout API 不可用。' };
+      const result = await electronAPI.gitCheckout({ repoPath: repo.path, branch, create: Boolean(args.create), startPoint: typeof args.startPoint === 'string' ? args.startPoint : undefined });
+      return { success: true, message: `已切换到分支 ${branch}。`, ...result };
+    },
+  },
+  {
+    name: 'git_create_branch',
+    module: 'git',
+    permission: { module: 'git', action: 'create' },
+    tool: {
+      name: 'git_create_branch',
+      description: '创建 Git 分支，可选择创建后立即 checkout。',
+      inputSchema: { type: 'object', properties: { repoPath: { type: 'string' }, repoName: { type: 'string' }, branch: { type: 'string' }, startPoint: { type: 'string' }, checkout: { type: 'boolean' } }, required: ['branch'] },
+    },
+    execute: async (args) => {
+      const repo = resolveGitRepoForTool(args);
+      const branch = String(args.branch || '').trim();
+      if (!branch) return { success: false, error: 'branch 不能为空。' };
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.gitCreateBranch) return { success: false, error: 'Git create branch API 不可用。' };
+      const result = await electronAPI.gitCreateBranch({ repoPath: repo.path, branch, startPoint: typeof args.startPoint === 'string' ? args.startPoint : undefined, checkout: Boolean(args.checkout) });
+      return { success: true, message: `分支 ${branch} 已创建。`, ...result };
+    },
+  },
+  {
+    name: 'git_delete_branch',
+    module: 'git',
+    permission: { module: 'git', action: 'delete' },
+    tool: {
+      name: 'git_delete_branch',
+      description: '删除 Git 本地分支。force=true 使用 -D 强制删除。该操作会触发确认。',
+      inputSchema: { type: 'object', properties: { repoPath: { type: 'string' }, repoName: { type: 'string' }, branch: { type: 'string' }, force: { type: 'boolean' } }, required: ['branch'] },
+    },
+    execute: async (args) => {
+      const repo = resolveGitRepoForTool(args);
+      const branch = String(args.branch || '').trim();
+      if (!branch) return { success: false, error: 'branch 不能为空。' };
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.gitDeleteBranch) return { success: false, error: 'Git delete branch API 不可用。' };
+      const result = await electronAPI.gitDeleteBranch({ repoPath: repo.path, branch, force: Boolean(args.force) });
+      return { success: true, message: `分支 ${branch} 已删除。`, ...result };
+    },
+  },
+  {
+    name: 'git_merge_branch',
+    module: 'git',
+    permission: { module: 'git', action: 'update' },
+    tool: {
+      name: 'git_merge_branch',
+      description: '将指定分支合并到当前分支，默认 --no-edit。该操作会触发确认。',
+      inputSchema: { type: 'object', properties: { repoPath: { type: 'string' }, repoName: { type: 'string' }, branch: { type: 'string' }, noFf: { type: 'boolean' } }, required: ['branch'] },
+    },
+    execute: async (args) => {
+      const repo = resolveGitRepoForTool(args);
+      const branch = String(args.branch || '').trim();
+      if (!branch) return { success: false, error: 'branch 不能为空。' };
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.gitMerge) return { success: false, error: 'Git merge API 不可用。' };
+      const result = await electronAPI.gitMerge({ repoPath: repo.path, branch, noFf: Boolean(args.noFf) });
+      return { success: true, message: `已合并分支 ${branch}。`, ...result };
+    },
+  },
+  {
+    name: 'git_stash',
+    module: 'git',
+    permission: { module: 'git', action: 'update' },
+    tool: {
+      name: 'git_stash',
+      description: '管理 Git stash。action=list/push/pop/drop；push/pop/drop 会触发确认。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          repoPath: { type: 'string' },
+          repoName: { type: 'string' },
+          action: { type: 'string', enum: ['list', 'push', 'pop', 'drop'] },
+          message: { type: 'string' },
+          index: { type: 'number' },
+          includeUntracked: { type: 'boolean' },
+        },
+        required: ['action'],
+      },
+    },
+    execute: async (args) => {
+      const repo = resolveGitRepoForTool(args);
+      const action = String(args.action || 'list');
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.gitStash) return { success: false, error: 'Git stash API 不可用。' };
+      const result = await electronAPI.gitStash({
+        repoPath: repo.path,
+        action,
+        message: typeof args.message === 'string' ? args.message : undefined,
+        index: typeof args.index === 'number' ? args.index : undefined,
+        includeUntracked: Boolean(args.includeUntracked),
+      });
+      return { success: true, message: `Git stash ${action} 完成。`, ...result };
     },
   },
 

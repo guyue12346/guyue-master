@@ -289,7 +289,6 @@ export default function VectorSearchModal({ isOpen, onClose, initialCollectionId
                 <span className="text-xs text-gray-400 ml-2">
                   {selectedInfo.totalChunks} 块 · {selectedInfo.files.length} 文件
                   {selectedInfo.hasHnswIndex && ' · HNSW'}
-                  {selectedInfo.hasKnowledgeGraph && ' · 知识图谱'}
                 </span>
               )}
             </div>
@@ -340,7 +339,6 @@ export default function VectorSearchModal({ isOpen, onClose, initialCollectionId
                 <span>块数: {selectedInfo.totalChunks}</span>
                 <span>算法: {selectedInfo.searchAlgorithm}</span>
                 {selectedInfo.hasHnswIndex && <span className="text-green-500">✓ HNSW</span>}
-                {selectedInfo.hasKnowledgeGraph && <span className="text-teal-500">✓ 知识图谱</span>}
               </div>
             )}
           </div>

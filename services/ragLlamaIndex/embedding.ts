@@ -47,6 +47,8 @@
 
 import { EmbeddingConfig, EmbeddingProvider } from './types';
 
+export type EmbeddingTaskKind = 'document' | 'query';
+
 // ════════════════════════════════════════════════════════════
 // Provider-Specific Implementations
 // ════════════════════════════════════════════════════════════
@@ -77,12 +79,16 @@ const PROVIDER_BASE_URLS: Record<EmbeddingProvider, string> = {
 // ── Gemini Embedding ──
 // 支持 gemini-embedding-001 (稳定) 和 gemini-embedding-2-preview (多模态)
 async function getGeminiEmbedding(
-  text: string, apiKey: string, model: string, baseUrl?: string,
+  text: string,
+  apiKey: string,
+  model: string,
+  baseUrl?: string,
+  taskKind: EmbeddingTaskKind = 'document',
 ): Promise<number[]> {
   const base = (baseUrl || PROVIDER_BASE_URLS.gemini).replace(/\/+$/, '');
   const body: Record<string, unknown> = {
     content: { parts: [{ text }] },
-    taskType: 'RETRIEVAL_DOCUMENT',
+    taskType: taskKind === 'query' ? 'RETRIEVAL_QUERY' : 'RETRIEVAL_DOCUMENT',
   };
   // gemini-embedding-001/2 支持 Matryoshka 维度缩放
   if (model.startsWith('gemini-embedding')) {
@@ -166,12 +172,13 @@ async function getOllamaEmbedding(
 export async function getEmbedding(
   text: string,
   config: EmbeddingConfig,
+  options?: { taskKind?: EmbeddingTaskKind },
 ): Promise<number[]> {
   const { provider, apiKey, model, baseUrl } = config;
 
   switch (provider) {
     case 'gemini':
-      return getGeminiEmbedding(text, apiKey, model, baseUrl);
+      return getGeminiEmbedding(text, apiKey, model, baseUrl, options?.taskKind ?? 'document');
 
     case 'openai':
       return getOpenAICompatibleEmbedding(
@@ -200,6 +207,14 @@ export async function getEmbedding(
   }
 }
 
+export function getDocumentEmbedding(text: string, config: EmbeddingConfig): Promise<number[]> {
+  return getEmbedding(text, config, { taskKind: 'document' });
+}
+
+export function getQueryEmbedding(text: string, config: EmbeddingConfig): Promise<number[]> {
+  return getEmbedding(text, config, { taskKind: 'query' });
+}
+
 /**
  * 创建一个绑定了配置的 Embedding 函数
  *
@@ -208,7 +223,11 @@ export async function getEmbedding(
  * 调用者只需要 embedFn("text") 而不用每次传 config。
  */
 export function createEmbedFunction(config: EmbeddingConfig) {
-  return (text: string) => getEmbedding(text, config);
+  return (text: string) => getDocumentEmbedding(text, config);
+}
+
+export function createQueryEmbedFunction(config: EmbeddingConfig) {
+  return (text: string) => getQueryEmbedding(text, config);
 }
 
 /**
@@ -239,7 +258,7 @@ export async function batchEmbed(
   for (let i = 0; i < texts.length; i += batchSize) {
     const batch = texts.slice(i, i + batchSize);
     const embeddings = await Promise.all(
-      batch.map(text => getEmbedding(text, config)),
+      batch.map(text => getDocumentEmbedding(text, config)),
     );
     results.push(...embeddings);
     options?.onProgress?.(Math.min(i + batchSize, texts.length), texts.length);

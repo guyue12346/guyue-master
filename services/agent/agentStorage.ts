@@ -3,7 +3,6 @@ import {
   DEFAULT_CHAT_CONFIG,
 } from '../chatService';
 import {
-  AGENT_PERMISSION_MODULES,
   AgentFullAccessPermissions,
   AgentToolPermissions,
   DEFAULT_AGENT_FULL_ACCESS_PERMISSIONS,
@@ -11,6 +10,7 @@ import {
   DEFAULT_DATA_PERMISSIONS,
   DataPermissions,
   deriveDataPermissionsFromToolPermissions,
+  getAgentPermissionModules,
 } from './agentPermissions';
 import { loadLocalJson, saveLocalJson, saveUnifiedJson } from '../../utils/unifiedStorage';
 
@@ -40,7 +40,7 @@ export const DEFAULT_AGENT_EMAIL_CONFIG = {
 
 export type AgentEmailConfig = typeof DEFAULT_AGENT_EMAIL_CONFIG;
 
-export type AgentSearchProvider = 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser';
+export type AgentSearchProvider = 'openai-web-search' | 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser' | 'duckduckgo-browser';
 export type AgentSearchMode = 'fast' | 'balanced' | 'deep';
 export type AgentSpecializedSearchSource = 'github' | 'npm' | 'stackoverflow' | 'arxiv';
 
@@ -61,6 +61,7 @@ export interface AgentSearchConfig {
   includeAnswer: boolean;
   includeRawContent: boolean;
   apiKeys: {
+    openai: string;
     tavily: string;
     exa: string;
     brave: string;
@@ -72,13 +73,14 @@ export interface AgentSearchConfig {
 }
 
 export const DEFAULT_AGENT_SEARCH_CONFIG: AgentSearchConfig = {
-  provider: 'tavily',
-  fallbackProviders: ['exa', 'brave', 'bing-browser'],
+  provider: 'openai-web-search',
+  fallbackProviders: ['tavily', 'exa', 'brave', 'duckduckgo-browser', 'bing-browser'],
   mode: 'balanced',
   maxResults: 8,
   includeAnswer: true,
   includeRawContent: false,
   apiKeys: {
+    openai: '',
     tavily: '',
     exa: '',
     brave: '',
@@ -109,7 +111,7 @@ const normalizeConfig = (value: any): ChatConfig => ({
   systemPrompt: typeof value?.systemPrompt === 'string' ? value.systemPrompt : '',
 });
 
-const AGENT_SEARCH_PROVIDERS = new Set<AgentSearchProvider>(['tavily', 'exa', 'brave', 'searxng', 'bing-browser']);
+const AGENT_SEARCH_PROVIDERS = new Set<AgentSearchProvider>(['openai-web-search', 'tavily', 'exa', 'brave', 'searxng', 'bing-browser', 'duckduckgo-browser']);
 const AGENT_SEARCH_MODES = new Set<AgentSearchMode>(['fast', 'balanced', 'deep']);
 const AGENT_SPECIALIZED_SEARCH_SOURCES = new Set<AgentSpecializedSearchSource>(['github', 'npm', 'stackoverflow', 'arxiv']);
 
@@ -149,15 +151,19 @@ const normalizeSearchConfig = (value: any): AgentSearchConfig => {
         .filter((item: AgentSearchProvider, index: number, arr: AgentSearchProvider[]) => arr.indexOf(item) === index)
     : DEFAULT_AGENT_SEARCH_CONFIG.fallbackProviders;
   const maxResults = Number(source.maxResults);
+  const normalizedProvider = normalizeSearchProvider(source.provider, DEFAULT_AGENT_SEARCH_CONFIG.provider);
 
   return {
-    provider: normalizeSearchProvider(source.provider, DEFAULT_AGENT_SEARCH_CONFIG.provider),
+    provider: normalizedProvider === 'bing-browser' || normalizedProvider === 'duckduckgo-browser'
+      ? DEFAULT_AGENT_SEARCH_CONFIG.provider
+      : normalizedProvider,
     fallbackProviders,
     mode: AGENT_SEARCH_MODES.has(source.mode) ? source.mode : DEFAULT_AGENT_SEARCH_CONFIG.mode,
     maxResults: Number.isFinite(maxResults) ? Math.min(Math.max(Math.floor(maxResults), 3), 20) : DEFAULT_AGENT_SEARCH_CONFIG.maxResults,
     includeAnswer: source.includeAnswer !== false,
     includeRawContent: Boolean(source.includeRawContent),
     apiKeys: {
+      openai: typeof apiKeys.openai === 'string' ? apiKeys.openai : '',
       tavily: typeof apiKeys.tavily === 'string' ? apiKeys.tavily : '',
       exa: typeof apiKeys.exa === 'string' ? apiKeys.exa : '',
       brave: typeof apiKeys.brave === 'string' ? apiKeys.brave : '',
@@ -220,7 +226,7 @@ const normalizeToolPermissions = (value: any, data: DataPermissions): AgentToolP
     ? value
     : migrateLegacyToolPermissions(data);
 
-  return AGENT_PERMISSION_MODULES.reduce((acc, module) => {
+  return getAgentPermissionModules().reduce((acc, module) => {
     if (module.key === 'dc-oj' && source.datacenter && !source['dc-oj']) {
       acc[module.key] = normalizeModuleCrud({
         read: source.datacenter.read,

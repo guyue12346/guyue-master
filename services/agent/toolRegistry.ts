@@ -59,6 +59,7 @@ export interface ToolExecutionContext {
   onCreatePrompt: (data: Partial<PromptRecord>) => void;
   onCreateMarkdownNote: (data: Partial<MarkdownNote>) => void;
   onCreateOJSubmission: (submission: OJSubmission) => void;
+  onUpdateOJHeatmapData: (data: OJHeatmapData) => void;
   ojHeatmapData: OJHeatmapData;
   onCreateResource: (item: Partial<ResourceItem>) => void;
   onUpdateResource: (id: string, updates: Partial<ResourceItem>) => void;
@@ -94,7 +95,7 @@ export interface ToolExecutionContext {
 
 export const WEB_SEARCH_TOOL: ChatTool = {
   name: 'web_search',
-  description: '使用已配置的 Agent 搜索引擎检索互联网实时信息。当需要最新资讯、官方文档、新闻、事实核验、价格或时效性内容时使用。底层会按设置使用 Tavily / Exa / Brave / SearXNG / Bing 并自动回退。',
+  description: '使用已配置的 Agent 搜索引擎检索互联网实时信息。当需要最新资讯、官方文档、新闻、事实核验、价格或时效性内容时使用。底层会按设置使用 Tavily / Exa / Brave / SearXNG / Bing / DuckDuckGo 并自动回退。',
   inputSchema: {
     type: 'object',
     properties: {
@@ -309,7 +310,7 @@ export const getNativeToolRegistrations = (
 
   return allRegistrations
     .filter(reg => {
-      if (reg.module === 'web') return true;
+      if (reg.module === 'web' || reg.module === 'system') return true;
       if (!enabledModuleIds.has(reg.module) || searchOnly) return false;
       return scopeSet.size === 0 || scopeSet.has(reg.module);
     })
@@ -333,6 +334,7 @@ export const generateToolCallSummary = (toolCalls: ChatToolCall[]): string => {
 
   const labels: Record<string, string> = {
     create_todo: '创建待办', create_note: '创建便签', create_prompt: '创建技能卡',
+    get_current_time: '获取当前时间',
     create_markdown_note: '创建 Markdown 笔记', create_oj_submission: '创建做题记录',
     create_resource: '创建资源', create_leetcode_list: '创建 LeetCode 题单',
     create_learning_course: '创建学习课程', create_subtask: '创建子任务',
@@ -348,7 +350,19 @@ export const generateToolCallSummary = (toolCalls: ChatToolCall[]): string => {
     query_markdown_notes: '查询笔记', query_resources: '查询资源',
     query_ssh_records: '查询 SSH 记录', create_ssh_record: '创建 SSH 记录',
     query_api_records: '查询 API 记录', create_api_record: '创建 API 记录',
+    update_oj_submission: '更新做题记录', delete_oj_submission: '删除做题记录',
+    query_oj_heatmap: '查询 OJ 热力图', create_oj_site: '创建 OJ 网站',
+    update_oj_site: '更新 OJ 网站', delete_oj_site: '删除 OJ 网站',
+    query_website_records: '查询网站记录', create_website_record: '创建网站记录',
+    update_website_record: '更新网站记录', delete_website_record: '删除网站记录',
+    create_website_tag: '创建网站标签', update_website_tag: '更新网站标签', delete_website_tag: '删除网站标签',
     query_leetcode_lists: '查询题单', query_learning_courses: '查询课程',
+    create_learning_category: '创建学习分类', update_learning_category: '更新学习分类',
+    delete_learning_category: '删除学习分类', read_learning_course: '读取课程',
+    update_learning_course: '更新课程', delete_learning_course: '删除课程',
+    create_learning_module: '创建课程模块', update_learning_module: '更新课程模块',
+    delete_learning_module: '删除课程模块', create_learning_item: '创建课程条目',
+    update_learning_item: '更新课程条目', delete_learning_item: '删除课程条目',
     query_files: '查询文件', read_file: '读取文件',
     edit_file: '编辑文件',
     query_question_categories: '查询题库分类', create_question_category: '创建题库分类',
@@ -363,7 +377,13 @@ export const generateToolCallSummary = (toolCalls: ChatToolCall[]): string => {
     query_git_diff: '查看 Git Diff', git_stage_files: '暂存文件',
     git_unstage_files: '取消暂存', git_commit: 'Git 提交',
     git_fetch: 'Git Fetch', git_pull: 'Git Pull', git_push: 'Git Push',
-    query_images: '查询图片', upload_image: '上传图片',
+    git_add_repository: '添加 Git 仓库', git_remove_repository: '移除 Git 仓库',
+    query_git_branches: '查询 Git 分支', query_git_commit: '查看 Git 提交',
+    git_discard_file: '丢弃 Git 更改', git_checkout_branch: '切换 Git 分支',
+    git_create_branch: '创建 Git 分支', git_delete_branch: '删除 Git 分支',
+    git_merge_branch: '合并 Git 分支', git_stash: 'Git Stash',
+    query_images: '查询图片', create_image_record: '创建图片记录', upload_image: '上传图片',
+    update_image_record: '更新图片记录', delete_image_record: '删除图片记录', rename_image_category: '重命名图片分类',
     query_subtasks: '查询子任务', query_recurring_events: '查询重复事件',
     query_latex_file_categories: '查询 LaTeX 文件分类', create_latex_file_category: '创建 LaTeX 文件分类',
     query_latex_files: '查询 LaTeX 文件', read_latex_file: '读取 LaTeX 文件', edit_latex_file: '编辑 LaTeX 文件',

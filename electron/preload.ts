@@ -84,6 +84,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Plugins
   getPlugins: () => ipcRenderer.invoke('get-plugins'),
+  getPluginPreloadPath: () => ipcRenderer.invoke('get-plugin-preload-path'),
   installPlugin: () => ipcRenderer.invoke('install-plugin'),
   deletePlugin: (id: string) => ipcRenderer.invoke('delete-plugin', id),
 
@@ -102,6 +103,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveAppData: (key: string, data: any) => ipcRenderer.invoke('save-app-data', key, data),
   loadAppData: (key: string) => ipcRenderer.invoke('load-app-data', key),
   appDataExists: (key: string) => ipcRenderer.invoke('app-data-exists', key),
+  exportAppBackup: (params?: { localStorageItems?: Array<{ key: string; value: string | null }> }) =>
+    ipcRenderer.invoke('export-app-backup', params),
+  importAppBackup: () => ipcRenderer.invoke('import-app-backup'),
 
   // LeetCode API
   leetcodeApi: (params: { query: string; variables: any; session: string }) => ipcRenderer.invoke('leetcode-api', params),
@@ -122,6 +126,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   gitLog: (params: { repoPath: string; limit?: number }) => ipcRenderer.invoke('git-log', params),
   gitDiff: (params: { repoPath: string; filePath: string; staged?: boolean }) => ipcRenderer.invoke('git-diff', params),
   gitShowCommit: (params: { repoPath: string; hash: string }) => ipcRenderer.invoke('git-show-commit', params),
+  gitBranches: (repoPath: string) => ipcRenderer.invoke('git-branches', repoPath),
   gitStage: (params: { repoPath: string; paths: string[] }) => ipcRenderer.invoke('git-stage', params),
   gitUnstage: (params: { repoPath: string; paths: string[] }) => ipcRenderer.invoke('git-unstage', params),
   gitDiscard: (params: { repoPath: string; filePath: string; untracked?: boolean }) => ipcRenderer.invoke('git-discard', params),
@@ -129,6 +134,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   gitFetch: (repoPath: string) => ipcRenderer.invoke('git-fetch', repoPath),
   gitPull: (repoPath: string) => ipcRenderer.invoke('git-pull', repoPath),
   gitPush: (repoPath: string) => ipcRenderer.invoke('git-push', repoPath),
+  gitCheckout: (params: { repoPath: string; branch: string; create?: boolean; startPoint?: string }) => ipcRenderer.invoke('git-checkout', params),
+  gitCreateBranch: (params: { repoPath: string; branch: string; startPoint?: string; checkout?: boolean }) => ipcRenderer.invoke('git-create-branch', params),
+  gitDeleteBranch: (params: { repoPath: string; branch: string; force?: boolean }) => ipcRenderer.invoke('git-delete-branch', params),
+  gitMerge: (params: { repoPath: string; branch: string; noFf?: boolean }) => ipcRenderer.invoke('git-merge', params),
+  gitStash: (params: { repoPath: string; action: 'list' | 'push' | 'pop' | 'drop'; message?: string; index?: number; includeUntracked?: boolean }) => ipcRenderer.invoke('git-stash', params),
 
   // AI Studio API
   openAIStudioLogin: () => ipcRenderer.invoke('open-aistudio-login'),
@@ -141,14 +151,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Agent 网络搜索
   agentWebSearch: (params: {
     query: string;
-    provider?: 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser';
-    fallbackProviders?: Array<'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser'>;
+    provider?: 'openai-web-search' | 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser' | 'duckduckgo-browser';
+    fallbackProviders?: Array<'openai-web-search' | 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser' | 'duckduckgo-browser'>;
     mode?: 'fast' | 'balanced' | 'deep';
     searchMode?: 'fast' | 'balanced' | 'deep';
     maxResults?: number;
     includeAnswer?: boolean;
     includeRawContent?: boolean;
-    apiKeys?: { tavily?: string; exa?: string; brave?: string };
+    apiKeys?: { openai?: string; tavily?: string; exa?: string; brave?: string };
     searxngBaseUrl?: string;
     language?: string;
     country?: string;
@@ -266,6 +276,7 @@ export interface ElectronAPI {
   uploadImage: (params: { accessToken: string; owner: string; repo: string; path: string; content: string; message: string }) => Promise<any>;
   // Plugins
   getPlugins: () => Promise<any[]>;
+  getPluginPreloadPath: () => Promise<string>;
   installPlugin: () => Promise<boolean>;
   deletePlugin: (id: string) => Promise<boolean>;
   // Terminal
@@ -278,6 +289,27 @@ export interface ElectronAPI {
   saveAppData: (key: string, data: any) => Promise<boolean>;
   loadAppData: (key: string) => Promise<any>;
   appDataExists: (key: string) => Promise<boolean>;
+  exportAppBackup: (params?: { localStorageItems?: Array<{ key: string; value: string | null }> }) => Promise<{
+    success: boolean;
+    canceled?: boolean;
+    path?: string;
+    fileCount?: number;
+    localStorageCount?: number;
+    size?: number;
+    createdAt?: string;
+    error?: string;
+  }>;
+  importAppBackup: () => Promise<{
+    success: boolean;
+    canceled?: boolean;
+    path?: string;
+    restorePoint?: string;
+    fileCount?: number;
+    localStorageItems?: Array<{ key: string; value: string | null }>;
+    createdAt?: string;
+    appVersion?: string;
+    error?: string;
+  }>;
   // LeetCode API
   leetcodeApi: (params: { query: string; variables: any; session: string }) => Promise<any>;
   // Codex Usage API
@@ -330,6 +362,7 @@ export interface ElectronAPI {
   gitLog: (params: { repoPath: string; limit?: number }) => Promise<any[]>;
   gitDiff: (params: { repoPath: string; filePath: string; staged?: boolean }) => Promise<string>;
   gitShowCommit: (params: { repoPath: string; hash: string }) => Promise<string>;
+  gitBranches: (repoPath: string) => Promise<any>;
   gitStage: (params: { repoPath: string; paths: string[] }) => Promise<any>;
   gitUnstage: (params: { repoPath: string; paths: string[] }) => Promise<any>;
   gitDiscard: (params: { repoPath: string; filePath: string; untracked?: boolean }) => Promise<any>;
@@ -337,6 +370,11 @@ export interface ElectronAPI {
   gitFetch: (repoPath: string) => Promise<{ output: string; status: any; log: any[] }>;
   gitPull: (repoPath: string) => Promise<{ output: string; status: any; log: any[] }>;
   gitPush: (repoPath: string) => Promise<{ output: string; status: any; log: any[] }>;
+  gitCheckout: (params: { repoPath: string; branch: string; create?: boolean; startPoint?: string }) => Promise<{ output: string; status: any; log: any[] }>;
+  gitCreateBranch: (params: { repoPath: string; branch: string; startPoint?: string; checkout?: boolean }) => Promise<{ output: string; status: any; log: any[] }>;
+  gitDeleteBranch: (params: { repoPath: string; branch: string; force?: boolean }) => Promise<{ output: string; status: any; log: any[] }>;
+  gitMerge: (params: { repoPath: string; branch: string; noFf?: boolean }) => Promise<{ output: string; status: any; log: any[] }>;
+  gitStash: (params: { repoPath: string; action: 'list' | 'push' | 'pop' | 'drop'; message?: string; index?: number; includeUntracked?: boolean }) => Promise<any>;
   // AI Studio API
   openAIStudioLogin: () => Promise<boolean>;
   fetchAIStudioData: (params?: { projectId?: string; serviceAccountJson?: string }) => Promise<any>;
@@ -346,14 +384,14 @@ export interface ElectronAPI {
   // Agent 网络搜索
   agentWebSearch: (params: {
     query: string;
-    provider?: 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser';
-    fallbackProviders?: Array<'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser'>;
+    provider?: 'openai-web-search' | 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser' | 'duckduckgo-browser';
+    fallbackProviders?: Array<'openai-web-search' | 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser' | 'duckduckgo-browser'>;
     mode?: 'fast' | 'balanced' | 'deep';
     searchMode?: 'fast' | 'balanced' | 'deep';
     maxResults?: number;
     includeAnswer?: boolean;
     includeRawContent?: boolean;
-    apiKeys?: { tavily?: string; exa?: string; brave?: string };
+    apiKeys?: { openai?: string; tavily?: string; exa?: string; brave?: string };
     searxngBaseUrl?: string;
     language?: string;
     country?: string;

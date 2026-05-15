@@ -1,25 +1,7 @@
 import type { ComponentType } from 'react';
-import {
-  Brain,
-  BookOpenCheck,
-  Code2,
-  FileType2,
-  Flame,
-  FolderOpen,
-  GraduationCap,
-  GitBranch,
-  Image,
-  ListTodo,
-  Mail,
-  Package,
-  Pencil,
-  PencilRuler,
-  Server,
-  Sparkles,
-  StickyNote,
-  Webhook,
-} from 'lucide-react';
+import * as Icons from 'lucide-react';
 import type { ChatConfig } from '../chatService';
+import { getBuiltinAgentScopeManifests } from '../modules';
 
 export interface AgentModule {
   id: string;
@@ -27,33 +9,72 @@ export interface AgentModule {
   icon: ComponentType<{ className?: string }>;
   enabled: boolean;
   description: string;
+  owner?: string;
+  kind?: 'core' | 'builtin' | 'plugin';
 }
 
-export const AGENT_MODULES: AgentModule[] = [
-  { id: 'todo',       name: '待办事项', icon: ListTodo,       enabled: true, description: '创建、查询待办事项' },
-  { id: 'dc-oj',      name: 'OJ记录',    icon: Flame,          enabled: true, description: '查询 OJ 统计、创建做题记录' },
-  { id: 'dc-resources', name: '资源中心', icon: Package,       enabled: true, description: '查询、创建、修改、删除资源记录' },
-  { id: 'dc-ssh',     name: 'SSH管理',   icon: Server,         enabled: true, description: '查询、创建、修改、删除 SSH 连接记录' },
-  { id: 'dc-api',     name: 'API记录',   icon: Webhook,        enabled: true, description: '查询、创建、修改、删除 API 接口记录' },
-  { id: 'learning',   name: '学习',     icon: GraduationCap, enabled: true, description: '创建课程、查询学习分类' },
-  { id: 'leetcode',   name: '刷题',     icon: Code2,         enabled: true, description: '创建题单、查询已有题单' },
-  { id: 'question-bank', name: '题库', icon: BookOpenCheck,  enabled: true, description: '查询、创建、修改题目、题库分类和解题方法' },
-  { id: 'canvas',     name: '画布',     icon: PencilRuler,   enabled: true, description: '查询、创建、修改画布和画布分类' },
-  { id: 'git',        name: 'Git管理',  icon: GitBranch,     enabled: true, description: '查询仓库状态、提交记录，执行暂存、提交、拉取和推送' },
-  { id: 'files',      name: '文件管理', icon: FolderOpen,    enabled: true, description: '查询、读取文件管理中的文件（需授权分类）' },
-  { id: 'knowledge',  name: '知识库',   icon: Brain,         enabled: true, description: '构建本地文件知识库并进行语义检索' },
-  { id: 'prompts',    name: 'Skills',   icon: Sparkles,      enabled: true, description: '创建 Prompt 技能卡' },
-  { id: 'notes',      name: '笔记备忘', icon: StickyNote,    enabled: true, description: '创建便签笔记' },
-  { id: 'image',      name: '图床',     icon: Image,         enabled: true, description: '查询图片链接、上传图片到图床' },
-  { id: 'markdown',   name: 'Markdown', icon: Pencil,        enabled: true, description: '创建 Markdown 笔记' },
-  { id: 'latex',      name: 'LaTeX',    icon: FileType2,     enabled: true, description: '查询、读取、编辑 LaTeX 文件和模板（需授权分类）' },
-  { id: 'email',      name: '邮件',     icon: Mail,          enabled: true, description: '发送邮件' },
+const iconByName = (iconName?: string): ComponentType<{ className?: string }> => {
+  const Icon = (Icons as any)[iconName || 'Package'] || Icons.Package;
+  return Icon as ComponentType<{ className?: string }>;
+};
+
+const builtinAgentModules: AgentModule[] = getBuiltinAgentScopeManifests().map(scope => ({
+  id: scope.id,
+  name: scope.name,
+  icon: iconByName(scope.icon),
+  enabled: true,
+  description: scope.description,
+  kind: 'builtin',
+}));
+
+const pluginAgentModules = new Map<string, AgentModule>();
+const AGENT_MODULE_REGISTRY_EVENT = 'guyue-agent-module-registry-changed';
+
+const notifyAgentModuleRegistryChanged = () => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(AGENT_MODULE_REGISTRY_EVENT));
+  }
+};
+
+export const registerAgentModule = (module: Omit<AgentModule, 'icon'> & { icon?: AgentModule['icon'] | string }) => {
+  const normalized: AgentModule = {
+    ...module,
+    icon: typeof module.icon === 'string' ? iconByName(module.icon) : module.icon || Icons.Package,
+    enabled: module.enabled !== false,
+    kind: module.kind || 'plugin',
+  };
+  pluginAgentModules.set(normalized.id, normalized);
+  notifyAgentModuleRegistryChanged();
+  return () => {
+    const current = pluginAgentModules.get(normalized.id);
+    if (current?.owner === normalized.owner) {
+      pluginAgentModules.delete(normalized.id);
+      notifyAgentModuleRegistryChanged();
+    }
+  };
+};
+
+export const unregisterAgentModulesByOwner = (owner: string) => {
+  Array.from(pluginAgentModules.entries()).forEach(([id, module]) => {
+    if (module.owner === owner) pluginAgentModules.delete(id);
+  });
+  notifyAgentModuleRegistryChanged();
+};
+
+export const getAgentModules = (): AgentModule[] => [
+  ...builtinAgentModules,
+  ...Array.from(pluginAgentModules.values()),
 ];
 
-export const ENABLED_AGENT_MODULES = AGENT_MODULES.filter(module => module.enabled);
+export const getEnabledAgentModules = (): AgentModule[] =>
+  getAgentModules().filter(module => module.enabled);
+
+export const AGENT_MODULES = getAgentModules();
+export const ENABLED_AGENT_MODULES = getEnabledAgentModules();
+export const AGENT_MODULE_REGISTRY_CHANGED_EVENT = AGENT_MODULE_REGISTRY_EVENT;
 
 export const getModuleById = (moduleId?: string | null) =>
-  AGENT_MODULES.find(module => module.id === moduleId) || null;
+  getAgentModules().find(module => module.id === moduleId) || null;
 
 export const isNativeProvider = (provider: ChatConfig['provider']) =>
   ['openai', 'anthropic', 'gemini', 'zenmux', 'moonshot', 'deepseek'].includes(provider);

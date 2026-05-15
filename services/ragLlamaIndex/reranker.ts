@@ -45,7 +45,7 @@
  */
 
 import { SearchResult, RerankerConfig, LLMFunction } from './types';
-import { getEmbedding } from './embedding';
+import { getDocumentEmbedding, getQueryEmbedding } from './embedding';
 import type { EmbeddingConfig } from './types';
 
 // ════════════════════════════════════════════════════════════
@@ -253,9 +253,9 @@ async function rerankWithMMR(
   }
 
   // Get embeddings for all candidates + query
-  const queryEmb = await getEmbedding(query, embeddingConfig);
+  const queryEmb = await getQueryEmbedding(query, embeddingConfig);
   const docEmbs = await Promise.all(
-    results.map(r => getEmbedding(r.text.slice(0, 500), embeddingConfig)),
+    results.map(r => getDocumentEmbedding(r.text.slice(0, 500), embeddingConfig)),
   );
 
   // Normalize relevance scores to [0, 1]

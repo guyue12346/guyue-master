@@ -127,6 +127,12 @@ export interface FileRecord {
   category: string;
   note: string;
   createdAt: number;
+  rag?: {
+    included: boolean;
+    collectionIds: string[];
+    lastIndexedAt?: number;
+    updatedAt?: number;
+  };
 }
 
 /** 知识库标签 */
@@ -410,6 +416,7 @@ export interface ElectronAPI {
   uploadImage: (params: { accessToken: string; owner: string; repo: string; path: string; content: string; message: string }) => Promise<any>;
   // Plugins
   getPlugins: () => Promise<PluginMetadata[]>;
+  getPluginPreloadPath: () => Promise<string>;
   installPlugin: () => Promise<boolean>;
   deletePlugin: (id: string) => Promise<boolean>;
   // Terminal
@@ -422,6 +429,27 @@ export interface ElectronAPI {
   saveAppData: (key: string, data: any) => Promise<boolean>;
   loadAppData: (key: string) => Promise<any>;
   appDataExists: (key: string) => Promise<boolean>;
+  exportAppBackup: (params?: { localStorageItems?: Array<{ key: string; value: string | null }> }) => Promise<{
+    success: boolean;
+    canceled?: boolean;
+    path?: string;
+    fileCount?: number;
+    localStorageCount?: number;
+    size?: number;
+    createdAt?: string;
+    error?: string;
+  }>;
+  importAppBackup: () => Promise<{
+    success: boolean;
+    canceled?: boolean;
+    path?: string;
+    restorePoint?: string;
+    fileCount?: number;
+    localStorageItems?: Array<{ key: string; value: string | null }>;
+    createdAt?: string;
+    appVersion?: string;
+    error?: string;
+  }>;
   // LeetCode API
   leetcodeApi: (params: { query: string; variables: any; session: string }) => Promise<any>;
   // Codex Usage API
@@ -439,6 +467,7 @@ export interface ElectronAPI {
   gitLog: (params: { repoPath: string; limit?: number }) => Promise<GitCommitRecord[]>;
   gitDiff: (params: { repoPath: string; filePath: string; staged?: boolean }) => Promise<string>;
   gitShowCommit: (params: { repoPath: string; hash: string }) => Promise<string>;
+  gitBranches: (repoPath: string) => Promise<any>;
   gitStage: (params: { repoPath: string; paths: string[] }) => Promise<GitStatusData>;
   gitUnstage: (params: { repoPath: string; paths: string[] }) => Promise<GitStatusData>;
   gitDiscard: (params: { repoPath: string; filePath: string; untracked?: boolean }) => Promise<GitStatusData>;
@@ -446,6 +475,11 @@ export interface ElectronAPI {
   gitFetch: (repoPath: string) => Promise<GitOperationResult>;
   gitPull: (repoPath: string) => Promise<GitOperationResult>;
   gitPush: (repoPath: string) => Promise<GitOperationResult>;
+  gitCheckout: (params: { repoPath: string; branch: string; create?: boolean; startPoint?: string }) => Promise<GitOperationResult>;
+  gitCreateBranch: (params: { repoPath: string; branch: string; startPoint?: string; checkout?: boolean }) => Promise<GitOperationResult>;
+  gitDeleteBranch: (params: { repoPath: string; branch: string; force?: boolean }) => Promise<GitOperationResult>;
+  gitMerge: (params: { repoPath: string; branch: string; noFf?: boolean }) => Promise<GitOperationResult>;
+  gitStash: (params: { repoPath: string; action: 'list' | 'push' | 'pop' | 'drop'; message?: string; index?: number; includeUntracked?: boolean }) => Promise<any>;
   // AI Studio API
   openAIStudioLogin: () => Promise<boolean>;
   fetchAIStudioData: (params?: { projectId?: string; serviceAccountJson?: string }) => Promise<any>;

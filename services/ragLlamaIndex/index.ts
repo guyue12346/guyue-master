@@ -7,7 +7,7 @@
  * ```typescript
  * import {
  *   loadDocument, chunkDocuments, LocalVectorStore,
- *   createEmbedFunction, buildKnowledgeGraph,
+ *   createEmbedFunction,
  * } from '../services/ragLlamaIndex';
  * ```
  *
@@ -20,7 +20,6 @@
  * │    → chunkDocuments() → TextNode[]                     │
  * │      → enrichMetadata() → TextNode[] (元数据丰富)       │
  * │        → vectorStore.addNodes() → 向量存储              │
- * │        → buildKnowledgeGraph() → 知识图谱 (可选)        │
  * │          → saveVectorStore() → 持久化到磁盘             │
  * └────────────────────────────────────────────────────────┘
  *
@@ -28,7 +27,6 @@
  * ┌────────────────────────────────────────────────────────┐
  * │  用户提问                                               │
  * │    → vectorStore.search() → 相似文本块                  │
- * │    → knowledgeGraph.findRelevantTriples() → 相关三元组  │
  * │      → 组装 Prompt = 系统提示 + 检索结果 + 用户问题     │
  * │        → LLM 生成回答                                   │
  * └────────────────────────────────────────────────────────┘
@@ -43,8 +41,6 @@ export type {
   ChunkingStrategy,
   ChunkingConfig,
   ChunkMetadata,
-  KnowledgeTriple,
-  KnowledgeGraphConfig,
   StorageConfig,
   RagPipelineConfig,
   IndexedFileInfo,
@@ -54,7 +50,6 @@ export type {
   // 向量库信息类型 (version 4)
   VectorStoreInfo,
   VectorEntryDetail,
-  KnowledgeGraphSummary,
   // 格式感知分块类型
   MarkdownChunkingMethod,
   MarkdownChunkingConfig,
@@ -75,7 +70,6 @@ export {
   EXTENSION_TO_DOCTYPE,
   EXTENSION_TO_LANGUAGE,
   DEFAULT_CHUNKING_CONFIG,
-  DEFAULT_KNOWLEDGE_GRAPH_CONFIG,
   DEFAULT_SUPPORTED_EXTENSIONS,
   createDefaultConfig,
   inferDocType,
@@ -128,10 +122,14 @@ export {
 // ── Embedding ──
 export {
   getEmbedding,
+  getDocumentEmbedding,
+  getQueryEmbedding,
   createEmbedFunction,
+  createQueryEmbedFunction,
   batchEmbed,
   EMBEDDING_MODEL_OPTIONS,
 } from './embedding';
+export type { EmbeddingTaskKind } from './embedding';
 
 // ── Vector Store ──
 export type { VectorEntry, SerializedVectorStore, SerializedHnswIndex, StorageAdapter } from './vectorStore';
@@ -145,14 +143,6 @@ export {
 // ── Pre-Retrieval Optimization ──
 export type { PreRetrievalResult } from './preRetrieval';
 export { optimizePreRetrieval } from './preRetrieval';
-
-// ── Knowledge Graph ──
-export type { EntityInfo } from './knowledgeGraph';
-export {
-  extractTriples,
-  KnowledgeGraph,
-  buildKnowledgeGraph,
-} from './knowledgeGraph';
 
 // ── Retrieval ──
 export type {

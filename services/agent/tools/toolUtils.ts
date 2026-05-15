@@ -1,16 +1,79 @@
 import type { APIRecord, SSHRecord } from '../../../types';
 import { loadProfiles } from '../../../utils/apiProfileService';
+import type { EmbeddingConfig, EmbeddingProvider } from '../../rag';
 
-export const getEmbeddingKeyFromProfiles = (): { apiKey: string; baseUrl?: string } => {
+const EMBEDDING_PROVIDERS: EmbeddingProvider[] = ['openai', 'gemini', 'zhipu', 'qwen', 'ollama', 'custom'];
+
+const DEFAULT_EMBEDDING_MODELS: Record<EmbeddingProvider, string> = {
+  openai: 'text-embedding-3-small',
+  gemini: 'gemini-embedding-001',
+  zhipu: 'embedding-3',
+  qwen: 'text-embedding-v3',
+  ollama: 'nomic-embed-text',
+  custom: 'text-embedding-3-small',
+};
+
+const inferEmbeddingProvider = (provider?: string, baseUrl?: string): EmbeddingProvider => {
+  const p = (provider || '').toLowerCase();
+  if (EMBEDDING_PROVIDERS.includes(p as EmbeddingProvider)) return p as EmbeddingProvider;
+  const normalizedUrl = (baseUrl || '').toLowerCase();
+  if (normalizedUrl.includes('generativelanguage.googleapis.com') || normalizedUrl.includes('googleapis.com')) return 'gemini';
+  if (normalizedUrl.includes('dashscope') || normalizedUrl.includes('aliyuncs.com')) return 'qwen';
+  if (normalizedUrl.includes('bigmodel.cn') || normalizedUrl.includes('zhipu')) return 'zhipu';
+  if (normalizedUrl.includes('localhost:11434')) return 'ollama';
+  return normalizedUrl ? 'custom' : 'openai';
+};
+
+export const getEmbeddingConfigFromProfiles = (): EmbeddingConfig | null => {
+  try {
+    const ragEmbeddingRaw = localStorage.getItem('guyue_rag_lab_embedding');
+    if (ragEmbeddingRaw) {
+      const saved = JSON.parse(ragEmbeddingRaw);
+      if (saved?.provider && (saved.apiKey || saved.provider === 'ollama')) {
+        const provider = inferEmbeddingProvider(saved.provider, saved.baseUrl);
+        return {
+          provider,
+          apiKey: saved.apiKey || '',
+          model: saved.model || DEFAULT_EMBEDDING_MODELS[provider],
+          baseUrl: saved.baseUrl || undefined,
+          dimensions: saved.dimensions,
+        };
+      }
+    }
+  } catch {}
+
   try {
     const profiles = loadProfiles();
-    const embProviders = ['openai', 'gemini', 'zhipu', 'qwen', 'ollama', 'cohere', 'voyage', 'jina'];
-    const profile = profiles.find(p => embProviders.includes(p.provider) && p.apiKey);
-    if (profile) return { apiKey: profile.apiKey, baseUrl: profile.baseUrl || undefined };
+    const profile = profiles.find(p => {
+      const provider = inferEmbeddingProvider(p.provider, p.baseUrl);
+      return EMBEDDING_PROVIDERS.includes(provider) && (p.apiKey || provider === 'ollama');
+    });
+    if (profile) {
+      const provider = inferEmbeddingProvider(profile.provider, profile.baseUrl);
+      return {
+        provider,
+        apiKey: profile.apiKey || '',
+        model: DEFAULT_EMBEDDING_MODELS[provider],
+        baseUrl: profile.baseUrl || undefined,
+      };
+    }
   } catch {}
+
   const apiKey = localStorage.getItem('guyue_rag_embedding_key') || '';
   const baseUrl = localStorage.getItem('guyue_rag_embedding_base_url')?.trim() || undefined;
-  return { apiKey, baseUrl };
+  if (!apiKey && !baseUrl) return null;
+  const provider = inferEmbeddingProvider(undefined, baseUrl);
+  return {
+    provider,
+    apiKey,
+    model: DEFAULT_EMBEDDING_MODELS[provider],
+    ...(baseUrl ? { baseUrl } : {}),
+  };
+};
+
+export const getEmbeddingKeyFromProfiles = (): { apiKey: string; baseUrl?: string } => {
+  const config = getEmbeddingConfigFromProfiles();
+  return { apiKey: config?.apiKey || '', baseUrl: config?.baseUrl };
 };
 
 export const normalizeLimit = (value: unknown, fallback = 20, max = 100) => {

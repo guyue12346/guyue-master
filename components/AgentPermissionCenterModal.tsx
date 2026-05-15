@@ -2,7 +2,6 @@ import React from 'react';
 import { Eye, Lock, Pencil, Plus, ShieldCheck, Trash2, Unlock, X } from 'lucide-react';
 import {
   AGENT_CRUD_ACTIONS,
-  AGENT_PERMISSION_MODULES,
   DEFAULT_AGENT_FULL_ACCESS_PERMISSIONS,
   type AgentCrudAction,
   type AgentFullAccessPermissions,
@@ -16,6 +15,7 @@ interface AgentPermissionCenterModalProps {
   capabilities: ToolPermissionCapabilities;
   toolPermissions: AgentToolPermissions;
   fullAccessPermissions: AgentFullAccessPermissions;
+  modules: Array<{ key: string; label: string; desc: string }>;
   allToolPermissionsEnabled: boolean;
   enabledToolPermissionCount: number;
   fullAccessPermissionCount: number;
@@ -50,6 +50,7 @@ export const AgentPermissionCenterModal: React.FC<AgentPermissionCenterModalProp
   capabilities,
   toolPermissions,
   fullAccessPermissions,
+  modules,
   allToolPermissionsEnabled,
   enabledToolPermissionCount,
   fullAccessPermissionCount,
@@ -108,7 +109,7 @@ export const AgentPermissionCenterModal: React.FC<AgentPermissionCenterModalProp
             <span className="flex justify-center" title="完全权限"><ShieldCheck className="h-3.5 w-3.5" /></span>
           </div>
           <div className="space-y-1">
-            {AGENT_PERMISSION_MODULES
+            {modules
               .filter(module => AGENT_CRUD_ACTIONS.some(action => isSupported(capabilities, module.key, action.key)))
               .map(module => {
                 const enabledFullActions = (['update', 'delete'] as AgentCrudAction[])

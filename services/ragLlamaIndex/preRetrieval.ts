@@ -35,7 +35,7 @@
  */
 
 import { PreRetrievalConfig, PreRetrievalStrategy, LLMFunction, EmbeddingConfig } from './types';
-import { getEmbedding } from './embedding';
+import { getQueryEmbedding } from './embedding';
 
 // ════════════════════════════════════════════════════════════
 // Prompt Templates
@@ -217,7 +217,7 @@ export async function optimizePreRetrieval(
         log.push('🔢 将假设回答向量化...');
         const embeddings: number[][] = [];
         for (const hyp of hypotheticals) {
-          const emb = await getEmbedding(hyp, embeddingConfig);
+          const emb = await getQueryEmbedding(hyp, embeddingConfig);
           embeddings.push(emb);
         }
 

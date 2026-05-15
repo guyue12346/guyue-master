@@ -17,8 +17,9 @@ import { AgentHelpModal } from './AgentHelpModal';
 import { AgentPermissionCenterModal } from './AgentPermissionCenterModal';
 import { MarkdownContent } from './MarkdownContent';
 import {
-  AGENT_MODULES,
-  ENABLED_AGENT_MODULES,
+  AGENT_MODULE_REGISTRY_CHANGED_EVENT,
+  getAgentModules,
+  getEnabledAgentModules,
   getModuleById,
   isStepwiseNativeProvider,
   type AgentModule,
@@ -47,9 +48,10 @@ import {
 } from '../services/agent/agentStorage';
 import {
   AGENT_CRUD_ACTIONS,
-  AGENT_PERMISSION_MODULES,
+  createAgentToolPermissions,
   DEFAULT_AGENT_FULL_ACCESS_PERMISSIONS,
   DEFAULT_AGENT_TOOL_PERMISSIONS,
+  getAgentPermissionModules,
   type AgentCrudAction,
   type AgentFullAccessPermissions,
   type AgentToolPermissions,
@@ -69,10 +71,12 @@ import {
   SPECIALIZED_SEARCH_TOOL,
   WEB_SEARCH_TOOL_REGISTRATION,
   SPECIALIZED_SEARCH_TOOL_REGISTRATION,
+  type ToolRegistration,
   type ToolExecutionContext,
 } from '../services/agent/toolRegistry';
 import { toStrictTool } from '../services/agent/toolSchema';
-import { TOOL_REGISTRY } from '../services/agent/tools';
+import { getToolRegistry, getToolRegistryOwner } from '../services/agent/tools';
+import { AGENT_TOOL_REGISTRY_CHANGED_EVENT } from '../services/agent/dynamicToolRegistry';
 import {
   normalizeTodoPayload,
   resolveTodoMatch,
@@ -103,6 +107,7 @@ import {
 } from '../services/agent/snapshots';
 import {
   detectModuleScopeLocally,
+  getModuleDisplayName,
   getModuleScopeLabel,
   getRouterSignature,
   normalizeModuleScope,
@@ -160,6 +165,7 @@ interface AgentPanelProps {
   onCreatePrompt: (promptData: Partial<PromptRecord>) => void;
   onCreateMarkdownNote: (noteData: Partial<MarkdownNote>) => void;
   onCreateOJSubmission: (submission: OJSubmission) => void;
+  onUpdateOJHeatmapData: (data: OJHeatmapData) => void;
   ojHeatmapData: OJHeatmapData;
   onCreateResource: (item: Partial<ResourceItem>) => void;
   onUpdateResource: (id: string, updates: Partial<ResourceItem>) => void;
@@ -243,6 +249,9 @@ interface AgentRuntimeToolVisualEvent {
   id: string;
   toolName: string;
   moduleName?: string;
+  sourceLabel?: string;
+  categoryLabel?: string;
+  permissionLabel?: string;
   status: 'running' | 'success' | 'error' | 'waiting';
   summary: string;
   timestamp: number;
@@ -252,10 +261,101 @@ interface AgentRuntimeToolVisualEvent {
 const MAX_DEBUG_ITEMS = 200;
 const MAX_RUNTIME_VISUAL_EVENTS = 120;
 const MAX_RUNTIME_TOOL_EVENTS = 80;
+const AGENT_TOOL_CATEGORY_LABELS: Record<AgentCrudAction, string> = {
+  read: '查询',
+  create: '创建',
+  update: '修改',
+  delete: '删除',
+};
+
+const getToolVisualMeta = (registration: ToolRegistration) => {
+  const owner = getToolRegistryOwner(registration.name);
+  const permissionTarget = getToolPermissionTarget(registration);
+  const sourceLabel = registration.module === 'web'
+    ? '运行时工具'
+    : owner?.kind === 'plugin'
+      ? `插件：${owner.ownerId}`
+      : '内置模块';
+  const categoryLabel = registration.module === 'web'
+    ? '联网检索'
+    : AGENT_TOOL_CATEGORY_LABELS[permissionTarget.action] || permissionTarget.action;
+
+  return {
+    moduleName: getModuleDisplayName(registration.module),
+    sourceLabel,
+    categoryLabel,
+    permissionLabel: `${getModuleDisplayName(permissionTarget.module)} · ${permissionTarget.action}`,
+  };
+};
 const AGENT_ROUTE_CACHE_KEY = 'guyue_agent_route_cache_v1';
 const AGENT_ROUTE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const AGENT_ROUTE_CACHE_MAX_ENTRIES = 100;
 const AGENT_ROUTE_CACHE_MIN_CONFIDENCE = 0.75;
+const AGENT_PAGE_STATE_KEY = 'guyue_agent_page_state_v1';
+
+interface AgentPageState {
+  inputDraft: string;
+  selectedModules: string[];
+  isDebugCollapsed: boolean;
+  isExecutionVizCollapsed: boolean;
+  enableWebSearch: boolean;
+}
+
+const normalizeAgentPageState = (value: any): AgentPageState => {
+  const enabledModuleIds = new Set(getEnabledAgentModules().map(module => module.id));
+  return {
+    inputDraft: typeof value?.inputDraft === 'string' ? value.inputDraft : '',
+    selectedModules: Array.isArray(value?.selectedModules)
+      ? value.selectedModules
+          .map((moduleId: unknown) => String(moduleId))
+          .filter(moduleId => enabledModuleIds.has(moduleId))
+      : [],
+    isDebugCollapsed: typeof value?.isDebugCollapsed === 'boolean' ? value.isDebugCollapsed : true,
+    isExecutionVizCollapsed: typeof value?.isExecutionVizCollapsed === 'boolean' ? value.isExecutionVizCollapsed : false,
+    enableWebSearch: typeof value?.enableWebSearch === 'boolean'
+      ? value.enableWebSearch
+      : localStorage.getItem('guyue_agent_web_search') === 'true',
+  };
+};
+
+const loadAgentPageState = (): AgentPageState => {
+  try {
+    return normalizeAgentPageState(JSON.parse(localStorage.getItem(AGENT_PAGE_STATE_KEY) || 'null'));
+  } catch {
+    return normalizeAgentPageState(null);
+  }
+};
+
+const saveAgentPageState = (state: AgentPageState) => {
+  try {
+    localStorage.setItem(AGENT_PAGE_STATE_KEY, JSON.stringify(state));
+    localStorage.setItem('guyue_agent_web_search', state.enableWebSearch ? 'true' : 'false');
+  } catch {}
+};
+
+const EMAIL_SENDING_LINE_RE = /(^|\n)\s*发送中(?:\.{3}|…+|。*)\s*(?=\n|$)/g;
+
+const removeEmailSendingLine = (content: string) => {
+  EMAIL_SENDING_LINE_RE.lastIndex = 0;
+  const cleaned = content.replace(EMAIL_SENDING_LINE_RE, '$1').replace(/\n{3,}/g, '\n\n').trimEnd();
+  EMAIL_SENDING_LINE_RE.lastIndex = 0;
+  return cleaned;
+};
+
+const withEmailSendingLine = (content: string) => {
+  if (EMAIL_SENDING_LINE_RE.test(content)) {
+    EMAIL_SENDING_LINE_RE.lastIndex = 0;
+    return content;
+  }
+  EMAIL_SENDING_LINE_RE.lastIndex = 0;
+  return `${content.trimEnd()}\n\n发送中...`;
+};
+
+const withEmailFinalLine = (content: string, finalLine: string) => {
+  const cleaned = removeEmailSendingLine(content);
+  if (cleaned.includes(finalLine)) return cleaned;
+  return `${cleaned}\n\n${finalLine}`;
+};
 
 /* ─── 调试阶段中文标签映射 ─── */
 const STAGE_DISPLAY: Record<string, string> = {
@@ -455,11 +555,14 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
   'dc-oj': `## OJ 记录模块
 
 ### 核心能力
-查询 OJ 做题统计，创建新的做题记录。
+查询 OJ 做题统计/热力图明细，管理做题记录和 OJ 网站配置。
 
 ### 可用工具
 - **query_oj_stats** — 查询提交统计、最近记录、可用平台和分类 ID。
+- **query_oj_heatmap** — 查询按日期聚合的热力图明细和提交记录。
 - **create_oj_submission** — 创建做题记录。必填 siteName 和 problemId，可选 categoryId、problemTitle、date。
+- **update_oj_submission / delete_oj_submission** — 修改或删除做题记录。
+- **create_oj_site / update_oj_site / delete_oj_site** — 管理 OJ 网站和分类配置。
 
 ### 工作流程规范
 1. 如果不确定平台或分类 ID，先 query_oj_stats。
@@ -504,15 +607,30 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
 管理数据中心 API 接口记录。
 
 ### 可用工具
-- **query_api_records** — 查询 API 记录和可用分类；只返回 hasApiKey，不返回密钥明文。
+- **query_api_records** — 查询 API 记录和可用分类；默认只返回 hasApiKey，includeSecret=true 时可返回密钥明文。
 - **create_api_record** — 创建 API 记录，可保存用户明确提供的 apiKey。
 - **update_api_record** — 修改 API 记录；不传 apiKey 时保留原密钥。
 - **delete_api_record** — 删除 API 记录。
 
 ### 工作流程规范
 1. 修改或删除前先 query_api_records 获取 id。
-2. 查询时不能要求工具回显 API Key 明文。
+2. 读取 API Key 明文前确认用户确实需要；权限中心关闭读取时不会提供工具。
 3. 只有用户明确提供密钥时，才把它写入 create/update 参数。`,
+
+  'dc-website': `## 网站管理模块
+
+### 核心能力
+管理数据中心的网站账号记录、密码、标签和备注。应用离线存储，访问由 Agent 权限中心控制。
+
+### 可用工具
+- **query_website_records** — 查询网站记录和标签，可返回密码明文。
+- **create_website_record / update_website_record / delete_website_record** — 创建、修改、删除网站账号记录。
+- **create_website_tag / update_website_tag / delete_website_tag** — 管理网站标签。
+
+### 工作流程规范
+1. 修改或删除前先 query_website_records 获取 id。
+2. 用户明确要求查看账号密码时，可以在权限允许下返回完整记录。
+3. 删除标签时如果标签下有记录，要给出 fallbackTag 或让工具迁移到默认标签。`,
 
   leetcode: `## LeetCode 刷题模块
 
@@ -537,6 +655,11 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
 ### 可用工具
 - **create_learning_course** — 创建课程。必填 title，必须指定 categoryId（已有分类 ID）或 categoryName（创建新分类），二选一。可选完整结构：modules（学习模块及其讲义）、assignmentModules（练习模块）、personalModules（个人资源模块）、customSections（自定义分区）。
 - **query_learning_courses** — 查询所有分类（含唯一 ID）和课程列表。创建课程前**必须**先调用此工具获取分类 ID。
+- **read_learning_course** — 读取课程完整结构。
+- **create/update/delete_learning_category** — 管理学习分类。
+- **update/delete_learning_course** — 修改或删除课程。
+- **create/update/delete_learning_module** — 管理课程模块。
+- **create/update/delete_learning_item** — 管理模块中的讲义或资源条目。
 
 ### 工作流程规范
 1. **创建课程前**：**必须**先调用 query_learning_courses 获取 categories 列表及其 ID，然后用 categoryId 指定所属分类。绝对不要猜测分类名。
@@ -565,26 +688,31 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
   knowledge: `## 知识库模块
 
 ### 核心能力
-基于用户加入知识库的本地文件建立索引，并进行语义检索。适合回答“根据我的资料/某批文件/知识库内容”的问题。
+基于 RAG Studio 中构建的向量库，以及用户加入 Agent 文件知识库的本地文件，进行语义检索。适合回答“根据我的资料/某批文件/知识库内容”的问题。
 
 ### 可用工具
+- **list_rag_collections** — 列出 RAG Studio 中已有的向量库集合和查询方案。
+- **search_rag_collections** — 搜索 RAG Studio 中已有的一个或多个向量库集合；不指定集合时搜索全部已构建集合。
 - **search_knowledge_base** — 在已加入知识库的文件中语义搜索，返回相关片段和来源文件。
 - **build_knowledge_base** — 构建或更新知识库索引。
 
 ### 工作流程规范
-1. 回答文件知识库问题时，优先 search_knowledge_base，再基于返回片段作答。
-2. 如果搜索提示索引不存在或需要更新，再调用 build_knowledge_base 后重试搜索。
-3. 最终回复需要标注主要来源文件名，不要把未检索到的信息说成来自知识库。
-4. 如果知识库没有文件或未配置 Embedding API Key，明确告诉用户需要先在文件管理中加入文件并完成配置。`,
+1. 用户说“我的向量库 / RAG / 知识库 / 文档库”时，优先 list_rag_collections 判断可用集合，再调用 search_rag_collections。
+2. 用户明确指的是 Agent 文件知识库或刚加入的文件时，调用 search_knowledge_base；如果索引缺失，再 build_knowledge_base 后重试。
+3. 最终回复需要标注主要来源文件名和知识库名，不要把未检索到的信息说成来自知识库。
+4. 如果没有可用集合或未配置 Embedding API Key，明确告诉用户需要先在 RAG Studio 构建向量库或完成配置。`,
 
   image: `## 图床模块
 
 ### 核心能力
-查询已上传的图片和上传新图片到 Gitee 图床。
+查询、上传和管理图床图片记录。
 
 ### 可用工具
 - **query_images** — 查询图床中已有图片，返回 URL 和 Markdown 格式链接。
+- **create_image_record** — 为外部图片 URL 创建本地图床记录。
 - **upload_image** — 将用户消息中附带的图片上传到图床，返回访问链接。
+- **update_image_record / delete_image_record** — 修改或删除本地图床记录。
+- **rename_image_category** — 批量重命名图床分类。
 
 ### 工作流程规范
 1. upload_image 需要用户在消息中附带图片（粘贴或拖拽），不能凭空上传。
@@ -694,14 +822,18 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
   git: `## Git 管理模块
 
 ### 核心能力
-查询本地 Git 管理中心登记的仓库、查看状态/日志/diff，并执行暂存、取消暂存、提交、fetch、pull、push。
+查询本地 Git 管理中心登记的仓库、查看状态/日志/diff，并执行仓库、分支、暂存区、提交、远程同步和 stash 操作。
 
 ### 可用工具
+- **git_add_repository / git_remove_repository** — 添加或移除 Git 管理中心仓库记录。
 - **query_git_repositories** — 查询已登记仓库，refresh=true 可同步状态。
 - **query_git_status** — 查询仓库分支、远程、ahead/behind 和工作区文件。
 - **query_git_diff** — 查看指定文件 diff。
+- **query_git_branches / query_git_commit** — 查询分支和提交详情。
 - **git_stage_files / git_unstage_files** — 暂存或取消暂存明确文件列表。
 - **git_commit / git_fetch / git_pull / git_push** — 执行提交和远程同步操作。
+- **git_checkout_branch / git_create_branch / git_delete_branch / git_merge_branch** — 分支切换、创建、删除、合并。
+- **git_discard_file / git_stash** — 丢弃文件更改或管理 stash。
 
 ### 工作流程规范
 1. 先 query_git_repositories 或 query_git_status 确认仓库、分支、远程和变更列表。
@@ -848,8 +980,8 @@ const buildModulePromptSection = (moduleIds: string[], modulePrompts?: Record<st
     .join('');
 };
 
-const buildModuleRouterPrompt = (input: string) => {
-  const moduleList = ENABLED_AGENT_MODULES
+const buildModuleRouterPrompt = (input: string, modules: AgentModule[] = getEnabledAgentModules()) => {
+  const moduleList = modules
     .map(module => `- ${module.id}: ${module.name}，${module.description}`)
     .join('\n');
   return [
@@ -876,9 +1008,9 @@ const buildSupplementalRouterPrompt = (input: {
   toolCalls: ChatToolCall[];
   toolResults: Array<{ toolCall: ChatToolCall; result: any }>;
   evaluation: AgentCompletionEvaluation;
-}) => {
+}, modules: AgentModule[] = getEnabledAgentModules()) => {
   const currentSet = new Set(input.currentModules);
-  const moduleList = ENABLED_AGENT_MODULES
+  const moduleList = modules
     .filter(module => !currentSet.has(module.id))
     .map(module => `- ${module.id}: ${module.name}，${module.description}`)
     .join('\n') || '无';
@@ -1470,6 +1602,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   onCreatePrompt,
   onCreateMarkdownNote,
   onCreateOJSubmission,
+  onUpdateOJHeatmapData,
   ojHeatmapData,
   onCreateResource,
   onUpdateResource,
@@ -1504,7 +1637,13 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     }
     return saved;
   });
-  const [inputValue, setInputValue] = useState('');
+  const initialPageState = useMemo(() => loadAgentPageState(), []);
+  const [registryVersion, setRegistryVersion] = useState(0);
+  const agentModules = useMemo(() => getAgentModules(), [registryVersion]);
+  const enabledAgentModules = useMemo(() => getEnabledAgentModules(), [registryVersion]);
+  const toolRegistry = useMemo(() => getToolRegistry(), [registryVersion]);
+  const permissionModules = useMemo(() => getAgentPermissionModules(), [registryVersion]);
+  const [inputValue, setInputValue] = useState(() => initialPageState.inputDraft);
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const dragCounterRef = useRef(0);
@@ -1516,7 +1655,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const [routerConfig, setRouterConfig] = useState<ChatConfig>(() => loadAgentRouterConfig());
   const [searchConfig, setSearchConfig] = useState<AgentSearchConfig>(() => loadAgentSearchConfig());
   const [modulePrompts, setModulePrompts] = useState<Record<string, string>>(() => loadStoredModulePrompts(DEFAULT_MODULE_PROMPTS));
-  const [selectedModules, setSelectedModules] = useState<string[]>([]);
+  const [selectedModules, setSelectedModules] = useState<string[]>(() => initialPageState.selectedModules);
   const [storedAgentPermissions] = useState(() => loadAgentPermissions());
   const [toolPermissions, setToolPermissions] = useState<AgentToolPermissions>(() => storedAgentPermissions.tools || DEFAULT_AGENT_TOOL_PERMISSIONS);
   const [fullAccessPermissions, setFullAccessPermissions] = useState<AgentFullAccessPermissions>(() => storedAgentPermissions.fullAccess || DEFAULT_AGENT_FULL_ACCESS_PERMISSIONS);
@@ -1533,8 +1672,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const [emailTestError, setEmailTestError] = useState('');
   const [contacts, setContacts] = useState<Contact[]>(() => loadContacts());
   const [isModuleCollapsed, setIsModuleCollapsed] = useState(false);
-  const [isDebugCollapsed, setIsDebugCollapsed] = useState(true);
-  const [isExecutionVizCollapsed, setIsExecutionVizCollapsed] = useState(true);
+  const [isDebugCollapsed, setIsDebugCollapsed] = useState(() => initialPageState.isDebugCollapsed);
+  const [isExecutionVizCollapsed, setIsExecutionVizCollapsed] = useState(() => initialPageState.isExecutionVizCollapsed);
   const [expandedDebugIds, setExpandedDebugIds] = useState<Set<string>>(new Set());
   const [debugItems, setDebugItems] = useState<AgentDebugItem[]>([]);
   const [agentRuntimeEvents, setAgentRuntimeEvents] = useState<AgentTraceEvent[]>([]);
@@ -1545,11 +1684,31 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     title: 'Agent 空闲',
     active: false,
   });
-  const [enableWebSearch, setEnableWebSearch] = useState(() =>
-    localStorage.getItem('guyue_agent_web_search') === 'true'
-  );
+  const [enableWebSearch, setEnableWebSearch] = useState(() => initialPageState.enableWebSearch);
   const webSearchPermissionEnabled = Boolean(toolPermissions.web?.read);
   const effectiveWebSearchEnabled = enableWebSearch && webSearchPermissionEnabled;
+
+  useEffect(() => {
+    const bumpRegistryVersion = () => setRegistryVersion(version => version + 1);
+    window.addEventListener(AGENT_TOOL_REGISTRY_CHANGED_EVENT, bumpRegistryVersion);
+    window.addEventListener(AGENT_MODULE_REGISTRY_CHANGED_EVENT, bumpRegistryVersion);
+    return () => {
+      window.removeEventListener(AGENT_TOOL_REGISTRY_CHANGED_EVENT, bumpRegistryVersion);
+      window.removeEventListener(AGENT_MODULE_REGISTRY_CHANGED_EVENT, bumpRegistryVersion);
+    };
+  }, []);
+
+  useEffect(() => {
+    const defaultPermissions = createAgentToolPermissions(false);
+    setToolPermissions(prev => {
+      const next = { ...defaultPermissions, ...prev };
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+    });
+    setFullAccessPermissions(prev => {
+      const next = { ...defaultPermissions, ...prev };
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+    });
+  }, [permissionModules]);
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1557,32 +1716,32 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const supportsNativeTools = useMemo(() => isStepwiseNativeProvider(config.provider), [config.provider]);
   const currentModels = AGENT_AVAILABLE_MODELS[config.provider] || [];
   const toolPermissionCapabilities = useMemo(
-    () => getToolPermissionCapabilities(TOOL_REGISTRY, ENABLED_AGENT_MODULES),
-    [],
+    () => getToolPermissionCapabilities(toolRegistry, enabledAgentModules),
+    [enabledAgentModules, toolRegistry],
   );
   const isSupportedToolPermission = useCallback(
     (moduleId: string, action: AgentCrudAction) => Boolean(toolPermissionCapabilities[moduleId]?.[action]),
     [toolPermissionCapabilities],
   );
   const enabledToolPermissionCount = useMemo(
-    () => AGENT_PERMISSION_MODULES.reduce((total, module) => (
+    () => permissionModules.reduce((total, module) => (
       total + AGENT_CRUD_ACTIONS.reduce((sum, action) => (
         sum + (isSupportedToolPermission(module.key, action.key) && toolPermissions[module.key]?.[action.key] ? 1 : 0)
       ), 0)
     ), 0),
-    [isSupportedToolPermission, toolPermissions],
+    [isSupportedToolPermission, permissionModules, toolPermissions],
   );
   const allToolPermissionsEnabled = useMemo(
-    () => AGENT_PERMISSION_MODULES.every(module =>
+    () => permissionModules.every(module =>
       AGENT_CRUD_ACTIONS.every(action =>
         !isSupportedToolPermission(module.key, action.key) ||
         Boolean(toolPermissions[module.key]?.[action.key]),
       ),
     ),
-    [isSupportedToolPermission, toolPermissions],
+    [isSupportedToolPermission, permissionModules, toolPermissions],
   );
   const fullAccessPermissionCount = useMemo(
-    () => AGENT_PERMISSION_MODULES.reduce((total, module) => (
+    () => permissionModules.reduce((total, module) => (
       total + (['update', 'delete'] as AgentCrudAction[]).reduce((sum, action) => (
         sum + (
           isSupportedToolPermission(module.key, action) &&
@@ -1593,11 +1752,11 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         )
       ), 0)
     ), 0),
-    [fullAccessPermissions, isSupportedToolPermission, toolPermissions],
+    [fullAccessPermissions, isSupportedToolPermission, permissionModules, toolPermissions],
   );
   const allowedActionTypes = useMemo(
     () => {
-      const names = TOOL_REGISTRY
+      const names = toolRegistry
       .filter(registration => canUseToolRegistration(registration, toolPermissions))
       .map(registration => registration.name);
       if (effectiveWebSearchEnabled) {
@@ -1608,7 +1767,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       }
       return names;
     },
-    [effectiveWebSearchEnabled, searchConfig.specialized?.enabledSources?.length, toolPermissions],
+    [effectiveWebSearchEnabled, searchConfig.specialized?.enabledSources?.length, toolPermissions, toolRegistry],
   );
   const effectiveFilePermissions = useMemo(
     () => (toolPermissions.files?.read || toolPermissions.files?.update) ? ['全部'] : [],
@@ -1737,7 +1896,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
   const setAllToolPermissions = useCallback((enabled: boolean) => {
     setToolPermissions(
-      AGENT_PERMISSION_MODULES.reduce((acc, module) => {
+      permissionModules.reduce((acc, module) => {
         acc[module.key] = {
           read: isSupportedToolPermission(module.key, 'read') ? enabled : false,
           create: isSupportedToolPermission(module.key, 'create') ? enabled : false,
@@ -1748,9 +1907,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       }, {} as AgentToolPermissions),
     );
     if (!enabled) {
-      setFullAccessPermissions(DEFAULT_AGENT_FULL_ACCESS_PERMISSIONS);
+      setFullAccessPermissions(createAgentToolPermissions(false));
     }
-  }, [isSupportedToolPermission]);
+  }, [isSupportedToolPermission, permissionModules]);
 
   const toggleToolPermission = useCallback((moduleKey: string, actionKey: AgentCrudAction) => {
     if (!isSupportedToolPermission(moduleKey, actionKey)) return;
@@ -1785,9 +1944,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   }, [isSupportedToolPermission, toolPermissions]);
 
   const isFallbackActionAllowed = useCallback((actionType: string) => {
-    const registration = findToolRegistration(TOOL_REGISTRY, actionType);
+    const registration = findToolRegistration(toolRegistry, actionType);
     return registration ? canUseToolRegistration(registration, toolPermissions) : true;
-  }, [toolPermissions]);
+  }, [toolPermissions, toolRegistry]);
 
   const buildToolExecContext = useCallback((currentAttachments?: ChatAttachment[]): ToolExecutionContext => ({
     todos: [...todos],
@@ -1805,6 +1964,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     onCreatePrompt,
     onCreateMarkdownNote,
     onCreateOJSubmission,
+    onUpdateOJHeatmapData,
     ojHeatmapData,
     onCreateResource,
     onUpdateResource,
@@ -1869,6 +2029,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     onCreateMarkdownNote,
     onCreateNote,
     onCreateOJSubmission,
+    onUpdateOJHeatmapData,
     onCreatePrompt,
     onCreateRecurring,
     onCreateResource,
@@ -1906,9 +2067,10 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     resourceData,
     sshRecords,
     apiRecords,
+    ojHeatmapData,
     recurringEvents,
     fileRecords,
-  }), [apiRecords, fileRecords, notes, recurringEvents, resourceData, sshRecords, todos]);
+  }), [apiRecords, fileRecords, notes, ojHeatmapData, recurringEvents, resourceData, sshRecords, todos]);
 
   const buildToolConfirmation = useCallback((
     toolName: string,
@@ -2071,8 +2233,14 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('guyue_agent_web_search', enableWebSearch ? 'true' : 'false');
-  }, [enableWebSearch]);
+    saveAgentPageState({
+      inputDraft: inputValue,
+      selectedModules,
+      isDebugCollapsed,
+      isExecutionVizCollapsed,
+      enableWebSearch,
+    });
+  }, [enableWebSearch, inputValue, isDebugCollapsed, isExecutionVizCollapsed, selectedModules]);
 
   useEffect(() => {
     saveAgentConfig(config);
@@ -2194,7 +2362,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     }
 
     try {
-      const routerPrompt = buildModuleRouterPrompt(input);
+      const routerPrompt = buildModuleRouterPrompt(input, enabledAgentModules);
       const routerService = new ChatService({
         ...routingConfig,
         systemPrompt: '',
@@ -2253,7 +2421,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       });
       return routeResult;
     }
-  }, [config, pushDebugItem, pushServiceDebugEvent, routerConfig, selectedModules]);
+  }, [config, enabledAgentModules, pushDebugItem, pushServiceDebugEvent, routerConfig, selectedModules]);
 
   const detectSupplementalModuleScope = useCallback(async (input: {
     goal: string;
@@ -2310,7 +2478,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       const routerPrompt = buildSupplementalRouterPrompt({
         ...input,
         currentModules,
-      });
+      }, enabledAgentModules);
       const routerService = new ChatService({
         ...routingConfig,
         systemPrompt: '',
@@ -2371,7 +2539,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       });
       return result;
     }
-  }, [config, pushDebugItem, pushServiceDebugEvent, routerConfig]);
+  }, [config, enabledAgentModules, pushDebugItem, pushServiceDebugEvent, routerConfig]);
 
   const runFallbackConversation = useCallback(async (
     assistantId: string,
@@ -2472,7 +2640,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             let summaryText = '';
             let pendingConfirm: PendingConfirmation | undefined;
             let undoSnapshot: UndoSnapshot | undefined;
-            const registration = findToolRegistration(TOOL_REGISTRY, action.type);
+            const registration = findToolRegistration(toolRegistry, action.type);
             if (registration) {
               const target = getToolPermissionTarget(registration);
               if (target.action === 'update' || target.action === 'delete') {
@@ -3029,15 +3197,15 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       const toolScope = getNativeToolScope(activeRoutedScope, routeResult.useTools);
       const enableSpecializedSearch = effectiveWebSearchEnabled && (searchConfig.specialized?.enabledSources?.length || 0) > 0;
       const runtimeToolRegistry = [
-        ...TOOL_REGISTRY,
+        ...toolRegistry,
         WEB_SEARCH_TOOL_REGISTRATION,
         SPECIALIZED_SEARCH_TOOL_REGISTRATION,
       ];
       const buildNativeRegistrationsForScope = (scope: string[], useTools: boolean) =>
         supportsNativeTools && useTools
           ? getNativeToolRegistrations(
-              TOOL_REGISTRY,
-              ENABLED_AGENT_MODULES,
+              toolRegistry,
+              enabledAgentModules,
               getNativeToolScope(scope, useTools),
               effectiveWebSearchEnabled,
               toolPermissions,
@@ -3146,14 +3314,13 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               finishAgentToolTransaction(agentRunLogId, txId, { status: 'failed', error: `未知工具: ${toolCall.name}` });
               return { success: false, error: `未知工具: ${toolCall.name}` };
             }
-            const registrationModuleName = registration.module === 'web'
-              ? '联网搜索'
-              : getModuleById(registration.module)?.name || registration.module;
-            markToolEvent({ moduleName: registrationModuleName, summary: '校验工具权限' });
+            const visualMeta = getToolVisualMeta(registration);
+            markToolEvent({ ...visualMeta, summary: '校验工具权限' });
             if (registration.module !== 'web' && activeRoutedScope.length > 0 && !activeRoutedScope.includes(registration.module)) {
-              const moduleName = getModuleById(registration.module)?.name || registration.module;
+              const moduleName = getModuleDisplayName(registration.module);
               const error = `工具 ${toolCall.name} 属于「${moduleName}」，不在当前作用域「${getModuleScopeLabel(activeRoutedScope)}」内。`;
               markToolEvent({
+                ...visualMeta,
                 moduleName,
                 status: 'error',
                 summary: error,
@@ -3169,7 +3336,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             }
             if (!canUseToolRegistration(registration, toolPermissions)) {
               markToolEvent({
-                moduleName: registrationModuleName,
+                ...visualMeta,
                 status: 'error',
                 summary: `工具未授权: ${toolCall.name}`,
               });
@@ -3186,9 +3353,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             try {
               const execution = await executeRegisteredToolWithSafety(registration, toolCall.arguments, toolExecContext);
               const result = execution.result;
-              const moduleName = registration.module === 'web'
-                ? '联网搜索'
-                : getModuleById(registration.module)?.name || registration.module;
+              const moduleName = visualMeta.moduleName;
               executedAction = { type: toolCall.name, status: execution.executed ? 'success' : 'pending', data: execution.executed ? toolCall.arguments : result };
               const pendingConfirmation = execution.pendingConfirmation || (
                 result?.pendingConfirmation && result?.confirmationId
@@ -3203,6 +3368,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               );
 
               markToolEvent({
+                ...visualMeta,
                 moduleName,
                 status: pendingConfirmation ? 'waiting' : result?.success === false ? 'error' : 'success',
                 summary: summarizeRuntimeToolResult(result),
@@ -3227,7 +3393,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             } catch (error) {
               const errMsg = error instanceof Error ? error.message : String(error);
               markToolEvent({
-                moduleName: registrationModuleName,
+                ...visualMeta,
                 status: 'error',
                 summary: errMsg,
               });
@@ -3423,7 +3589,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
           });
 
           const inferredModules = normalizeModuleScope(runtimeResult.toolCalls
-            .map(call => getModuleByToolName(TOOL_REGISTRY, call.name))
+            .map(call => getModuleByToolName(runtimeToolRegistry, call.name))
             .filter(Boolean));
           const displayModules = inferredModules.length > 0 ? inferredModules : activeRoutedScope;
           const runtimePendingConfirmation = runtimeResult.pendingConfirmations?.[runtimeResult.pendingConfirmations.length - 1] as PendingConfirmation | undefined;
@@ -3509,6 +3675,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     detectSupplementalModuleScope,
     effectiveDataPermissions,
     effectiveWebSearchEnabled,
+    enabledAgentModules,
     evaluateAgentCompletion,
     executeRegisteredToolWithSafety,
     fileRecords,
@@ -3548,6 +3715,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     supportsNativeTools,
     todoCategories,
     toolPermissions,
+    toolRegistry,
   ]);
 
   const clearHistory = () => {
@@ -3644,6 +3812,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         onUpdateNote,
         onCreateResource,
         onUpdateResource,
+        onUpdateOJHeatmapData,
         onSaveSSH,
         onSaveAPI,
         onCreateRecurring,
@@ -3698,7 +3867,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       const toolName = pc.data.toolName;
       const args = pc.data.arguments || {};
       const registration = typeof toolName === 'string'
-        ? findToolRegistration(TOOL_REGISTRY, toolName)
+        ? findToolRegistration(toolRegistry, toolName)
         : undefined;
 
       if (!registration) {
@@ -3707,6 +3876,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             ? {
                 ...m,
                 content: `${m.content}\n\n❌ 确认失败：未知工具 ${toolName || ''}`,
+                action: m.action ? { ...m.action, status: 'error', error: `未知工具 ${toolName || ''}` } : m.action,
                 pendingConfirmation: { ...pc, status: 'cancelled' },
               }
             : m
@@ -3720,6 +3890,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             ? {
                 ...m,
                 content: `${m.content}\n\n❌ 确认失败：工具未授权 ${toolName}`,
+                action: m.action ? { ...m.action, status: 'error', error: `工具未授权 ${toolName}` } : m.action,
                 pendingConfirmation: { ...pc, status: 'cancelled' },
               }
             : m
@@ -3759,6 +3930,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             ? {
                 ...m,
                 content: `${m.content}\n\n❌ 执行失败：${errMsg}`,
+                action: m.action ? { ...m.action, status: 'error', error: errMsg } : m.action,
                 pendingConfirmation: { ...pc, status: 'cancelled' },
               }
             : m
@@ -3775,10 +3947,19 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     }
 
     if (pc.type === 'send_email') {
-      // 更新状态为处理中（复用 pending 但 UI 中会显示加载）
+      // 邮件发送是异步 IPC，先进入 processing，防止重复点击确认按钮。
       setMessages(prev => prev.map(m =>
         m.id === messageId
-          ? { ...m, pendingConfirmation: { ...pc, status: 'confirmed' } }
+          ? {
+              ...m,
+              content: withEmailSendingLine(m.content),
+              action: {
+                ...(m.action || { type: 'send_email' }),
+                type: m.action?.type || 'send_email',
+                status: 'pending',
+              },
+              pendingConfirmation: { ...pc, status: 'processing' },
+            }
           : m
       ));
 
@@ -3798,11 +3979,18 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
         if (!result.success) throw new Error(result.error || '发送失败');
 
+        const successLine = `✅ 邮件已成功发送至 ${pc.data.recipientDisplay || pc.data.recipient}`;
         setMessages(prev => prev.map(m =>
           m.id === messageId
             ? {
                 ...m,
-                content: m.content + `\n\n✅ 邮件已成功发送至 ${pc.data.recipientDisplay || pc.data.recipient}`,
+                content: withEmailFinalLine(m.content, successLine),
+                action: {
+                  ...(m.action || { type: 'send_email' }),
+                  type: m.action?.type || 'send_email',
+                  status: 'success',
+                  data: { ...(m.action?.data || {}), result },
+                },
                 pendingConfirmation: { ...pc, status: 'confirmed' },
               }
             : m
@@ -3816,11 +4004,18 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         });
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
+        const errorLine = `❌ 发送失败：${errMsg}`;
         setMessages(prev => prev.map(m =>
           m.id === messageId
             ? {
                 ...m,
-                content: m.content + `\n\n❌ 发送失败：${errMsg}`,
+                content: withEmailFinalLine(m.content, errorLine),
+                action: {
+                  ...(m.action || { type: 'send_email' }),
+                  type: m.action?.type || 'send_email',
+                  status: 'error',
+                  error: errMsg,
+                },
                 pendingConfirmation: { ...pc, status: 'cancelled' },
               }
             : m
@@ -3834,7 +4029,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         });
       }
     }
-  }, [buildToolExecContext, executeRegisteredToolWithSafety, messages, pushDebugItem, toolPermissions]);
+  }, [buildToolExecContext, executeRegisteredToolWithSafety, messages, pushDebugItem, toolPermissions, toolRegistry]);
 
   const handleCancelAction = useCallback((messageId: string) => {
     setMessages(prev => prev.map(m =>
@@ -3842,6 +4037,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         ? {
             ...m,
             content: m.content + `\n\n🚫 已取消${m.pendingConfirmation?.type === 'send_email' ? '发送' : '执行'}。`,
+            action: m.action
+              ? { ...m.action, status: 'error', error: m.pendingConfirmation?.type === 'send_email' ? '用户取消发送' : '用户取消执行' }
+              : m.action,
             pendingConfirmation: { ...m.pendingConfirmation!, status: 'cancelled' },
           }
         : m
@@ -4027,8 +4225,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                       {showModuleSelector && (
                         <>
                           <div className="fixed inset-0 z-40" onClick={() => setShowModuleSelector(false)} />
-                          <div className="absolute bottom-full right-0 mb-2 z-50 w-60 rounded-2xl shadow-xl border overflow-hidden py-1.5" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
-                            <div className="px-3 py-1.5 flex items-center justify-between">
+                          <div className="absolute bottom-full right-0 mb-2 z-50 w-72 max-w-[calc(100vw-2rem)] max-h-[min(70vh,520px)] rounded-2xl shadow-xl border overflow-hidden py-1.5 flex flex-col" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
+                            <div className="px-3 py-1.5 flex items-center justify-between shrink-0 border-b" style={{ borderColor: 'var(--t-border)' }}>
                               <div>
                                 <p className="text-[11px] font-semibold text-gray-500">Agent 作用域</p>
                                 <p className="text-[10px] text-gray-400 mt-0.5">不选则自动路由</p>
@@ -4037,29 +4235,31 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                                 <button onClick={() => setSelectedModules([])} className="text-[10px] text-gray-400 hover:text-gray-600">清除</button>
                               )}
                             </div>
-                            {AGENT_MODULES.map((module) => {
-                              const Icon = module.icon;
-                              const isSelected = selectedModules.includes(module.id);
-                              return (
-                                <button
-                                  key={module.id}
-                                  onClick={() => handleModuleClick(module.id)}
-                                  disabled={!module.enabled}
-                                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${
-                                    isSelected
-                                      ? 'bg-blue-50 text-blue-600'
-                                      : module.enabled
-                                        ? 'text-gray-700 hover:bg-gray-50'
-                                        : 'text-gray-300 cursor-not-allowed'
-                                  }`}
-                                >
-                                  <Icon className="w-3.5 h-3.5 shrink-0" />
-                                  <span className="text-xs font-medium">{module.name}</span>
-                                  <span className="text-[10px] text-gray-400 truncate">{module.description}</span>
-                                  {isSelected && <CheckCircle2 className="w-3 h-3 ml-auto text-blue-500" />}
-                                </button>
-                              );
-                            })}
+                            <div className="min-h-0 overflow-y-auto py-1">
+                              {agentModules.map((module) => {
+                                const Icon = module.icon;
+                                const isSelected = selectedModules.includes(module.id);
+                                return (
+                                  <button
+                                    key={module.id}
+                                    onClick={() => handleModuleClick(module.id)}
+                                    disabled={!module.enabled}
+                                    className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${
+                                      isSelected
+                                        ? 'bg-blue-50 text-blue-600'
+                                        : module.enabled
+                                          ? 'text-gray-700 hover:bg-gray-50'
+                                          : 'text-gray-300 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    <Icon className="w-3.5 h-3.5 shrink-0" />
+                                    <span className="text-xs font-medium shrink-0">{module.name}</span>
+                                    <span className="text-[10px] text-gray-400 truncate">{module.description}</span>
+                                    {isSelected && <CheckCircle2 className="w-3 h-3 ml-auto text-blue-500 shrink-0" />}
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
                         </>
                       )}
@@ -4296,7 +4496,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                         <span className="w-12 text-center">完全</span>
                       </div>
                       <div className="max-h-[420px] overflow-y-auto pb-2">
-                        {AGENT_PERMISSION_MODULES
+                        {permissionModules
                           .filter(module => AGENT_CRUD_ACTIONS.some(action => isSupportedToolPermission(module.key, action.key)))
                           .map(module => {
                             const enabledFullActions = (['update', 'delete'] as AgentCrudAction[])
@@ -4389,7 +4589,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                 className={`relative w-8 h-8 flex items-center justify-center rounded-xl transition-colors ${
                   !isExecutionVizCollapsed ? 'text-blue-600 bg-blue-50' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
                 }`}
-                title={isExecutionVizCollapsed ? '展开执行过程' : '收起执行过程'}
+                title={isExecutionVizCollapsed ? '展开 Agent Console' : '收起 Agent Console'}
               >
                 <Workflow className="w-4 h-4" />
                 {agentRuntimeStatus.active && (
@@ -4432,7 +4632,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         searchConfig={searchConfig}
         onChangeSearchConfig={setSearchConfig}
         onClearHistory={handleClearHistory}
-        modules={ENABLED_AGENT_MODULES.map(m => ({ id: m.id, name: m.name }))}
+        modules={enabledAgentModules.map(m => ({ id: m.id, name: m.name }))}
         modulePrompts={modulePrompts}
         onChangeModulePrompts={setModulePrompts}
         emailConfig={emailConfig}
@@ -4452,6 +4652,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         capabilities={toolPermissionCapabilities}
         toolPermissions={toolPermissions}
         fullAccessPermissions={fullAccessPermissions}
+        modules={permissionModules}
         allToolPermissionsEnabled={allToolPermissionsEnabled}
         enabledToolPermissionCount={enabledToolPermissionCount}
         fullAccessPermissionCount={fullAccessPermissionCount}
@@ -4499,60 +4700,91 @@ const AgentExecutionProcessPanel: React.FC<{
   const visibleStages = AGENT_RUNTIME_VISUAL_STAGES.filter(stage =>
     stage !== 'error' || latestByStage.has('error') || status.stage === 'error',
   );
-  const recentEvents = events.slice(-12).reverse();
+
+  const selectedToolNames = useMemo(() => {
+    const names = new Set<string>();
+    const addToolCall = (item: any) => {
+      const name = typeof item?.name === 'string' ? item.name : typeof item?.toolName === 'string' ? item.toolName : '';
+      if (name) names.add(name);
+    };
+    for (const event of events) {
+      const payload = event.payload as any;
+      if (Array.isArray(payload?.toolCalls)) payload.toolCalls.forEach(addToolCall);
+      if (Array.isArray(payload?.pendingToolCalls)) payload.pendingToolCalls.forEach(addToolCall);
+      if (Array.isArray(payload?.toolResults)) payload.toolResults.forEach((result: any) => addToolCall(result?.toolCall));
+      if (payload?.observation?.toolName) names.add(payload.observation.toolName);
+    }
+    toolEvents.forEach(tool => names.add(tool.toolName));
+    return Array.from(names);
+  }, [events, toolEvents]);
+
+  const recentEvents = events.slice(-10).reverse();
   const recentTools = toolEvents.slice(-8).reverse();
   const hasData = events.length > 0 || toolEvents.length > 0;
   const completedStageCount = visibleStages.filter(stage => latestByStage.get(stage)?.status === 'success').length;
+  const waitingToolCount = toolEvents.filter(tool => tool.status === 'waiting').length;
+  const failedToolCount = toolEvents.filter(tool => tool.status === 'error').length;
+  const snapshotCount = events.reduce((count, event) => {
+    const value = (event.payload as any)?.undoSnapshotCount;
+    return count + (Number.isFinite(Number(value)) ? Number(value) : 0);
+  }, 0);
+  const pendingApprovalCount = Math.max(waitingToolCount, events.reduce((count, event) => {
+    const value = (event.payload as any)?.pendingConfirmationCount;
+    return count + (Number.isFinite(Number(value)) ? Number(value) : 0);
+  }, 0));
+
+  const consoleStatus = status.stage === 'idle'
+    ? '等待任务'
+    : status.status === 'error' || status.stage === 'error'
+      ? '需要处理'
+      : status.stage === 'approval' || status.status === 'waiting'
+        ? '等待确认'
+        : status.active
+          ? '运行中'
+          : '已完成';
+
+  const phaseCards: Array<{ label: string; desc: string; stages: AgentTraceEvent['stage'][] }> = [
+    { label: '路由/规划', desc: '确定作用域与工具范围', stages: ['planning', 'decision'] },
+    { label: '执行', desc: '调用已授权函数', stages: ['execution'] },
+    { label: '检查', desc: '校验结果与缺失项', stages: ['verification', 'inspection'] },
+    { label: '汇报', desc: '整理最终答复', stages: ['reflection', 'reporting'] },
+  ];
+
+  const getPhaseTone = (phaseStages: AgentTraceEvent['stage'][]) => {
+    const phaseEvents = phaseStages.map(stage => latestByStage.get(stage)).filter(Boolean) as AgentTraceEvent[];
+    const isActive = phaseStages.includes(status.stage as AgentTraceEvent['stage']) && status.active;
+    if (phaseEvents.some(event => event.status === 'error') || (phaseStages.includes('error') && status.stage === 'error')) {
+      return 'border-red-200 bg-red-50 text-red-700';
+    }
+    if (phaseEvents.some(event => event.status === 'waiting') || (isActive && status.status === 'waiting')) {
+      return 'border-amber-200 bg-amber-50 text-amber-700';
+    }
+    if (isActive) return 'border-blue-200 bg-blue-50 text-blue-700';
+    if (phaseEvents.length && phaseEvents.every(event => event.status === 'success' || event.status === 'skipped')) {
+      return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+    }
+    return 'border-slate-200 bg-white text-slate-500';
+  };
 
   const getStageTone = (stage: Exclude<AgentRuntimeStatusStage, 'idle'>) => {
     const event = latestByStage.get(stage);
     const isActive = status.stage === stage && status.active;
     if (event?.status === 'error' || stage === 'error') {
-      return {
-        dot: 'bg-red-500 border-red-100 text-white',
-        line: 'bg-red-200',
-        card: 'border-red-100 bg-red-50/60',
-        text: 'text-red-700',
-      };
+      return { dot: 'bg-red-500 border-red-100 text-white', line: 'bg-red-200', card: 'border-red-100 bg-red-50/70', text: 'text-red-700' };
     }
     if (event?.status === 'waiting' || (status.stage === stage && status.status === 'waiting')) {
-      return {
-        dot: 'bg-amber-500 border-amber-100 text-white',
-        line: 'bg-amber-200',
-        card: 'border-amber-100 bg-amber-50/60',
-        text: 'text-amber-700',
-      };
+      return { dot: 'bg-amber-500 border-amber-100 text-white', line: 'bg-amber-200', card: 'border-amber-100 bg-amber-50/70', text: 'text-amber-700' };
     }
     if (isActive || event?.status === 'started') {
-      return {
-        dot: 'bg-blue-500 border-blue-100 text-white',
-        line: 'bg-blue-200',
-        card: 'border-blue-100 bg-blue-50/60',
-        text: 'text-blue-700',
-      };
+      return { dot: 'bg-blue-500 border-blue-100 text-white', line: 'bg-blue-200', card: 'border-blue-100 bg-blue-50/70', text: 'text-blue-700' };
     }
     if (event?.status === 'success') {
-      return {
-        dot: 'bg-emerald-500 border-emerald-100 text-white',
-        line: 'bg-emerald-200',
-        card: 'border-emerald-100 bg-emerald-50/60',
-        text: 'text-emerald-700',
-      };
+      return { dot: 'bg-emerald-500 border-emerald-100 text-white', line: 'bg-emerald-200', card: 'border-emerald-100 bg-emerald-50/70', text: 'text-emerald-700' };
     }
     if (event?.status === 'skipped') {
-      return {
-        dot: 'bg-slate-300 border-slate-100 text-white',
-        line: 'bg-slate-200',
-        card: 'border-slate-100 bg-slate-50',
-        text: 'text-slate-500',
-      };
+      return { dot: 'bg-slate-300 border-slate-100 text-white', line: 'bg-slate-200', card: 'border-slate-100 bg-slate-50', text: 'text-slate-500' };
     }
-    return {
-      dot: 'bg-white border-slate-200 text-slate-300',
-      line: 'bg-slate-100',
-      card: 'border-slate-100 bg-white',
-      text: 'text-slate-400',
-    };
+    return { dot: 'bg-white border-slate-200 text-slate-300', line: 'bg-slate-100', card: 'border-slate-100 bg-white', text: 'text-slate-400' };
   };
 
   const getToolTone = (tool: AgentRuntimeToolVisualEvent) => {
@@ -4563,62 +4795,105 @@ const AgentExecutionProcessPanel: React.FC<{
   };
 
   return (
-    <div className="shrink-0 w-[340px] border-l flex flex-col min-h-0 overflow-hidden" style={{ borderColor: 'var(--t-border)', background: 'var(--t-bg-secondary)' }}>
-      <div className="shrink-0 border-b flex items-center justify-between px-3" style={{ minHeight: '48px', borderColor: 'var(--t-border)', background: 'var(--t-header-bg)' }}>
-        <div className="flex items-center gap-1.5 min-w-0">
-          <Workflow className="w-3.5 h-3.5 text-blue-500" />
-          <p className="text-xs font-semibold text-slate-700">执行过程</p>
-          <span className={`w-2 h-2 rounded-full ring-4 ${getAgentRuntimeIndicatorClass(status)}`} />
+    <div className="shrink-0 w-[380px] border-l flex flex-col min-h-0 overflow-hidden" style={{ borderColor: 'var(--t-border)', background: 'var(--t-bg-secondary)' }}>
+      <div className="shrink-0 border-b px-4 py-3" style={{ borderColor: 'var(--t-border)', background: 'var(--t-header-bg)' }}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+              <Workflow className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-slate-800">Agent Console</p>
+              <p className="text-[11px] text-slate-400 truncate">可观察、可确认、可回退</p>
+            </div>
+          </div>
+          <button
+            onClick={onClear}
+            disabled={!hasData}
+            className={`w-8 h-8 inline-flex items-center justify-center rounded-xl transition-colors ${
+              hasData ? 'text-slate-400 hover:text-red-500 hover:bg-red-50' : 'text-slate-200 cursor-not-allowed'
+            }`}
+            title="清空执行过程"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
         </div>
-        <button
-          onClick={onClear}
-          disabled={!hasData}
-          className={`w-7 h-7 inline-flex items-center justify-center rounded-lg transition-colors ${
-            hasData ? 'text-slate-400 hover:text-red-500 hover:bg-red-50' : 'text-slate-200 cursor-not-allowed'
-          }`}
-          title="清空执行过程"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
         <div className="rounded-2xl border border-blue-100 bg-white p-3 shadow-sm">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-[11px] text-slate-400">当前节点</p>
-              <p className="text-sm font-semibold text-slate-800 truncate">
-                {status.stage === 'idle' ? '空闲' : AGENT_RUNTIME_STAGE_LABELS[status.stage]}
-              </p>
+              <p className="text-[11px] text-slate-400">当前状态</p>
+              <div className="mt-1 flex items-center gap-2">
+                <span className={`relative w-2.5 h-2.5 rounded-full ring-4 ${getAgentRuntimeIndicatorClass(status)}`}>
+                  {status.active && <span className="absolute inset-0 rounded-full bg-current opacity-40 animate-ping" />}
+                </span>
+                <p className="text-base font-semibold text-slate-900">{consoleStatus}</p>
+              </div>
             </div>
-            <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
-              {status.active && <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />}
-              <span>{status.active ? '运行中' : status.status === 'error' ? '异常' : '已暂停'}</span>
+            <div className="rounded-xl bg-slate-50 px-2.5 py-1.5 text-right">
+              <p className="text-[10px] text-slate-400">节点</p>
+              <p className="text-sm font-semibold text-slate-700">{status.stage === 'idle' ? '空闲' : AGENT_RUNTIME_STAGE_LABELS[status.stage]}</p>
             </div>
           </div>
-          <p className="mt-2 text-xs text-slate-500 leading-relaxed line-clamp-2">
+          <p className="mt-3 text-xs text-slate-500 leading-relaxed line-clamp-2">
             {hasData ? status.title : '等待下一次 Agent 任务。'}
           </p>
-          <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+          <div className="mt-3 grid grid-cols-4 gap-2 text-center">
             <div className="rounded-xl bg-slate-50 px-2 py-2">
               <p className="text-[10px] text-slate-400">节点</p>
               <p className="text-sm font-semibold text-slate-700">{completedStageCount}/{visibleStages.length}</p>
             </div>
             <div className="rounded-xl bg-slate-50 px-2 py-2">
-              <p className="text-[10px] text-slate-400">工具</p>
-              <p className="text-sm font-semibold text-slate-700">{toolEvents.length}</p>
+              <p className="text-[10px] text-slate-400">函数</p>
+              <p className="text-sm font-semibold text-slate-700">{selectedToolNames.length}</p>
             </div>
             <div className="rounded-xl bg-slate-50 px-2 py-2">
-              <p className="text-[10px] text-slate-400">事件</p>
-              <p className="text-sm font-semibold text-slate-700">{events.length}</p>
+              <p className="text-[10px] text-slate-400">确认</p>
+              <p className="text-sm font-semibold text-slate-700">{pendingApprovalCount}</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 px-2 py-2">
+              <p className="text-[10px] text-slate-400">快照</p>
+              <p className="text-sm font-semibold text-slate-700">{snapshotCount}</p>
             </div>
           </div>
         </div>
 
+        <section className="grid grid-cols-2 gap-2">
+          {phaseCards.map(phase => (
+            <div key={phase.label} className={`rounded-2xl border px-3 py-2.5 ${getPhaseTone(phase.stages)}`}>
+              <p className="text-xs font-semibold">{phase.label}</p>
+              <p className="mt-0.5 text-[10px] opacity-75 line-clamp-1">{phase.desc}</p>
+            </div>
+          ))}
+        </section>
+
+        <section className="rounded-2xl border border-slate-100 bg-white p-3">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[11px] font-semibold text-slate-500">本次函数范围</p>
+            <span className="text-[10px] text-slate-400">{selectedToolNames.length || '自动'}</span>
+          </div>
+          {selectedToolNames.length === 0 ? (
+            <p className="text-xs text-slate-400 leading-relaxed">尚未产生工具决策。模型选择函数后会在这里列出实际进入执行链路的函数。</p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {selectedToolNames.slice(0, 12).map(name => (
+                <span key={name} className="rounded-lg bg-slate-50 border border-slate-100 px-2 py-1 text-[11px] font-medium text-slate-600">
+                  {name}
+                </span>
+              ))}
+              {selectedToolNames.length > 12 && (
+                <span className="rounded-lg bg-slate-50 border border-slate-100 px-2 py-1 text-[11px] font-medium text-slate-400">+{selectedToolNames.length - 12}</span>
+              )}
+            </div>
+          )}
+        </section>
+
         <section>
           <div className="flex items-center justify-between mb-2">
             <p className="text-[11px] font-semibold text-slate-500">节点流转</p>
-            <span className="text-[10px] text-slate-400">{status.title}</span>
+            <span className="text-[10px] text-slate-400 truncate max-w-[190px]">{status.title}</span>
           </div>
           <div className="space-y-2">
             {visibleStages.map((stage, index) => {
@@ -4642,16 +4917,10 @@ const AgentExecutionProcessPanel: React.FC<{
                   <div className={`flex-1 min-w-0 rounded-xl border px-2.5 py-2 ${tone.card}`}>
                     <div className="flex items-center justify-between gap-2">
                       <p className={`text-xs font-semibold ${tone.text}`}>{AGENT_RUNTIME_STAGE_LABELS[stage]}</p>
-                      {event && (
-                        <span className="text-[10px] text-slate-400 shrink-0">{formatRuntimeTimestamp(event.timestamp)}</span>
-                      )}
+                      {event && <span className="text-[10px] text-slate-400 shrink-0">{formatRuntimeTimestamp(event.timestamp)}</span>}
                     </div>
-                    <p className="text-[11px] text-slate-600 leading-relaxed line-clamp-2 mt-0.5">
-                      {event?.title || '等待触发'}
-                    </p>
-                    {event?.detail && (
-                      <p className="text-[10px] text-slate-400 leading-relaxed line-clamp-2 mt-1">{event.detail}</p>
-                    )}
+                    <p className="text-[11px] text-slate-600 leading-relaxed line-clamp-2 mt-0.5">{event?.title || '等待触发'}</p>
+                    {event?.detail && <p className="text-[10px] text-slate-400 leading-relaxed line-clamp-2 mt-1">{event.detail}</p>}
                   </div>
                 </div>
               );
@@ -4662,35 +4931,30 @@ const AgentExecutionProcessPanel: React.FC<{
         <section>
           <div className="flex items-center justify-between mb-2">
             <p className="text-[11px] font-semibold text-slate-500">工具调用</p>
-            <span className="text-[10px] text-slate-400">{recentTools.length} 条</span>
+            <span className={`text-[10px] ${failedToolCount > 0 ? 'text-red-500' : waitingToolCount > 0 ? 'text-amber-500' : 'text-slate-400'}`}>
+              {recentTools.length} 条
+            </span>
           </div>
           {recentTools.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-200 bg-white/70 py-5 text-center text-xs text-slate-400">
-              暂无工具调用
-            </div>
+            <div className="rounded-xl border border-dashed border-slate-200 bg-white/70 py-5 text-center text-xs text-slate-400">暂无工具调用</div>
           ) : (
             <div className="space-y-1.5">
               {recentTools.map(tool => (
                 <div key={tool.id} className={`rounded-xl border px-2.5 py-2 ${getToolTone(tool)}`}>
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0 flex items-center gap-1.5">
-                      {tool.status === 'running' ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                      ) : tool.status === 'error' ? (
-                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                      ) : (
-                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                      )}
+                      {tool.status === 'running' ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" /> : tool.status === 'error' ? <AlertCircle className="w-3.5 h-3.5 shrink-0" /> : tool.status === 'waiting' ? <ShieldCheck className="w-3.5 h-3.5 shrink-0" /> : <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />}
                       <p className="text-xs font-semibold truncate">{tool.toolName}</p>
                     </div>
-                    {tool.durationMs !== undefined && (
-                      <span className="text-[10px] opacity-70 shrink-0">{tool.durationMs}ms</span>
-                    )}
+                    {tool.durationMs !== undefined && <span className="text-[10px] opacity-70 shrink-0">{tool.durationMs}ms</span>}
                   </div>
-                  <div className="mt-1 flex items-center gap-1.5 text-[10px] opacity-80">
-                    {tool.moduleName && <span className="rounded-md bg-white/70 px-1.5 py-0.5">{tool.moduleName}</span>}
-                    <span className="line-clamp-1">{tool.summary}</span>
-                  </div>
+	                  <div className="mt-1 flex items-center gap-1.5 text-[10px] opacity-80">
+	                    {tool.moduleName && <span className="rounded-md bg-white/70 px-1.5 py-0.5">{tool.moduleName}</span>}
+	                    {tool.sourceLabel && <span className="rounded-md bg-white/70 px-1.5 py-0.5">{tool.sourceLabel}</span>}
+	                    {tool.categoryLabel && <span className="rounded-md bg-white/70 px-1.5 py-0.5">{tool.categoryLabel}</span>}
+	                    {tool.permissionLabel && <span className="rounded-md bg-white/70 px-1.5 py-0.5">{tool.permissionLabel}</span>}
+	                    <span className="line-clamp-1">{tool.summary}</span>
+	                  </div>
                 </div>
               ))}
             </div>
@@ -4703,17 +4967,13 @@ const AgentExecutionProcessPanel: React.FC<{
             <span className="text-[10px] text-slate-400">{recentEvents.length} 条</span>
           </div>
           {recentEvents.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-200 bg-white/70 py-5 text-center text-xs text-slate-400">
-              暂无运行轨迹
-            </div>
+            <div className="rounded-xl border border-dashed border-slate-200 bg-white/70 py-5 text-center text-xs text-slate-400">暂无运行轨迹</div>
           ) : (
             <div className="space-y-1.5">
               {recentEvents.map(event => (
                 <div key={event.id} className="rounded-xl border border-slate-100 bg-white px-2.5 py-2">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-[11px] font-semibold text-slate-600">
-                      {AGENT_RUNTIME_STAGE_LABELS[event.stage]}
-                    </p>
+                    <p className="text-[11px] font-semibold text-slate-600">{AGENT_RUNTIME_STAGE_LABELS[event.stage]}</p>
                     <span className="text-[10px] text-slate-400">{formatRuntimeTimestamp(event.timestamp)}</span>
                   </div>
                   <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">{event.title}</p>
@@ -4765,6 +5025,16 @@ class MessageErrorBoundary extends React.Component<
   }
 }
 
+const formatAgentCardPayload = (value: unknown, maxLength = 260) => {
+  try {
+    const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    if (!text) return '';
+    return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+  } catch {
+    return String(value || '');
+  }
+};
+
 const MessageBubble: React.FC<{
   message: AgentMessage;
   onDelete?: (messageId: string) => void;
@@ -4778,10 +5048,23 @@ const MessageBubble: React.FC<{
     : message.targetModule
       ? [message.targetModule]
       : [];
-  const targetModules = normalizeModuleScope(targetModuleIds).map(moduleId => getModuleById(moduleId)).filter(Boolean) as AgentModule[];
+  const targetModules = normalizeModuleScope(targetModuleIds).map(moduleId => {
+    const module = getModuleById(moduleId);
+    return module || { id: moduleId, name: getModuleDisplayName(moduleId) };
+  }).filter(Boolean) as Array<Pick<AgentModule, 'id' | 'name'>>;
   const canDelete = message.id !== 'welcome';
   const pc = message.pendingConfirmation;
   const userAvatar = useUserAvatar();
+  const snapshotLabel = (pc?.data?.snapshot as UndoSnapshot | undefined)?.label || message.undoSnapshot?.label || '';
+  const toolArgumentsPreview = pc?.type === 'agent_tool'
+    ? formatAgentCardPayload(pc.data.arguments || {})
+    : '';
+  const showRunCard = !isUser && (
+    targetModules.length > 0 ||
+    Boolean(message.action) ||
+    Boolean(pc) ||
+    Boolean(message.undoSnapshot)
+  );
   
   return (
     <div className={`flex items-end gap-2.5 ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -4849,6 +5132,62 @@ const MessageBubble: React.FC<{
           )}
         </div>
 
+        {showRunCard && (
+          <div className="mb-3 rounded-2xl border border-slate-200 bg-white/85 p-3 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0 flex items-center gap-2">
+                <span className={`w-2.5 h-2.5 rounded-full ${
+                  pc?.status === 'pending'
+                    ? 'bg-amber-500'
+                    : pc?.status === 'processing'
+                      ? 'bg-blue-500 animate-pulse'
+                      : message.action?.status === 'error'
+                      ? 'bg-red-500'
+                      : message.action?.status === 'pending'
+                        ? 'bg-blue-500 animate-pulse'
+                        : 'bg-emerald-500'
+                }`} />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-slate-700 truncate">
+                    {pc?.status === 'pending'
+                      ? '等待用户确认'
+                      : pc?.status === 'processing'
+                        ? '正在执行'
+                        : message.action?.status === 'error'
+                        ? '执行失败'
+                        : message.action?.status === 'pending'
+                          ? '正在执行'
+                          : '执行结果'}
+                  </p>
+                  <p className="text-[10px] text-slate-400 truncate">
+                    {message.action?.type || pc?.data?.toolName || snapshotLabel || 'Agent 任务'}
+                  </p>
+                </div>
+              </div>
+              {message.undoSnapshot && (
+                <span className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-700 border border-amber-100">
+                  <Undo2 className="w-3 h-3" />
+                  可撤回
+                </span>
+              )}
+            </div>
+            {targetModules.length > 0 && (
+              <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                {targetModules.slice(0, 4).map(module => (
+                  <span key={module.id} className="inline-flex items-center rounded-lg bg-slate-50 text-slate-500 px-2 py-1 text-[10px] border border-slate-100">
+                    {module.name}
+                  </span>
+                ))}
+                {targetModules.length > 4 && (
+                  <span className="inline-flex items-center rounded-lg bg-slate-50 text-slate-400 px-2 py-1 text-[10px] border border-slate-100">
+                    +{targetModules.length - 4}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {message.attachments && message.attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-2">
             {message.attachments.map((att, idx) => (
@@ -4879,61 +5218,78 @@ const MessageBubble: React.FC<{
           )}
         </div>
 
-        {/* 二次确认卡片 */}
+        {/* 执行确认卡片 */}
         {pc && (
-          <div className={`mt-3 rounded-2xl border p-3.5 ${
-            pc.status === 'pending' ? 'border-blue-200 bg-blue-50/80' :
+          <div className={`mt-3 rounded-2xl border p-3.5 shadow-sm ${
+            pc.status === 'pending' ? 'border-amber-200 bg-amber-50/80' :
+            pc.status === 'processing' ? 'border-blue-200 bg-blue-50/80' :
             pc.status === 'confirmed' ? 'border-green-200 bg-green-50/80' :
             'border-gray-200 bg-gray-50/80'
           }`}>
-            <div className="flex items-center gap-2 mb-2">
-              {pc.type === 'send_email'
-                ? <Mail className={`w-4 h-4 ${pc.status === 'confirmed' ? 'text-green-600' : pc.status === 'cancelled' ? 'text-gray-400' : 'text-blue-600'}`} />
-                : <ShieldCheck className={`w-4 h-4 ${pc.status === 'confirmed' ? 'text-green-600' : pc.status === 'cancelled' ? 'text-gray-400' : 'text-blue-600'}`} />
-              }
-              <span className={`text-xs font-semibold ${pc.status === 'confirmed' ? 'text-green-700' : pc.status === 'cancelled' ? 'text-gray-500' : 'text-blue-700'}`}>
-                {pc.type === 'send_email'
-                  ? (pc.status === 'pending' ? '📮 邮件待确认' : pc.status === 'confirmed' ? '✅ 邮件已发送' : '🚫 已取消发送')
-                  : (pc.status === 'pending' ? '操作待确认' : pc.status === 'confirmed' ? '已执行' : '已取消执行')}
-              </span>
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div className="flex items-start gap-2 min-w-0">
+                <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                  pc.status === 'pending' ? 'bg-amber-100 text-amber-700' :
+                  pc.status === 'processing' ? 'bg-blue-100 text-blue-700' :
+                  pc.status === 'confirmed' ? 'bg-green-100 text-green-700' :
+                  'bg-gray-100 text-gray-500'
+                }`}>
+                  {pc.status === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : pc.type === 'send_email' ? <Mail className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4" />}
+                </div>
+                <div className="min-w-0">
+                  <p className={`text-xs font-semibold ${
+                    pc.status === 'pending' ? 'text-amber-800' :
+                    pc.status === 'processing' ? 'text-blue-800' :
+                    pc.status === 'confirmed' ? 'text-green-800' :
+                    'text-gray-600'
+                  }`}>
+                    {pc.type === 'send_email'
+                      ? (pc.status === 'pending' ? '邮件发送确认' : pc.status === 'processing' ? '邮件发送中' : pc.status === 'confirmed' ? '邮件已发送' : '邮件发送已取消')
+                      : (pc.status === 'pending' ? '工具执行确认' : pc.status === 'processing' ? '工具执行中' : pc.status === 'confirmed' ? '工具已执行' : '工具执行已取消')}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-slate-500 line-clamp-2">{pc.summary}</p>
+                </div>
+              </div>
+              {snapshotLabel && (
+                <span className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-white/70 px-2 py-1 text-[10px] font-medium text-amber-700 border border-amber-100">
+                  <Undo2 className="w-3 h-3" />
+                  已快照
+                </span>
+              )}
             </div>
+
             {pc.type === 'send_email' ? (
-              <div className="space-y-1.5 text-xs text-gray-700">
-                <div className="flex gap-2">
-                  <span className="text-gray-500 shrink-0 w-10">收件人</span>
-                  <span className="font-medium">{pc.data.recipientDisplay || pc.data.recipient}</span>
-                </div>
-                <div className="flex gap-2">
-                  <span className="text-gray-500 shrink-0 w-10">主题</span>
-                  <span className="font-medium">{pc.data.subject}</span>
-                </div>
+              <div className="space-y-2 text-xs text-gray-700">
+                <div className="grid grid-cols-[56px,1fr] gap-2"><span className="text-gray-500">收件人</span><span className="font-medium truncate">{pc.data.recipientDisplay || pc.data.recipient}</span></div>
+                <div className="grid grid-cols-[56px,1fr] gap-2"><span className="text-gray-500">主题</span><span className="font-medium">{pc.data.subject}</span></div>
                 {pc.data.contentPreview && (
-                  <div className="flex gap-2">
-                    <span className="text-gray-500 shrink-0 w-10">内容</span>
-                    <span className="text-gray-600 line-clamp-3">{pc.data.contentPreview}</span>
-                  </div>
+                  <div className="grid grid-cols-[56px,1fr] gap-2"><span className="text-gray-500">正文</span><span className="text-gray-600 line-clamp-3">{pc.data.contentPreview}</span></div>
                 )}
               </div>
             ) : (
-              <div className="space-y-1.5 text-xs text-gray-700">
-                <div className="flex gap-2">
-                  <span className="text-gray-500 shrink-0 w-10">操作</span>
-                  <span className="font-medium">{pc.data.actionLabel || pc.data.toolName}</span>
-                </div>
-                <div className="flex gap-2">
-                  <span className="text-gray-500 shrink-0 w-10">工具</span>
-                  <span className="text-gray-600">{pc.data.toolName}</span>
-                </div>
+              <div className="space-y-2 text-xs text-gray-700">
+                <div className="grid grid-cols-[56px,1fr] gap-2"><span className="text-gray-500">函数</span><span className="font-mono text-[11px] text-slate-700 truncate">{pc.data.toolName}</span></div>
+                <div className="grid grid-cols-[56px,1fr] gap-2"><span className="text-gray-500">操作</span><span className="font-medium">{pc.data.actionLabel || pc.data.toolName}</span></div>
+                {snapshotLabel && (
+                  <div className="grid grid-cols-[56px,1fr] gap-2"><span className="text-gray-500">回退点</span><span className="text-amber-700 line-clamp-2">{snapshotLabel}</span></div>
+                )}
+                {toolArgumentsPreview && toolArgumentsPreview !== '{}' && (
+                  <div className="mt-2 rounded-xl bg-white/70 border border-slate-100 p-2">
+                    <div className="mb-1 text-[10px] font-semibold text-slate-400">参数预览</div>
+                    <pre className="text-[10px] leading-4 text-slate-600 whitespace-pre-wrap break-all max-h-28 overflow-auto">{toolArgumentsPreview}</pre>
+                  </div>
+                )}
               </div>
             )}
+
             {pc.status === 'pending' && (
               <div className="flex items-center gap-2 mt-3">
                 <button
                   onClick={() => onConfirm?.(message.id)}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-colors shadow-sm"
                 >
-                  {pc.type === 'send_email' ? <Send className="w-3 h-3" /> : <ShieldCheck className="w-3 h-3" />}
-                  {pc.type === 'send_email' ? '确认发送' : '确认执行'}
+                  {pc.type === 'send_email' ? <Send className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />}
+                  {pc.type === 'send_email' ? '发送' : '执行'}
                 </button>
                 <button
                   onClick={() => onCancelConfirm?.(message.id)}

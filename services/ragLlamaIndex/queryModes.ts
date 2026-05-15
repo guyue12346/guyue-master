@@ -53,7 +53,7 @@
 import { LLMFunction, EmbeddingConfig } from './types';
 import { RagPipeline, QueryEngineConfig, QueryResult } from './queryEngine';
 import { RetrievalResult } from './retrieval';
-import { getEmbedding } from './embedding';
+import { getDocumentEmbedding, getQueryEmbedding } from './embedding';
 
 // ════════════════════════════════════════════════════════════
 // Type Definitions — 查询模式配置
@@ -342,13 +342,13 @@ async function routeByEmbedding(
   config: RouterConfig,
   embeddingConfig: EmbeddingConfig,
 ): Promise<string> {
-  const queryEmbedding = await getEmbedding(query, embeddingConfig);
+  const queryEmbedding = await getQueryEmbedding(query, embeddingConfig);
 
   let bestRouteId = config.defaultRoute || config.routes[0]?.id || '';
   let bestSimilarity = -1;
 
   for (const route of config.routes) {
-    const descEmbedding = await getEmbedding(
+    const descEmbedding = await getDocumentEmbedding(
       `${route.name}: ${route.description}`,
       embeddingConfig,
     );

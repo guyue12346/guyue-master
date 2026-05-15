@@ -300,8 +300,6 @@ export function createDefaultConfig(
       alpha: 0.7,
       bm25K1: 1.2,
       bm25B: 0.75,
-      includeKnowledgeGraph: false,
-      kgMaxTriples: 5,
       ...overrides?.retrieval,
     },
     reranker: {
@@ -341,7 +339,7 @@ export function createPrecisionConfig(embeddingConfig: EmbeddingConfig): QueryEn
   return createDefaultConfig(embeddingConfig, {
     retrieval: {
       strategy: 'hybrid', topK: 30,
-      fusionMethod: 'rrf', includeKnowledgeGraph: true,
+      fusionMethod: 'rrf',
     },
     reranker: { type: 'llm', topN: 5 },
   });

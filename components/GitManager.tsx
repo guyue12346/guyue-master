@@ -307,6 +307,19 @@ export const GitManager: React.FC<GitManagerProps> = ({ onOpenTerminal }) => {
   }, []);
 
   useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (!Array.isArray(detail?.repositories)) return;
+      setRepositories(detail.repositories);
+      setSelectedPath(current => detail.repositories.some((repo: GitRepositoryRecord) => repo.path === current)
+        ? current
+        : detail.repositories[0]?.path || '');
+    };
+    window.addEventListener('guyue-git-repositories-updated', handler);
+    return () => window.removeEventListener('guyue-git-repositories-updated', handler);
+  }, []);
+
+  useEffect(() => {
     if (!selectedPath) return;
     refreshRepo(selectedPath, { silent: true });
   }, [selectedPath]);

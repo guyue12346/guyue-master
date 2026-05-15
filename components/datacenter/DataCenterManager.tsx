@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart3, Flame, Package, Settings, X, ToggleLeft, ToggleRight, Shield, Activity, Terminal, Webhook, HelpCircle, GripVertical } from 'lucide-react';
+import { BarChart3, Flame, Package, Settings, X, ToggleLeft, ToggleRight, Shield, Activity, Terminal, Webhook, HelpCircle, GripVertical, ChevronRight } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { OJHeatmapContainer } from './OJHeatmapContainer';
 import { ResourceCenter } from './ResourceCenter';
@@ -17,6 +17,7 @@ import { AVAILABLE_ICONS } from '../../types';
 
 // localStorage 存储键
 const STORAGE_KEY_DATACENTER_CONFIG = 'linkmaster_datacenter_config';
+const STORAGE_KEY_DATACENTER_SIDEBAR = 'guyue_datacenter_sidebar_visible';
 
 // 模块默认顺序
 const DEFAULT_MODULE_ORDER: DataCenterModuleKey[] = ['ssh', 'apiManager', 'fileManager', 'ojHeatmap', 'resourceCenter', 'passwordManager', 'zenmuxUsage', 'codexUsage', 'aiStudio', 'kimiApi'];
@@ -378,6 +379,7 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
   const [activePage, setActivePage] = useState<SubPage>('ssh');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isNavVisible, setIsNavVisible] = useState(() => localStorage.getItem(STORAGE_KEY_DATACENTER_SIDEBAR) !== 'false');
 
   // 数据中心配置
   const [config, setConfig] = useState<DataCenterConfig>(() => {
@@ -393,6 +395,9 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY_DATACENTER_CONFIG, JSON.stringify(config));
   }, [config]);
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_DATACENTER_SIDEBAR, String(isNavVisible));
+  }, [isNavVisible]);
 
   // 按配置顺序过滤可见导航项
   const moduleOrder = config.moduleOrder ?? DEFAULT_MODULE_ORDER;
@@ -411,7 +416,15 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
   return (
     <div className="h-full flex">
       {/* 左侧导航 */}
-      <div className="w-48 shrink-0 bg-white/30 dark:bg-gray-800/30 border-r border-gray-200/50 dark:border-gray-700/50 p-3 flex flex-col">
+      {isNavVisible ? (
+      <div className="relative w-48 shrink-0 bg-white/30 dark:bg-gray-800/30 border-r border-gray-200/50 dark:border-gray-700/50 p-3 flex flex-col">
+        <button
+          onClick={() => setIsNavVisible(false)}
+          className="absolute -right-3 top-5 z-20 h-7 w-7 flex items-center justify-center rounded-full border border-gray-200 bg-white text-gray-400 shadow-sm hover:text-gray-700 dark:border-gray-700 dark:bg-gray-800"
+          title="隐藏模块栏"
+        >
+          <ChevronRight className="h-3.5 w-3.5 rotate-180" />
+        </button>
         <div className="flex items-center justify-between mb-4 px-2">
           <div className="flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-blue-500" />
@@ -464,6 +477,15 @@ export const DataCenterManager: React.FC<DataCenterManagerProps> = ({
           )}
         </nav>
       </div>
+      ) : (
+        <button
+          onClick={() => setIsNavVisible(true)}
+          className="h-full w-5 shrink-0 border-r border-gray-200/50 bg-white/30 dark:bg-gray-800/30 dark:border-gray-700/50 flex items-center justify-center group"
+          title="展开模块栏"
+        >
+          <span className="h-8 w-0.5 rounded-full bg-gray-300 transition-colors group-hover:bg-gray-500" />
+        </button>
+      )}
 
       {/* 设置弹窗 */}
       <DataCenterSettingsModal

@@ -3,7 +3,7 @@ import type { AgentCrudAction } from './agentPermissions';
 export interface AgentPendingConfirmation {
   id: string;
   type: 'send_email' | 'agent_tool';
-  status: 'pending' | 'confirmed' | 'cancelled';
+  status: 'pending' | 'processing' | 'confirmed' | 'cancelled';
   data: Record<string, any>;
   summary: string;
 }
@@ -21,7 +21,9 @@ export interface AgentUndoSnapshot {
     | 'file'
     | 'question'
     | 'question_method'
-    | 'canvas';
+    | 'canvas'
+    | 'oj_heatmap'
+    | 'local_storage';
   action: 'update' | 'delete';
   id: string;
   data: Record<string, any>;

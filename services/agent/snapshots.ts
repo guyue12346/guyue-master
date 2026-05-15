@@ -2,6 +2,7 @@ import type {
   APIRecord,
   FileRecord,
   Note,
+  OJHeatmapData,
   RecurringEvent,
   ResourceCenterData,
   ResourceItem,
@@ -23,6 +24,7 @@ export interface AgentUndoSnapshotContext {
   todos: TodoItem[];
   notes: Note[];
   resourceData: ResourceCenterData;
+  ojHeatmapData: OJHeatmapData;
   sshRecords: SSHRecord[];
   apiRecords: APIRecord[];
   recurringEvents: RecurringEvent[];
@@ -36,6 +38,7 @@ export interface AgentUndoRestoreHandlers {
   onUpdateNote: (id: string, updates: Partial<Note>) => void;
   onCreateResource: (item: Partial<ResourceItem>) => void;
   onUpdateResource: (id: string, updates: Partial<ResourceItem>) => void;
+  onUpdateOJHeatmapData: (data: OJHeatmapData) => void;
   onSaveSSH: (record: Partial<SSHRecord>) => void;
   onSaveAPI: (record: Partial<APIRecord>) => void;
   onCreateRecurring: (data: Partial<RecurringEvent>) => void;
@@ -51,11 +54,27 @@ export const createAgentUndoSnapshotForTool = async (
     apiRecords,
     fileRecords,
     notes,
+    ojHeatmapData,
     recurringEvents,
     resourceData,
     sshRecords,
     todos,
   } = context;
+
+  const makeLocalStorageSnapshot = (
+    label: string,
+    keys: string[],
+    events: string[] = [],
+  ): AgentUndoSnapshot => ({
+    type: 'local_storage',
+    action: 'update',
+    id: keys.join('|'),
+    data: {
+      items: keys.map(key => ({ key, value: localStorage.getItem(key) })),
+      events,
+    },
+    label,
+  });
 
   if (['update_todo', 'delete_todo'].includes(toolName)) {
     const match = resolveTodoMatch(todos, args);
@@ -110,6 +129,51 @@ export const createAgentUndoSnapshotForTool = async (
         label: `${toolName === 'delete_resource' ? '删除' : '修改'}资源「${item.name}」`,
       };
     }
+  }
+
+  if ([
+    'update_oj_submission',
+    'delete_oj_submission',
+    'update_oj_site',
+    'delete_oj_site',
+  ].includes(toolName)) {
+    return {
+      type: 'oj_heatmap',
+      action: toolName.startsWith('delete') ? 'delete' : 'update',
+      id: 'oj-heatmap',
+      data: ojHeatmapData as any,
+      label: toolName.includes('site') ? '修改 OJ 网站配置' : '修改 OJ 做题记录',
+    };
+  }
+
+  if ([
+    'update_website_record',
+    'delete_website_record',
+    'update_website_tag',
+    'delete_website_tag',
+  ].includes(toolName)) {
+    return makeLocalStorageSnapshot('修改网站管理数据', ['linkmaster_passwords_v1', 'linkmaster_password_tags_v1'], ['guyue-password-manager-updated']);
+  }
+
+  if ([
+    'update_image_record',
+    'delete_image_record',
+    'rename_image_category',
+  ].includes(toolName)) {
+    return makeLocalStorageSnapshot('修改图床记录', ['linkmaster_image_records_v1'], ['guyue:image-records-updated']);
+  }
+
+  if ([
+    'update_learning_category',
+    'delete_learning_category',
+    'update_learning_course',
+    'delete_learning_course',
+    'update_learning_module',
+    'delete_learning_module',
+    'update_learning_item',
+    'delete_learning_item',
+  ].includes(toolName)) {
+    return makeLocalStorageSnapshot('修改学习空间数据', ['learning_categories_v1', 'learning_courses_v1'], ['learning-data-updated']);
   }
 
   if (['update_ssh_record', 'delete_ssh_record'].includes(toolName)) {
@@ -264,6 +328,32 @@ export const restoreAgentUndoSnapshot = async (
   if (snap.type === 'resource') {
     if (snap.action === 'delete') handlers.onCreateResource(snap.data as Partial<ResourceItem>);
     else handlers.onUpdateResource(snap.id, snap.data as Partial<ResourceItem>);
+    return;
+  }
+
+  if (snap.type === 'oj_heatmap') {
+    handlers.onUpdateOJHeatmapData(snap.data as unknown as OJHeatmapData);
+    return;
+  }
+
+  if (snap.type === 'local_storage') {
+    const items = Array.isArray((snap.data as any).items) ? (snap.data as any).items : [];
+    for (const item of items) {
+      if (!item?.key) continue;
+      if (item.value === null || item.value === undefined) localStorage.removeItem(item.key);
+      else localStorage.setItem(item.key, String(item.value));
+    }
+    const events = Array.isArray((snap.data as any).events) ? (snap.data as any).events : [];
+    for (const eventName of events) {
+      if (eventName === 'guyue:image-records-updated') {
+        const raw = localStorage.getItem('linkmaster_image_records_v1');
+        let records: any[] = [];
+        try { records = raw ? JSON.parse(raw) : []; } catch { records = []; }
+        window.dispatchEvent(new CustomEvent(eventName, { detail: { records } }));
+      } else {
+        window.dispatchEvent(new CustomEvent(eventName));
+      }
+    }
     return;
   }
 

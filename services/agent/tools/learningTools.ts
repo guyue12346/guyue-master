@@ -1,5 +1,85 @@
-import type { Category } from '../../../types';
 import type { ToolRegistration } from '../toolRegistry';
+
+const LEARNING_CATEGORIES_STORAGE_KEY = 'learning_categories_v1';
+const LEARNING_COURSES_STORAGE_KEY = 'learning_courses_v1';
+type LearningSection = 'resources' | 'assignments' | 'personal' | 'custom';
+
+const agentLearningId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+const loadLearningCategories = (): any[] => {
+  try {
+    return JSON.parse(localStorage.getItem(LEARNING_CATEGORIES_STORAGE_KEY) || '[]');
+  } catch {
+    return [];
+  }
+};
+
+const loadLearningCourses = (): any[] => {
+  try {
+    return JSON.parse(localStorage.getItem(LEARNING_COURSES_STORAGE_KEY) || '[]');
+  } catch {
+    return [];
+  }
+};
+
+const saveLearningCategories = (categories: any[]) => {
+  localStorage.setItem(LEARNING_CATEGORIES_STORAGE_KEY, JSON.stringify(categories));
+  window.dispatchEvent(new CustomEvent('learning-data-updated'));
+};
+
+const saveLearningCourses = (courses: any[]) => {
+  localStorage.setItem(LEARNING_COURSES_STORAGE_KEY, JSON.stringify(courses));
+  window.dispatchEvent(new CustomEvent('learning-data-updated'));
+};
+
+const summarizeLearningCourse = (course: any, categories: any[]) => ({
+  id: course.id,
+  title: course.title,
+  description: course.description || null,
+  categoryId: course.categoryId,
+  categoryName: categories.find((cat: any) => cat.id === course.categoryId)?.name || course.categoryId,
+  moduleCount: (course.modules || []).length,
+  lectureCount: (course.modules || []).reduce((n: number, m: any) => n + (m.lectures || []).length, 0),
+  assignmentModuleCount: (course.assignmentModules || []).length,
+  assignmentCount: (course.assignmentModules || []).reduce((n: number, m: any) => n + (m.items || []).length, 0),
+  personalModuleCount: (course.personalModules || []).length,
+  personalItemCount: (course.personalModules || []).reduce((n: number, m: any) => n + (m.items || []).length, 0),
+  customSectionCount: (course.customSections || []).length,
+  priority: course.priority ?? 10,
+});
+
+const getLearningCourse = (courses: any[], args: Record<string, any>) => {
+  const id = typeof args.courseId === 'string' ? args.courseId.trim() : '';
+  const title = typeof args.courseTitle === 'string' ? args.courseTitle.trim() : '';
+  return (id ? courses.find((course: any) => course.id === id) : undefined)
+    || (title ? courses.find((course: any) => course.title === title) : undefined);
+};
+
+const getLearningSectionModules = (course: any, section: LearningSection, customSectionId?: string) => {
+  if (section === 'resources') {
+    course.modules = Array.isArray(course.modules) ? course.modules : [];
+    return course.modules;
+  }
+  if (section === 'assignments') {
+    course.assignmentModules = Array.isArray(course.assignmentModules) ? course.assignmentModules : [];
+    return course.assignmentModules;
+  }
+  if (section === 'personal') {
+    course.personalModules = Array.isArray(course.personalModules) ? course.personalModules : [];
+    return course.personalModules;
+  }
+  course.customSections = Array.isArray(course.customSections) ? course.customSections : [];
+  const customSection = course.customSections.find((item: any) => item.id === customSectionId);
+  if (!customSection) return null;
+  customSection.modules = Array.isArray(customSection.modules) ? customSection.modules : [];
+  return customSection.modules;
+};
+
+const normalizeLearningSection = (value: unknown): LearningSection => {
+  const section = String(value || 'resources');
+  if (['resources', 'assignments', 'personal', 'custom'].includes(section)) return section as LearningSection;
+  return 'resources';
+};
 
 export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
   {
@@ -369,19 +449,436 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
         return {
           success: true,
           categories: cats.map((c: any) => ({ id: c.id, name: c.name })),
-          courses: courses.map((c: any) => ({
-            id: c.id,
-            title: c.title,
-            description: c.description || null,
-            categoryId: c.categoryId,
-            categoryName: cats.find((cat: any) => cat.id === c.categoryId)?.name || c.categoryId,
-            moduleCount: (c.modules || []).length,
-            lectureCount: (c.modules || []).reduce((n: number, m: any) => n + (m.lectures || []).length, 0),
-            assignmentModuleCount: (c.assignmentModules || []).length,
-            personalModuleCount: (c.personalModules || []).length,
-            customSectionCount: (c.customSections || []).length,
-          })),
+          courses: courses.map((c: any) => summarizeLearningCourse(c, cats)),
         };
+      },
+    },
+  {
+      name: 'create_learning_category',
+      module: 'learning',
+      tool: {
+        name: 'create_learning_category',
+        description: '创建学习空间课程分类。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            icon: { type: 'string', description: 'Lucide 图标名，默认 BookOpen。' },
+            color: { type: 'string', description: '颜色键，默认 blue。' },
+            priority: { type: 'number' },
+          },
+          required: ['name'],
+        },
+      },
+      execute: async (args) => {
+        const name = String(args.name || '').trim();
+        if (!name) return { success: false, error: '分类名称不能为空。' };
+        const categories = loadLearningCategories();
+        if (categories.some((category: any) => category.name === name)) {
+          return { success: false, error: `学习分类「${name}」已存在。` };
+        }
+        const category = {
+          id: agentLearningId('cat'),
+          name,
+          icon: typeof args.icon === 'string' && args.icon.trim() ? args.icon.trim() : 'BookOpen',
+          color: typeof args.color === 'string' && args.color.trim() ? args.color.trim() : 'blue',
+          priority: typeof args.priority === 'number' ? args.priority : categories.length + 1,
+        };
+        saveLearningCategories([...categories, category]);
+        return { success: true, message: `学习分类「${name}」已创建`, category };
+      },
+    },
+  {
+      name: 'update_learning_category',
+      module: 'learning',
+      tool: {
+        name: 'update_learning_category',
+        description: '修改学习空间课程分类。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            icon: { type: 'string' },
+            color: { type: 'string' },
+            priority: { type: 'number' },
+          },
+          required: ['id'],
+        },
+      },
+      execute: async (args) => {
+        const id = String(args.id || '').trim();
+        const categories = loadLearningCategories();
+        const category = categories.find((item: any) => item.id === id);
+        if (!category) return { success: false, error: `未找到学习分类「${id}」。` };
+        const updates: Record<string, any> = {};
+        for (const field of ['name', 'icon', 'color']) {
+          if (typeof args[field] === 'string') updates[field] = args[field].trim();
+        }
+        if (typeof args.priority === 'number') updates.priority = args.priority;
+        saveLearningCategories(categories.map((item: any) => item.id === id ? { ...item, ...updates } : item));
+        return { success: true, message: `学习分类「${category.name}」已更新`, updated: { id, ...updates } };
+      },
+    },
+  {
+      name: 'delete_learning_category',
+      module: 'learning',
+      tool: {
+        name: 'delete_learning_category',
+        description: '删除学习空间课程分类。若该分类下有课程，需要提供 fallbackCategoryId 迁移课程。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            fallbackCategoryId: { type: 'string', description: '迁移课程到这个分类。' },
+          },
+          required: ['id'],
+        },
+      },
+      execute: async (args) => {
+        const id = String(args.id || '').trim();
+        const categories = loadLearningCategories();
+        const category = categories.find((item: any) => item.id === id);
+        if (!category) return { success: false, error: `未找到学习分类「${id}」。` };
+        const courses = loadLearningCourses();
+        const affected = courses.filter((course: any) => course.categoryId === id);
+        const fallbackCategoryId = typeof args.fallbackCategoryId === 'string' ? args.fallbackCategoryId.trim() : '';
+        if (affected.length > 0) {
+          if (!fallbackCategoryId || !categories.some((item: any) => item.id === fallbackCategoryId && item.id !== id)) {
+            return { success: false, error: `分类下有 ${affected.length} 门课程，请提供有效 fallbackCategoryId 后再删除。` };
+          }
+          saveLearningCourses(courses.map((course: any) => course.categoryId === id ? { ...course, categoryId: fallbackCategoryId } : course));
+        }
+        saveLearningCategories(categories.filter((item: any) => item.id !== id));
+        return { success: true, message: `学习分类「${category.name}」已删除，迁移课程 ${affected.length} 门` };
+      },
+    },
+  {
+      name: 'read_learning_course',
+      module: 'learning',
+      tool: {
+        name: 'read_learning_course',
+        description: '读取一门学习课程的完整结构，包括学习模块、讲义、练习模块、个人资源和自定义分区。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            courseId: { type: 'string' },
+            courseTitle: { type: 'string' },
+          },
+        },
+      },
+      execute: async (args) => {
+        const categories = loadLearningCategories();
+        const courses = loadLearningCourses();
+        const course = getLearningCourse(courses, args);
+        if (!course) return { success: false, error: '未找到课程。请先 query_learning_courses 获取 courseId。' };
+        return { success: true, category: categories.find((cat: any) => cat.id === course.categoryId) || null, course };
+      },
+    },
+  {
+      name: 'update_learning_course',
+      module: 'learning',
+      tool: {
+        name: 'update_learning_course',
+        description: '修改学习课程的基础信息或总览 Markdown。不会覆盖模块列表，模块请用专门工具修改。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            courseId: { type: 'string' },
+            courseTitle: { type: 'string' },
+            title: { type: 'string' },
+            description: { type: 'string' },
+            categoryId: { type: 'string' },
+            introMarkdown: { type: 'string' },
+            icon: { type: 'string' },
+            priority: { type: 'number' },
+          },
+        },
+      },
+      execute: async (args) => {
+        const categories = loadLearningCategories();
+        const courses = loadLearningCourses();
+        const course = getLearningCourse(courses, args);
+        if (!course) return { success: false, error: '未找到课程。' };
+        const updates: Record<string, any> = {};
+        for (const field of ['title', 'description', 'introMarkdown', 'icon']) {
+          if (typeof args[field] === 'string') updates[field] = args[field].trim();
+        }
+        if (typeof args.categoryId === 'string' && args.categoryId.trim()) {
+          const categoryId = args.categoryId.trim();
+          if (!categories.some((category: any) => category.id === categoryId)) {
+            return { success: false, error: `分类 ID「${categoryId}」不存在。` };
+          }
+          updates.categoryId = categoryId;
+        }
+        if (typeof args.priority === 'number') updates.priority = args.priority;
+        saveLearningCourses(courses.map((item: any) => item.id === course.id ? { ...item, ...updates } : item));
+        return { success: true, message: `课程「${course.title}」已更新`, updated: { id: course.id, ...updates } };
+      },
+    },
+  {
+      name: 'delete_learning_course',
+      module: 'learning',
+      tool: {
+        name: 'delete_learning_course',
+        description: '删除一门学习课程。需要先 query_learning_courses 获取 courseId。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            courseId: { type: 'string' },
+            courseTitle: { type: 'string' },
+          },
+        },
+      },
+      execute: async (args) => {
+        const courses = loadLearningCourses();
+        const course = getLearningCourse(courses, args);
+        if (!course) return { success: false, error: '未找到课程。' };
+        saveLearningCourses(courses.filter((item: any) => item.id !== course.id));
+        return { success: true, message: `课程「${course.title}」已删除` };
+      },
+    },
+  {
+      name: 'create_learning_module',
+      module: 'learning',
+      tool: {
+        name: 'create_learning_module',
+        description: '在课程中创建模块。section=resources 表示学习讲义模块，assignments 表示练习模块，personal 表示个人资源模块，custom 表示自定义分区模块。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            courseId: { type: 'string' },
+            section: { type: 'string', enum: ['resources', 'assignments', 'personal', 'custom'] },
+            customSectionId: { type: 'string' },
+            title: { type: 'string' },
+            description: { type: 'string' },
+          },
+          required: ['courseId', 'title'],
+        },
+      },
+      execute: async (args) => {
+        const courses = loadLearningCourses();
+        const course = getLearningCourse(courses, args);
+        if (!course) return { success: false, error: '未找到课程。' };
+        const section = normalizeLearningSection(args.section);
+        const modules = getLearningSectionModules(course, section, typeof args.customSectionId === 'string' ? args.customSectionId : undefined);
+        if (!modules) return { success: false, error: '未找到自定义分区。' };
+        const module = {
+          id: agentLearningId('mod'),
+          title: String(args.title || '').trim(),
+          description: typeof args.description === 'string' ? args.description.trim() : '',
+          ...(section === 'resources' ? { lectures: [] } : { items: [] }),
+        };
+        if (!module.title) return { success: false, error: '模块标题不能为空。' };
+        modules.push(module);
+        saveLearningCourses(courses.map((item: any) => item.id === course.id ? course : item));
+        return { success: true, message: `课程「${course.title}」已新增模块「${module.title}」`, module };
+      },
+    },
+  {
+      name: 'update_learning_module',
+      module: 'learning',
+      tool: {
+        name: 'update_learning_module',
+        description: '修改课程模块标题或描述。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            courseId: { type: 'string' },
+            moduleId: { type: 'string' },
+            section: { type: 'string', enum: ['resources', 'assignments', 'personal', 'custom'] },
+            customSectionId: { type: 'string' },
+            title: { type: 'string' },
+            description: { type: 'string' },
+          },
+          required: ['courseId', 'moduleId'],
+        },
+      },
+      execute: async (args) => {
+        const courses = loadLearningCourses();
+        const course = getLearningCourse(courses, args);
+        if (!course) return { success: false, error: '未找到课程。' };
+        const section = normalizeLearningSection(args.section);
+        const modules = getLearningSectionModules(course, section, typeof args.customSectionId === 'string' ? args.customSectionId : undefined);
+        if (!modules) return { success: false, error: '未找到分区。' };
+        const module = modules.find((item: any) => item.id === args.moduleId);
+        if (!module) return { success: false, error: `未找到模块「${args.moduleId}」。` };
+        if (typeof args.title === 'string') module.title = args.title.trim();
+        if (typeof args.description === 'string') module.description = args.description.trim();
+        saveLearningCourses(courses.map((item: any) => item.id === course.id ? course : item));
+        return { success: true, message: `模块「${module.title}」已更新`, module };
+      },
+    },
+  {
+      name: 'delete_learning_module',
+      module: 'learning',
+      tool: {
+        name: 'delete_learning_module',
+        description: '删除课程模块及其中的讲义/条目。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            courseId: { type: 'string' },
+            moduleId: { type: 'string' },
+            section: { type: 'string', enum: ['resources', 'assignments', 'personal', 'custom'] },
+            customSectionId: { type: 'string' },
+          },
+          required: ['courseId', 'moduleId'],
+        },
+      },
+      execute: async (args) => {
+        const courses = loadLearningCourses();
+        const course = getLearningCourse(courses, args);
+        if (!course) return { success: false, error: '未找到课程。' };
+        const section = normalizeLearningSection(args.section);
+        const modules = getLearningSectionModules(course, section, typeof args.customSectionId === 'string' ? args.customSectionId : undefined);
+        if (!modules) return { success: false, error: '未找到分区。' };
+        const module = modules.find((item: any) => item.id === args.moduleId);
+        if (!module) return { success: false, error: `未找到模块「${args.moduleId}」。` };
+        const nextModules = modules.filter((item: any) => item.id !== args.moduleId);
+        modules.splice(0, modules.length, ...nextModules);
+        saveLearningCourses(courses.map((item: any) => item.id === course.id ? course : item));
+        return { success: true, message: `模块「${module.title}」已删除` };
+      },
+    },
+  {
+      name: 'create_learning_item',
+      module: 'learning',
+      tool: {
+        name: 'create_learning_item',
+        description: '在课程模块中创建讲义或资源条目。resources 分区会创建 lecture，其它分区创建 item。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            courseId: { type: 'string' },
+            moduleId: { type: 'string' },
+            section: { type: 'string', enum: ['resources', 'assignments', 'personal', 'custom'] },
+            customSectionId: { type: 'string' },
+            title: { type: 'string' },
+            link: { type: 'string', description: '练习/个人/自定义资源链接。' },
+            lecturer: { type: 'string', description: '讲义来源或讲师。' },
+            materials: { type: 'string', description: '讲义材料文件名。' },
+            date: { type: 'string' },
+            desc: { type: 'string' },
+            icon: { type: 'string' },
+          },
+          required: ['courseId', 'moduleId', 'title'],
+        },
+      },
+      execute: async (args) => {
+        const courses = loadLearningCourses();
+        const course = getLearningCourse(courses, args);
+        if (!course) return { success: false, error: '未找到课程。' };
+        const section = normalizeLearningSection(args.section);
+        const modules = getLearningSectionModules(course, section, typeof args.customSectionId === 'string' ? args.customSectionId : undefined);
+        const module = modules?.find((item: any) => item.id === args.moduleId);
+        if (!module) return { success: false, error: `未找到模块「${args.moduleId}」。` };
+        const title = String(args.title || '').trim();
+        if (!title) return { success: false, error: '条目标题不能为空。' };
+        const item = section === 'resources'
+          ? {
+              id: agentLearningId('lec'),
+              title,
+              lecturer: typeof args.lecturer === 'string' ? args.lecturer.trim() : '',
+              materials: typeof args.materials === 'string' ? args.materials.trim() : '',
+              date: typeof args.date === 'string' ? args.date.trim() : '',
+              desc: typeof args.desc === 'string' ? args.desc.trim() : '',
+              icon: typeof args.icon === 'string' ? args.icon.trim() : undefined,
+            }
+          : {
+              id: agentLearningId('item'),
+              title,
+              link: typeof args.link === 'string' ? args.link.trim() : '',
+              icon: typeof args.icon === 'string' ? args.icon.trim() : undefined,
+            };
+        if (section === 'resources') {
+          module.lectures = Array.isArray(module.lectures) ? module.lectures : [];
+          module.lectures.push(item);
+        } else {
+          module.items = Array.isArray(module.items) ? module.items : [];
+          module.items.push(item);
+        }
+        saveLearningCourses(courses.map((entry: any) => entry.id === course.id ? course : entry));
+        return { success: true, message: `课程「${course.title}」已新增条目「${title}」`, item };
+      },
+    },
+  {
+      name: 'update_learning_item',
+      module: 'learning',
+      tool: {
+        name: 'update_learning_item',
+        description: '修改课程模块中的讲义或资源条目。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            courseId: { type: 'string' },
+            moduleId: { type: 'string' },
+            itemId: { type: 'string' },
+            section: { type: 'string', enum: ['resources', 'assignments', 'personal', 'custom'] },
+            customSectionId: { type: 'string' },
+            title: { type: 'string' },
+            link: { type: 'string' },
+            lecturer: { type: 'string' },
+            materials: { type: 'string' },
+            date: { type: 'string' },
+            desc: { type: 'string' },
+            icon: { type: 'string' },
+          },
+          required: ['courseId', 'moduleId', 'itemId'],
+        },
+      },
+      execute: async (args) => {
+        const courses = loadLearningCourses();
+        const course = getLearningCourse(courses, args);
+        if (!course) return { success: false, error: '未找到课程。' };
+        const section = normalizeLearningSection(args.section);
+        const modules = getLearningSectionModules(course, section, typeof args.customSectionId === 'string' ? args.customSectionId : undefined);
+        const module = modules?.find((entry: any) => entry.id === args.moduleId);
+        if (!module) return { success: false, error: `未找到模块「${args.moduleId}」。` };
+        const collectionKey = section === 'resources' ? 'lectures' : 'items';
+        module[collectionKey] = Array.isArray(module[collectionKey]) ? module[collectionKey] : [];
+        const item = module[collectionKey].find((entry: any) => entry.id === args.itemId);
+        if (!item) return { success: false, error: `未找到条目「${args.itemId}」。` };
+        for (const field of ['title', 'link', 'lecturer', 'materials', 'date', 'desc', 'icon']) {
+          if (typeof args[field] === 'string') item[field] = args[field].trim();
+        }
+        saveLearningCourses(courses.map((entry: any) => entry.id === course.id ? course : entry));
+        return { success: true, message: `条目「${item.title}」已更新`, item };
+      },
+    },
+  {
+      name: 'delete_learning_item',
+      module: 'learning',
+      tool: {
+        name: 'delete_learning_item',
+        description: '删除课程模块中的讲义或资源条目。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            courseId: { type: 'string' },
+            moduleId: { type: 'string' },
+            itemId: { type: 'string' },
+            section: { type: 'string', enum: ['resources', 'assignments', 'personal', 'custom'] },
+            customSectionId: { type: 'string' },
+          },
+          required: ['courseId', 'moduleId', 'itemId'],
+        },
+      },
+      execute: async (args) => {
+        const courses = loadLearningCourses();
+        const course = getLearningCourse(courses, args);
+        if (!course) return { success: false, error: '未找到课程。' };
+        const section = normalizeLearningSection(args.section);
+        const modules = getLearningSectionModules(course, section, typeof args.customSectionId === 'string' ? args.customSectionId : undefined);
+        const module = modules?.find((entry: any) => entry.id === args.moduleId);
+        if (!module) return { success: false, error: `未找到模块「${args.moduleId}」。` };
+        const collectionKey = section === 'resources' ? 'lectures' : 'items';
+        module[collectionKey] = Array.isArray(module[collectionKey]) ? module[collectionKey] : [];
+        const item = module[collectionKey].find((entry: any) => entry.id === args.itemId);
+        if (!item) return { success: false, error: `未找到条目「${args.itemId}」。` };
+        module[collectionKey] = module[collectionKey].filter((entry: any) => entry.id !== args.itemId);
+        saveLearningCourses(courses.map((entry: any) => entry.id === course.id ? course : entry));
+        return { success: true, message: `条目「${item.title}」已删除` };
       },
     },
 ];

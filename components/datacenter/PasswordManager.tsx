@@ -804,6 +804,15 @@ export const PasswordManager: React.FC = () => {
     });
   }, [migrateEncryptedData, loadTags, loadEntries]);
 
+  useEffect(() => {
+    const handler = () => {
+      loadTags();
+      loadEntries();
+    };
+    window.addEventListener('guyue-password-manager-updated', handler);
+    return () => window.removeEventListener('guyue-password-manager-updated', handler);
+  }, [loadTags, loadEntries]);
+
   const handleSave = useCallback((data: { url: string; shortName: string; account: string; password: string; note: string; tag: string }) => {
     const now = Date.now();
     let newEntries: PasswordEntry[];

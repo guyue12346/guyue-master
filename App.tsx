@@ -14,6 +14,7 @@ import {
   loadUnifiedJson,
   saveLocalStorageMirror,
 } from './utils/unifiedStorage';
+import { moduleManifestToModuleConfig, normalizePluginManifest } from './services/modules';
 
 // Lazy load components to improve initial load performance
 const NoteList = React.lazy(() => import('./components/NoteList').then(m => ({ default: m.NoteList })));
@@ -31,6 +32,7 @@ const SpaceManager = React.lazy(() => import('./components/SpaceManager').then(m
 const PracticeManager = React.lazy(() => import('./components/PracticeManager').then(m => ({ default: m.PracticeManager })));
 const ImageHosting = React.lazy(() => import('./components/ImageHosting').then(m => ({ default: m.ImageHosting })));
 const PluginContainer = React.lazy(() => import('./components/PluginContainer').then(m => ({ default: m.PluginContainer })));
+const PluginRuntimeHost = React.lazy(() => import('./components/PluginRuntimeHost').then(m => ({ default: m.PluginRuntimeHost })));
 const HeatmapContainer = React.lazy(() => import('./components/HeatmapContainer').then(m => ({ default: m.HeatmapContainer })));
 const DataCenterManager = React.lazy(() => import('./components/datacenter/DataCenterManager').then(m => ({ default: m.DataCenterManager })));
 const GitManager = React.lazy(() => import('./components/GitManager').then(m => ({ default: m.GitManager })));
@@ -86,6 +88,7 @@ const STORAGE_KEY_MUSIC_PLAYLISTS = 'guyue_music_playlists_v1';
 const STORAGE_KEY_APP_MODE = 'guyue_app_mode';
 const STORAGE_KEY_TODO_SUBMODE = 'guyue_todo_submode';
 const STORAGE_KEY_MODE_SNAPSHOTS = 'guyue_mode_snapshots';
+const STORAGE_KEY_MODULE_SIDEBARS = 'guyue_module_sidebar_visibility_v1';
 
 const normalizeAppTheme = (theme: string | null | undefined) => {
   if (theme === 'minimal') return 'pure';
@@ -112,6 +115,53 @@ const REMOVED_LEGACY_MODULE_NAMES = new Set(['AI对话']);
 const isRemovedLegacyModule = (moduleLike: { id?: string; name?: string }) =>
   REMOVED_LEGACY_MODULE_IDS.has(moduleLike.id || '') ||
   REMOVED_LEGACY_MODULE_NAMES.has(moduleLike.name || '');
+
+const PLUGIN_REGISTRY_UPDATED_EVENT = 'guyue:plugins-updated';
+
+const pluginToModuleConfig = (plugin: PluginMetadata): ModuleConfig => {
+  try {
+    const manifest = normalizePluginManifest(plugin, {
+      dirPath: plugin.dirPath,
+      entryPath: plugin.entryPath,
+    });
+    return moduleManifestToModuleConfig(manifest);
+  } catch {
+    return {
+      id: plugin.id,
+      name: plugin.name,
+      icon: plugin.icon || 'Package',
+      enabled: true,
+      priority: 50,
+      isPlugin: true,
+      pluginPath: plugin.entryPath,
+    };
+  }
+};
+
+const mergePluginModules = (prevConfig: ModuleConfig[], loadedPlugins: PluginMetadata[]): ModuleConfig[] => {
+  const pluginModules = loadedPlugins.map(pluginToModuleConfig);
+  const activePluginIds = new Set(pluginModules.map(module => module.id));
+  const nextConfig = prevConfig.filter(module => !module.isPlugin || activePluginIds.has(module.id));
+
+  pluginModules.forEach(pluginModule => {
+    const existingIndex = nextConfig.findIndex(module => module.id === pluginModule.id);
+    if (existingIndex === -1) {
+      nextConfig.push(pluginModule);
+      return;
+    }
+
+    const existing = nextConfig[existingIndex];
+    nextConfig[existingIndex] = {
+      ...pluginModule,
+      ...existing,
+      name: pluginModule.name,
+      pluginPath: pluginModule.pluginPath,
+      isPlugin: true,
+    };
+  });
+
+  return nextConfig;
+};
 
 const DEFAULT_SPLASH_QUOTES = [
   '有善始者实繁，能克终者盖寡',
@@ -262,6 +312,24 @@ function recoverNonEmptyArray<T>(current: T[] | null | undefined, candidates: Ar
     .filter((candidate): candidate is T[] => Array.isArray(candidate) && candidate.length > 0)
     .sort((a, b) => b.length - a.length);
   return nonEmptyCandidates[0] || (Array.isArray(current) ? current : []);
+}
+
+const isWelcomeNoteOnly = (notes: any) =>
+  Array.isArray(notes) &&
+  notes.length === 1 &&
+  typeof notes[0]?.content === 'string' &&
+  notes[0].content.includes('欢迎使用 NoteMaster');
+
+function recoverNotes(current: Note[] | null | undefined, candidates: Array<Note[] | null | undefined>) {
+  const currentNotes = Array.isArray(current) ? current : [];
+  const nonEmptyCandidates = candidates
+    .filter((candidate): candidate is Note[] => Array.isArray(candidate) && candidate.length > 0)
+    .sort((a, b) => b.length - a.length);
+  const bestCandidate = nonEmptyCandidates[0];
+  if (!bestCandidate) return currentNotes;
+  if (currentNotes.length === 0) return bestCandidate;
+  if (isWelcomeNoteOnly(currentNotes) && bestCandidate.length > currentNotes.length) return bestCandidate;
+  return currentNotes;
 }
 
 const App: React.FC = () => {
@@ -421,7 +489,24 @@ const App: React.FC = () => {
     return localStorage.getItem('linkmaster_browser_start_page') || 'https://www.bing.com';
   });
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+  const [moduleSidebarVisibility, setModuleSidebarVisibility] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_MODULE_SIDEBARS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return {};
+  });
   const [appTheme, setAppTheme] = useState(() => normalizeAppTheme(localStorage.getItem('guyue_sidebar_theme')));
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_MODULE_SIDEBARS, JSON.stringify(moduleSidebarVisibility));
+  }, [moduleSidebarVisibility]);
+  const isModuleSidebarVisible = useCallback((key: string) => moduleSidebarVisibility[key] !== false, [moduleSidebarVisibility]);
+  const setModuleSidebarVisible = useCallback((key: string, visible: boolean) => {
+    setModuleSidebarVisibility(prev => prev[key] === visible ? prev : { ...prev, [key]: visible });
+  }, []);
   useEffect(() => {
     const h = () => {
       const normalizedTheme = normalizeAppTheme(localStorage.getItem('guyue_sidebar_theme'));
@@ -445,6 +530,7 @@ const App: React.FC = () => {
   const [hasDataCenterMounted, setHasDataCenterMounted] = useState(false);
   const [hasGitMounted, setHasGitMounted] = useState(false);
   const [hasQuestionBankMounted, setHasQuestionBankMounted] = useState(false);
+  const [hasAgentMounted, setHasAgentMounted] = useState(false);
   const [hasMusicMounted, setHasMusicMounted] = useState(false);
   const [hasRagMounted, setHasRagMounted] = useState(false);
   const [hasKbMounted, setHasKbMounted] = useState(false);
@@ -487,6 +573,9 @@ const App: React.FC = () => {
     if (appMode === 'question-bank' && !hasQuestionBankMounted) {
       setHasQuestionBankMounted(true);
     }
+    if (appMode === 'agent' && !hasAgentMounted) {
+      setHasAgentMounted(true);
+    }
     if (appMode === 'music' && !hasMusicMounted) {
       setHasMusicMounted(true);
     }
@@ -499,7 +588,7 @@ const App: React.FC = () => {
     if (appMode === 'workflow' && !hasWorkflowMounted) {
       setHasWorkflowMounted(true);
     }
-  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasPracticeMounted, hasSpacesMounted, hasExcalidrawMounted, hasDataCenterMounted, hasGitMounted, hasQuestionBankMounted, hasMusicMounted, hasRagMounted, hasKbMounted, hasWorkflowMounted]);
+  }, [appMode, hasTerminalMounted, hasBrowserMounted, hasPracticeMounted, hasSpacesMounted, hasExcalidrawMounted, hasDataCenterMounted, hasGitMounted, hasQuestionBankMounted, hasAgentMounted, hasMusicMounted, hasRagMounted, hasKbMounted, hasWorkflowMounted]);
 
   // Persist appMode & todoSubMode to localStorage
   useEffect(() => {
@@ -1026,7 +1115,12 @@ const App: React.FC = () => {
           defaultValue: null,
           recover: storageRescueEnabled ? recoverCategoriesMap : undefined,
         },
-        { key: STORAGE_KEY_NOTES, setter: setNotes, defaultValue: [{id: '1', content: '欢迎使用 NoteMaster！\n在这里记录你的灵感。', color: 'bg-yellow-100', createdAt: Date.now()}]},
+        {
+          key: STORAGE_KEY_NOTES,
+          setter: setNotes,
+          defaultValue: [{id: '1', content: '欢迎使用 NoteMaster！\n在这里记录你的灵感。', color: 'bg-yellow-100', createdAt: Date.now()}],
+          recover: recoverNotes,
+        },
         {
           key: STORAGE_KEY_SSH,
           setter: setSSHRecords,
@@ -1423,28 +1517,7 @@ const App: React.FC = () => {
         window.electronAPI.getPlugins().then(loadedPlugins => {
           setPlugins(loadedPlugins);
 
-          setModuleConfig(prevConfig => {
-            const pluginModules: ModuleConfig[] = loadedPlugins.map(p => ({
-              id: p.id,
-              name: p.name,
-              icon: 'Package',
-              enabled: true,
-              priority: 50,
-              isPlugin: true,
-              pluginPath: p.entryPath
-            }));
-
-            const newConfig = [...prevConfig];
-            pluginModules.forEach(pm => {
-              const existingIndex = newConfig.findIndex(m => m.id === pm.id);
-              if (existingIndex === -1) {
-                newConfig.push(pm);
-              } else {
-                newConfig[existingIndex] = { ...newConfig[existingIndex], pluginPath: pm.pluginPath, isPlugin: true };
-              }
-            });
-            return newConfig;
-          });
+          setModuleConfig(prevConfig => mergePluginModules(prevConfig, loadedPlugins));
 
           setIsAppReady(true);
         });
@@ -1535,29 +1608,7 @@ const App: React.FC = () => {
       window.electronAPI.getPlugins().then(loadedPlugins => {
         setPlugins(loadedPlugins);
 
-        setModuleConfig(prevConfig => {
-          const pluginModules: ModuleConfig[] = loadedPlugins.map(p => ({
-            id: p.id,
-            name: p.name,
-            icon: 'Package',
-            enabled: true,
-            priority: 50,
-            isPlugin: true,
-            pluginPath: p.entryPath
-          }));
-
-          const newConfig = [...prevConfig];
-          pluginModules.forEach(pm => {
-            const existingIndex = newConfig.findIndex(m => m.id === pm.id);
-            if (existingIndex === -1) {
-              newConfig.push(pm);
-            } else {
-               // Update path if needed, keep user settings
-               newConfig[existingIndex] = { ...newConfig[existingIndex], pluginPath: pm.pluginPath, isPlugin: true };
-            }
-          });
-          return newConfig;
-        });
+        setModuleConfig(prevConfig => mergePluginModules(prevConfig, loadedPlugins));
 
         // All data loaded, mark app as ready
         setIsAppReady(true);
@@ -1724,6 +1775,28 @@ const App: React.FC = () => {
     };
     window.addEventListener('guyue:image-record-added', handleImageRecordAdded);
     return () => window.removeEventListener('guyue:image-record-added', handleImageRecordAdded);
+  }, []);
+
+  useEffect(() => {
+    const handlePluginsUpdated = (event: Event) => {
+      const nextPlugins = (event as CustomEvent<{ plugins?: PluginMetadata[] }>).detail?.plugins;
+      if (!Array.isArray(nextPlugins)) return;
+      setPlugins(nextPlugins);
+      setModuleConfig(prevConfig => mergePluginModules(prevConfig, nextPlugins));
+    };
+    window.addEventListener(PLUGIN_REGISTRY_UPDATED_EVENT, handlePluginsUpdated);
+    return () => window.removeEventListener(PLUGIN_REGISTRY_UPDATED_EVENT, handlePluginsUpdated);
+  }, []);
+
+  useEffect(() => {
+    const handleImageRecordsUpdated = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (Array.isArray(detail?.records)) {
+        setImageRecords(detail.records);
+      }
+    };
+    window.addEventListener('guyue:image-records-updated', handleImageRecordsUpdated);
+    return () => window.removeEventListener('guyue:image-records-updated', handleImageRecordsUpdated);
   }, []);
 
   useEffect(() => {
@@ -2678,6 +2751,36 @@ const App: React.FC = () => {
     }
   };
 
+  const renderCollapsibleModuleSidebar = (key: string, content: React.ReactNode, label = '分类栏') => {
+    if (!isModuleSidebarVisible(key)) {
+      return (
+        <button
+          key={`${key}-collapsed`}
+          onClick={() => setModuleSidebarVisible(key, true)}
+          className="h-full w-5 shrink-0 flex items-center justify-center border-r transition-colors group"
+          style={{ borderColor: 'var(--t-border)', background: 'var(--t-bg-secondary)' }}
+          title={`展开${label}`}
+        >
+          <span className="w-0.5 h-8 rounded-full transition-colors bg-gray-300 group-hover:bg-gray-500" />
+        </button>
+      );
+    }
+
+    return (
+      <div key={`${key}-expanded`} className="relative h-full shrink-0">
+        {content}
+        <button
+          onClick={() => setModuleSidebarVisible(key, false)}
+          className="absolute -right-3 top-5 z-40 h-7 w-7 flex items-center justify-center rounded-full border shadow-sm transition-colors"
+          style={{ borderColor: 'var(--t-border)', background: 'var(--t-bg-card)', color: 'var(--t-text-muted)' }}
+          title={`隐藏${label}`}
+        >
+          <ChevronRight className="w-3.5 h-3.5 rotate-180" />
+        </button>
+      </div>
+    );
+  };
+
   return (
     <>
       {showSplash ? (
@@ -2701,60 +2804,66 @@ const App: React.FC = () => {
           )}
 
       {appMode === 'markdown' && !isMarkdownFullscreen ? (
-        <Suspense fallback={<div className="w-64 bg-gray-50 border-r border-gray-200" />}>
-          <MarkdownSidebar
-            notes={filteredMarkdownNotes}
-            categories={categoriesMap[appMode] || DEFAULT_CATEGORIES}
-            selectedNoteId={activeTipId}
-            onSelectNote={setActiveTipId}
-            onAddNote={handleAddMarkdownNote}
-            onDeleteNote={handleDeleteMarkdownNote}
-          />
-        </Suspense>
-      ) : appMode === 'files' ? (
-        !isRendererFullscreen && (
+        renderCollapsibleModuleSidebar('markdown', (
           <Suspense fallback={<div className="w-64 bg-gray-50 border-r border-gray-200" />}>
-            <ArchiveSidebar
-              archives={filteredFileRecords}
+            <MarkdownSidebar
+              notes={filteredMarkdownNotes}
               categories={categoriesMap[appMode] || DEFAULT_CATEGORIES}
-              activeFileId={activeRenderFileId}
-              onOpen={(file) => {
-              setActiveRenderFileId(file.id);
-              setIsEditingFile(false);
-            }}
-              onCreateFolder={() => {
-                setInitialCategoryEditId(null);
-                setIsCategoryManagerOpen(true);
-              }}
-              onUploadFile={() => {
-                setEditingFile(null);
-                setFileModalMode('file');
-                setIsFileModalOpen(true);
-              }}
-              onCreateNote={() => {
-                setEditingFile(null);
-                setFileModalMode('note');
-                setIsFileModalOpen(true);
-              }}
-              onDelete={(id) => handleDeleteFile(id)}
-              onEdit={(file) => {
-                setEditingFile(file);
-                setFileModalMode('file');
-                setIsFileModalOpen(true);
-              }}
-              onEditCategory={handleEditCategory}
-              onDeleteCategory={handleDeleteCategory}
-              onImportFromVault={handleImportFromVault}
-              onHelp={() => setIsHelpOpen(true)}
+              selectedNoteId={activeTipId}
+              onSelectNote={setActiveTipId}
+              onAddNote={handleAddMarkdownNote}
+              onDeleteNote={handleDeleteMarkdownNote}
             />
           </Suspense>
+        ), 'Markdown 分类栏')
+      ) : appMode === 'files' ? (
+        !isRendererFullscreen && (
+          renderCollapsibleModuleSidebar('files', (
+            <Suspense fallback={<div className="w-64 bg-gray-50 border-r border-gray-200" />}>
+              <ArchiveSidebar
+                archives={filteredFileRecords}
+                categories={categoriesMap[appMode] || DEFAULT_CATEGORIES}
+                activeFileId={activeRenderFileId}
+                onOpen={(file) => {
+                setActiveRenderFileId(file.id);
+                setIsEditingFile(false);
+              }}
+                onCreateFolder={() => {
+                  setInitialCategoryEditId(null);
+                  setIsCategoryManagerOpen(true);
+                }}
+                onUploadFile={() => {
+                  setEditingFile(null);
+                  setFileModalMode('file');
+                  setIsFileModalOpen(true);
+                }}
+                onCreateNote={() => {
+                  setEditingFile(null);
+                  setFileModalMode('note');
+                  setIsFileModalOpen(true);
+                }}
+                onDelete={(id) => handleDeleteFile(id)}
+                onEdit={(file) => {
+                  setEditingFile(file);
+                  setFileModalMode('file');
+                  setIsFileModalOpen(true);
+                }}
+                onEditCategory={handleEditCategory}
+                onDeleteCategory={handleDeleteCategory}
+                onImportFromVault={handleImportFromVault}
+                onHelp={() => setIsHelpOpen(true)}
+              />
+            </Suspense>
+          ), '文件分类栏')
         )
       ) : appMode === 'todo' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible ? (
-        <TodoSidebar
-          subMode={todoSubMode}
-          onSubModeChange={setTodoSubMode}
-          recurringCount={recurringEvents.filter(e => e.isActive).length}
-        />
+        renderCollapsibleModuleSidebar('todo', (
+          <TodoSidebar
+            subMode={todoSubMode}
+            onSubModeChange={setTodoSubMode}
+            recurringCount={recurringEvents.filter(e => e.isActive).length}
+          />
+        ), '待办导航栏')
       ) : appMode === 'latex' && !isRendererFullscreen && !isTerminalFullscreen && !isLatexFullscreen && isLatexSidebarVisible ? (
         <Suspense fallback={<div className="w-60 bg-[#F5F5F5] border-r border-gray-200 shrink-0" />}>
           <LatexSidebar
@@ -2772,39 +2881,46 @@ const App: React.FC = () => {
           />
         </Suspense>
       ) : appMode === 'music' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible ? (
-        <Suspense fallback={<div className="w-60 bg-[#F5F5F5] border-r border-gray-200 shrink-0" />}>
-          <MusicSidebar
-            playlists={musicPlaylists}
-            tracks={musicTracks}
-            selectedPlaylist={selectedMusicPlaylist}
-            onSelectPlaylist={setSelectedMusicPlaylist}
-            onCreatePlaylist={handleMusicCreatePlaylist}
-            onRenamePlaylist={handleMusicRenamePlaylist}
-            onDeletePlaylist={handleMusicDeletePlaylist}
-            onUpdatePlaylist={handleMusicUpdatePlaylist}
-            onReorderPlaylist={handleMusicReorderPlaylist}
-          />
-        </Suspense>
+        renderCollapsibleModuleSidebar('music', (
+          <Suspense fallback={<div className="w-60 bg-[#F5F5F5] border-r border-gray-200 shrink-0" />}>
+            <MusicSidebar
+              playlists={musicPlaylists}
+              tracks={musicTracks}
+              selectedPlaylist={selectedMusicPlaylist}
+              onSelectPlaylist={setSelectedMusicPlaylist}
+              onCreatePlaylist={handleMusicCreatePlaylist}
+              onRenamePlaylist={handleMusicRenamePlaylist}
+              onDeletePlaylist={handleMusicDeletePlaylist}
+              onUpdatePlaylist={handleMusicUpdatePlaylist}
+              onReorderPlaylist={handleMusicReorderPlaylist}
+            />
+          </Suspense>
+        ), '音乐分类栏')
       ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'practice' && appMode !== 'spaces' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'git' && appMode !== 'question-bank' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
-        <Sidebar 
-          appMode={appMode}  
-          categories={activeCategories} 
-          selectedCategory={selectedCategory} 
-          onSelectCategory={setSelectedCategory}
-          onOpenManager={() => setIsCategoryManagerOpen(true)}
-          totalCount={getCurrentCount()}
-          files={appMode === 'files' ? filteredFileRecords : undefined}
-          activeFileId={activeRenderFileId}
-          onSelectFile={(id) => {
-            setActiveRenderFileId(id);
-            setIsEditingFile(false);
-          }}
-        />
+        renderCollapsibleModuleSidebar(`category:${appMode}`, (
+          <Sidebar 
+            appMode={appMode}  
+            categories={activeCategories} 
+            selectedCategory={selectedCategory} 
+            onSelectCategory={setSelectedCategory}
+            onOpenManager={() => setIsCategoryManagerOpen(true)}
+            totalCount={getCurrentCount()}
+            files={appMode === 'files' ? filteredFileRecords : undefined}
+            activeFileId={activeRenderFileId}
+            onSelectFile={(id) => {
+              setActiveRenderFileId(id);
+              setIsEditingFile(false);
+            }}
+          />
+        ), '分类栏')
       ) : null}
 
-      {appMode === 'agent' && (
+      {(hasAgentMounted || appMode === 'agent') && (
+        <div className={appMode === 'agent' ? 'flex-1 min-w-0 min-h-0' : 'hidden'}>
         <Suspense fallback={<div className="flex-1 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-gray-400" /></div>}>
           <AgentPanel
+            isOpen={appMode === 'agent'}
+            onClose={() => setAppMode('todo')}
             todos={todos}
             notes={notes}
             onCreateTodo={(todoData) => {
@@ -2872,6 +2988,7 @@ const App: React.FC = () => {
                 submissions: [...prev.submissions, submission],
               }));
             }}
+            onUpdateOJHeatmapData={(data) => setOJHeatmapData(data)}
             ojHeatmapData={ojHeatmapData}
             onCreateResource={(itemData) => {
               const newItem = {
@@ -2941,6 +3058,7 @@ const App: React.FC = () => {
             onOpenSettings={() => setIsSettingsOpen(true)}
           />
         </Suspense>
+        </div>
       )}
 
       <div className={`flex-1 flex flex-col min-w-0 relative`} style={appMode === 'agent' ? { display: 'none' } : { background: 'var(--t-bg-main)' }}>
@@ -3186,6 +3304,7 @@ const App: React.FC = () => {
                 <PluginContainer 
                   entryPath={moduleConfig.find(m => m.id === appMode)?.pluginPath || ''} 
                   pluginId={appMode}
+                  pluginName={moduleConfig.find(m => m.id === appMode)?.name}
                   onOpenInBrowser={handleOpenInBrowser}
                 />
               </div>
@@ -3511,6 +3630,10 @@ const App: React.FC = () => {
         moduleName={moduleConfig.find(m => m.id === appMode)?.name}
         isPlugin={moduleConfig.find(m => m.id === appMode)?.isPlugin}
       />
+
+      <Suspense fallback={null}>
+        <PluginRuntimeHost plugins={plugins} />
+      </Suspense>
 
 
         </div>

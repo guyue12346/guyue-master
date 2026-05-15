@@ -8,7 +8,8 @@ import os from 'os';
 import nodemailer from 'nodemailer';
 import dns from 'dns';
 import { spawn, exec, execFile } from 'child_process';
-import { createSign } from 'crypto';
+import { createHash, createSign } from 'crypto';
+import { gzipSync, gunzipSync } from 'zlib';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -324,6 +325,14 @@ function ensureRelativeGitPath(repoPath: string, filePath: string): string {
   return relative;
 }
 
+function ensureSafeGitRef(value: string, label = 'Git 引用'): string {
+  const ref = String(value || '').trim();
+  if (!ref || ref.includes('\0') || ref.startsWith('-') || ref.includes('..') || /[\s~^:?*\[\\]/.test(ref)) {
+    throw new Error(`${label} 无效`);
+  }
+  return ref;
+}
+
 function parseStatusBranch(line: string) {
   const raw = line.slice(3).trim();
   const ahead = Number(raw.match(/ahead (\d+)/)?.[1] ?? 0);
@@ -529,6 +538,43 @@ async function getGitLog(repoPath: string, limit = 80) {
   ], root);
 
   return parseGitLog(stdout);
+}
+
+function parseBranchRows(stdout: string, remote = false) {
+  return stdout
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      const [name, upstream, shortHash, date, ...subjectParts] = line.split('\x00');
+      return {
+        name,
+        upstream: upstream || null,
+        shortHash: shortHash || null,
+        date: date || null,
+        subject: subjectParts.join('\x00') || '',
+        remote,
+      };
+    });
+}
+
+async function getGitBranches(repoPath: string) {
+  const root = await resolveGitRoot(repoPath);
+  const [{ stdout: localStdout }, { stdout: remoteStdout }] = await Promise.all([
+    runGit(['branch', '--format=%(refname:short)%00%(upstream:short)%00%(objectname:short)%00%(committerdate:iso8601)%00%(subject)'], root),
+    runGit(['branch', '-r', '--format=%(refname:short)%00%(upstream:short)%00%(objectname:short)%00%(committerdate:iso8601)%00%(subject)'], root).catch(() => ({ stdout: '', stderr: '' })),
+  ]);
+  const status = await getGitStatus(root);
+  return {
+    current: status.branch,
+    local: parseBranchRows(localStdout, false),
+    remote: parseBranchRows(remoteStdout, true).filter(branch => branch.name !== 'origin/HEAD'),
+    status,
+  };
+}
+
+async function gitOperationResult(root: string, output: string) {
+  return { output: output.trim(), status: await getGitStatus(root), log: await getGitLog(root, 80) };
 }
 
 // Codex / ChatGPT 登录窗口
@@ -1337,6 +1383,11 @@ ipcMain.handle('git-show-commit', async (_event, params: { repoPath: string; has
   return stdout;
 });
 
+ipcMain.handle('git-branches', async (_event, repoPath: string) => {
+  if (!repoPath) throw new Error('缺少仓库路径');
+  return getGitBranches(repoPath);
+});
+
 ipcMain.handle('git-stage', async (_event, params: { repoPath: string; paths: string[] }) => {
   if (!params?.repoPath || !Array.isArray(params.paths)) throw new Error('缺少暂存参数');
   const root = await resolveGitRoot(params.repoPath);
@@ -1395,6 +1446,71 @@ ipcMain.handle('git-push', async (_event, repoPath: string) => {
   const root = await resolveGitRoot(repoPath);
   const { stdout, stderr } = await runGit(['push'], root, 120000);
   return { output: `${stdout}${stderr}`.trim(), status: await getGitStatus(root), log: await getGitLog(root, 80) };
+});
+
+ipcMain.handle('git-checkout', async (_event, params: { repoPath: string; branch: string; create?: boolean; startPoint?: string }) => {
+  if (!params?.repoPath) throw new Error('缺少仓库路径');
+  const root = await resolveGitRoot(params.repoPath);
+  const branch = ensureSafeGitRef(params.branch, '分支名');
+  const args = params.create
+    ? ['checkout', '-b', branch, ...(params.startPoint ? [ensureSafeGitRef(params.startPoint, '起点引用')] : [])]
+    : ['checkout', branch];
+  const { stdout, stderr } = await runGit(args, root, 120000);
+  return gitOperationResult(root, `${stdout}${stderr}`);
+});
+
+ipcMain.handle('git-create-branch', async (_event, params: { repoPath: string; branch: string; startPoint?: string; checkout?: boolean }) => {
+  if (!params?.repoPath) throw new Error('缺少仓库路径');
+  const root = await resolveGitRoot(params.repoPath);
+  const branch = ensureSafeGitRef(params.branch, '分支名');
+  const startPoint = params.startPoint ? ensureSafeGitRef(params.startPoint, '起点引用') : undefined;
+  const args = params.checkout
+    ? ['checkout', '-b', branch, ...(startPoint ? [startPoint] : [])]
+    : ['branch', branch, ...(startPoint ? [startPoint] : [])];
+  const { stdout, stderr } = await runGit(args, root, 120000);
+  return gitOperationResult(root, `${stdout}${stderr}`);
+});
+
+ipcMain.handle('git-delete-branch', async (_event, params: { repoPath: string; branch: string; force?: boolean }) => {
+  if (!params?.repoPath) throw new Error('缺少仓库路径');
+  const root = await resolveGitRoot(params.repoPath);
+  const branch = ensureSafeGitRef(params.branch, '分支名');
+  const { stdout, stderr } = await runGit(['branch', params.force ? '-D' : '-d', branch], root, 120000);
+  return gitOperationResult(root, `${stdout}${stderr}`);
+});
+
+ipcMain.handle('git-merge', async (_event, params: { repoPath: string; branch: string; noFf?: boolean }) => {
+  if (!params?.repoPath) throw new Error('缺少仓库路径');
+  const root = await resolveGitRoot(params.repoPath);
+  const branch = ensureSafeGitRef(params.branch, '分支名');
+  const args = ['merge', ...(params.noFf ? ['--no-ff'] : []), '--no-edit', branch];
+  const { stdout, stderr } = await runGit(args, root, 120000);
+  return gitOperationResult(root, `${stdout}${stderr}`);
+});
+
+ipcMain.handle('git-stash', async (_event, params: { repoPath: string; action: 'list' | 'push' | 'pop' | 'drop'; message?: string; index?: number; includeUntracked?: boolean }) => {
+  if (!params?.repoPath) throw new Error('缺少仓库路径');
+  const root = await resolveGitRoot(params.repoPath);
+  if (params.action === 'list') {
+    const { stdout } = await runGit(['stash', 'list'], root, 60000);
+    return {
+      output: stdout.trim(),
+      stashes: stdout.split('\n').filter(Boolean).map(line => {
+        const [head, ...rest] = line.split(': ');
+        return { ref: head, message: rest.join(': ') };
+      }),
+      status: await getGitStatus(root),
+      log: await getGitLog(root, 80),
+    };
+  }
+  if (params.action === 'push') {
+    const args = ['stash', 'push', ...(params.includeUntracked ? ['-u'] : []), ...(params.message ? ['-m', params.message] : [])];
+    const { stdout, stderr } = await runGit(args, root, 120000);
+    return gitOperationResult(root, `${stdout}${stderr}`);
+  }
+  const ref = `stash@{${Math.max(0, Number(params.index) || 0)}}`;
+  const { stdout, stderr } = await runGit(['stash', params.action, ref], root, 120000);
+  return gitOperationResult(root, `${stdout}${stderr}`);
 });
 
 // IPC: 确保目录存在
@@ -2509,6 +2625,8 @@ ipcMain.handle('get-plugins', async () => {
   }
 });
 
+ipcMain.handle('get-plugin-preload-path', async () => path.join(__dirname, 'plugin-preload.js'));
+
 ipcMain.handle('install-plugin', async () => {
   if (!mainWindow) return false;
   
@@ -2708,6 +2826,241 @@ ipcMain.handle('app-data-exists', async (_, key: string) => {
   }
 });
 
+// ==================== 全量数据备份 / 转移 ====================
+type BackupLocalStorageItem = {
+  key: string;
+  value: string | null;
+};
+
+type BackupFileEntry = {
+  relativePath: string;
+  size: number;
+  mtimeMs: number;
+  sha256: string;
+  encoding: 'base64';
+  data: string;
+};
+
+type GuyueBackupBundle = {
+  format: 'guyue-master.backup';
+  formatVersion: 2;
+  createdAt: string;
+  appVersion: string;
+  platform: NodeJS.Platform;
+  localStorageItems: BackupLocalStorageItem[];
+  files: BackupFileEntry[];
+};
+
+const BACKUP_ALLOWED_ROOTS = new Set(['app-data', 'rag-indexes', 'latex', 'plugins']);
+
+function sha256Buffer(buffer: Buffer): string {
+  return createHash('sha256').update(buffer).digest('hex');
+}
+
+function safeBackupRelativePath(relativePath: string): string | null {
+  const normalized = path.normalize(relativePath).replace(/^(\.\.(\/|\\|$))+/, '');
+  if (!normalized || path.isAbsolute(normalized) || normalized.startsWith('..')) return null;
+  const topLevel = normalized.split(path.sep)[0];
+  if (!BACKUP_ALLOWED_ROOTS.has(topLevel)) return null;
+  return normalized;
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function collectBackupFiles(rootName: string): Promise<BackupFileEntry[]> {
+  const rootDir = path.join(app.getPath('userData'), rootName);
+  if (!(await pathExists(rootDir))) return [];
+
+  const entries: BackupFileEntry[] = [];
+
+  async function walk(currentDir: string) {
+    const dirEntries = await fs.readdir(currentDir, { withFileTypes: true });
+    for (const entry of dirEntries) {
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+
+      const relFromUserData = path.relative(app.getPath('userData'), fullPath);
+      const safeRelative = safeBackupRelativePath(relFromUserData);
+      if (!safeRelative) continue;
+
+      const [stat, data] = await Promise.all([fs.stat(fullPath), fs.readFile(fullPath)]);
+      entries.push({
+        relativePath: safeRelative,
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        sha256: sha256Buffer(data),
+        encoding: 'base64',
+        data: data.toString('base64'),
+      });
+    }
+  }
+
+  await walk(rootDir);
+  return entries;
+}
+
+async function copyDirectoryIfExists(sourceDir: string, targetDir: string) {
+  if (!(await pathExists(sourceDir))) return;
+  await fs.mkdir(targetDir, { recursive: true });
+  const entries = await fs.readdir(sourceDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const sourcePath = path.join(sourceDir, entry.name);
+    const targetPath = path.join(targetDir, entry.name);
+    if (entry.isDirectory()) {
+      await copyDirectoryIfExists(sourcePath, targetPath);
+    } else if (entry.isFile()) {
+      await fs.copyFile(sourcePath, targetPath);
+    }
+  }
+}
+
+async function createUserDataRestorePoint(reason: string) {
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '').replace('T', '-');
+  const restoreDir = path.join(app.getPath('userData'), `restore-point-${reason}-${stamp}`);
+  await fs.mkdir(restoreDir, { recursive: true });
+  for (const rootName of BACKUP_ALLOWED_ROOTS) {
+    await copyDirectoryIfExists(path.join(app.getPath('userData'), rootName), path.join(restoreDir, rootName));
+  }
+  return restoreDir;
+}
+
+function parseBackupBundle(payload: Buffer): GuyueBackupBundle {
+  const rawText = payload[0] === 0x1f && payload[1] === 0x8b
+    ? gunzipSync(payload).toString('utf-8')
+    : payload.toString('utf-8');
+  const parsed = JSON.parse(rawText);
+  if (!parsed || parsed.format !== 'guyue-master.backup' || parsed.formatVersion !== 2) {
+    throw new Error('备份文件格式不兼容');
+  }
+  if (!Array.isArray(parsed.files) || !Array.isArray(parsed.localStorageItems)) {
+    throw new Error('备份文件内容不完整');
+  }
+  return parsed as GuyueBackupBundle;
+}
+
+ipcMain.handle('export-app-backup', async (_, params?: { localStorageItems?: BackupLocalStorageItem[] }) => {
+  try {
+    const saveDialogOptions = {
+      title: '导出 Guyue Master 备份',
+      defaultPath: `GuyueMaster-${new Date().toISOString().slice(0, 10)}.guyuebackup`,
+      filters: [
+        { name: 'Guyue Master Backup', extensions: ['guyuebackup'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    };
+    const saveResult = mainWindow
+      ? await dialog.showSaveDialog(mainWindow, saveDialogOptions)
+      : await dialog.showSaveDialog(saveDialogOptions);
+
+    if (saveResult.canceled || !saveResult.filePath) {
+      return { success: false, canceled: true };
+    }
+
+    const files = (
+      await Promise.all(Array.from(BACKUP_ALLOWED_ROOTS).map(rootName => collectBackupFiles(rootName)))
+    ).flat();
+
+    const bundle: GuyueBackupBundle = {
+      format: 'guyue-master.backup',
+      formatVersion: 2,
+      createdAt: new Date().toISOString(),
+      appVersion: app.getVersion(),
+      platform: process.platform,
+      localStorageItems: Array.isArray(params?.localStorageItems) ? params.localStorageItems : [],
+      files,
+    };
+
+    const payload = gzipSync(Buffer.from(JSON.stringify(bundle), 'utf-8'), { level: 9 });
+    await fs.writeFile(saveResult.filePath, payload);
+
+    return {
+      success: true,
+      path: saveResult.filePath,
+      fileCount: files.length,
+      localStorageCount: bundle.localStorageItems.length,
+      size: payload.length,
+      createdAt: bundle.createdAt,
+    };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+ipcMain.handle('import-app-backup', async () => {
+  try {
+    const openDialogOptions = {
+      title: '导入 Guyue Master 备份',
+      properties: ['openFile'] as Electron.OpenDialogOptions['properties'],
+      filters: [
+        { name: 'Guyue Master Backup', extensions: ['guyuebackup', 'json'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    };
+    const openResult = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, openDialogOptions)
+      : await dialog.showOpenDialog(openDialogOptions);
+
+    if (openResult.canceled || openResult.filePaths.length === 0) {
+      return { success: false, canceled: true };
+    }
+
+    const filePath = openResult.filePaths[0];
+    const bundle = parseBackupBundle(await fs.readFile(filePath));
+    const restorePoint = await createUserDataRestorePoint('before-import');
+    const rootsToRestore = new Set<string>();
+
+    for (const entry of bundle.files) {
+      const safeRelative = safeBackupRelativePath(entry.relativePath);
+      if (!safeRelative) {
+        throw new Error(`备份中包含不允许写入的路径：${entry.relativePath}`);
+      }
+      rootsToRestore.add(safeRelative.split(path.sep)[0]);
+    }
+
+    for (const rootName of rootsToRestore) {
+      await fs.rm(path.join(app.getPath('userData'), rootName), { recursive: true, force: true });
+    }
+
+    for (const entry of bundle.files) {
+      const safeRelative = safeBackupRelativePath(entry.relativePath);
+      if (!safeRelative) {
+        throw new Error(`备份中包含不允许写入的路径：${entry.relativePath}`);
+      }
+      const data = Buffer.from(entry.data, entry.encoding);
+      const digest = sha256Buffer(data);
+      if (digest !== entry.sha256) {
+        throw new Error(`文件校验失败：${entry.relativePath}`);
+      }
+      const targetPath = path.join(app.getPath('userData'), safeRelative);
+      await fs.mkdir(path.dirname(targetPath), { recursive: true });
+      await fs.writeFile(targetPath, data);
+    }
+
+    return {
+      success: true,
+      path: filePath,
+      restorePoint,
+      fileCount: bundle.files.length,
+      localStorageItems: bundle.localStorageItems,
+      createdAt: bundle.createdAt,
+      appVersion: bundle.appVersion,
+    };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
 // ==================== 邮件发送功能 ====================
 interface EmailConfig {
   enabled: boolean;
@@ -2880,7 +3233,7 @@ ipcMain.handle('test-email-config', async (_, config: EmailConfig) => {
   }
 });
 
-type AgentSearchProvider = 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser';
+type AgentSearchProvider = 'openai-web-search' | 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser' | 'duckduckgo-browser';
 type AgentSearchMode = 'fast' | 'balanced' | 'deep';
 type AgentSpecializedSearchSource = 'github' | 'npm' | 'stackoverflow' | 'arxiv';
 
@@ -2894,6 +3247,7 @@ interface AgentWebSearchParams {
   includeAnswer?: boolean;
   includeRawContent?: boolean;
   apiKeys?: {
+    openai?: string;
     tavily?: string;
     exa?: string;
     brave?: string;
@@ -2940,7 +3294,7 @@ interface AgentWebSearchResult {
   meta?: Record<string, any>;
 }
 
-const AGENT_SEARCH_PROVIDERS = new Set<AgentSearchProvider>(['tavily', 'exa', 'brave', 'searxng', 'bing-browser']);
+const AGENT_SEARCH_PROVIDERS = new Set<AgentSearchProvider>(['openai-web-search', 'tavily', 'exa', 'brave', 'searxng', 'bing-browser', 'duckduckgo-browser']);
 const AGENT_SPECIALIZED_SEARCH_SOURCES = new Set<AgentSpecializedSearchSource>(['github', 'npm', 'stackoverflow', 'arxiv']);
 
 const normalizeAgentSearchProvider = (value: unknown, fallback: AgentSearchProvider): AgentSearchProvider =>
@@ -2962,8 +3316,22 @@ const normalizeSearchMaxResults = (value: unknown) => {
   return Math.min(Math.max(Math.floor(parsed), 3), 20);
 };
 
-const providerNeedsApiKey = (provider: AgentSearchProvider) =>
-  provider === 'tavily' || provider === 'exa' || provider === 'brave';
+const searchProviderApiKeyName = (provider: AgentSearchProvider): keyof NonNullable<AgentWebSearchParams['apiKeys']> | null => {
+  switch (provider) {
+    case 'openai-web-search':
+      return 'openai';
+    case 'tavily':
+      return 'tavily';
+    case 'exa':
+      return 'exa';
+    case 'brave':
+      return 'brave';
+    default:
+      return null;
+  }
+};
+
+const providerNeedsApiKey = (provider: AgentSearchProvider) => searchProviderApiKeyName(provider) !== null;
 
 const withDomainOperators = (query: string, includeDomains?: string[], excludeDomains?: string[]) => {
   const include = Array.isArray(includeDomains)
@@ -3013,6 +3381,131 @@ const decodeHtmlEntity = (value: string): string =>
 const stripMarkup = (value: unknown): string =>
   decodeHtmlEntity(String(value || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
 
+const normalizeSearchResultUrl = (rawUrl: string, baseUrl: string): string => {
+  const decoded = decodeHtmlEntity(rawUrl || '').trim();
+  if (!decoded || decoded.startsWith('javascript:') || decoded.startsWith('#')) return '';
+
+  try {
+    const absoluteUrl = decoded.startsWith('//')
+      ? `https:${decoded}`
+      : new URL(decoded, baseUrl).toString();
+    const parsed = new URL(absoluteUrl);
+
+    const duckDuckGoTarget = parsed.searchParams.get('uddg');
+    if (duckDuckGoTarget) {
+      try {
+        return decodeURIComponent(duckDuckGoTarget);
+      } catch {
+        return duckDuckGoTarget;
+      }
+    }
+
+    const bingTarget = parsed.searchParams.get('u');
+    if (parsed.hostname.includes('bing.com') && bingTarget) {
+      const encoded = bingTarget.startsWith('a1') ? bingTarget.slice(2) : bingTarget;
+      const target = Buffer.from(encoded, 'base64').toString('utf8');
+      if (/^https?:\/\//i.test(target)) return target;
+    }
+
+    return absoluteUrl;
+  } catch {
+    return '';
+  }
+};
+
+const tokenizeSearchQueryForQuality = (query: string): string[] => {
+  const normalized = query
+    .toLowerCase()
+    .replace(/[“”"‘’'`.,，。！？!?;；:：()[\]{}<>《》【】]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const tokens = new Set<string>();
+
+  normalized.split(' ').forEach(part => {
+    const value = part.trim();
+    if (!value) return;
+    if (/^[\u4e00-\u9fff]+$/.test(value)) {
+      if (value.length >= 2) tokens.add(value);
+      if (value.length > 4) {
+        for (let size = Math.min(4, value.length); size >= 2; size -= 1) {
+          for (let i = 0; i <= value.length - size; i += 1) {
+            tokens.add(value.slice(i, i + size));
+          }
+        }
+      }
+      return;
+    }
+    value.split(/[^a-z0-9_\-\u4e00-\u9fff]+/i).forEach(token => {
+      if (token.length >= 2) tokens.add(token);
+    });
+  });
+
+  return Array.from(tokens).filter(token => !['the', 'and', 'or', 'www', 'com', 'http', 'https'].includes(token));
+};
+
+const scoreSearchResultRelevance = (result: AgentWebSearchResult, queryTerms: string[]) => {
+  if (queryTerms.length === 0) return 1;
+  const title = `${result.title || ''}`.toLowerCase();
+  const snippet = `${result.snippet || ''}`.toLowerCase();
+  const url = `${result.url || ''}`.toLowerCase();
+  const haystack = `${title}\n${snippet}\n${url}`;
+  let score = 0;
+
+  queryTerms.forEach(term => {
+    if (!term) return;
+    if (title.includes(term)) score += 4;
+    if (snippet.includes(term)) score += 2;
+    if (url.includes(encodeURIComponent(term).toLowerCase()) || url.includes(term)) score += 1;
+    if (!haystack.includes(term)) return;
+    if (/^[\u4e00-\u9fff]{2,}$/.test(term)) {
+      score += Math.min(term.length, 4);
+    } else {
+      score += 1;
+    }
+  });
+
+  return score;
+};
+
+const ensureRelevantSearchResults = (
+  result: { directAnswer: string | null; results: AgentWebSearchResult[] },
+  params: AgentWebSearchParams,
+  provider: AgentSearchProvider,
+) => {
+  const queryTerms = tokenizeSearchQueryForQuality(params.query);
+  if (queryTerms.length === 0 || result.directAnswer) return result;
+
+  const scored = result.results
+    .map(item => ({
+      ...item,
+      score: typeof item.score === 'number' ? item.score : undefined,
+      meta: {
+        ...(item.meta || {}),
+        relevanceScore: scoreSearchResultRelevance(item, queryTerms),
+      },
+    }))
+    .filter(item => Number(item.meta?.relevanceScore || 0) > 0)
+    .sort((a, b) => Number(b.meta?.relevanceScore || 0) - Number(a.meta?.relevanceScore || 0));
+
+  const minRelevantResults = Math.min(2, normalizeSearchMaxResults(params.maxResults));
+  const bestScore = Number(scored[0]?.meta?.relevanceScore || 0);
+  if (scored.length < minRelevantResults && bestScore < 4) {
+    throw new Error(`搜索结果相关性过低，已丢弃（provider=${provider}, queryTerms=${queryTerms.slice(0, 8).join('/') || 'none'}）`);
+  }
+
+  return { ...result, results: scored };
+};
+
+const pushUniqueSearchResult = (
+  results: AgentWebSearchResult[],
+  item: AgentWebSearchResult,
+  maxResults: number,
+) => {
+  if (!item.title || !item.url || results.length >= maxResults) return;
+  if (results.some(result => result.url === item.url)) return;
+  results.push(item);
+};
+
 const getXmlTag = (xml: string, tagName: string): string => {
   const match = xml.match(new RegExp(`<${tagName}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tagName}>`, 'i'));
   return match ? stripMarkup(match[1]) : '';
@@ -3022,6 +3515,184 @@ const normalizeSpecializedSearchMaxResults = (value: unknown, fallback?: unknown
   const parsed = Number(value ?? fallback);
   if (!Number.isFinite(parsed)) return 8;
   return Math.min(Math.max(Math.floor(parsed), 3), 20);
+};
+
+const extractOpenAIResponseText = (data: any): string => {
+  if (typeof data?.output_text === 'string' && data.output_text.trim()) {
+    return data.output_text.trim();
+  }
+
+  const chunks: string[] = [];
+  const output = Array.isArray(data?.output) ? data.output : [];
+  output.forEach((item: any) => {
+    if (typeof item?.content === 'string') {
+      chunks.push(item.content);
+      return;
+    }
+    if (!Array.isArray(item?.content)) return;
+    item.content.forEach((content: any) => {
+      if (typeof content?.text === 'string') chunks.push(content.text);
+      if (typeof content?.output_text === 'string') chunks.push(content.output_text);
+      if (typeof content?.summary === 'string') chunks.push(content.summary);
+    });
+  });
+
+  return chunks.join('\n').trim();
+};
+
+const extractOpenAIResponseCitations = (data: any, responseText: string, maxResults: number): AgentWebSearchResult[] => {
+  const citations: AgentWebSearchResult[] = [];
+  const output = Array.isArray(data?.output) ? data.output : [];
+
+  const visitContent = (content: any) => {
+    const annotations = Array.isArray(content?.annotations) ? content.annotations : [];
+    annotations.forEach((annotation: any) => {
+      const url = String(annotation?.url || '').trim();
+      if (!/^https?:\/\//i.test(url)) return;
+      const start = Number(annotation?.start_index);
+      const end = Number(annotation?.end_index);
+      const citedText = Number.isFinite(start) && Number.isFinite(end) && end > start
+        ? responseText.slice(Math.max(0, start - 80), Math.min(responseText.length, end + 160)).trim()
+        : '';
+      pushUniqueSearchResult(citations, {
+        title: String(annotation?.title || url).trim(),
+        url,
+        snippet: citedText || responseText.slice(0, 360),
+        source: 'openai-web-search',
+        meta: { provider: 'openai-responses-web_search', citation: true },
+      }, maxResults);
+    });
+  };
+
+  output.forEach((item: any) => {
+    if (Array.isArray(item?.content)) item.content.forEach(visitContent);
+  });
+
+  return citations;
+};
+
+const parseJsonObjectFromText = (text: string): any | null => {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidates = [
+    fenced?.[1],
+    trimmed,
+    trimmed.match(/\{[\s\S]*\}/)?.[0],
+  ].filter((item): item is string => Boolean(item && item.trim()));
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return null;
+};
+
+const normalizeSearchDomain = (domain: string): string => {
+  const value = domain.trim();
+  if (!value) return '';
+  try {
+    const parsed = new URL(value.includes('://') ? value : `https://${value}`);
+    return parsed.hostname.replace(/^www\./i, '');
+  } catch {
+    return value.replace(/^https?:\/\//i, '').replace(/^www\./i, '').split('/')[0];
+  }
+};
+
+const searchWithOpenAIWebSearch = async (params: AgentWebSearchParams): Promise<{ directAnswer: string | null; results: AgentWebSearchResult[] }> => {
+  const apiKey = params.apiKeys?.openai?.trim();
+  if (!apiKey) throw new Error('OpenAI API Key 未配置');
+
+  const mode = normalizeAgentSearchMode(params.searchMode || params.mode);
+  const maxResults = normalizeSearchMaxResults(params.maxResults);
+  const allowedDomains = Array.isArray(params.includeDomains)
+    ? params.includeDomains.map(normalizeSearchDomain).filter(Boolean)
+    : [];
+  const excludedDomains = Array.isArray(params.excludeDomains)
+    ? params.excludeDomains.map(normalizeSearchDomain).filter(Boolean)
+    : [];
+
+  const webSearchTool: Record<string, unknown> = {
+    type: 'web_search',
+    external_web_access: true,
+    search_context_size: mode === 'deep' ? 'high' : mode === 'fast' ? 'low' : 'medium',
+    search_content_types: ['text'],
+  };
+  if (allowedDomains.length > 0) {
+    webSearchTool.filters = { allowed_domains: allowedDomains };
+  }
+  if (params.country) {
+    webSearchTool.user_location = { type: 'approximate', country: params.country };
+  }
+
+  const data = await fetchJson('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'gpt-4.1-mini',
+      input: [
+        {
+          role: 'system',
+          content: [
+            'You are a web search adapter for an agent runtime.',
+            'Use the web_search tool for current web facts.',
+            'Return only compact JSON with this shape:',
+            '{"answer": string | null, "results": [{"title": string, "url": string, "snippet": string, "publishedDate": string | null}]}',
+            'Every result must have a real source URL. Do not invent URLs.',
+          ].join(' '),
+        },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            query: params.query,
+            maxResults,
+            language: params.language || 'zh-CN',
+            country: params.country || 'CN',
+            timeRange: params.timeRange || null,
+            topic: params.topic || 'general',
+            excludedDomains,
+          }),
+        },
+      ],
+      tools: [webSearchTool],
+      tool_choice: 'auto',
+      temperature: 0,
+      max_output_tokens: 1600,
+    }),
+  });
+
+  const text = extractOpenAIResponseText(data);
+  const parsed = parseJsonObjectFromText(text);
+  const rawResults = Array.isArray(parsed?.results) ? parsed.results : [];
+  const parsedResults = rawResults
+    .slice(0, maxResults)
+    .map((item: any): AgentWebSearchResult => ({
+      title: String(item?.title || item?.url || '').trim(),
+      url: String(item?.url || '').trim(),
+      snippet: String(item?.snippet || item?.content || '').trim(),
+      publishedDate: typeof item?.publishedDate === 'string' ? item.publishedDate : undefined,
+      source: 'openai-web-search',
+      meta: { provider: 'openai-responses-web_search' },
+    }))
+    .filter((item: AgentWebSearchResult) => item.title && /^https?:\/\//i.test(item.url));
+  const citationResults = extractOpenAIResponseCitations(data, text, maxResults);
+  const results = [...parsedResults];
+  citationResults.forEach(item => pushUniqueSearchResult(results, item, maxResults));
+
+  const directAnswer = typeof parsed?.answer === 'string' && parsed.answer.trim()
+    ? parsed.answer.trim()
+    : text.trim() || null;
+
+  return {
+    directAnswer,
+    results,
+  };
 };
 
 const searchWithTavily = async (params: AgentWebSearchParams): Promise<{ directAnswer: string | null; results: AgentWebSearchResult[] }> => {
@@ -3178,12 +3849,129 @@ const searchWithSearxng = async (params: AgentWebSearchParams): Promise<{ direct
   };
 };
 
-// Agent 网络搜索：旧兜底方案。用隐藏 BrowserWindow 加载 Bing 搜索页，渲染完毕后提取真实结果。
+const parseBingHtmlResults = (html: string, params: AgentWebSearchParams): AgentWebSearchResult[] => {
+  const maxResults = normalizeSearchMaxResults(params.maxResults);
+  const results: AgentWebSearchResult[] = [];
+  const blocks = Array.from(html.matchAll(/<li[^>]+class="[^"]*\bb_algo\b[^"]*"[^>]*>([\s\S]*?)(?=<li[^>]+class="[^"]*\bb_algo\b|<\/ol>|<\/body>)/gi));
+
+  for (const match of blocks) {
+    const block = match[1] || '';
+    const anchor = block.match(/<h2[^>]*>[\s\S]*?<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<\/h2>/i)
+      || block.match(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
+    if (!anchor) continue;
+
+    const url = normalizeSearchResultUrl(anchor[1], 'https://www.bing.com/search');
+    const title = stripMarkup(anchor[2]);
+    const snippetMatch = block.match(/<p[^>]*>([\s\S]*?)<\/p>/i)
+      || block.match(/<div[^>]+class="[^"]*\bb_caption\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i)
+      || block.match(/<span[^>]+class="[^"]*\bb_snippet\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i);
+    const snippet = snippetMatch ? stripMarkup(snippetMatch[1]).slice(0, 500) : '';
+
+    pushUniqueSearchResult(results, {
+      title,
+      url,
+      snippet,
+      source: 'bing-browser',
+    }, maxResults);
+  }
+
+  return results;
+};
+
+const searchWithBingHtml = async (params: AgentWebSearchParams): Promise<{ directAnswer: string | null; results: AgentWebSearchResult[] }> => {
+  const url = new URL('https://www.bing.com/search');
+  url.searchParams.set('q', withDomainOperators(params.query, params.includeDomains, params.excludeDomains));
+  url.searchParams.set('setlang', params.language || 'zh-CN');
+  url.searchParams.set('cc', params.country || 'CN');
+  url.searchParams.set('count', String(normalizeSearchMaxResults(params.maxResults)));
+
+  const html = await fetchText(url.toString(), {
+    method: 'GET',
+    headers: {
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    },
+  });
+
+  return {
+    directAnswer: null,
+    results: parseBingHtmlResults(html, params),
+  };
+};
+
+const parseDuckDuckGoHtmlResults = (html: string, params: AgentWebSearchParams): AgentWebSearchResult[] => {
+  const maxResults = normalizeSearchMaxResults(params.maxResults);
+  const results: AgentWebSearchResult[] = [];
+  const richAnchors = Array.from(html.matchAll(/<a[^>]+class="[^"]*\bresult__a\b[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi));
+
+  for (const match of richAnchors) {
+    const nearbyHtml = html.slice(match.index || 0, (match.index || 0) + 2400);
+    const snippetMatch = nearbyHtml.match(/<a[^>]+class="[^"]*\bresult__snippet\b[^"]*"[\s\S]*?>([\s\S]*?)<\/a>/i)
+      || nearbyHtml.match(/<div[^>]+class="[^"]*\bresult__snippet\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+    pushUniqueSearchResult(results, {
+      title: stripMarkup(match[2]),
+      url: normalizeSearchResultUrl(match[1], 'https://duckduckgo.com/html/'),
+      snippet: snippetMatch ? stripMarkup(snippetMatch[1]).slice(0, 500) : '',
+      source: 'duckduckgo-browser',
+    }, maxResults);
+  }
+
+  if (results.length >= maxResults) return results;
+
+  const liteAnchors = Array.from(html.matchAll(/<a[^>]+href="([^"]*uddg=[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi));
+  for (const match of liteAnchors) {
+    pushUniqueSearchResult(results, {
+      title: stripMarkup(match[2]),
+      url: normalizeSearchResultUrl(match[1], 'https://lite.duckduckgo.com/lite/'),
+      snippet: '',
+      source: 'duckduckgo-browser',
+    }, maxResults);
+  }
+
+  return results;
+};
+
+const searchWithDuckDuckGoBrowser = async (params: AgentWebSearchParams): Promise<{ directAnswer: string | null; results: AgentWebSearchResult[] }> => {
+  const query = withDomainOperators(params.query, params.includeDomains, params.excludeDomains);
+  const urls = [
+    `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}&kl=cn-zh`,
+    `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`,
+  ];
+  const errors: string[] = [];
+
+  for (const url of urls) {
+    try {
+      const html = await fetchText(url, {
+        method: 'GET',
+        headers: {
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+      });
+      const results = parseDuckDuckGoHtmlResults(html, params);
+      if (results.length > 0) {
+        return { directAnswer: null, results };
+      }
+      errors.push('DuckDuckGo 页面未解析到搜索结果');
+    } catch (error) {
+      errors.push((error as Error).message);
+    }
+  }
+
+  throw new Error(errors.join('；') || 'DuckDuckGo 未获得搜索结果');
+};
+
+// Agent 网络搜索兜底方案。优先用隐藏 BrowserWindow 加载 Bing；若页面 DOM 被风控或结构变化导致无结果，
+// 再走 Bing HTML 和 DuckDuckGo HTML，避免无 API Key 时搜索完全不可用。
 const searchWithBingBrowser = async (params: AgentWebSearchParams): Promise<{ directAnswer: string | null; results: AgentWebSearchResult[] }> => {
   let searchWin: BrowserWindow | null = null;
+  const fallbackErrors: string[] = [];
   try {
     const encoded = encodeURIComponent(withDomainOperators(params.query, params.includeDomains, params.excludeDomains));
     const searchUrl = `https://www.bing.com/search?q=${encoded}&setlang=${encodeURIComponent(params.language || 'zh-CN')}&cc=${encodeURIComponent(params.country || 'CN')}&count=${normalizeSearchMaxResults(params.maxResults)}`;
+    const maxResults = normalizeSearchMaxResults(params.maxResults);
 
     searchWin = new BrowserWindow({
       width: 1280,
@@ -3219,17 +4007,18 @@ const searchWithBingBrowser = async (params: AgentWebSearchParams): Promise<{ di
     const extracted = await searchWin.webContents.executeJavaScript(`
       (() => {
         const results = [];
+        const maxResults = ${maxResults};
 
         // 1. 直答卡（天气、计算、知识卡等）
         const answerBox = document.querySelector('#b_content .b_ans, #b_content .b_direct_answer, .wtr_maincard, .b_focusTextMedium');
         const directAnswer = answerBox ? answerBox.innerText.trim().replace(/\\s+/g, ' ').substring(0, 500) : null;
 
         // 2. 普通搜索条目 #b_results > li.b_algo
-        const items = document.querySelectorAll('#b_results > li.b_algo');
+        const items = document.querySelectorAll('#b_results > li.b_algo, li.b_algo');
         items.forEach(item => {
-          if (results.length >= 8) return;
-          const titleEl = item.querySelector('h2 a');
-          const snippetEl = item.querySelector('.b_caption p, .b_snippet, .b_algoSlug');
+          if (results.length >= maxResults) return;
+          const titleEl = item.querySelector('h2 a, a[href^="http"]');
+          const snippetEl = item.querySelector('.b_caption p, .b_snippet, .b_lineclamp2, .b_algoSlug');
           const title = titleEl ? titleEl.innerText.trim() : '';
           const url = titleEl ? (titleEl.href || '') : '';
           const snippet = snippetEl ? snippetEl.innerText.trim().replace(/\\s+/g, ' ').substring(0, 400) : '';
@@ -3245,15 +4034,31 @@ const searchWithBingBrowser = async (params: AgentWebSearchParams): Promise<{ di
 
     const { directAnswer, results } = extracted as { directAnswer: string | null; results: Array<{ title: string; url: string; snippet: string }> };
 
-    if (!directAnswer && results.length === 0) {
-      throw new Error('未获得搜索结果，请检查网络或代理设置');
+    if (directAnswer || results.length > 0) {
+      return { directAnswer, results: results.map(item => ({ ...item, source: 'bing-browser' })) };
     }
-
-    return { directAnswer, results: results.map(item => ({ ...item, source: 'bing-browser' })) };
+    fallbackErrors.push('Bing 页面加载成功但未解析到标准搜索结果');
   } catch (e) {
     searchWin?.destroy();
-    throw e;
+    searchWin = null;
+    fallbackErrors.push((e as Error).message);
   }
+
+  try {
+    const htmlResult = await searchWithBingHtml(params);
+    if (htmlResult.directAnswer || htmlResult.results.length > 0) return htmlResult;
+    fallbackErrors.push('Bing HTML 未解析到搜索结果');
+  } catch (error) {
+    fallbackErrors.push(`Bing HTML: ${(error as Error).message}`);
+  }
+
+  try {
+    return await searchWithDuckDuckGoBrowser(params);
+  } catch (error) {
+    fallbackErrors.push(`DuckDuckGo: ${(error as Error).message}`);
+  }
+
+  throw new Error(fallbackErrors.join('；') || '未获得搜索结果，请检查网络或代理设置');
 };
 
 const buildGitHubSearchQuery = (params: AgentSpecializedSearchParams) => {
@@ -3493,6 +4298,8 @@ const runSpecializedSearch = async (params: AgentSpecializedSearchParams): Promi
 
 const runAgentSearchProvider = async (provider: AgentSearchProvider, params: AgentWebSearchParams) => {
   switch (provider) {
+    case 'openai-web-search':
+      return searchWithOpenAIWebSearch(params);
     case 'tavily':
       return searchWithTavily(params);
     case 'exa':
@@ -3501,6 +4308,8 @@ const runAgentSearchProvider = async (provider: AgentSearchProvider, params: Age
       return searchWithBrave(params);
     case 'searxng':
       return searchWithSearxng(params);
+    case 'duckduckgo-browser':
+      return searchWithDuckDuckGoBrowser(params);
     case 'bing-browser':
     default:
       return searchWithBingBrowser(params);
@@ -3511,10 +4320,10 @@ ipcMain.handle('agent-web-search', async (_, rawParams: AgentWebSearchParams) =>
   const query = typeof rawParams.query === 'string' ? rawParams.query.trim() : '';
   if (!query) return { success: false, error: '搜索词不能为空', results: [] };
 
-  const primary = normalizeAgentSearchProvider(rawParams.provider, 'tavily');
+  const primary = normalizeAgentSearchProvider(rawParams.provider, 'openai-web-search');
   const fallbackProviders = Array.isArray(rawParams.fallbackProviders)
     ? rawParams.fallbackProviders.map(item => normalizeAgentSearchProvider(item, 'bing-browser'))
-    : ['exa', 'brave', 'bing-browser'] as AgentSearchProvider[];
+    : ['tavily', 'exa', 'brave', 'duckduckgo-browser', 'bing-browser'] as AgentSearchProvider[];
   const providerOrder = [primary, ...fallbackProviders].filter((provider, index, arr) => arr.indexOf(provider) === index);
   const params: AgentWebSearchParams = {
     ...rawParams,
@@ -3528,13 +4337,14 @@ ipcMain.handle('agent-web-search', async (_, rawParams: AgentWebSearchParams) =>
   for (const provider of providerOrder) {
     try {
       if (providerNeedsApiKey(provider)) {
-        const key = params.apiKeys?.[provider]?.trim();
+        const keyName = searchProviderApiKeyName(provider);
+        const key = keyName ? params.apiKeys?.[keyName]?.trim() : '';
         if (!key) {
           errors.push(`${provider}: API Key 未配置`);
           continue;
         }
       }
-      const result = await runAgentSearchProvider(provider, params);
+      const result = ensureRelevantSearchResults(await runAgentSearchProvider(provider, params), params, provider);
       if (result.directAnswer || result.results.length > 0) {
         return {
           success: true,

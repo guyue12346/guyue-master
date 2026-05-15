@@ -47,7 +47,7 @@
 
 import type { TextNode } from '@llamaindex/core/schema';
 import { EmbeddingConfig, SearchResult, SearchOptions, StorageConfig, SearchAlgorithm, HnswConfig, ChunkingStrategy, ChunkingConfig, KnowledgeGraphSummary, VectorStoreInfo, VectorEntryDetail, KnowledgeTriple } from './types';
-import { getEmbedding, batchEmbed } from './embedding';
+import { getQueryEmbedding, batchEmbed } from './embedding';
 
 // ════════════════════════════════════════════════════════════
 // HNSW Index (Hierarchical Navigable Small World)
@@ -658,7 +658,7 @@ export class LocalVectorStore {
     const minScore = options?.minScore ?? 0.0;
 
     // 1. Query embedding (或使用预计算的 HyDE 向量)
-    const queryVec = precomputedQueryVec ?? await getEmbedding(query, embeddingConfig);
+    const queryVec = precomputedQueryVec ?? await getQueryEmbedding(query, embeddingConfig);
 
     // 2. 根据算法选择搜索策略
     let candidates: Array<{ entry: VectorEntry; score: number }> = [];

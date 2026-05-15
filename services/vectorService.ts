@@ -8,7 +8,6 @@
 import {
   LocalVectorStore,
   RagPipeline,
-  KnowledgeGraph,
   loadDocument,
   chunkDocuments,
   enrichMetadata,
@@ -26,6 +25,18 @@ import {
 } from './ragLlamaIndex';
 import type { RetrievalResult } from './ragLlamaIndex/retrieval';
 import { inferDocType, DEFAULT_CHUNKING_CONFIG } from './ragLlamaIndex/config';
+import {
+  recordCollectionIndex,
+  removeCollectionFromManifest,
+  removeFileFromCollectionManifest,
+} from './rag/manifest';
+import {
+  normalizeRagCollectionConfig,
+  resolveRagQueryConfig,
+  type RagQueryOverrides,
+  type RagQueryProfile,
+} from './rag/config';
+import type { RagFileInput, RagIndexedFileInput } from './rag/types';
 
 // ════════════════════════════════════════════════════════════
 // Types
@@ -45,6 +56,7 @@ export interface VectorSearchOptions {
   alpha?: number;
   reranker?: RerankerConfig['type'];
   rerankerTopN?: number;
+  queryProfileId?: string;
   /** If true, use the config saved in the collection JSON instead of caller-provided options */
   useCollectionConfig?: boolean;
   /** LLM function for pre-retrieval optimization (query rewriting, HyDE). Required if collection has preRetrieval config. */
@@ -241,6 +253,13 @@ export async function buildIndex(
     meta: existingCollection?.meta,
   });
   await saveCollectionToDisk(collectionId, store);
+  await persistManifestSnapshot(collectionId, store, {
+    files,
+    embeddingConfig,
+    config: existingCollection?.config,
+    meta: existingCollection?.meta,
+    source: 'vector-service',
+  });
 
   return {
     collectionId,
@@ -263,25 +282,19 @@ export async function search(
   const store = collection.store;
 
   const qCfg = buildQueryConfig(embeddingConfig, options, collection.config);
+  const savedProfile = getSavedQueryProfile(collection.config, options, embeddingConfig);
   const pipeline = new RagPipeline(qCfg);
   pipeline.setVectorStore(store);
-  if (collection.knowledgeGraph) {
-    pipeline.setKnowledgeGraph(hydrateKnowledgeGraph(collection.knowledgeGraph));
-  }
 
   // 确保 BM25 构建（hybrid/bm25 需要）
-  const strategy = options?.useCollectionConfig && collection.config?.retrieval?.strategy
-    ? collection.config.retrieval.strategy
-    : (options?.strategy ?? 'hybrid');
+  const strategy = qCfg.retrieval.strategy;
   if (strategy === 'hybrid' || strategy === 'bm25') {
     pipeline.buildBM25();
   }
 
   // Wire LLM function for LLM reranker and pre-retrieval optimization
   if (options?.llmFn) {
-    const rerankerType = options?.useCollectionConfig
-      ? collection.config?.reranker?.type
-      : (options?.reranker ?? 'none');
+    const rerankerType = qCfg.reranker.type;
     if (rerankerType === 'llm') {
       pipeline.setLLMFunction(options.llmFn);
     }
@@ -290,9 +303,7 @@ export async function search(
   // 检索前优化（查询改写 / HyDE）
   let optimizedQuery = query;
   let hydeEmbedding: number[] | undefined;
-  const preRetCfg: PreRetrievalConfig | undefined = options?.useCollectionConfig
-    ? collection.config?.preRetrieval
-    : undefined;
+  const preRetCfg: PreRetrievalConfig | undefined = savedProfile?.preRetrieval;
 
   if (preRetCfg && preRetCfg.strategy !== 'none' && options?.llmFn) {
     try {
@@ -343,24 +354,18 @@ export async function searchWithMeta(
   const store = collection.store;
 
   const qCfg = buildQueryConfig(embeddingConfig, options, collection.config);
+  const savedProfile = getSavedQueryProfile(collection.config, options, embeddingConfig);
   const pipeline = new RagPipeline(qCfg);
   pipeline.setVectorStore(store);
-  if (collection.knowledgeGraph) {
-    pipeline.setKnowledgeGraph(hydrateKnowledgeGraph(collection.knowledgeGraph));
-  }
 
-  const strategy = options?.useCollectionConfig && collection.config?.retrieval?.strategy
-    ? collection.config.retrieval.strategy
-    : (options?.strategy ?? 'hybrid');
+  const strategy = qCfg.retrieval.strategy;
   if (strategy === 'hybrid' || strategy === 'bm25') {
     pipeline.buildBM25();
   }
 
   // Wire LLM for reranker
   if (options?.llmFn) {
-    const rerankerType = options?.useCollectionConfig
-      ? collection.config?.reranker?.type
-      : (options?.reranker ?? 'none');
+    const rerankerType = qCfg.reranker.type;
     if (rerankerType === 'llm') {
       pipeline.setLLMFunction(options.llmFn);
     }
@@ -369,7 +374,7 @@ export async function searchWithMeta(
   // Pre-retrieval optimization
   let optimizedQuery = query;
   let hydeEmbedding: number[] | undefined;
-  const preRetCfg = options?.useCollectionConfig ? collection.config?.preRetrieval : undefined;
+  const preRetCfg = savedProfile?.preRetrieval;
   const preRetrievalLog: string[] = [];
   let preRetrievalStrategy = 'none';
 
@@ -393,9 +398,7 @@ export async function searchWithMeta(
   const result = await pipeline.query(optimizedQuery, hydeEmbedding);
   const totalMs = performance.now() - startTime;
 
-  const rerankerType = options?.useCollectionConfig
-    ? (collection.config?.reranker?.type ?? 'none')
-    : (options?.reranker ?? 'none');
+  const rerankerType = qCfg.reranker.type;
 
   return {
     results: normalizeResults(result.results),
@@ -463,6 +466,9 @@ export async function deleteCollection(collectionId: string): Promise<void> {
     const api = getElectronAPI();
     await api.deleteFile(`${dir}/${collectionId}.json`);
   } catch { /* ignore */ }
+  await removeCollectionFromManifest(collectionId).catch(err => {
+    console.warn('VectorService failed to update RAG manifest after collection delete:', err);
+  });
 }
 
 /**
@@ -494,6 +500,9 @@ export async function removeFile(collectionId: string, filePath: string): Promis
   const removed = store.removeByFilePath(filePath);
   if (removed > 0) {
     await saveCollectionToDisk(collectionId, store);
+    await removeFileFromCollectionManifest(collectionId, filePath).catch(err => {
+      console.warn('VectorService failed to update RAG manifest after file removal:', err);
+    });
   }
   return removed;
 }
@@ -541,11 +550,17 @@ export async function saveCollectionPayload(collectionId: string, payload: Colle
     ...(payload.meta !== undefined ? { meta: payload.meta } : {}),
   };
   await writeCollectionPayloadToDisk(collectionId, normalized);
+  const store = LocalVectorStore.deserialize(normalized.vectorStore);
   collectionCache.set(collectionId, {
-    store: LocalVectorStore.deserialize(normalized.vectorStore),
+    store,
     config: normalized.config,
     knowledgeGraph: normalized.knowledgeGraph,
     meta: normalized.meta,
+  });
+  await persistManifestSnapshot(collectionId, store, {
+    config: normalized.config,
+    meta: normalized.meta,
+    source: 'vector-service',
   });
 }
 
@@ -554,14 +569,6 @@ export async function saveCollectionConfig(collectionId: string, config?: Record
   await saveCollectionPayload(collectionId, {
     ...payload,
     ...(config !== undefined ? { config } : {}),
-  });
-}
-
-export async function saveCollectionKnowledgeGraph(collectionId: string, knowledgeGraph?: any): Promise<void> {
-  const payload = await readCollectionPayloadFromDisk(collectionId);
-  await saveCollectionPayload(collectionId, {
-    ...payload,
-    ...(knowledgeGraph !== undefined ? { knowledgeGraph } : {}),
   });
 }
 
@@ -576,6 +583,11 @@ export async function saveCollectionVectorStore(
     ...(extras?.config !== undefined ? { config: extras.config } : existing?.config !== undefined ? { config: existing.config } : {}),
     ...(extras?.knowledgeGraph !== undefined ? { knowledgeGraph: extras.knowledgeGraph } : existing?.knowledgeGraph !== undefined ? { knowledgeGraph: existing.knowledgeGraph } : {}),
     ...(extras?.meta !== undefined ? { meta: extras.meta } : existing?.meta !== undefined ? { meta: existing.meta } : {}),
+  });
+  await persistManifestSnapshot(collectionId, store, {
+    config: extras?.config ?? existing?.config,
+    meta: extras?.meta ?? existing?.meta,
+    source: 'rag-lab',
   });
 }
 
@@ -696,12 +708,6 @@ async function writeCollectionPayloadToDisk(collectionId: string, payload: Colle
   await api.writeFile(`${dir}/${collectionId}.json`, JSON.stringify(payload));
 }
 
-function hydrateKnowledgeGraph(serializedGraph: any): KnowledgeGraph {
-  return KnowledgeGraph.deserialize(
-    typeof serializedGraph === 'string' ? JSON.parse(serializedGraph) : serializedGraph,
-  );
-}
-
 function buildQueryConfig(
   embeddingConfig: EmbeddingConfig,
   options?: VectorSearchOptions,
@@ -709,9 +715,10 @@ function buildQueryConfig(
 ): QueryEngineConfig {
   // If useCollectionConfig and we have saved config, use it
   if (options?.useCollectionConfig && savedConfig) {
-    const ret = savedConfig.retrieval || {};
-    const rer = savedConfig.reranker || {};
-    const topK = options?.topK ?? ret.topK ?? 5;
+    const profile = getSavedQueryProfile(savedConfig, options, embeddingConfig);
+    const ret: RetrievalConfig = profile?.retrieval || { strategy: 'hybrid', topK: 5 };
+    const rer: RerankerConfig = profile?.reranker || { type: 'none', topN: 5 };
+    const topK = ret.topK ?? 5;
     const strategy = ret.strategy ?? 'hybrid';
     return {
       retrieval: {
@@ -722,8 +729,6 @@ function buildQueryConfig(
         rrfK: ret.rrfK ?? 60,
         bm25K1: ret.bm25K1 ?? 1.2,
         bm25B: ret.bm25B ?? 0.75,
-        includeKnowledgeGraph: ret.includeKnowledgeGraph ?? false,
-        kgMaxTriples: ret.kgMaxTriples ?? 5,
       },
       reranker: {
         type: rer.type ?? 'none',
@@ -747,8 +752,6 @@ function buildQueryConfig(
       rrfK: 60,
       bm25K1: 1.2,
       bm25B: 0.75,
-      includeKnowledgeGraph: false,
-      kgMaxTriples: 5,
     },
     reranker: {
       type: options?.reranker ?? 'none',
@@ -757,6 +760,35 @@ function buildQueryConfig(
     },
     embeddingConfig,
   };
+}
+
+function buildQueryOverrides(options?: VectorSearchOptions): RagQueryOverrides | undefined {
+  if (!options) return undefined;
+  const retrieval: Partial<RetrievalConfig> = {};
+  const reranker: Partial<RerankerConfig> = {};
+  if (options.topK !== undefined) retrieval.topK = options.topK;
+  if (options.strategy !== undefined) retrieval.strategy = options.strategy;
+  if (options.alpha !== undefined) retrieval.alpha = options.alpha;
+  if (options.reranker !== undefined) reranker.type = options.reranker;
+  if (options.rerankerTopN !== undefined) reranker.topN = options.rerankerTopN;
+  return {
+    ...(Object.keys(retrieval).length > 0 ? { retrieval } : {}),
+    ...(Object.keys(reranker).length > 0 ? { reranker } : {}),
+  };
+}
+
+function getSavedQueryProfile(
+  savedConfig: any,
+  options: VectorSearchOptions | undefined,
+  embeddingConfig: EmbeddingConfig,
+): RagQueryProfile | null {
+  if (!options?.useCollectionConfig) return null;
+  return resolveRagQueryConfig(
+    savedConfig,
+    options.queryProfileId,
+    buildQueryOverrides(options),
+    { embedding: embeddingConfig },
+  );
 }
 
 function normalizeResults(results: RetrievalResult[]): VectorSearchResult[] {
@@ -768,6 +800,68 @@ function normalizeResults(results: RetrievalResult[]): VectorSearchResult[] {
     metadata: r.metadata ?? {},
     nodeId: r.nodeId,
   }));
+}
+
+function getIndexedFileSnapshot(store: LocalVectorStore): RagIndexedFileInput[] {
+  const metadataByPath = new Map<string, Record<string, any>>();
+  for (const id of store.getEntryIds()) {
+    const entry = store.getEntry(id);
+    const path = entry?.metadata?.filePath;
+    if (path && !metadataByPath.has(path)) {
+      metadataByPath.set(path, entry.metadata || {});
+    }
+  }
+
+  return store.getIndexedFiles().map(file => {
+    const meta = metadataByPath.get(file.filePath) || {};
+    return {
+      fileId: meta.fileId,
+      filePath: file.filePath,
+      fileName: file.fileName,
+      fileType: meta.fileType,
+      chunkCount: file.chunkCount,
+      indexedAt: file.indexedAt,
+      fileSize: meta.fileSize,
+      lastModified: meta.lastModified,
+    };
+  });
+}
+
+async function persistManifestSnapshot(
+  collectionId: string,
+  store: LocalVectorStore,
+  options?: {
+    files?: RagFileInput[];
+    embeddingConfig?: EmbeddingConfig;
+    config?: Record<string, any>;
+    meta?: Record<string, any>;
+    source?: 'rag-lab' | 'agent' | 'legacy-agent' | 'vector-service' | 'disk' | 'unknown';
+  },
+): Promise<void> {
+  try {
+    const stats = store.getStats();
+    const embeddingConfig = options?.embeddingConfig ?? (
+      stats.embeddingProvider && stats.embeddingModel
+        ? { provider: stats.embeddingProvider as EmbeddingConfig['provider'], model: stats.embeddingModel, apiKey: '' }
+        : undefined
+    );
+    await recordCollectionIndex({
+      collectionId,
+      collectionName: options?.meta?.name,
+      source: options?.source || 'vector-service',
+      files: options?.files,
+      indexedFiles: getIndexedFileSnapshot(store),
+      embeddingConfig,
+      vectorCount: store.size,
+      config: options?.config ? normalizeRagCollectionConfig(options.config, { embedding: embeddingConfig }) : undefined,
+      metadata: {
+        config: options?.config,
+        ...options?.meta,
+      },
+    });
+  } catch (err) {
+    console.warn('VectorService failed to persist RAG manifest snapshot:', err);
+  }
 }
 
 function storeToInfo(collectionId: string, store: LocalVectorStore, config?: any): CollectionInfo {
@@ -787,7 +881,7 @@ function storeToInfo(collectionId: string, store: LocalVectorStore, config?: any
     updatedAt: stats.updatedAt,
     searchAlgorithm: store.searchAlgorithm,
     hasHnswIndex: store.hasHnswIndex,
-    hasKnowledgeGraph: store.hasKnowledgeGraph,
+    hasKnowledgeGraph: false,
     chunkingStrategy: store.chunkingStrategy,
     config,
   };

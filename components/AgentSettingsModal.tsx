@@ -85,14 +85,16 @@ const PROVIDER_LABELS: Record<string, string> = {
 };
 
 const SEARCH_PROVIDER_LABELS: Record<AgentSearchProvider, string> = {
+  'openai-web-search': 'OpenAI Web Search',
   tavily: 'Tavily',
   exa: 'Exa',
   brave: 'Brave',
   searxng: 'SearXNG',
   'bing-browser': 'Bing Browser',
+  'duckduckgo-browser': 'DuckDuckGo Browser',
 };
 
-const SEARCH_PROVIDERS: AgentSearchProvider[] = ['tavily', 'exa', 'brave', 'searxng', 'bing-browser'];
+const SEARCH_PROVIDERS: AgentSearchProvider[] = ['openai-web-search', 'tavily', 'exa', 'brave', 'searxng', 'duckduckgo-browser', 'bing-browser'];
 const SEARCH_MODES: Array<{ key: AgentSearchMode; label: string }> = [
   { key: 'fast', label: '快速' },
   { key: 'balanced', label: '均衡' },
@@ -642,6 +644,13 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
 
                 <div className="space-y-2">
                   <label className="block text-xs text-gray-500">API Key</label>
+                  <input
+                    type="password"
+                    value={searchConfig.apiKeys.openai}
+                    onChange={e => updateSearchApiKey('openai', e.target.value)}
+                    placeholder="OpenAI API Key（Responses web_search）"
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  />
                   <input
                     type="password"
                     value={searchConfig.apiKeys.tavily}

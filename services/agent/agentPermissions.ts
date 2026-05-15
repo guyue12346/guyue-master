@@ -1,3 +1,5 @@
+import { getAgentModules } from './agentModules';
+
 export interface PermissionLevel {
   read: boolean;
   write: boolean;
@@ -31,6 +33,7 @@ export const AGENT_CRUD_ACTIONS: { key: AgentCrudAction; label: string; tone: st
 ];
 
 export const AGENT_PERMISSION_MODULES: { key: string; label: string; desc: string }[] = [
+  { key: 'system', label: '系统功能', desc: '读取当前电脑时间等本机只读系统信息' },
   { key: 'todo', label: '待办', desc: '待办、子任务、重复事件和待办分类' },
   { key: 'notes', label: '便签', desc: '便签查询、创建、修改、删除' },
   { key: 'prompts', label: '技能卡', desc: '技能卡和提示词分类' },
@@ -39,6 +42,7 @@ export const AGENT_PERMISSION_MODULES: { key: string; label: string; desc: strin
   { key: 'dc-resources', label: '资源中心', desc: '资源中心记录和分类' },
   { key: 'dc-ssh', label: 'SSH管理', desc: 'SSH 连接记录' },
   { key: 'dc-api', label: 'API记录', desc: 'API 接口记录，查询时默认隐藏密钥' },
+  { key: 'dc-website', label: '网站管理', desc: '网站账号、密码、标签和备注记录' },
   { key: 'learning', label: '学习课程', desc: '学习课程和分类' },
   { key: 'leetcode', label: '题单', desc: 'LeetCode 题单数据' },
   { key: 'question-bank', label: '题库', desc: '题库分类、题目、题单和解题方法' },
@@ -67,17 +71,38 @@ export const createModulePermission = (value = false): AgentModulePermission => 
   delete: value,
 });
 
-export const DEFAULT_AGENT_TOOL_PERMISSIONS: AgentToolPermissions =
-  AGENT_PERMISSION_MODULES.reduce((acc, module) => {
+export const DEFAULT_AGENT_TOOL_PERMISSIONS: AgentToolPermissions = (() => {
+  const permissions = AGENT_PERMISSION_MODULES.reduce((acc, module) => {
     acc[module.key] = createModulePermission(false);
     return acc;
   }, {} as AgentToolPermissions);
+  permissions.system = { ...createModulePermission(false), read: true };
+  return permissions;
+})();
 
 export const DEFAULT_AGENT_FULL_ACCESS_PERMISSIONS: AgentFullAccessPermissions =
   AGENT_PERMISSION_MODULES.reduce((acc, module) => {
     acc[module.key] = createModulePermission(false);
     return acc;
   }, {} as AgentFullAccessPermissions);
+
+export const getAgentPermissionModules = () => {
+  const builtInKeys = new Set(AGENT_PERMISSION_MODULES.map(module => module.key));
+  const pluginModules = getAgentModules()
+    .filter(module => module.kind === 'plugin' && !builtInKeys.has(module.id))
+    .map(module => ({
+      key: module.id,
+      label: module.name,
+      desc: module.description || '插件提供的 Agent 工具',
+    }));
+  return [...AGENT_PERMISSION_MODULES, ...pluginModules];
+};
+
+export const createAgentToolPermissions = (value = false): AgentToolPermissions =>
+  getAgentPermissionModules().reduce((acc, module) => {
+    acc[module.key] = createModulePermission(value);
+    return acc;
+  }, {} as AgentToolPermissions);
 
 export const deriveDataPermissionsFromToolPermissions = (
   permissions: AgentToolPermissions,

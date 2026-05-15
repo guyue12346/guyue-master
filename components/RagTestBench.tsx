@@ -17,7 +17,6 @@ import type {
   FormatChunkingOverrides, MarkdownChunkingConfig, PdfChunkingConfig,
   HtmlChunkingConfig, CodeChunkingConfig,
   PreRetrievalStrategy, PreRetrievalConfig, SearchAlgorithm, HnswConfig,
-  KnowledgeGraphConfig,
 } from '../services/ragLlamaIndex';
 import {
   loadDocuments, chunkDocuments, createEmbedFunction,
@@ -25,7 +24,6 @@ import {
   RagPipeline, createSimpleVectorConfig, createBalancedConfig,
   createPrecisionConfig, EMBEDDING_MODEL_OPTIONS, DEFAULT_CHUNKING_CONFIG,
   enrichMetadata, executeQueryMode, optimizePreRetrieval,
-  buildKnowledgeGraph, KnowledgeGraph,
 } from '../services/ragLlamaIndex';
 import type { FileReader as RagFileReader } from '../services/ragLlamaIndex';
 import type { QueryEngineConfig } from '../services/ragLlamaIndex';
@@ -36,9 +34,18 @@ import {
   loadCollectionPayload as loadVectorCollectionPayload,
   saveCollectionPayload as saveVectorCollectionPayload,
   saveCollectionConfig as saveVectorCollectionConfig,
-  saveCollectionKnowledgeGraph as saveVectorCollectionKnowledgeGraph,
   saveCollectionVectorStore as saveVectorCollectionStore,
 } from '../services/vectorService';
+import {
+  createRagCollectionConfig,
+  getRagQueryProfile,
+  getRagFileKey,
+  initializeRagRepository,
+  normalizeRagCollectionConfig,
+  DEFAULT_RAG_QUERY_PROFILE_ID,
+  type RagFileCollectionRef,
+  type RagManifest,
+} from '../services/rag';
 import { loadProfiles, API_PROVIDER_LABELS, API_PROVIDER_BASE_URLS } from '../utils/apiProfileService';
 import type { ApiProfile } from '../types';
 
@@ -57,9 +64,10 @@ const LS_QUERY_MODE = `${LS_PREFIX}query_mode`;
 const LS_FORMAT_OVERRIDES = `${LS_PREFIX}format_overrides`;
 const LS_PRE_RETRIEVAL = `${LS_PREFIX}pre_retrieval`;
 const LS_SEARCH_ALGO = `${LS_PREFIX}search_algorithm`;
-const LS_KG_API_PROFILE = `${LS_PREFIX}kg_api_profile`;
 const LS_PRE_RETRIEVAL_API_PROFILE = `${LS_PREFIX}pre_retrieval_api_profile`;
 const LS_LLM_RERANKER_API_PROFILE = `${LS_PREFIX}llm_reranker_api_profile`;
+const LS_PIPELINE_PRESETS = `${LS_PREFIX}pipeline_presets`;
+const LS_ACTIVE_PIPELINE_PRESET = `${LS_PREFIX}active_pipeline_preset`;
 
 const PROVIDERS: EmbeddingProvider[] = ['openai', 'gemini', 'zhipu', 'qwen', 'ollama', 'custom'];
 const PROVIDER_LABELS: Record<EmbeddingProvider, string> = {
@@ -290,13 +298,9 @@ interface CollectionMeta {
   topicVocabulary?: string[];
   /** 是否已构建 HNSW 索引 */
   hasHnsw?: boolean;
-  /** 是否已构建知识图谱 */
-  hasKg?: boolean;
-  /** 知识图谱三元组数量 */
-  kgTripleCount?: number;
 }
 
-/** LLM API 配置（用于知识图谱构建、检索前优化等需要LLM的功能） */
+/** LLM API 配置（用于检索前优化、LLM 重排等需要 LLM 的功能） */
 interface LlmApiConfig {
   profileId: string;
   provider: string;
@@ -326,6 +330,28 @@ interface EvalMetrics {
   strategy: string;
 }
 
+interface RagPipelinePresetConfig {
+  embedding: EmbeddingConfig;
+  chunking: ChunkingConfig;
+  retrieval: RetrievalConfig;
+  reranker: RerankerConfig;
+  queryMode: QueryModeConfig;
+  preRetrieval: PreRetrievalConfig;
+  searchAlgorithm: SearchAlgorithm;
+  hnsw: HnswConfig;
+  formatOverrides: FormatChunkingOverrides;
+  formatTypeEnabled: Record<string, boolean>;
+}
+
+interface RagPipelinePreset {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt: number;
+  updatedAt: number;
+  config: RagPipelinePresetConfig;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function lsGet<T>(key: string, fallback: T): T {
@@ -338,13 +364,26 @@ function lsSet(key: string, value: unknown) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
+function cloneConfig<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 // ── Default config values (used when switching to collection without saved config) ──
 const DEFAULT_RETRIEVAL: RetrievalConfig = { strategy: 'hybrid' as RetrievalStrategy, topK: 20, alpha: 0.7, fusionMethod: 'rrf' as FusionMethod, rrfK: 60 };
 const DEFAULT_RERANKER: RerankerConfig = { type: 'none' as RerankerType, topN: 5, mmrLambda: 0.7 };
 const DEFAULT_QUERY_MODE: QueryModeConfig = { mode: 'single' as QueryMode, subQuestion: { maxSubQuestions: 3, mergeStrategy: 'deduplicate' as const, deduplicateThreshold: 0.9 }, iterative: { maxIterations: 3, qualityThreshold: 0.7, refinementStrategy: 'rephrase' as const } };
 const DEFAULT_PRE_RETRIEVAL: PreRetrievalConfig = { strategy: 'none' as PreRetrievalStrategy, expansion: { maxTerms: 5, includeOriginal: true }, rewrite: { style: 'precise' as const }, hyde: { responseLength: 'medium' as const, numHypothetical: 1 } };
 const DEFAULT_HNSW: HnswConfig = { m: 16, efConstruction: 200, efSearch: 50 };
-const DEFAULT_KG_CONFIG: KnowledgeGraphConfig = { enabled: false, maxTriplesPerChunk: 10, includeEntityDescriptions: true };
+
+const BUILTIN_PIPELINE_PRESETS: Array<{ key: string; icon: React.ReactNode; label: string; desc: string; needsApi?: boolean }> = [
+  { key: 'simple', icon: <Zap size={12} />, label: '快速向量', desc: 'Vector' },
+  { key: 'keyword', icon: <Search size={12} />, label: '关键词', desc: 'BM25' },
+  { key: 'balanced', icon: <Settings2 size={12} />, label: '均衡混合', desc: 'Hybrid' },
+  { key: 'semantic', icon: <GitBranch size={12} />, label: '语义增强', desc: 'Expand', needsApi: true },
+  { key: 'hyde', icon: <FileSearch size={12} />, label: 'HyDE', desc: 'Hypothetical', needsApi: true },
+  { key: 'precision', icon: <Sparkles size={12} />, label: '精确重排', desc: 'Rerank', needsApi: true },
+  { key: 'deep', icon: <Layers size={12} />, label: '深度检索', desc: 'Deep', needsApi: true },
+];
 
 function inferDocType(name: string): SupportedDocType {
   const ext = name.split('.').pop()?.toLowerCase() ?? '';
@@ -517,7 +556,7 @@ const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void; label
   );
 };
 
-// ── LLM Model options per provider (for KG / pre-retrieval API config) ──
+// ── LLM Model options per provider (for pre-retrieval / reranker API config) ──
 const LLM_MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
   gemini: [
     { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite' },
@@ -733,12 +772,7 @@ const HELP_SECTIONS = [
 【向量搜索算法】
 • 暴力搜索（brute-force）：精确计算，<10000 向量时足够快。
 • HNSW：构建近似最近邻图，适合大规模向量库。
-  → 需要先在「索引优化」中构建。
-
-【知识图谱检索】
-• includeKnowledgeGraph：是否在检索时利用知识图谱。
-  → 需要先构建知识图谱。
-• kgMaxTriples：每次检索最多引入的三元组数量，默认 5。`,
+  → 需要先在「索引优化」中构建。`,
   },
   {
     title: '🔄 重排与检索前优化',
@@ -771,7 +805,7 @@ const HELP_SECTIONS = [
   → 适合问答类查询，需要额外一次嵌入计算。`,
   },
   {
-    title: '🧠 查询模式与知识图谱',
+    title: '🧭 查询模式',
     content: `【查询模式】
 • 单次检索（single）：标准 query → retrieve → rerank → return。
 • 条件路由（router）：自动选择最合适的知识库。
@@ -783,20 +817,8 @@ const HELP_SECTIONS = [
   → 迭代策略：关键词扩展 / LLM 改写 / 查询简化。
   → maxIterations 控制最大迭代次数（默认 3）。
 
-【知识图谱】
-从文档中提取实体和关系（三元组），增强检索的关联能力。
-
-【知识图谱参数】
-• maxTriplesPerChunk：每个块最多提取的三元组数。
-  → 默认 10。推荐 5-20。过多会引入噪声三元组。
-• entityTypes（实体类型）：关注的实体类型，如"人物、技术、概念"。
-  → 留空则不限制。设置后 LLM 只提取这些类型的实体。
-• 生成实体描述：LLM 为每个实体生成一句话解释。
-  → 有助于知识图谱检索时的语义匹配。
-• 构建方式：每 10 个块打包一次 API 请求（批处理）。
-
 【自动更新】
-HNSW 和知识图谱首次需手动构建。建立后，新增向量时自动增量更新。`,
+HNSW 首次需手动构建。建立后，新增向量时自动增量更新。`,
   },
   {
     title: '📊 评分结果参考',
@@ -852,15 +874,14 @@ HNSW 和知识图谱首次需手动构建。建立后，新增向量时自动增
 路径: {用户数据目录}/rag-indexes/{集合ID}.json
 
 【集合管理】
-• 每个集合包含：文档向量、配置、HNSW索引、知识图谱
+• 每个集合包含：文档向量、配置、HNSW索引
 • 切换集合时自动加载对应配置
 • 构建后所有配置封装，对外提供统一检索 API
 
-【4 个构建操作】
+【3 个构建操作】
 • 构建基本向量库：分块 → 嵌入 → 保存
 • 更新配置：仅保存配置，不重建向量
 • 构建 HNSW 索引：全量构建近似最近邻图
-• 构建知识图谱：LLM 批量提取三元组
 
 【HNSW 索引参数】
 • M（邻居数）：每个节点的最大邻居连接数。
@@ -938,16 +959,7 @@ export function RagTestBench() {
     () => lsGet(`${LS_PREFIX}hnsw_config`, { m: 16, efConstruction: 200, efSearch: 50 }),
   );
 
-  // ── Knowledge graph state ──
-  const [kgEnabled, setKgEnabled] = useState<boolean>(() => lsGet(`${LS_PREFIX}kg_enabled`, false));
-  const [kgConfig, setKgConfig] = useState<KnowledgeGraphConfig>(
-    () => lsGet(`${LS_PREFIX}kg_config`, { enabled: false, maxTriplesPerChunk: 10, includeEntityDescriptions: true }),
-  );
-  const knowledgeGraphRef = useRef<KnowledgeGraph | null>(null);
-  const [kgTripleSample, setKgTripleSample] = useState<{ triple: { subject: string; predicate: string; object: string; sourceChunkId: string }; entityDescs: Record<string, string> } | null>(null);
-
   // ── LLM API configs for features requiring LLM calls ──
-  const [kgApiConfig, setKgApiConfig] = useState<LlmApiConfig | null>(() => lsGet(LS_KG_API_PROFILE, null));
   const [preRetrievalApiConfig, setPreRetrievalApiConfig] = useState<LlmApiConfig | null>(() => lsGet(LS_PRE_RETRIEVAL_API_PROFILE, null));
   const [llmRerankerApiConfig, setLlmRerankerApiConfig] = useState<LlmApiConfig | null>(() => lsGet(LS_LLM_RERANKER_API_PROFILE, null));
 
@@ -1003,7 +1015,6 @@ export function RagTestBench() {
   const [evalMetrics, setEvalMetrics] = useState<EvalMetrics | null>(null);
   const [expandedResults, setExpandedResults] = useState<Set<number>>(new Set());
   const [rebuildingHnsw, setRebuildingHnsw] = useState(false);
-  const [rebuildingKg, setRebuildingKg] = useState(false);
   const [updatingConfig, setUpdatingConfig] = useState(false);
 
   // ── Drag-and-drop state ──
@@ -1016,10 +1027,40 @@ export function RagTestBench() {
 
   // ── Help state ──
   const [showHelp, setShowHelp] = useState(false);
-  const [activePreset, setActivePreset] = useState<string | null>(null);
+  const [activePreset, setActivePreset] = useState<string | null>(() => lsGet<string | null>(LS_ACTIVE_PIPELINE_PRESET, null));
+  const [pipelinePresets, setPipelinePresets] = useState<RagPipelinePreset[]>(() => {
+    const saved = lsGet<RagPipelinePreset[]>(LS_PIPELINE_PRESETS, []);
+    return Array.isArray(saved)
+      ? saved.filter(item => item?.id && item?.name && item?.config)
+      : [];
+  });
+  const [presetDraftName, setPresetDraftName] = useState('');
+  const [presetDraftDesc, setPresetDraftDesc] = useState('');
 
   // ── Active collection helper ──
   const activeCollection = collections.find(c => c.id === activeCollectionId);
+  const [ragManifest, setRagManifest] = useState<RagManifest | null>(null);
+
+  const refreshRagManifest = useCallback(async () => {
+    try {
+      setRagManifest(await initializeRagRepository());
+    } catch (err) {
+      console.warn('Failed to load RAG manifest:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshRagManifest();
+  }, [refreshRagManifest]);
+
+  const activeManifestCollection = activeCollectionId ? ragManifest?.collections[activeCollectionId] : undefined;
+  const manifestFiles = Object.values(ragManifest?.files || {});
+  const manifestIndexedFileCount = manifestFiles.filter(file =>
+    Object.values(file.collections || {}).some(ref => ref.state === 'indexed'),
+  ).length;
+  const manifestIndexedChunkCount = manifestFiles.reduce((sum, file) => (
+    sum + Object.values(file.collections || {}).reduce((inner, ref) => inner + (ref.state === 'indexed' ? ref.chunkCount || 0 : 0), 0)
+  ), 0);
 
   // ── Persist configs ──
   useEffect(() => { lsSet(LS_EMBEDDING, embeddingConfig); }, [embeddingConfig]);
@@ -1037,8 +1078,8 @@ export function RagTestBench() {
   useEffect(() => { lsSet(LS_PRE_RETRIEVAL, preRetrievalConfig); }, [preRetrievalConfig]);
   useEffect(() => { lsSet(LS_SEARCH_ALGO, searchAlgorithm); }, [searchAlgorithm]);
   useEffect(() => { lsSet(`${LS_PREFIX}hnsw_config`, hnswConfig); }, [hnswConfig]);
-  useEffect(() => { lsSet(`${LS_PREFIX}kg_enabled`, kgEnabled); }, [kgEnabled]);
-  useEffect(() => { lsSet(`${LS_PREFIX}kg_config`, kgConfig); }, [kgConfig]);
+  useEffect(() => { lsSet(LS_PIPELINE_PRESETS, pipelinePresets); }, [pipelinePresets]);
+  useEffect(() => { lsSet(LS_ACTIVE_PIPELINE_PRESET, activePreset); }, [activePreset]);
 
   // Apply search algorithm to vector store
   useEffect(() => {
@@ -1066,65 +1107,58 @@ export function RagTestBench() {
       if (data?.vectorStore) {
         vectorStoreRef.current = LocalVectorStore.deserialize(data.vectorStore);
 
-        // 恢复封装的完整配置（无保存配置时重置为默认值）
-        const cfg = data.config || {};
-        setEmbeddingConfig(cfg.embedding ?? embeddingConfig);
-        setChunkingConfig(cfg.chunking ?? chunkingConfig);
-        setFormatOverrides(cfg.formatOverrides ?? {});
-        setFormatTypeEnabled(cfg.formatTypeEnabled ?? { markdown: true, pdf: true, html: true, code: true });
-        setRetrievalConfig(cfg.retrieval ?? DEFAULT_RETRIEVAL);
-        setRerankerConfig(cfg.reranker ?? DEFAULT_RERANKER);
-        setQueryModeConfig(cfg.queryMode ?? DEFAULT_QUERY_MODE);
-        setPreRetrievalConfig(cfg.preRetrieval ?? DEFAULT_PRE_RETRIEVAL);
-        setSearchAlgorithm(cfg.searchAlgorithm ?? 'brute-force');
-        setHnswConfig(cfg.hnsw ?? DEFAULT_HNSW);
-        setKgEnabled(cfg.kgEnabled ?? false);
-        setKgConfig(cfg.kg ?? DEFAULT_KG_CONFIG);
+        // 恢复分层配置；旧版扁平 config 会在这里自动归一化
+        const cfg = normalizeRagCollectionConfig(data.config, {
+          embedding: embeddingConfig,
+          chunking: chunkingConfig,
+          retrieval: retrievalConfig,
+          reranker: rerankerConfig,
+          queryMode: queryModeConfig,
+          preRetrieval: preRetrievalConfig,
+          searchAlgorithm,
+          hnsw: hnswConfig,
+          formatOverrides,
+          formatTypeEnabled,
+        });
+        const queryProfile = getRagQueryProfile(cfg, cfg.defaultQueryProfileId);
+        setEmbeddingConfig(cfg.build.embedding);
+        setChunkingConfig(cfg.build.chunking);
+        setFormatOverrides(cfg.build.formatOverrides ?? {});
+        setFormatTypeEnabled(cfg.build.formatTypeEnabled ?? { markdown: true, pdf: true, html: true, code: true });
+        setRetrievalConfig(queryProfile.retrieval);
+        setRerankerConfig(queryProfile.reranker);
+        setQueryModeConfig(queryProfile.queryMode);
+        setPreRetrievalConfig(queryProfile.preRetrieval);
+        setSearchAlgorithm(cfg.index.searchAlgorithm ?? 'brute-force');
+        setHnswConfig(cfg.index.hnsw ?? DEFAULT_HNSW);
 
-        const restoredEmbCfg = data.config?.embedding ?? embeddingConfig;
-        const restoredRetCfg = data.config?.retrieval ?? retrievalConfig;
-        const restoredRerankerCfg = data.config?.reranker ?? rerankerConfig;
+        const restoredEmbCfg = cfg.build.embedding;
+        const restoredRetCfg = queryProfile.retrieval;
+        const restoredRerankerCfg = queryProfile.reranker;
         const qCfg: QueryEngineConfig = { retrieval: restoredRetCfg, reranker: restoredRerankerCfg, embeddingConfig: restoredEmbCfg };
         const pipeline = new RagPipeline(qCfg);
         pipeline.setVectorStore(vectorStoreRef.current);
         pipeline.buildBM25();
 
-        // 恢复知识图谱
-        if (data.knowledgeGraph) {
-          try {
-            knowledgeGraphRef.current = KnowledgeGraph.deserialize(data.knowledgeGraph);
-            pipeline.setKnowledgeGraph(knowledgeGraphRef.current);
-          } catch (err) {
-            console.warn('Failed to restore knowledge graph:', err);
-            knowledgeGraphRef.current = null;
-          }
-        } else {
-          knowledgeGraphRef.current = null;
-        }
-
         pipelineRef.current = pipeline;
         setIndexStatus('ready');
         const vecCount = vectorStoreRef.current.size;
         const algoInfo = vecCount > 0 && vectorStoreRef.current.searchAlgorithm === 'hnsw' ? '，HNSW 已加载' : '';
-        const kgInfo = knowledgeGraphRef.current && knowledgeGraphRef.current.tripleCount > 0
-          ? `，图谱 ${knowledgeGraphRef.current.tripleCount} 三元组` : '';
-        if (vecCount === 0 && (algoInfo || kgInfo)) {
-          setIndexProgress(`⚠️ 向量库为空（0 个向量），但存在历史索引数据${kgInfo}。建议重新构建基本向量库。`);
+        if (vecCount === 0 && algoInfo) {
+          setIndexProgress(`⚠️ 向量库为空（0 个向量），但存在历史索引数据。建议重新构建基本向量库。`);
         } else {
-          setIndexProgress(`已加载 ${vecCount} 个向量${algoInfo}${kgInfo}`);
+          setIndexProgress(`已加载 ${vecCount} 个向量${algoInfo}`);
         }
 
         // Update collection metadata with loaded state
         const loadedHasHnsw = vectorStoreRef.current.searchAlgorithm === 'hnsw';
-        const loadedKgCount = knowledgeGraphRef.current?.tripleCount ?? 0;
         setCollections(prev => prev.map(c => c.id === activeCollectionId
-          ? { ...c, hasHnsw: loadedHasHnsw, hasKg: loadedKgCount > 0, kgTripleCount: loadedKgCount, vectorCount: vecCount }
+          ? { ...c, hasHnsw: loadedHasHnsw, vectorCount: vecCount }
           : c
         ));
       } else {
         vectorStoreRef.current = new LocalVectorStore();
         pipelineRef.current = null;
-        knowledgeGraphRef.current = null;
         // Reset config to defaults for empty collection
         setRetrievalConfig(DEFAULT_RETRIEVAL);
         setRerankerConfig(DEFAULT_RERANKER);
@@ -1132,8 +1166,6 @@ export function RagTestBench() {
         setPreRetrievalConfig(DEFAULT_PRE_RETRIEVAL);
         setSearchAlgorithm('brute-force');
         setHnswConfig(DEFAULT_HNSW);
-        setKgEnabled(false);
-        setKgConfig(DEFAULT_KG_CONFIG);
         setIndexStatus('idle');
         setIndexProgress('');
       }
@@ -1167,6 +1199,142 @@ export function RagTestBench() {
     });
   }, []);
 
+  const capturePipelineConfig = useCallback((): RagPipelinePresetConfig => ({
+    embedding: cloneConfig(embeddingConfig),
+    chunking: cloneConfig(chunkingConfig),
+    retrieval: cloneConfig(retrievalConfig),
+    reranker: cloneConfig(rerankerConfig),
+    queryMode: cloneConfig(queryModeConfig),
+    preRetrieval: cloneConfig(preRetrievalConfig),
+    searchAlgorithm,
+    hnsw: cloneConfig(hnswConfig),
+    formatOverrides: cloneConfig(formatOverrides),
+    formatTypeEnabled: cloneConfig(formatTypeEnabled),
+  }), [
+    chunkingConfig,
+    embeddingConfig,
+    formatOverrides,
+    formatTypeEnabled,
+    hnswConfig,
+    preRetrievalConfig,
+    queryModeConfig,
+    rerankerConfig,
+    retrievalConfig,
+    searchAlgorithm,
+  ]);
+
+  const applyPipelineConfig = useCallback((config: RagPipelinePresetConfig) => {
+    setEmbeddingConfig(cloneConfig(config.embedding));
+    setChunkingConfig(cloneConfig(config.chunking));
+    setRetrievalConfig(cloneConfig(config.retrieval));
+    setRerankerConfig(cloneConfig(config.reranker));
+    setQueryModeConfig(cloneConfig(config.queryMode));
+    setPreRetrievalConfig(cloneConfig(config.preRetrieval));
+    setSearchAlgorithm(config.searchAlgorithm || 'brute-force');
+    setHnswConfig(cloneConfig(config.hnsw || DEFAULT_HNSW));
+    setFormatOverrides(cloneConfig(config.formatOverrides || {}));
+    setFormatTypeEnabled(cloneConfig(config.formatTypeEnabled || { markdown: true, pdf: true, html: true, code: true }));
+  }, []);
+
+  const getActivePresetLabel = useCallback(() => {
+    if (!activePreset) return '未选择方案';
+    if (activePreset.startsWith('custom:')) {
+      const id = activePreset.slice('custom:'.length);
+      return pipelinePresets.find(item => item.id === id)?.name || '自定义方案';
+    }
+    return BUILTIN_PIPELINE_PRESETS.find(item => item.key === activePreset)?.label || activePreset;
+  }, [activePreset, pipelinePresets]);
+
+  const buildCurrentRagRuntimeConfig = useCallback(() => createRagCollectionConfig({
+    build: {
+      embedding: embeddingConfig,
+      chunking: chunkingConfig,
+      formatOverrides,
+      formatTypeEnabled,
+    },
+    index: {
+      searchAlgorithm,
+      hnsw: hnswConfig,
+    },
+    queryProfiles: [{
+      id: DEFAULT_RAG_QUERY_PROFILE_ID,
+      name: activePreset ? getActivePresetLabel() : '默认查询',
+      retrieval: retrievalConfig,
+      reranker: rerankerConfig,
+      queryMode: queryModeConfig,
+      preRetrieval: preRetrievalConfig,
+    }],
+    defaultQueryProfileId: DEFAULT_RAG_QUERY_PROFILE_ID,
+    generation: {
+      answerStyle: 'normal',
+      includeSources: true,
+    },
+  }, {
+    embedding: embeddingConfig,
+    chunking: chunkingConfig,
+    retrieval: retrievalConfig,
+    reranker: rerankerConfig,
+    queryMode: queryModeConfig,
+    preRetrieval: preRetrievalConfig,
+    searchAlgorithm,
+    hnsw: hnswConfig,
+    formatOverrides,
+    formatTypeEnabled,
+  }), [
+    activePreset,
+    chunkingConfig,
+    embeddingConfig,
+    formatOverrides,
+    formatTypeEnabled,
+    getActivePresetLabel,
+    hnswConfig,
+    preRetrievalConfig,
+    queryModeConfig,
+    rerankerConfig,
+    retrievalConfig,
+    searchAlgorithm,
+  ]);
+
+  const saveCurrentPipelinePreset = useCallback(() => {
+    const now = Date.now();
+    const name = presetDraftName.trim() || `RAG 方案 ${pipelinePresets.length + 1}`;
+    const preset: RagPipelinePreset = {
+      id: `preset-${now}-${Math.random().toString(36).slice(2, 7)}`,
+      name,
+      description: presetDraftDesc.trim(),
+      createdAt: now,
+      updatedAt: now,
+      config: capturePipelineConfig(),
+    };
+    setPipelinePresets(prev => [preset, ...prev]);
+    setActivePreset(`custom:${preset.id}`);
+    setPresetDraftName('');
+    setPresetDraftDesc('');
+  }, [capturePipelineConfig, pipelinePresets.length, presetDraftDesc, presetDraftName]);
+
+  const overwriteActivePipelinePreset = useCallback(() => {
+    if (!activePreset?.startsWith('custom:')) return;
+    const id = activePreset.slice('custom:'.length);
+    const now = Date.now();
+    setPipelinePresets(prev => prev.map(item => (
+      item.id === id
+        ? { ...item, updatedAt: now, config: capturePipelineConfig() }
+        : item
+    )));
+  }, [activePreset, capturePipelineConfig]);
+
+  const applySavedPipelinePreset = useCallback((presetId: string) => {
+    const preset = pipelinePresets.find(item => item.id === presetId);
+    if (!preset) return;
+    applyPipelineConfig(preset.config);
+    setActivePreset(`custom:${preset.id}`);
+  }, [applyPipelineConfig, pipelinePresets]);
+
+  const deletePipelinePreset = useCallback((presetId: string) => {
+    setPipelinePresets(prev => prev.filter(item => item.id !== presetId));
+    if (activePreset === `custom:${presetId}`) setActivePreset(null);
+  }, [activePreset]);
+
   // ── Apply preset ──
   const applyPreset = useCallback((mode: string) => {
     if (mode === 'simple') {
@@ -1174,32 +1342,39 @@ export function RagTestBench() {
       setRetrievalConfig(cfg.retrieval);
       setRerankerConfig(cfg.reranker);
       setPreRetrievalConfig({ strategy: 'none' });
+      setQueryModeConfig(DEFAULT_QUERY_MODE);
     } else if (mode === 'balanced') {
       const cfg = createBalancedConfig(embeddingConfig);
       setRetrievalConfig(cfg.retrieval);
       setRerankerConfig(cfg.reranker);
       setPreRetrievalConfig({ strategy: 'none' });
+      setQueryModeConfig(DEFAULT_QUERY_MODE);
     } else if (mode === 'precision') {
       const cfg = createPrecisionConfig(embeddingConfig);
       setRetrievalConfig(cfg.retrieval);
       setRerankerConfig(cfg.reranker);
       setPreRetrievalConfig({ strategy: 'none' });
+      setQueryModeConfig(DEFAULT_QUERY_MODE);
     } else if (mode === 'semantic') {
       setRetrievalConfig({ ...DEFAULT_RETRIEVAL, strategy: 'vector', topK: 8 });
       setRerankerConfig({ type: 'mmr', topN: 5, mmrLambda: 0.5 });
       setPreRetrievalConfig({ strategy: 'expansion' });
+      setQueryModeConfig(DEFAULT_QUERY_MODE);
     } else if (mode === 'keyword') {
       setRetrievalConfig({ ...DEFAULT_RETRIEVAL, strategy: 'bm25', topK: 15 });
       setRerankerConfig({ type: 'none', topN: 10 });
       setPreRetrievalConfig({ strategy: 'none' });
+      setQueryModeConfig(DEFAULT_QUERY_MODE);
     } else if (mode === 'deep') {
-      setRetrievalConfig({ ...DEFAULT_RETRIEVAL, strategy: 'hybrid', topK: 30, includeKnowledgeGraph: true, kgMaxTriples: 10 });
+      setRetrievalConfig({ ...DEFAULT_RETRIEVAL, strategy: 'hybrid', topK: 30 });
       setRerankerConfig({ type: 'llm', topN: 5 });
       setPreRetrievalConfig({ strategy: 'rewrite' });
+      setQueryModeConfig({ ...DEFAULT_QUERY_MODE, mode: 'iterative', iterative: { maxIterations: 3, qualityThreshold: 0.7, refinementStrategy: 'rephrase' } });
     } else if (mode === 'hyde') {
       setRetrievalConfig({ ...DEFAULT_RETRIEVAL, strategy: 'hybrid', topK: 20 });
       setRerankerConfig({ type: 'mmr', topN: 5, mmrLambda: 0.7 });
       setPreRetrievalConfig({ strategy: 'hyde' });
+      setQueryModeConfig(DEFAULT_QUERY_MODE);
     }
     setActivePreset(mode);
   }, [embeddingConfig]);
@@ -1224,9 +1399,10 @@ export function RagTestBench() {
   // ── Delete collection ──
   const deleteCollection = useCallback(async (id: string) => {
     await deleteCollectionCache(id);
+    await refreshRagManifest();
     setCollections(prev => prev.filter(c => c.id !== id));
     if (activeCollectionId === id) setActiveCollectionId('');
-  }, [activeCollectionId]);
+  }, [activeCollectionId, refreshRagManifest]);
 
   // ── Add files ──
   const handleAddFiles = useCallback(async () => {
@@ -1633,37 +1809,7 @@ export function RagTestBench() {
         return;
       }
 
-      // ═══ Phase 3.5: Knowledge Graph — build if enabled OR if collection already has KG ═══
-      const hadKg = knowledgeGraphRef.current && knowledgeGraphRef.current.tripleCount > 0;
-      if (kgEnabled || hadKg) {
-        if (!kgApiConfig?.apiKey && !embeddingConfig.apiKey) {
-          const skipMsg = hadKg
-            ? '⚠ 知识图谱增量更新跳过：未配置 LLM API，请在「索引优化 → 知识图谱」中选择 API 配置'
-            : '⚠ 知识图谱构建跳过：未配置 LLM API，请在「索引优化 → 知识图谱」中选择 API 配置';
-          errors.push(skipMsg);
-          setIndexProgress('⚠️ 跳过知识图谱（未配置 API）');
-        } else {
-          const kgAction = hadKg ? '增量更新' : '构建';
-          setBuildProgress({ phase: 'saving', current: 0, total: 1, detail: `${kgAction}知识图谱…`, errors });
-          setIndexProgress(`🧠 ${kgAction}知识图谱…（${enriched.length} 个块）`);
-
-          try {
-            const llmFn = makeUniversalLlmFn(kgApiConfig, embeddingConfig.apiKey);
-
-            const chunks = enriched.map((n: any) => ({ id: n.id_, text: n.getText() }));
-            const graph = await buildKnowledgeGraph(chunks, kgConfig, llmFn, (msg) => {
-              setIndexProgress(msg);
-            });
-            knowledgeGraphRef.current = graph;
-            setIndexProgress(`✅ 知识图谱${kgAction}完成: ${graph.tripleCount} 三元组, ${graph.entityCount} 实体`);
-          } catch (err: any) {
-            errors.push(`⚠ 知识图谱${kgAction}失败: ${err?.message}`);
-            console.error('KG build error:', err);
-          }
-        }
-      }
-
-      // ═══ Phase 3.75: Rebuild HNSW if previously built or currently selected ═══
+      // ═══ Phase 3.5: Rebuild HNSW if previously built or currently selected ═══
       const hadHnsw = vectorStoreRef.current.searchAlgorithm === 'hnsw';
       if (searchAlgorithm === 'hnsw' || hadHnsw) {
         const hnswAction = hadHnsw ? '增量更新' : '构建';
@@ -1682,20 +1828,11 @@ export function RagTestBench() {
         }
       }
 
-      // ═══ Phase 3.8: 记录分块策略与知识图谱统计 ═══
+      // ═══ Phase 3.8: 记录分块策略 ═══
       vectorStoreRef.current.setChunkingConfig(
         chunkingConfig.strategy ?? 'sentence',
         chunkingConfig,
       );
-      if (knowledgeGraphRef.current && knowledgeGraphRef.current.tripleCount > 0) {
-        vectorStoreRef.current.setKnowledgeGraphStats({
-          tripleCount: knowledgeGraphRef.current.tripleCount,
-          entityCount: knowledgeGraphRef.current.entityCount,
-          builtAt: Date.now(),
-        });
-      } else {
-        vectorStoreRef.current.setKnowledgeGraphStats(null);
-      }
 
       // ═══ Phase 3.9: 生成向量库摘要 & 主题词表 ═══
       let collectionSummary = '';
@@ -1706,7 +1843,7 @@ export function RagTestBench() {
         setBuildProgress({ phase: 'saving', current: 0, total: 1, detail: '生成向量库摘要…', errors });
         setIndexProgress('📝 正在生成向量库摘要…');
 
-        summaryLlmFn = makeUniversalLlmFn(kgApiConfig, embeddingConfig.apiKey);
+        summaryLlmFn = makeUniversalLlmFn(preRetrievalApiConfig, embeddingConfig.apiKey);
 
         // 采样部分文本块用于摘要
         const allEntries = Array.from({ length: Math.min(enriched.length, 20) }, (_, i) =>
@@ -1788,26 +1925,9 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
         const saveData: any = {
           vectorStore: vectorStoreRef.current.serialize(),
           meta: { embeddingProvider: embeddingConfig.provider, embeddingModel: embeddingConfig.model },
-          // 封装完整配置：向量库 = 向量 + 索引 + 全部配置
-          config: {
-            embedding: embeddingConfig,
-            chunking: chunkingConfig,
-            formatOverrides,
-            formatTypeEnabled,
-            retrieval: retrievalConfig,
-            reranker: rerankerConfig,
-            queryMode: queryModeConfig,
-            preRetrieval: preRetrievalConfig,
-            searchAlgorithm,
-            hnsw: hnswConfig,
-            kgEnabled,
-            kg: kgConfig,
-          },
+          // 分层配置：构建配置 / 索引配置 / 查询方案 / 生成配置
+          config: buildCurrentRagRuntimeConfig(),
         };
-        // 持久化知识图谱
-        if (knowledgeGraphRef.current && knowledgeGraphRef.current.tripleCount > 0) {
-          saveData.knowledgeGraph = knowledgeGraphRef.current.serialize();
-        }
         await saveVectorCollectionPayload(activeCollectionId, saveData);
       } catch (err: any) {
         setIndexStatus('error');
@@ -1828,8 +1948,6 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
             summary: collectionSummary || c.summary,
             topicVocabulary: topicVocabulary.length > 0 ? topicVocabulary : c.topicVocabulary,
             hasHnsw: vectorStoreRef.current.searchAlgorithm === 'hnsw',
-            hasKg: (knowledgeGraphRef.current?.tripleCount ?? 0) > 0,
-            kgTripleCount: knowledgeGraphRef.current?.tripleCount ?? 0,
           }
         : c,
       ));
@@ -1839,13 +1957,14 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
       const errSummary = errors.length > 0 ? ` (${errors.length} 个警告)` : '';
       setIndexProgress(`✅ 索引完成 — ${vectorStoreRef.current.size} 个向量，${successPaths.size} 个文件${errSummary}`);
       setBuildProgress(null);
+      await refreshRagManifest();
     } catch (err: any) {
       setIndexStatus('error');
       setIndexProgress(`❌ 未知错误: ${err?.message ?? String(err)}\n${err?.stack?.split('\n').slice(0, 3).join('\n') ?? ''}`);
       setBuildProgress(null);
       console.error('BuildIndex uncaught error:', err);
     }
-  }, [documents, selectedDocs, embeddingConfig, chunkingConfig, retrievalConfig, rerankerConfig, activeCollectionId, activeCollection, formatOverrides, formatTypeEnabled, kgEnabled, kgConfig]);
+  }, [documents, selectedDocs, embeddingConfig, chunkingConfig, retrievalConfig, rerankerConfig, activeCollectionId, activeCollection, formatOverrides, formatTypeEnabled, preRetrievalApiConfig, refreshRagManifest, buildCurrentRagRuntimeConfig]);
 
   // ── Update Config (save current config to collection without rebuilding) ──
   const updateConfig = useCallback(async () => {
@@ -1864,17 +1983,6 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
       return;
     }
 
-    // Validate: if KG retrieval enabled, check if KG is built
-    if (retrievalConfig.includeKnowledgeGraph) {
-      const hasKg = knowledgeGraphRef.current && knowledgeGraphRef.current.tripleCount > 0;
-      if (!hasKg) {
-        setIndexStatus('error');
-        setIndexProgress('❌ 检索配置中启用了知识图谱增强，但尚未构建知识图谱。请先点击"构建知识图谱"。');
-        setUpdatingConfig(false);
-        return;
-      }
-    }
-
     try {
       const existing = await loadCollectionFromDisk(activeCollectionId);
       if (!existing) {
@@ -1884,46 +1992,36 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
         return;
       }
 
-      const newConfig = {
-        embedding: embeddingConfig,
-        chunking: chunkingConfig,
-        formatOverrides,
-        formatTypeEnabled,
-        retrieval: retrievalConfig,
-        reranker: rerankerConfig,
-        queryMode: queryModeConfig,
-        preRetrieval: preRetrievalConfig,
-        searchAlgorithm,
-        hnsw: hnswConfig,
-        kgEnabled,
-        kg: kgConfig,
-      };
+      const newConfig = buildCurrentRagRuntimeConfig();
 
       // Warn if embedding model changed
-      const oldCfg = existing.config;
-      if (oldCfg?.embedding &&
-          (oldCfg.embedding.provider !== embeddingConfig.provider || oldCfg.embedding.model !== embeddingConfig.model)) {
+      const oldCfg = existing.config ? normalizeRagCollectionConfig(existing.config) : null;
+      if (oldCfg?.build.embedding &&
+          (oldCfg.build.embedding.provider !== embeddingConfig.provider || oldCfg.build.embedding.model !== embeddingConfig.model)) {
         const confirmed = window.confirm(
-          `⚠️ Embedding 配置已变更（${oldCfg.embedding.provider}/${oldCfg.embedding.model} → ${embeddingConfig.provider}/${embeddingConfig.model}）。\n\n` +
+          `⚠️ Embedding 配置已变更（${oldCfg.build.embedding.provider}/${oldCfg.build.embedding.model} → ${embeddingConfig.provider}/${embeddingConfig.model}）。\n\n` +
           `修改 Embedding 模型后，现有向量与新查询向量的语义空间不匹配，检索效果会大幅下降。\n建议重新"构建基本向量库"。\n\n确定要保存此配置吗？`
         );
         if (!confirmed) { setUpdatingConfig(false); return; }
       }
 
       await saveVectorCollectionConfig(activeCollectionId, newConfig);
+      await refreshRagManifest();
 
       // Build diff summary
       const changes: string[] = [];
       if (oldCfg) {
-        if (JSON.stringify(oldCfg.embedding) !== JSON.stringify(newConfig.embedding)) changes.push('Embedding');
-        if (JSON.stringify(oldCfg.chunking) !== JSON.stringify(newConfig.chunking)) changes.push('分块');
-        if (JSON.stringify(oldCfg.retrieval) !== JSON.stringify(newConfig.retrieval)) changes.push('检索');
-        if (JSON.stringify(oldCfg.reranker) !== JSON.stringify(newConfig.reranker)) changes.push('重排');
-        if (JSON.stringify(oldCfg.queryMode) !== JSON.stringify(newConfig.queryMode)) changes.push('查询流程');
-        if (JSON.stringify(oldCfg.preRetrieval) !== JSON.stringify(newConfig.preRetrieval)) changes.push('检索前优化');
-        if (oldCfg.searchAlgorithm !== newConfig.searchAlgorithm) changes.push('搜索算法');
-        if (JSON.stringify(oldCfg.hnsw) !== JSON.stringify(newConfig.hnsw)) changes.push('HNSW');
-        if (JSON.stringify(oldCfg.kg) !== JSON.stringify(newConfig.kg) || oldCfg.kgEnabled !== newConfig.kgEnabled) changes.push('知识图谱');
+        const oldProfile = getRagQueryProfile(oldCfg, oldCfg.defaultQueryProfileId);
+        const newProfile = getRagQueryProfile(newConfig, newConfig.defaultQueryProfileId);
+        if (JSON.stringify(oldCfg.build.embedding) !== JSON.stringify(newConfig.build.embedding)) changes.push('Embedding');
+        if (JSON.stringify(oldCfg.build.chunking) !== JSON.stringify(newConfig.build.chunking)) changes.push('分块');
+        if (JSON.stringify(oldCfg.build.formatOverrides) !== JSON.stringify(newConfig.build.formatOverrides)) changes.push('格式分块');
+        if (JSON.stringify(oldProfile.retrieval) !== JSON.stringify(newProfile.retrieval)) changes.push('检索');
+        if (JSON.stringify(oldProfile.reranker) !== JSON.stringify(newProfile.reranker)) changes.push('重排');
+        if (JSON.stringify(oldProfile.queryMode) !== JSON.stringify(newProfile.queryMode)) changes.push('查询流程');
+        if (JSON.stringify(oldProfile.preRetrieval) !== JSON.stringify(newProfile.preRetrieval)) changes.push('检索前优化');
+        if (oldCfg.index.searchAlgorithm !== newConfig.index.searchAlgorithm) changes.push('搜索算法');
+        if (JSON.stringify(oldCfg.index.hnsw) !== JSON.stringify(newConfig.index.hnsw)) changes.push('HNSW');
       }
 
       setIndexStatus('ready');
@@ -1938,7 +2036,7 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
     }
   }, [activeCollectionId, embeddingConfig, chunkingConfig, formatOverrides, formatTypeEnabled,
       retrievalConfig, rerankerConfig, queryModeConfig, preRetrievalConfig, searchAlgorithm,
-      hnswConfig, kgEnabled, kgConfig]);
+      hnswConfig, refreshRagManifest, buildCurrentRagRuntimeConfig]);
 
   // ── Build HNSW Index (standalone) ──
   const buildHnswIndex = useCallback(async () => {
@@ -1959,6 +2057,7 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
 
       // Persist
       await saveVectorCollectionStore(activeCollectionId, vectorStoreRef.current);
+      await refreshRagManifest();
       setIndexStatus('ready');
       setIndexProgress(`✅ HNSW 索引已构建（${vectorStoreRef.current.size} 向量）`);
       setCollections(prev => prev.map(c => c.id === activeCollectionId ? { ...c, hasHnsw: true } : c));
@@ -1968,59 +2067,7 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
     } finally {
       setRebuildingHnsw(false);
     }
-  }, [activeCollectionId, hnswConfig]);
-
-  // ── Build Knowledge Graph (standalone) ──
-  const buildKg = useCallback(async () => {
-    if (!activeCollectionId || vectorStoreRef.current.size === 0) {
-      setIndexStatus('error');
-      setIndexProgress('❌ 请先构建基本向量库');
-      return;
-    }
-    if (!kgApiConfig?.apiKey && !embeddingConfig.apiKey) {
-      setIndexStatus('error');
-      setIndexProgress('❌ 请先在「知识图谱」配置中选择 API 配置，或确保 Embedding 配置中有 API Key');
-      return;
-    }
-    setRebuildingKg(true);
-    try {
-      const llmFn = makeUniversalLlmFn(kgApiConfig, embeddingConfig.apiKey);
-
-      const allEntries = vectorStoreRef.current.serialize().entries;
-      const chunks = allEntries.map(e => ({ id: e.id, text: e.text }));
-      setIndexProgress(`🧠 构建知识图谱…（${chunks.length} 个块）`);
-      const graph = await buildKnowledgeGraph(chunks, kgConfig, llmFn, (msg) => {
-        setIndexProgress(msg);
-      });
-      knowledgeGraphRef.current = graph;
-
-      if (graph.tripleCount === 0) {
-        // 0 triples — keep the error message from buildKnowledgeGraph visible
-        setIndexStatus('error');
-        setCollections(prev => prev.map(c => c.id === activeCollectionId
-          ? { ...c, hasKg: false, kgTripleCount: 0 }
-          : c
-        ));
-        return;
-      }
-
-      setKgEnabled(true);
-
-      // Persist
-      await saveVectorCollectionKnowledgeGraph(activeCollectionId, graph.serialize());
-      setIndexStatus('ready');
-      setIndexProgress(`✅ 知识图谱: ${graph.tripleCount} 三元组, ${graph.entityCount} 实体`);
-      setCollections(prev => prev.map(c => c.id === activeCollectionId
-        ? { ...c, hasKg: true, kgTripleCount: graph.tripleCount }
-        : c
-      ));
-    } catch (err: any) {
-      setIndexStatus('error');
-      setIndexProgress(`❌ 知识图谱构建失败: ${err?.message}`);
-    } finally {
-      setRebuildingKg(false);
-    }
-  }, [activeCollectionId, kgConfig, kgApiConfig]);
+  }, [activeCollectionId, hnswConfig, refreshRagManifest]);
 
   // ── Search ──
   const handleSearch = useCallback(async () => {
@@ -2060,9 +2107,6 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
       const pipeline = new RagPipeline(qCfg);
       pipeline.setVectorStore(vectorStoreRef.current);
       pipeline.buildBM25();
-      if (knowledgeGraphRef.current) {
-        pipeline.setKnowledgeGraph(knowledgeGraphRef.current);
-      }
       // Wire LLM function for LLM reranker
       if (rerankerConfig.type === 'llm') {
         const llmFn = makeUniversalLlmFn(llmRerankerApiConfig, embeddingConfig.apiKey);
@@ -2223,214 +2267,187 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
       setFormatOverrides(prev => ({ ...prev, html: { method: 'dom-section', ...prev.html, ...patch } as HtmlChunkingConfig }));
     const updateCode = (patch: Partial<CodeChunkingConfig>) =>
       setFormatOverrides(prev => ({ ...prev, code: { method: 'function', ...prev.code, ...patch } as CodeChunkingConfig }));
+    const formatCard = (
+      title: string,
+      enabled: boolean,
+      onToggle: (value: boolean) => void,
+      children: React.ReactNode,
+    ) => (
+      <div className={`rounded-lg border border-gray-200 bg-white p-2.5 space-y-2 ${enabled ? '' : 'opacity-60'}`}>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-gray-700">{title}</span>
+          <Toggle checked={enabled} onChange={onToggle} />
+        </div>
+        {enabled && children}
+      </div>
+    );
 
     return (
-      <div className="mb-4 rounded-lg">
+      <div className="mb-4">
         {renderSectionHeader('format-chunking', <FileType size={14} className="text-orange-500" />, '格式专属分块')}
         {!collapsed && (
-          <div className="space-y-3 pl-5">
-                {/* ── Markdown ── */}
-                <div className={`border-l-2 ${formatTypeEnabled.markdown !== false ? 'border-blue-500/30' : 'border-gray-300/30 opacity-60'} pl-2.5 space-y-2 bg-gray-50 rounded-r-lg p-2`}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-blue-400">📝 Markdown / MDX</span>
-                    <Toggle checked={formatTypeEnabled.markdown !== false} onChange={v => setFormatTypeEnabled(prev => ({ ...prev, markdown: v }))} />
-                  </div>
-                  {formatTypeEnabled.markdown !== false && (
-                    <>
+          <div className="space-y-2 pl-5">
+            {formatCard(
+              'Markdown / MDX',
+              formatTypeEnabled.markdown !== false,
+              v => setFormatTypeEnabled(prev => ({ ...prev, markdown: v })),
+              <>
                   <div>
-                    <label className={labelCls}>分块方式</label>
+                    <label className={labelCls}>方式</label>
                     <select className={selectCls} value={formatOverrides.markdown?.method ?? 'heading'}
                       onChange={e => updateMd({ method: e.target.value as any })}>
                       {MD_CHUNK_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                     </select>
-                    <div className="text-[10px] text-gray-400 mt-0.5">
-                      {(formatOverrides.markdown?.method ?? 'heading') === 'heading'
-                        ? '按标题层级切分，每个标题段作为一个块'
-                        : (formatOverrides.markdown?.method === 'semantic' ? '用语义相似度检测话题切换' : '按句子贪心合并到块上限')}
-                    </div>
                   </div>
                   {(formatOverrides.markdown?.method ?? 'heading') === 'heading' && (
                     <>
-                      <div className="grid grid-cols-2 gap-1.5">
+                      <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className={labelCls}>最大标题级别 (1-6)</label>
+                          <label className={labelCls}>标题级别</label>
                           <input className={inputCls} type="number" min={1} max={6}
                             value={formatOverrides.markdown?.maxHeadingLevel ?? 2}
                             onChange={e => updateMd({ maxHeadingLevel: parseInt(e.target.value) || 2 })} />
-                          <div className="text-[10px] text-gray-400">如设为 2，则按 ## 切分</div>
                         </div>
                         <div>
-                          <label className={labelCls}>块大小上限 (token)</label>
+                          <label className={labelCls}>块大小</label>
                           <input className={inputCls} type="number" min={64}
                             value={formatOverrides.markdown?.chunkSize ?? 512}
                             onChange={e => updateMd({ chunkSize: parseInt(e.target.value) || 512 })} />
-                          <div className="text-[10px] text-gray-400">超长标题段的二次切分</div>
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-1.5">
+                      <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className={labelCls}>块重叠 (token)</label>
+                          <label className={labelCls}>重叠</label>
                           <input className={inputCls} type="number" min={0}
                             value={formatOverrides.markdown?.chunkOverlap ?? 50}
                             onChange={e => updateMd({ chunkOverlap: parseInt(e.target.value) || 0 })} />
                         </div>
                         <div className="pt-5">
                           <Toggle checked={formatOverrides.markdown?.includeParentHeadings ?? true}
-                            onChange={v => updateMd({ includeParentHeadings: v })} label="子块含父标题上下文" />
+                            onChange={v => updateMd({ includeParentHeadings: v })} label="保留父标题" />
                         </div>
                       </div>
                     </>
                   )}
                   {(formatOverrides.markdown?.method === 'sentence' || formatOverrides.markdown?.method === 'semantic') && (
-                    <div className="grid grid-cols-2 gap-1.5">
+                    <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className={labelCls}>块大小 (token)</label>
+                        <label className={labelCls}>块大小</label>
                         <input className={inputCls} type="number" min={64}
                           value={formatOverrides.markdown?.chunkSize ?? 512}
                           onChange={e => updateMd({ chunkSize: parseInt(e.target.value) || 512 })} />
                       </div>
                       <div>
-                        <label className={labelCls}>块重叠 (token)</label>
+                        <label className={labelCls}>重叠</label>
                         <input className={inputCls} type="number" min={0}
                           value={formatOverrides.markdown?.chunkOverlap ?? 50}
                           onChange={e => updateMd({ chunkOverlap: parseInt(e.target.value) || 0 })} />
                       </div>
                     </div>
                   )}
-                    </>
-                  )}
-                </div>
+              </>,
+            )}
 
-                {/* ── PDF ── */}
-                <div className={`border-l-2 ${formatTypeEnabled.pdf !== false ? 'border-red-500/30' : 'border-gray-300/30 opacity-60'} pl-2.5 space-y-2 bg-gray-50 rounded-r-lg p-2`}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-red-400">📄 PDF</span>
-                    <Toggle checked={formatTypeEnabled.pdf !== false} onChange={v => setFormatTypeEnabled(prev => ({ ...prev, pdf: v }))} />
-                  </div>
-                  {formatTypeEnabled.pdf !== false && (
-                    <>
+            {formatCard(
+              'PDF',
+              formatTypeEnabled.pdf !== false,
+              v => setFormatTypeEnabled(prev => ({ ...prev, pdf: v })),
+              <>
                   <div>
-                    <label className={labelCls}>分块方式</label>
+                    <label className={labelCls}>方式</label>
                     <select className={selectCls} value={formatOverrides.pdf?.method ?? 'page'}
                       onChange={e => updatePdf({ method: e.target.value as any })}>
                       {PDF_CHUNK_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                     </select>
-                    <div className="text-[10px] text-gray-400 mt-0.5">
-                      {(formatOverrides.pdf?.method ?? 'page') === 'page'
-                        ? '按页切分，每页一个块（可二次切分超长页）'
-                        : formatOverrides.pdf?.method === 'paragraph' ? '按段落切分，保留段落完整性'
-                        : formatOverrides.pdf?.method === 'semantic' ? '语义检测切换点' : '按句贪心合并'}
-                    </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-1.5">
+                  <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className={labelCls}>块大小 (token)</label>
+                      <label className={labelCls}>块大小</label>
                       <input className={inputCls} type="number" min={64}
                         value={formatOverrides.pdf?.chunkSize ?? 512}
                         onChange={e => updatePdf({ chunkSize: parseInt(e.target.value) || 512 })} />
                     </div>
                     <div>
-                      <label className={labelCls}>块重叠 (token)</label>
+                      <label className={labelCls}>重叠</label>
                       <input className={inputCls} type="number" min={0}
                         value={formatOverrides.pdf?.chunkOverlap ?? 50}
                         onChange={e => updatePdf({ chunkOverlap: parseInt(e.target.value) || 0 })} />
                     </div>
                   </div>
                   <Toggle checked={formatOverrides.pdf?.respectPageBoundary ?? true}
-                    onChange={v => updatePdf({ respectPageBoundary: v })} label="尊重页面边界（不跨页合并）" />
-                    </>
-                  )}
-                </div>
+                    onChange={v => updatePdf({ respectPageBoundary: v })} label="页边界" />
+              </>,
+            )}
 
-                {/* ── HTML ── */}
-                <div className={`border-l-2 ${formatTypeEnabled.html !== false ? 'border-orange-500/30' : 'border-gray-300/30 opacity-60'} pl-2.5 space-y-2 bg-gray-50 rounded-r-lg p-2`}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-orange-400">🌐 HTML</span>
-                    <Toggle checked={formatTypeEnabled.html !== false} onChange={v => setFormatTypeEnabled(prev => ({ ...prev, html: v }))} />
-                  </div>
-                  {formatTypeEnabled.html !== false && (
-                    <>
+            {formatCard(
+              'HTML',
+              formatTypeEnabled.html !== false,
+              v => setFormatTypeEnabled(prev => ({ ...prev, html: v })),
+              <>
                   <div>
-                    <label className={labelCls}>分块方式</label>
+                    <label className={labelCls}>方式</label>
                     <select className={selectCls} value={formatOverrides.html?.method ?? 'dom-section'}
                       onChange={e => updateHtml({ method: e.target.value as any })}>
                       {HTML_CHUNK_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                     </select>
-                    <div className="text-[10px] text-gray-400 mt-0.5">
-                      {(formatOverrides.html?.method ?? 'dom-section') === 'dom-section'
-                        ? '按 DOM 语义标签切分（h1-h3, section, article）'
-                        : formatOverrides.html?.method === 'semantic' ? '语义检测切换点' : '按句贪心合并'}
-                    </div>
                   </div>
                   {(formatOverrides.html?.method ?? 'dom-section') === 'dom-section' && (
                     <div>
-                      <label className={labelCls}>切分标签（逗号分隔）</label>
+                      <label className={labelCls}>切分标签</label>
                       <input className={inputCls} type="text"
                         value={(formatOverrides.html?.sectionTags ?? ['h1','h2','h3','section','article']).join(',')}
                         onChange={e => updateHtml({ sectionTags: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })} />
-                      <div className="text-[10px] text-gray-400">遇到这些标签时开始新的块</div>
                     </div>
                   )}
-                  <div className="grid grid-cols-2 gap-1.5">
+                  <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className={labelCls}>块大小 (token)</label>
+                      <label className={labelCls}>块大小</label>
                       <input className={inputCls} type="number" min={64}
                         value={formatOverrides.html?.chunkSize ?? 512}
                         onChange={e => updateHtml({ chunkSize: parseInt(e.target.value) || 512 })} />
                     </div>
                     <div>
-                      <label className={labelCls}>块重叠 (token)</label>
+                      <label className={labelCls}>重叠</label>
                       <input className={inputCls} type="number" min={0}
                         value={formatOverrides.html?.chunkOverlap ?? 50}
                         onChange={e => updateHtml({ chunkOverlap: parseInt(e.target.value) || 0 })} />
                     </div>
                   </div>
                   <Toggle checked={formatOverrides.html?.stripTags ?? true}
-                    onChange={v => updateHtml({ stripTags: v })} label="去除 HTML 标签（仅保留纯文本）" />
-                    </>
-                  )}
-                </div>
+                    onChange={v => updateHtml({ stripTags: v })} label="去除标签" />
+              </>,
+            )}
 
-                {/* ── Code ── */}
-                <div className={`border-l-2 ${formatTypeEnabled.code !== false ? 'border-green-500/30' : 'border-gray-300/30 opacity-60'} pl-2.5 space-y-2 bg-gray-50 rounded-r-lg p-2`}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-green-400">💻 代码文件</span>
-                    <Toggle checked={formatTypeEnabled.code !== false} onChange={v => setFormatTypeEnabled(prev => ({ ...prev, code: v }))} />
-                  </div>
-                  {formatTypeEnabled.code !== false && (
-                    <>
+            {formatCard(
+              'Code',
+              formatTypeEnabled.code !== false,
+              v => setFormatTypeEnabled(prev => ({ ...prev, code: v })),
+              <>
                   <div>
-                    <label className={labelCls}>分块方式</label>
+                    <label className={labelCls}>方式</label>
                     <select className={selectCls} value={formatOverrides.code?.method ?? 'function'}
                       onChange={e => updateCode({ method: e.target.value as any })}>
                       {CODE_CHUNK_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                     </select>
-                    <div className="text-[10px] text-gray-400 mt-0.5">
-                      {(formatOverrides.code?.method ?? 'function') === 'function'
-                        ? '按函数/方法切分，每个函数一个块'
-                        : formatOverrides.code?.method === 'class' ? '按类切分，每个类一个块'
-                        : formatOverrides.code?.method === 'block' ? '按代码块（缩进/花括号）切分' : '按句贪心合并'}
-                    </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-1.5">
+                  <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className={labelCls}>块大小 (token)</label>
+                      <label className={labelCls}>块大小</label>
                       <input className={inputCls} type="number" min={64}
                         value={formatOverrides.code?.chunkSize ?? 512}
                         onChange={e => updateCode({ chunkSize: parseInt(e.target.value) || 512 })} />
                     </div>
                     <div>
-                      <label className={labelCls}>块重叠 (token)</label>
+                      <label className={labelCls}>重叠</label>
                       <input className={inputCls} type="number" min={0}
                         value={formatOverrides.code?.chunkOverlap ?? 50}
                         onChange={e => updateCode({ chunkOverlap: parseInt(e.target.value) || 0 })} />
                     </div>
                   </div>
                   <Toggle checked={formatOverrides.code?.includeImports ?? false}
-                    onChange={v => updateCode({ includeImports: v })} label="每块前附加 import/require 语句上下文" />
-                    </>
-                  )}
-                </div>
+                    onChange={v => updateCode({ includeImports: v })} label="包含 imports" />
+              </>,
+            )}
           </div>
         )}
       </div>
@@ -2668,37 +2685,6 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
               </div>
             )}
 
-            {/* ── 知识图谱检索增强 ── */}
-            <div className="border-t border-gray-200 pt-2 mt-2 space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-700 font-medium">启用知识图谱检索增强</span>
-                  {knowledgeGraphRef.current && knowledgeGraphRef.current.tripleCount > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-600">
-                      {knowledgeGraphRef.current.tripleCount} 三元组
-                    </span>
-                  )}
-                </div>
-                <Toggle checked={retrievalConfig.includeKnowledgeGraph ?? false} onChange={v => {
-                  if (v) {
-                    const hasKg = knowledgeGraphRef.current && knowledgeGraphRef.current.tripleCount > 0;
-                    if (!hasKg) {
-                      alert('⚠️ 尚未构建知识图谱，请先在「索引优化」中点击「构建知识图谱」。');
-                      return;
-                    }
-                  }
-                  setRetrievalConfig(prev => ({ ...prev, includeKnowledgeGraph: v }));
-                }} />
-              </div>
-              {retrievalConfig.includeKnowledgeGraph && (
-                <div className="pl-5">
-                  <label className={labelCls}>最大关联三元组数</label>
-                  <input className={inputCls} type="number" min={1} max={20}
-                    value={retrievalConfig.kgMaxTriples ?? 5}
-                    onChange={e => setRetrievalConfig(prev => ({ ...prev, kgMaxTriples: parseInt(e.target.value) || 5 }))} />
-                </div>
-              )}
-            </div>
           </div>
         )}
       </div>
@@ -2862,23 +2848,21 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
 
   function renderIndexOptimization() {
     const collapsed = collapsedSections['indexOpt'];
-    const kgStats = knowledgeGraphRef.current;
     const hasHnswBuilt = vectorStoreRef.current.searchAlgorithm === 'hnsw';
-    const hasKgBuilt = kgStats && kgStats.tripleCount > 0;
+    const configCardCls = 'rounded-lg border border-gray-200 bg-white p-2.5 space-y-2';
     return (
       <div className="mb-4">
         {renderSectionHeader('indexOpt', <Database size={14} className="text-cyan-500" />, '索引优化')}
         {!collapsed && (
-          <div className="space-y-3 pl-5">
-            {/* ── HNSW 索引配置 ── */}
-            <div className="border-l-2 border-cyan-500/30 pl-2.5 space-y-2 bg-gray-50 rounded-r-lg p-2">
+          <div className="space-y-2 pl-5">
+            <div className={configCardCls}>
               <div className="flex items-center justify-between">
-                <div className="text-[11px] font-semibold text-cyan-500 flex items-center gap-1.5">🏗️ HNSW 索引</div>
-                {hasHnswBuilt && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-100 text-cyan-600">已构建</span>}
+                <div className="text-xs font-semibold text-gray-700">HNSW</div>
+                {hasHnswBuilt && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">已构建</span>}
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className={labelCls}>M (连接数)</label>
+                  <label className={labelCls}>M</label>
                   <input className={inputCls} type="number" min={4} max={64}
                     value={hnswConfig.m ?? 16}
                     onChange={e => setHnswConfig(prev => ({ ...prev, m: parseInt(e.target.value) || 16 }))} />
@@ -2896,99 +2880,8 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
                     onChange={e => setHnswConfig(prev => ({ ...prev, efSearch: parseInt(e.target.value) || 50 }))} />
                 </div>
               </div>
-              <div className="text-[10px] text-gray-400 leading-relaxed">
-                M↑ 更准但更慢 | ef建图↑ 图质量更高 | ef查询↑ 搜索更准
-              </div>
-              {!vectorStoreRef.current.size && (
-                <div className="text-[10px] text-gray-400 italic">需要先构建基本向量库后才能构建 HNSW 索引</div>
-              )}
             </div>
 
-            {/* ── 知识图谱配置 ── */}
-            <div className="border-l-2 border-teal-500/30 pl-2.5 space-y-2 bg-gray-50 rounded-r-lg p-2">
-              <div className="flex items-center justify-between">
-                <div className="text-[11px] font-semibold text-teal-500 flex items-center gap-1.5">🧠 知识图谱</div>
-                {hasKgBuilt && <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-100 text-teal-600">已构建</span>}
-              </div>
-              <ApiProfilePicker
-                value={kgApiConfig}
-                onChange={setKgApiConfig}
-                storageKey={LS_KG_API_PROFILE}
-                label="LLM API 配置（用于提取三元组）"
-              />
-              <div>
-                <label className={labelCls}>每块最大三元组数</label>
-                <input className={inputCls} type="number" min={1} max={50}
-                  value={kgConfig.maxTriplesPerChunk}
-                  onChange={e => setKgConfig(prev => ({ ...prev, maxTriplesPerChunk: parseInt(e.target.value) || 10 }))} />
-              </div>
-              <div>
-                <label className={labelCls}>关注实体类型（逗号分隔，留空不限制）</label>
-                <input className={inputCls} placeholder="人物, 技术, 概念, 组织"
-                  value={(kgConfig.entityTypes || []).join(', ')}
-                  onChange={e => setKgConfig(prev => ({
-                    ...prev,
-                    entityTypes: e.target.value ? e.target.value.split(',').map(s => s.trim()).filter(Boolean) : undefined,
-                  }))} />
-              </div>
-              <div className="flex items-center gap-1">
-                <Toggle checked={kgConfig.includeEntityDescriptions ?? true}
-                  onChange={v => setKgConfig(prev => ({ ...prev, includeEntityDescriptions: v }))} label="生成实体描述" />
-                <span className="text-[10px] text-gray-400" title="开启后，LLM 会为每个提取的实体生成一句话描述（如「React — Facebook 开发的前端框架」），有助于知识图谱检索时的语义匹配">ⓘ</span>
-              </div>
-              {hasKgBuilt && (
-                <div className="p-2 rounded bg-teal-50 border border-teal-200 text-[10px] text-teal-700 space-y-2">
-                  <div>📊 三元组: {kgStats.tripleCount} | 实体: {kgStats.entityCount}</div>
-                  <div className="max-h-24 overflow-y-auto">
-                    {kgStats.getEntities().slice(0, 10).map((e, i) => (
-                      <span key={i} className="inline-block mr-1.5 px-1.5 py-0.5 rounded bg-teal-100 text-teal-800 mb-0.5">
-                        {e.name} ({e.tripleCount})
-                      </span>
-                    ))}
-                  </div>
-                  {/* Triple example */}
-                  <div className="border-t border-teal-200 pt-2">
-                    <button
-                      className="text-[10px] text-teal-600 hover:text-teal-800 font-medium"
-                      onClick={() => {
-                        const sample = knowledgeGraphRef.current?.getRandomTriple();
-                        setKgTripleSample(sample ?? null);
-                      }}
-                    >🎲 随机三元组示例</button>
-                    {kgTripleSample && (
-                      <div className="mt-1.5 space-y-1 bg-white/60 rounded p-2">
-                        <div className="font-medium text-teal-800">
-                          {kgTripleSample.triple.subject}
-                          <span className="mx-1 text-teal-500">→</span>
-                          <span className="text-teal-600">{kgTripleSample.triple.predicate}</span>
-                          <span className="mx-1 text-teal-500">→</span>
-                          {kgTripleSample.triple.object}
-                        </div>
-                        {Object.keys(kgTripleSample.entityDescs).length > 0 && (
-                          <div className="text-[9px] text-gray-500 space-y-0.5">
-                            {Object.entries(kgTripleSample.entityDescs).map(([name, desc]) => (
-                              <div key={name}><span className="font-medium text-gray-600">{name}</span>: {desc}</div>
-                            ))}
-                          </div>
-                        )}
-                        {(() => {
-                          const entry = vectorStoreRef.current?.getEntry(kgTripleSample.triple.sourceChunkId);
-                          return entry ? (
-                            <div className="text-[9px] text-gray-400 mt-1 border-t border-teal-100 pt-1">
-                              <span className="font-medium">原文：</span>
-                              <span className="italic">{entry.text.slice(0, 200)}{entry.text.length > 200 ? '…' : ''}</span>
-                            </div>
-                          ) : null;
-                        })()}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-              {!vectorStoreRef.current.size && (
-                <div className="text-[10px] text-gray-400 italic">需要先构建基本向量库后才能构建知识图谱</div>
-              )}
-            </div>
           </div>
         )}
       </div>
@@ -2996,24 +2889,44 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
   }
 
   function renderPresets() {
-    const presetItems: Array<{ key: string; icon: React.ReactNode; label: string; desc: string; needsApi?: boolean }> = [
-      { key: 'simple', icon: <Zap size={12} />, label: '简单向量', desc: '纯向量检索，最快' },
-      { key: 'keyword', icon: <Search size={12} />, label: '关键词', desc: 'BM25 精确匹配' },
-      { key: 'balanced', icon: <Settings2 size={12} />, label: '均衡混合', desc: 'Hybrid + RRF + MMR' },
-      { key: 'semantic', icon: <GitBranch size={12} />, label: '语义增强', desc: '向量 + 查询扩展 + MMR', needsApi: true },
-      { key: 'hyde', icon: <FileSearch size={12} />, label: 'HyDE 检索', desc: 'Hybrid + 假设文档嵌入', needsApi: true },
-      { key: 'precision', icon: <Sparkles size={12} />, label: '精确模式', desc: 'Hybrid + KG + LLM 重排', needsApi: true },
-      { key: 'deep', icon: <Layers size={12} />, label: '深度分析', desc: 'Hybrid + KG + 查询改写 + LLM 重排', needsApi: true },
-    ];
-    const needsApiForActive = presetItems.find(p => p.key === activePreset)?.needsApi;
+    const needsApiForActive = BUILTIN_PIPELINE_PRESETS.find(p => p.key === activePreset)?.needsApi;
+    const activeCustomId = activePreset?.startsWith('custom:') ? activePreset.slice('custom:'.length) : '';
     return (
-      <div className="mb-4">
-        <div className={sectionTitle}><Zap size={14} className="text-orange-500" /> 预设配置</div>
-        <div className="space-y-1 pl-5">
-          {presetItems.map(p => (
+      <div className="space-y-3">
+        <div className={sectionTitle}><Zap size={14} className="text-orange-500" /> 方案管理</div>
+
+        <div className="pl-5 space-y-2">
+          <select
+            className={selectCls}
+            value={activePreset || ''}
+            onChange={e => {
+              const value = e.target.value;
+              if (!value) {
+                setActivePreset(null);
+              } else if (value.startsWith('custom:')) {
+                applySavedPipelinePreset(value.slice('custom:'.length));
+              } else {
+                applyPreset(value);
+              }
+            }}
+          >
+            <option value="">不使用方案</option>
+            <optgroup label="内置模板">
+              {BUILTIN_PIPELINE_PRESETS.map(p => <option key={p.key} value={p.key}>{p.label} · {p.desc}</option>)}
+            </optgroup>
+            {pipelinePresets.length > 0 && (
+              <optgroup label="保存方案">
+                {pipelinePresets.map(p => <option key={p.id} value={`custom:${p.id}`}>{p.name}</option>)}
+              </optgroup>
+            )}
+          </select>
+        </div>
+
+        <div className="grid grid-cols-2 gap-1 pl-5">
+          {BUILTIN_PIPELINE_PRESETS.map(p => (
             <button
               key={p.key}
-              className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs transition-all border ${
+              className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs transition-all border ${
                 activePreset === p.key
                   ? 'bg-orange-50 border-orange-300 text-orange-700 ring-1 ring-orange-200'
                   : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50'
@@ -3026,16 +2939,80 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
                 }
               }}
             >
-              {p.icon}
-              <span className="font-medium">{p.label}</span>
-              {p.needsApi && <span className="text-[9px] text-amber-500 font-medium">API</span>}
-              <span className="text-[10px] text-gray-400 ml-auto">{p.desc}</span>
+              <span className="w-5 h-5 rounded-md bg-gray-50 border border-gray-200 flex items-center justify-center shrink-0">{p.icon}</span>
+              <span className="min-w-0 text-left">
+                <span className="block font-medium truncate">{p.label}</span>
+                <span className="block text-[10px] text-gray-400 truncate">{p.desc}{p.needsApi ? ' · API' : ''}</span>
+              </span>
             </button>
           ))}
         </div>
+
+        <div className="pl-5 grid grid-cols-[1fr_auto] gap-1.5">
+          <input
+            className={inputCls}
+            value={presetDraftName}
+            onChange={e => setPresetDraftName(e.target.value)}
+            placeholder="方案名称"
+          />
+          <button
+            className={btnSecondary}
+            onClick={saveCurrentPipelinePreset}
+            title="保存当前参数"
+          >
+            <Save size={13} />
+          </button>
+          <input
+            className={`${inputCls} col-span-2`}
+            value={presetDraftDesc}
+            onChange={e => setPresetDraftDesc(e.target.value)}
+            placeholder="备注"
+          />
+        </div>
+
+        {activeCustomId && (
+          <div className="pl-5">
+            <button
+              className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100"
+              onClick={overwriteActivePipelinePreset}
+            >
+              <Save size={12} /> 覆盖当前方案
+            </button>
+          </div>
+        )}
+
+        {pipelinePresets.length > 0 && (
+          <div className="pl-5 space-y-1">
+            {pipelinePresets.slice(0, 8).map(p => (
+              <div
+                key={p.id}
+                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border text-xs ${
+                  activeCustomId === p.id
+                    ? 'border-blue-300 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 bg-white text-gray-600'
+                }`}
+              >
+                <button className="min-w-0 flex-1 text-left" onClick={() => applySavedPipelinePreset(p.id)}>
+                  <div className="font-medium truncate">{p.name}</div>
+                  <div className="text-[10px] text-gray-400 truncate">
+                    {p.description || `${p.config.retrieval.strategy} · topK ${p.config.retrieval.topK} · ${p.config.reranker.type}`}
+                  </div>
+                </button>
+                <button
+                  className="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50"
+                  onClick={() => deletePipelinePreset(p.id)}
+                  title="删除方案"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {activePreset && (
-          <div className="text-[10px] text-orange-500 mt-1.5 pl-5">
-            ✨ 已选中「{presetItems.find(p => p.key === activePreset)?.label}」预设，构建时将使用此配置
+          <div className="text-[10px] text-orange-500 pl-5">
+            当前：{getActivePresetLabel()}
           </div>
         )}
         {needsApiForActive && (
@@ -3063,11 +3040,226 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
     );
   }
 
+  function getDocumentRagRef(filePath: string, collectionId = activeCollectionId): RagFileCollectionRef | null {
+    if (!collectionId || !ragManifest) return null;
+    return ragManifest.files[getRagFileKey(filePath)]?.collections?.[collectionId] ?? null;
+  }
+
+  function getDocumentRagRefCount(filePath: string): number {
+    if (!ragManifest) return 0;
+    const file = ragManifest.files[getRagFileKey(filePath)];
+    if (!file) return 0;
+    return Object.values(file.collections || {}).filter(ref => ref.state !== 'removed').length;
+  }
+
+  function renderRagStatusBadge(doc: DocEntry) {
+    const activeRef = getDocumentRagRef(doc.path);
+    const refCount = getDocumentRagRefCount(doc.path);
+    if (activeRef?.state === 'indexed') {
+      return (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100 text-[10px] shrink-0">
+          <CheckCircle2 size={10} /> {activeRef.chunkCount || 0}
+        </span>
+      );
+    }
+    if (activeRef && activeRef.state !== 'removed') {
+      return (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-100 text-[10px] shrink-0">
+          <Clock size={10} /> 待构建
+        </span>
+      );
+    }
+    if (refCount > 0) {
+      return (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-gray-50 text-gray-500 border border-gray-200 text-[10px] shrink-0">
+          <Database size={10} /> {refCount} 库
+        </span>
+      );
+    }
+    return null;
+  }
+
+  function renderRagOverview() {
+    const activeIndexedFiles = activeCollection
+      ? activeCollection.docPaths.filter(path => getDocumentRagRef(path)?.state === 'indexed').length
+      : 0;
+    const activePendingFiles = activeCollection
+      ? Math.max(0, activeCollection.docPaths.length - activeIndexedFiles)
+      : 0;
+    const activeVectorCount = activeManifestCollection?.vectorCount ?? activeCollection?.vectorCount ?? vectorStoreRef.current.size;
+
+    const Stat = ({ label, value, icon, tone }: { label: string; value: React.ReactNode; icon: React.ReactNode; tone: string }) => (
+      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 min-w-0">
+        <div className="flex items-center gap-2 text-[11px] text-gray-500">
+          <span className={`w-6 h-6 rounded-md flex items-center justify-center ${tone}`}>{icon}</span>
+          <span className="truncate">{label}</span>
+        </div>
+        <div className="mt-1 text-lg font-semibold text-gray-900 truncate">{value}</div>
+      </div>
+    );
+
+    return (
+      <div className="shrink-0 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold text-gray-950">RAG Studio</h1>
+              {activeCollection && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600">
+                  {getCollectionIcon(activeCollection.icon, activeCollection.color, 12)}
+                  <span className="max-w-[220px] truncate">{activeCollection.name}</span>
+                </span>
+              )}
+              {activePreset && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 text-xs text-orange-600">
+                  <Zap size={11} />
+                  <span className="max-w-[160px] truncate">{getActivePresetLabel()}</span>
+                </span>
+              )}
+            </div>
+            <div className="mt-1 text-xs text-gray-400 truncate">
+              {activeCollection
+                ? `${activeCollection.embeddingProvider || embeddingConfig.provider} / ${activeCollection.embeddingModel || embeddingConfig.model}`
+                : '未选择向量库'}
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              className="w-8 h-8 rounded-lg border border-gray-200 bg-white flex items-center justify-center text-gray-500 hover:text-blue-600 hover:border-blue-300 transition-colors"
+              onClick={() => void refreshRagManifest()}
+              title="刷新索引状态"
+            >
+              <RefreshCw size={14} />
+            </button>
+            <button
+              className="w-8 h-8 rounded-lg border border-gray-200 bg-white flex items-center justify-center text-gray-500 hover:text-blue-600 hover:border-blue-300 transition-colors"
+              onClick={() => setShowHelp(true)}
+              title="RAG Lab 知识手册"
+            >
+              <HelpCircle size={14} />
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-4 gap-2">
+          <Stat label="当前向量" value={activeVectorCount || 0} icon={<Hash size={13} />} tone="bg-blue-50 text-blue-600" />
+          <Stat label="当前文件" value={activeCollection?.docPaths.length ?? 0} icon={<FileText size={13} />} tone="bg-emerald-50 text-emerald-600" />
+          <Stat label="已索引" value={`${activeIndexedFiles}/${activeCollection?.docPaths.length ?? 0}`} icon={<CheckCircle2 size={13} />} tone="bg-violet-50 text-violet-600" />
+          <Stat label="Manifest" value={`${manifestIndexedFileCount} 文件`} icon={<Database size={13} />} tone="bg-amber-50 text-amber-600" />
+        </div>
+
+        <div className="grid grid-cols-5 gap-1.5">
+          {[
+            ['接入', `${documents.length} files`],
+            ['分块', chunkingConfig.strategy],
+            ['索引', `${embeddingConfig.provider}/${embeddingConfig.model}`],
+            ['召回', `${retrievalConfig.strategy} · topK ${retrievalConfig.topK}`],
+            ['重排', `${rerankerConfig.type}${rerankerConfig.type !== 'none' ? ` · topN ${rerankerConfig.topN}` : ''}`],
+          ].map(([label, value]) => (
+            <div key={label} className="min-w-0 rounded-lg border border-gray-200 bg-white px-2.5 py-2">
+              <div className="text-[10px] text-gray-400">{label}</div>
+              <div className="mt-0.5 text-xs font-medium text-gray-800 truncate">{value}</div>
+            </div>
+          ))}
+        </div>
+
+        {activeCollection && activePendingFiles > 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 flex items-center gap-2">
+            <Clock size={14} className="shrink-0" />
+            <span className="truncate">当前库有 {activePendingFiles} 个文件处于待构建或旧记录状态。</span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderSearchPanel() {
+    return (
+      <div className={`${panelCls} p-3 space-y-3`}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+            <Search size={14} className="text-blue-500" />
+            检索测试
+          </div>
+          <span className="text-[10px] text-gray-400">
+            {vectorStoreRef.current.size ? `${vectorStoreRef.current.size} vectors` : 'no index'}
+          </span>
+        </div>
+
+        <div className="flex gap-2">
+          <input
+            className={inputCls}
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void handleSearch();
+              }
+            }}
+            placeholder="输入检索问题"
+          />
+          <button
+            className={`${btnPrimary} shrink-0`}
+            disabled={!searchQuery.trim() || searching || vectorStoreRef.current.size === 0}
+            onClick={handleSearch}
+            title="检索"
+          >
+            {searching ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+          </button>
+        </div>
+
+        {preRetrievalLog.length > 0 && (
+          <div className="rounded-lg bg-gray-50 border border-gray-200 px-2.5 py-2 text-[10px] text-gray-500 max-h-24 overflow-y-auto">
+            {preRetrievalLog.map((line, index) => <div key={index}>{line}</div>)}
+          </div>
+        )}
+
+        {renderEvalMetrics()}
+
+        <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+          {searchResults.length === 0 && !searching && (
+            <div className="rounded-lg border border-dashed border-gray-200 py-7 text-center text-xs text-gray-400">
+              暂无检索结果
+            </div>
+          )}
+          {searchResults.map((result, index) => {
+            const expanded = expandedResults.has(index);
+            const metadata = (result.metadata || {}) as Record<string, any>;
+            return (
+              <div key={`${result.nodeId}-${index}`} className="rounded-lg border border-gray-200 bg-white p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs font-semibold text-gray-900">#{index + 1}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600">
+                    {(result.score * 100).toFixed(1)}%
+                  </span>
+                  <span className="text-[10px] text-gray-400 truncate" title={metadata.filePath || ''}>
+                    {metadata.fileName || '未知来源'}
+                  </span>
+                </div>
+                <button
+                  className="text-left w-full text-xs text-gray-600 leading-relaxed"
+                  onClick={() => setExpandedResults(prev => {
+                    const next = new Set(prev);
+                    next.has(index) ? next.delete(index) : next.add(index);
+                    return next;
+                  })}
+                >
+                  {expanded ? result.text : truncate(result.text, 180)}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   function renderCollectionPanel() {
     return (
       <div className="mb-4">
         <div className="flex items-center justify-between mb-2">
-          <div className={sectionTitle}><Database size={14} className="text-blue-500" /> 向量库</div>
+          <div className={sectionTitle}><Database size={14} className="text-blue-500" /> 集合列表</div>
           <button className="text-blue-500 hover:text-blue-600 transition-colors" onClick={() => setShowNewCollection(true)}>
             <Plus size={16} />
           </button>
@@ -3122,7 +3314,6 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
                 <div className="text-[10px] text-gray-400 flex items-center gap-1 flex-wrap">
                   <span>{col.docPaths.length} 文档 · {col.vectorCount > 0 ? `${col.vectorCount} 向量` : '未索引'}</span>
                   {col.hasHnsw && <span className="px-1 py-0.5 bg-cyan-50 text-cyan-600 rounded text-[9px] font-medium leading-none">HNSW</span>}
-                  {col.hasKg && <span className="px-1 py-0.5 bg-teal-50 text-teal-600 rounded text-[9px] font-medium leading-none">KG</span>}
                 </div>
               </div>
               <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-all shrink-0">
@@ -3194,7 +3385,6 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
 
     const isActive = col.id === activeCollectionId;
     const store = isActive ? vectorStoreRef.current : null;
-    const kg = isActive ? knowledgeGraphRef.current : null;
     const info = store?.getInfo();
 
     const strategyLabels: Record<string, string> = {
@@ -3314,25 +3504,6 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
                   <Row label="efConstruction" value={info.hnswConfig.efConstruction ?? 200} mono />
                   <Row label="efSearch" value={info.hnswConfig.efSearch ?? 50} mono />
                 </>
-              )}
-            </div>
-          </div>
-
-          {/* Knowledge Graph */}
-          <div className="mb-3">
-            <div className="text-[11px] font-semibold text-gray-500 mb-1 flex items-center gap-1"><GitBranch size={11} /> 知识图谱</div>
-            <div className="pl-1 divide-y divide-gray-100">
-              {(info?.hasKnowledgeGraph || (kg && kg.tripleCount > 0)) ? (
-                <>
-                  <Row label="状态" value={<Badge text="已构建" color="green" />} />
-                  <Row label="三元组" value={`${info?.knowledgeGraphStats?.tripleCount ?? kg?.tripleCount ?? 0} 条`} />
-                  <Row label="实体数" value={`${info?.knowledgeGraphStats?.entityCount ?? kg?.entityCount ?? 0} 个`} />
-                  {info?.knowledgeGraphStats?.builtAt && (
-                    <Row label="构建时间" value={new Date(info.knowledgeGraphStats.builtAt).toLocaleString('zh-CN')} />
-                  )}
-                </>
-              ) : (
-                <Row label="状态" value={<Badge text="未构建" color="gray" />} />
               )}
             </div>
           </div>
@@ -3474,7 +3645,7 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
   function renderDocumentsPanel() {
     const isBusy = indexStatus === 'loading' || indexStatus === 'chunking' || indexStatus === 'embedding' || indexStatus === 'saving';
     // Mutual exclusion: any build/save operation blocks all others
-    const isAnyBuildRunning = isBusy || rebuildingHnsw || rebuildingKg || updatingConfig;
+    const isAnyBuildRunning = isBusy || rebuildingHnsw || updatingConfig;
 
     // Current folder contents
     const childFolders = getChildFolders(folders, currentFolderId);
@@ -3688,7 +3859,8 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
                     <DocIcon type={doc.type} size={14} />
                     <span className="flex-1 text-xs text-gray-800 truncate" title={doc.path}>{doc.name}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${DOC_TYPE_COLORS[doc.type] ?? DOC_TYPE_COLORS.text}`}>{doc.type}</span>
-                    {inActiveCol && <CheckCircle2 size={12} className="text-green-500 shrink-0" />}
+                    {renderRagStatusBadge(doc)}
+                    {inActiveCol && !getDocumentRagRef(doc.path) && <CheckCircle2 size={12} className="text-green-500 shrink-0" />}
                     <button className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-500 shrink-0"
                       onClick={() => removeDocument(doc.path)}><Trash2 size={12} /></button>
                   </div>
@@ -3756,6 +3928,9 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
                   })}>
                   <div className="relative">
                     <DocIcon type={doc.type} size={28} />
+                    <span className="absolute -right-2 -top-2">
+                      {renderRagStatusBadge(doc)}
+                    </span>
                   </div>
                   <span className="text-[10px] text-gray-700 text-center truncate w-full" title={doc.name}>{doc.name}</span>
                 </div>
@@ -3852,10 +4027,34 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
             )}
             {activePreset && (
               <span className="bg-orange-50 text-orange-600 rounded px-1.5 py-0.5 border border-orange-200">
-                预设: {activePreset === 'simple' ? '简单' : activePreset === 'balanced' ? '均衡' : '精确'}
+                {getActivePresetLabel()}
               </span>
             )}
           </div>
+          <select
+            className="w-full bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] text-gray-700 focus:border-blue-400 focus:outline-none"
+            value={activePreset || ''}
+            onChange={e => {
+              const value = e.target.value;
+              if (!value) {
+                setActivePreset(null);
+              } else if (value.startsWith('custom:')) {
+                applySavedPipelinePreset(value.slice('custom:'.length));
+              } else {
+                applyPreset(value);
+              }
+            }}
+          >
+            <option value="">选择构建方案</option>
+            <optgroup label="内置模板">
+              {BUILTIN_PIPELINE_PRESETS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+            </optgroup>
+            {pipelinePresets.length > 0 && (
+              <optgroup label="保存方案">
+                {pipelinePresets.map(p => <option key={p.id} value={`custom:${p.id}`}>{p.name}</option>)}
+              </optgroup>
+            )}
+          </select>
           {/* Action buttons — 2 rows, mutually exclusive */}
           <div className="grid grid-cols-2 gap-1.5">
             <button
@@ -3893,18 +4092,6 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
             >
               {rebuildingHnsw ? <Loader2 size={12} className="animate-spin" /> : <GitBranch size={12} />}
               构建 HNSW 索引
-            </button>
-            <button
-              className={`flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-medium transition-colors ${
-                isAnyBuildRunning || !activeCollectionId || vectorStoreRef.current.size === 0
-                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                  : 'bg-teal-500 text-white hover:bg-teal-600'
-              }`}
-              disabled={isAnyBuildRunning || !activeCollectionId || vectorStoreRef.current.size === 0}
-              onClick={buildKg}
-            >
-              {rebuildingKg ? <Loader2 size={12} className="animate-spin" /> : <Route size={12} />}
-              构建知识图谱
             </button>
           </div>
         </div>
@@ -3996,7 +4183,7 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
 
   // ── Main render ──
   return (
-    <div className="h-full flex bg-white text-gray-800">
+    <div className="h-full bg-gray-50 text-gray-800 overflow-hidden">
       {renderHelpModal()}
       {renderCollectionDetailModal()}
       {renderFolderContextMenu()}
@@ -4008,38 +4195,47 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
         hideCollectionSelector
       />
 
-      {/* Left: Collection List */}
-      <div className="w-[240px] shrink-0 border-r border-gray-200 overflow-y-auto p-4 bg-white flex flex-col">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-1.5">
-            <button
-              className="w-7 h-7 rounded-full border border-gray-200 flex items-center justify-center text-gray-400 hover:text-blue-500 hover:border-blue-400 transition-colors"
-              onClick={() => setShowHelp(true)}
-              title="RAG Lab 知识手册"
-            >
-              <HelpCircle size={15} />
-            </button>
+      <div className={`h-full grid ${expandedPanel === 'docs' ? 'grid-cols-[280px_minmax(0,1fr)]' : 'grid-cols-[280px_minmax(420px,1fr)_390px]'}`}>
+        {/* Left: Collection List */}
+        <aside className="min-w-0 border-r border-gray-200 overflow-y-auto p-4 bg-white flex flex-col">
+          <div className="mb-4">
+            <div className="text-lg font-bold text-gray-950">知识库</div>
+            <div className="mt-1 grid grid-cols-2 gap-2">
+              <div className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5">
+                <div className="text-[10px] text-gray-400">集合</div>
+                <div className="text-sm font-semibold text-gray-900">{collections.length}</div>
+              </div>
+              <div className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5">
+                <div className="text-[10px] text-gray-400">索引块</div>
+                <div className="text-sm font-semibold text-gray-900">{manifestIndexedChunkCount || collections.reduce((sum, item) => sum + (item.vectorCount || 0), 0)}</div>
+              </div>
+            </div>
           </div>
-        </div>
-        {renderCollectionPanel()}
-      </div>
+          {renderCollectionPanel()}
+        </aside>
 
-      {/* Right: Documents (top) + Config (bottom) */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Right Top: Documents */}
-        <div className={`${expandedPanel === 'docs' ? 'flex-1' : 'h-[45%]'} p-3 border-b border-gray-200`}>
-          {renderDocumentsPanel()}
-        </div>
+        {/* Center: Overview + Documents */}
+        <main className="min-w-0 h-full flex flex-col gap-3 p-4 overflow-hidden">
+          {renderRagOverview()}
+          <div className="min-h-0 flex-1">
+            {renderDocumentsPanel()}
+          </div>
+        </main>
 
-        {/* Right Bottom: Configuration Panel — 2 columns */}
+        {/* Right: Search + Config */}
         {expandedPanel !== 'docs' && (
-          <div className="flex-1 overflow-y-auto p-4 min-h-0">
-            <div className="grid grid-cols-[1fr_320px] gap-4 h-full">
-              {/* Left Column: Embedding → 文档处理 → 查询配置 → 查询流程 */}
-              <div className="overflow-y-auto pr-2 space-y-1">
-                <div className="text-xs font-bold text-gray-800 flex items-center gap-1.5 mb-2 pb-1.5 border-b border-gray-100">
-                  <SlidersHorizontal size={13} className="text-blue-500" /> 静态配置
-                </div>
+          <aside className="min-w-0 border-l border-gray-200 bg-white/80 overflow-y-auto p-4 space-y-4">
+            <div className={`${panelCls} p-3`}>
+              {renderPresets()}
+            </div>
+            {renderSearchPanel()}
+
+            <div className={`${panelCls} p-3`}>
+              <div className="text-sm font-semibold text-gray-900 flex items-center gap-2 mb-3">
+                <SlidersHorizontal size={14} className="text-blue-500" />
+                索引配置
+              </div>
+              <div className="space-y-1">
                 {renderEmbeddingConfig()}
                 <div className="border-t border-gray-100 pt-1" />
                 {renderChunkingConfig()}
@@ -4050,16 +4246,11 @@ ${sampleTexts.map((t: string, i: number) => `[${i + 1}] ${t.slice(0, 200)}`).joi
                 {renderRerankerConfig()}
                 <div className="border-t border-gray-100 pt-1" />
                 {renderQueryModeConfig()}
-              </div>
-
-              {/* Right Column: 索引优化 → 预设配置 */}
-              <div className="overflow-y-auto pl-3 border-l border-gray-100 space-y-1">
-                {renderIndexOptimization()}
                 <div className="border-t border-gray-100 pt-1" />
-                {renderPresets()}
+                {renderIndexOptimization()}
               </div>
             </div>
-          </div>
+          </aside>
         )}
       </div>
     </div>

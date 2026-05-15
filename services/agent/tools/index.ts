@@ -10,9 +10,12 @@ import { LATEX_TOOL_REGISTRATIONS } from './latexTools';
 import { LEARNING_TOOL_REGISTRATIONS } from './learningTools';
 import { NOTE_TOOL_REGISTRATIONS } from './noteTools';
 import { QUESTION_BANK_TOOL_REGISTRATIONS } from './questionBankTools';
+import { SYSTEM_TOOL_REGISTRATIONS } from './systemTools';
 import { TODO_TOOL_REGISTRATIONS } from './todoTools';
+import { createDynamicAgentToolRegistry } from '../dynamicToolRegistry';
 
-export const TOOL_REGISTRY: ToolRegistration[] = [
+export const BUILTIN_TOOL_REGISTRATIONS: ToolRegistration[] = [
+  ...SYSTEM_TOOL_REGISTRATIONS,
   ...TODO_TOOL_REGISTRATIONS,
   ...NOTE_TOOL_REGISTRATIONS,
   ...DATA_CENTER_TOOL_REGISTRATIONS,
@@ -26,3 +29,19 @@ export const TOOL_REGISTRY: ToolRegistration[] = [
   ...KNOWLEDGE_TOOL_REGISTRATIONS,
   ...LATEX_TOOL_REGISTRATIONS,
 ];
+
+const mutableToolRegistry: ToolRegistration[] = [];
+
+export const AGENT_TOOL_REGISTRY = createDynamicAgentToolRegistry(mutableToolRegistry);
+
+AGENT_TOOL_REGISTRY.registerMany(BUILTIN_TOOL_REGISTRATIONS, {
+  kind: 'builtin',
+  ownerId: 'guyue-core',
+});
+
+export const TOOL_REGISTRY = AGENT_TOOL_REGISTRY.mutableList();
+export const getToolRegistry = () => AGENT_TOOL_REGISTRY.list();
+export const getToolRegistryOwner = AGENT_TOOL_REGISTRY.getOwner.bind(AGENT_TOOL_REGISTRY);
+export const registerAgentTool = AGENT_TOOL_REGISTRY.register.bind(AGENT_TOOL_REGISTRY);
+export const unregisterAgentTool = AGENT_TOOL_REGISTRY.unregister.bind(AGENT_TOOL_REGISTRY);
+export const unregisterAgentToolsByOwner = AGENT_TOOL_REGISTRY.unregisterByOwner.bind(AGENT_TOOL_REGISTRY);

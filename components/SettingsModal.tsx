@@ -1,11 +1,18 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { X, FileDown, FolderOpen, ExternalLink, ToggleLeft, ToggleRight, ChevronDown, Globe, Package, Plus, Trash2, GripVertical, Command, User, Camera, ArrowUpRight, Key, Pencil, Eye, EyeOff, Check } from 'lucide-react';
+import { X, FileDown, FileUp, FolderOpen, ExternalLink, ToggleLeft, ToggleRight, ChevronDown, Globe, Package, Plus, Trash2, GripVertical, User, Camera, ArrowUpRight, Key, Pencil, Eye, EyeOff, Check, DatabaseBackup, ShieldCheck } from 'lucide-react';
 import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, ModuleConfig, AVAILABLE_ICONS, PluginMetadata, ApiProfile, ApiProviderType } from '../types';
 import * as LucideIcons from 'lucide-react';
 import { loadProfiles, saveProfiles, addProfile, updateProfile, deleteProfile, API_PROVIDER_LABELS, migrateOldApiKeys } from '../utils/apiProfileService';
 
 const DEFAULT_SPLASH_QUOTE = '有善始者实繁，能克终者盖寡';
+const PLUGIN_REGISTRY_UPDATED_EVENT = 'guyue:plugins-updated';
+
+const notifyPluginsUpdated = (plugins: PluginMetadata[]) => {
+  window.dispatchEvent(new CustomEvent(PLUGIN_REGISTRY_UPDATED_EVENT, {
+    detail: { plugins },
+  }));
+};
 
 const normalizeAppTheme = (theme: string | null | undefined) => {
   if (theme === 'minimal') return 'pure';
@@ -49,6 +56,25 @@ const sortByPriority = (modules: ModuleConfig[]) => [...modules].sort((a, b) => 
 const normalizePriorities = (modules: ModuleConfig[]) =>
   modules.map((module, index) => ({ ...module, priority: index }));
 
+const collectLocalStorageSnapshot = () => {
+  if (typeof localStorage === 'undefined') return [];
+  return Object.keys(localStorage)
+    .sort()
+    .map(key => ({ key, value: localStorage.getItem(key) }));
+};
+
+const formatBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = bytes;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+};
+
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -88,8 +114,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [userAvatar, setUserAvatar] = useState<string>('');
   const [userName, setUserName] = useState<string>('Guyue');
   const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [isImporting, setIsImporting] = useState<boolean>(false);
   const [exportProgress, setExportProgress] = useState<number>(0);
   const [exportStep, setExportStep] = useState<string>('');
+  const [backupStatus, setBackupStatus] = useState<string>('');
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [sidebarTheme, setSidebarTheme] = useState<string>(() => normalizeAppTheme(localStorage.getItem('guyue_sidebar_theme')));
   const [mdEngine, setMdEngine] = useState<string>(() => localStorage.getItem('guyue_md_engine') || 'default');
@@ -170,7 +198,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       if (success) {
         const newPlugins = await window.electronAPI.getPlugins();
         setPlugins(newPlugins);
-        alert('插件安装成功！请重启应用以生效。');
+        notifyPluginsUpdated(newPlugins);
+        alert('插件安装成功，后台 runtime 已加载。');
       }
     }
   };
@@ -310,106 +339,70 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     localStorage.setItem('guyue_user_name', name);
   };
   
-  const handleExportMarkdown = async () => {
+  const handleExportAppBackup = async () => {
     setIsExporting(true);
     setExportProgress(0);
-    const tick = (step: string, pct: number) => {
+    setBackupStatus('');
+    const tick = async (step: string, pct: number) => {
       setExportStep(step);
       setExportProgress(pct);
-      return new Promise<void>(r => setTimeout(r, 0));
+      await new Promise<void>(r => setTimeout(r, 0));
     };
-    const read = (key: string) => {
-      try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch { return null; }
-    };
+    try {
+      if (!window.electronAPI?.exportAppBackup) {
+        throw new Error('当前环境不支持桌面备份');
+      }
+      await tick('整理浏览器态数据', 15);
+      const localStorageItems = collectLocalStorageSnapshot();
+      await tick('扫描应用数据目录', 40);
+      const result = await window.electronAPI.exportAppBackup({ localStorageItems });
+      if (result.canceled) {
+        setBackupStatus('已取消导出');
+        return;
+      }
+      if (!result.success) {
+        throw new Error(result.error || '导出失败');
+      }
+      await tick('写入备份包', 100);
+      setBackupStatus(`已导出 ${result.fileCount || 0} 个文件、${result.localStorageCount || 0} 项本地状态，大小 ${formatBytes(result.size || 0)}`);
+    } catch (error) {
+      setBackupStatus(`导出失败：${(error as Error).message}`);
+    } finally {
+      setTimeout(() => {
+        setIsExporting(false);
+        setExportProgress(0);
+        setExportStep('');
+      }, 800);
+    }
+  };
 
-    await tick('读取用户资料…', 5);
-    const profile = { name: localStorage.getItem('guyue_user_name') || 'Guyue', avatar: localStorage.getItem('guyue_user_avatar') || '' };
-
-    await tick('导出笔记与待办…', 15);
-    const todoPlan = read('linkmaster_todo_plan_v1');
-
-    await tick('导出 SSH / API 记录…', 25);
-
-    await tick('导出文件记录与分类…', 35);
-    const exportCategories = read('linkmaster_categories_v1');
-
-    await tick('导出 Prompts / Markdown…', 45);
-    const exportPrompts = read('linkmaster_prompts_v1');
-    const exportMarkdown = read('linkmaster_markdown_v1');
-
-    await tick('导出学习记录…', 55);
-    const learningCategories = read('learning_categories_v1');
-    const learningCourses = read('learning_courses_v1');
-    const learningProgress = read('learning_progress');
-
-    await tick('导出工作空间记录…', 60);
-    const workspaceCategories = read('workspace_categories_v1');
-    const workspaceSpaces = read('workspace_spaces_v1');
-
-    await tick('导出 LeetCode 记录…', 65);
-    const leetcodeLists = read('leetcode_lists');
-    const leetcodeProgress = read('leetcode_progress');
-
-    await tick('导出日历 / 循环事项…', 75);
-    const recurringEvents = read('linkmaster_recurring_v1');
-    const recurringCategories = read('linkmaster_recurring_cats_v1');
-
-    await tick('导出图片 / 配置…', 85);
-    const imageRecords = read('linkmaster_image_records_v1');
-    const imageConfig = read('linkmaster_image_config_v1');
-    const settings = {
-      archivePath: localStorage.getItem('linkmaster_archive_path') || '',
-      vaultPath: localStorage.getItem('linkmaster_vault_path') || '',
-      browserStartPage: localStorage.getItem('linkmaster_browser_start') || '',
-      splashQuotes: read('linkmaster_splash_text_v1'),
-      agentShortcutKey: localStorage.getItem('linkmaster_agent_shortcut') || 'Meta',
-      proxyPort: localStorage.getItem('linkmaster_proxy_port') || '',
-    };
-
-    await tick('生成备份文件…', 93);
-    const backup = {
-      exportedAt: new Date().toISOString(),
-      version: '2.0',
-      app: 'Guyue Master',
-      userProfile: profile,
-      notes,
-      todoPlan,
-      todos,
-      sshRecords,
-      apiRecords,
-      fileRecords,
-      categories: exportCategories,
-      prompts: exportPrompts,
-      markdownNotes: exportMarkdown,
-      learningCategories,
-      learningCourses,
-      learningProgress,
-      workspaceCategories,
-      workspaceSpaces,
-      leetcodeLists,
-      leetcodeProgress,
-      recurringEvents,
-      recurringCategories,
-      imageRecords,
-      imageHostingConfig: imageConfig,
-      moduleConfig,
-      settings,
-    };
-
-    await tick('正在下载…', 98);
-    const dateStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `GuyueMaster_Backup_${dateStr}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    await tick('完成', 100);
-    setTimeout(() => { setIsExporting(false); setExportProgress(0); setExportStep(''); }, 1200);
+  const handleImportAppBackup = async () => {
+    if (!confirm('导入会覆盖当前应用数据。导入前会自动创建恢复点，继续吗？')) return;
+    setIsImporting(true);
+    setBackupStatus('');
+    try {
+      if (!window.electronAPI?.importAppBackup) {
+        throw new Error('当前环境不支持桌面备份导入');
+      }
+      const result = await window.electronAPI.importAppBackup();
+      if (result.canceled) {
+        setBackupStatus('已取消导入');
+        return;
+      }
+      if (!result.success) {
+        throw new Error(result.error || '导入失败');
+      }
+      (result.localStorageItems || []).forEach(item => {
+        if (!item.key) return;
+        if (item.value === null || item.value === undefined) localStorage.removeItem(item.key);
+        else localStorage.setItem(item.key, item.value);
+      });
+      setBackupStatus(`已导入 ${result.fileCount || 0} 个文件；恢复点：${result.restorePoint || '已创建'}。请重启应用。`);
+    } catch (error) {
+      setBackupStatus(`导入失败：${(error as Error).message}`);
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   if (!isOpen) return null;
@@ -420,7 +413,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       <div className="theme-modal-backdrop absolute inset-0 z-[1] transition-opacity" onClick={onClose} />
 
       {/* Modal Content */}
-      <div className="theme-modal-shell relative z-[2] flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden">
+      <div className="theme-modal-shell relative z-[2] flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden">
         
         {/* Header */}
         <div className="theme-header-bar flex shrink-0 items-center justify-between px-6 py-4">
@@ -432,8 +425,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             </div>
             <div>
-              <h2 className="text-lg font-semibold" style={{ color: 'var(--t-text)' }}>设置</h2>
-              <p className="text-xs" style={{ color: 'var(--t-text-muted)' }}>全局主题、模块编排与本地配置</p>
+              <h2 className="text-lg font-semibold" style={{ color: 'var(--t-text)' }}>全局设置</h2>
+              <p className="text-xs" style={{ color: 'var(--t-text-muted)' }}>账户、外观、扩展、数据迁移</p>
             </div>
           </div>
           <button onClick={onClose} className="theme-icon-btn h-10 w-10 cursor-pointer">
@@ -441,11 +434,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </button>
         </div>
 
-        {/* Scrollable Content */}
-        <div className="flex-1 min-h-0 p-6 space-y-8 overflow-y-auto">
+        <div className="grid min-h-0 flex-1 grid-cols-[180px_1fr] overflow-hidden">
+          <aside className="hidden border-r p-4 md:block" style={{ borderColor: 'var(--t-border-light)', background: 'var(--t-bg-secondary)' }}>
+            <nav className="sticky top-0 space-y-1 text-sm">
+              {[
+                ['settings-profile', '个人资料'],
+                ['settings-appearance', '外观'],
+                ['settings-api', 'API'],
+                ['settings-modules', '模块'],
+                ['settings-plugins', '插件'],
+                ['settings-ai', 'AI 与网络'],
+                ['settings-paths', '路径'],
+                ['settings-data', '数据'],
+              ].map(([id, label]) => (
+                <a
+                  key={id}
+                  href={`#${id}`}
+                  className="block rounded-lg px-3 py-2 transition-colors hover:bg-white"
+                  style={{ color: 'var(--t-text-muted)' }}
+                >
+                  {label}
+                </a>
+              ))}
+            </nav>
+          </aside>
+
+          {/* Scrollable Content */}
+          <div className="min-h-0 space-y-8 overflow-y-auto p-6">
 
           {/* Section: User Profile */}
-          <div className="space-y-4">
+          <div id="settings-profile" className="space-y-4 scroll-mt-4">
             <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               个人资料
             </h3>
@@ -515,7 +533,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           {/* Section: Appearance */}
-          <div className="space-y-4">
+          <div id="settings-appearance" className="space-y-4 scroll-mt-4">
             <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               外观设置
             </h3>
@@ -610,7 +628,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
           
           {/* Section: API Key Management */}
-          <div className="space-y-4">
+          <div id="settings-api" className="space-y-4 scroll-mt-4">
             <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2 flex items-center gap-1.5" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               <Key className="w-3.5 h-3.5" /> API 密钥管理
             </h3>
@@ -824,7 +842,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           {/* Section: Module Management */}
-          <div className="space-y-4">
+          <div id="settings-modules" className="space-y-4 scroll-mt-4">
             <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               功能模块管理
             </h3>
@@ -943,7 +961,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           {/* Section: Plugin Extensions */}
-          <div className="space-y-4">
+          <div id="settings-plugins" className="space-y-4 scroll-mt-4">
             <div className="flex items-center justify-between border-b pb-2" style={{ borderColor: 'var(--t-border-light)' }}>
               <h3 className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--t-text-muted)' }}>
                 插件扩展
@@ -986,7 +1004,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         if (confirm(`确定要删除插件 "${plugin.name}" 吗？`)) {
                           window.electronAPI.deletePlugin(plugin.id).then(success => {
                             if (success) {
-                              setPlugins(prev => prev.filter(p => p.id !== plugin.id));
+                              setPlugins(prev => {
+                                const next = prev.filter(p => p.id !== plugin.id);
+                                notifyPluginsUpdated(next);
+                                return next;
+                              });
                               // Also update module config to remove it
                               onUpdateModules(moduleConfig.filter(m => m.id !== plugin.id));
                             } else {
@@ -1007,7 +1029,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           {/* Section: Splash Screen Settings */}
-          <div className="space-y-4">
+          <div className="space-y-4 scroll-mt-4">
             <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               开屏动画设置
             </h3>
@@ -1046,7 +1068,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           {/* Section: Proxy Settings */}
-          <div className="space-y-4">
+          <div id="settings-ai" className="space-y-4 scroll-mt-4">
             <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               网络代理（AI 请求）
             </h3>
@@ -1100,7 +1122,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           {/* Section: Agent Shortcut */}
-          <div className="space-y-4">
+          <div className="space-y-4 scroll-mt-4">
             <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               AI 助手快捷键
             </h3>
@@ -1134,7 +1156,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           {/* Section: Browser Settings */}
-          <div className="space-y-4">
+          <div className="space-y-4 scroll-mt-4">
             <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               浏览器设置
             </h3>
@@ -1161,7 +1183,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           {/* Section: File Archive */}
-          <div className="space-y-4">
+          <div id="settings-paths" className="space-y-4 scroll-mt-4">
             <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
               文件管理设置
             </h3>
@@ -1239,16 +1261,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           {/* Section: Data Management */}
-          <div className="space-y-4">
+          <div id="settings-data" className="space-y-4 scroll-mt-4">
             <h3 className="text-xs font-bold uppercase tracking-wider border-b pb-2" style={{ color: 'var(--t-text-muted)', borderColor: 'var(--t-border-light)' }}>
-              数据管理
+              数据备份与迁移
             </h3>
             
             {/* App Data Location */}
             <div className="rounded-xl p-4 border flex items-center justify-between" style={{ background: 'var(--t-bg-secondary)', borderColor: 'var(--t-border-light)' }}>
               <div>
                 <h4 className="text-sm font-medium" style={{ color: 'var(--t-text)' }}>应用数据位置</h4>
-                <p className="text-xs mt-1" style={{ color: 'var(--t-text-muted)' }}>存储数据库文件和配置信息</p>
+                <p className="text-xs mt-1" style={{ color: 'var(--t-text-muted)' }}>app-data、RAG 索引、LaTeX 文件、插件都在这里</p>
               </div>
               <button 
                 onClick={async () => {
@@ -1266,20 +1288,48 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </button>
             </div>
 
-            <div className="rounded-xl p-4 border space-y-3" style={{ background: 'var(--t-bg-secondary)', borderColor: 'var(--t-border-light)' }}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-sm font-medium" style={{ color: 'var(--t-text)' }}>导出数据</h4>
-                  <p className="text-xs mt-1" style={{ color: 'var(--t-text-muted)' }}>导出全量数据为 JSON 备份（笔记、待办、学习、LeetCode 等全部模块）</p>
+            <div className="rounded-xl p-4 border space-y-4" style={{ background: 'var(--t-bg-secondary)', borderColor: 'var(--t-border-light)' }}>
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-xl border bg-white p-3">
+                  <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                    <DatabaseBackup className="h-4 w-4" />
+                  </div>
+                  <div className="text-sm font-semibold" style={{ color: 'var(--t-text)' }}>备份包</div>
+                  <div className="mt-1 text-xs" style={{ color: 'var(--t-text-muted)' }}>.guyuebackup 压缩格式</div>
                 </div>
+                <div className="rounded-xl border bg-white p-3">
+                  <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+                    <ShieldCheck className="h-4 w-4" />
+                  </div>
+                  <div className="text-sm font-semibold" style={{ color: 'var(--t-text)' }}>校验</div>
+                  <div className="mt-1 text-xs" style={{ color: 'var(--t-text-muted)' }}>每个文件带 SHA-256</div>
+                </div>
+                <div className="rounded-xl border bg-white p-3">
+                  <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+                    <FileDown className="h-4 w-4" />
+                  </div>
+                  <div className="text-sm font-semibold" style={{ color: 'var(--t-text)' }}>恢复点</div>
+                  <div className="mt-1 text-xs" style={{ color: 'var(--t-text-muted)' }}>导入前自动备份当前数据</div>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={handleExportMarkdown}
-                  disabled={isExporting}
-                  className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 hover:border-gray-300 hover:text-gray-900 transition-all shadow-sm active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap"
+                  onClick={handleExportAppBackup}
+                  disabled={isExporting || isImporting}
+                  className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap"
                 >
                   <FileDown className="w-4 h-4" />
-                  <span>{isExporting ? '导出中…' : '导出 JSON'}</span>
+                  <span>{isExporting ? '导出中…' : '导出备份'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleImportAppBackup}
+                  disabled={isExporting || isImporting}
+                  className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap"
+                >
+                  <FileUp className="w-4 h-4" />
+                  <span>{isImporting ? '导入中…' : '导入备份'}</span>
                 </button>
               </div>
               {isExporting && (
@@ -1296,9 +1346,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </div>
               )}
+              {backupStatus && (
+                <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                  {backupStatus}
+                </div>
+              )}
             </div>
           </div>
 
+        </div>
         </div>
       </div>
     </div>
