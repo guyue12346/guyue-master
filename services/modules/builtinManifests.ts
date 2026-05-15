@@ -64,7 +64,7 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
     ui: { type: 'native', appMode: 'spaces' },
     agent: {
       scopes: [
-        { id: 'learning', name: '学习', icon: 'GraduationCap', description: '创建课程、查询学习分类' },
+        { id: 'learning', name: '学习', icon: 'GraduationCap', description: '管理学习方向、课程、章节和课程资源条目' },
       ],
     },
   },
@@ -79,7 +79,8 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
     ui: { type: 'native', appMode: 'practice' },
     agent: {
       scopes: [
-        { id: 'leetcode', name: '刷题', icon: 'Code2', description: '创建题单、查询已有题单' },
+        { id: 'leetcode', name: '刷题', icon: 'Code2', description: '管理题单、分组、题目和完成进度' },
+        { id: 'code', name: 'Code', icon: 'TerminalSquare', description: '管理编码练习分类、分类笔记、练习和练习文件' },
       ],
     },
   },
@@ -204,7 +205,7 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
     ui: { type: 'native', appMode: 'image-hosting' },
     agent: {
       scopes: [
-        { id: 'image', name: '图床', icon: 'Image', description: '查询图片链接、上传图片到图床' },
+        { id: 'image', name: '图床', icon: 'Image', description: '管理图床分类、图片记录、图片链接读取和上传' },
       ],
     },
   },
@@ -219,7 +220,7 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
     ui: { type: 'native', appMode: 'latex' },
     agent: {
       scopes: [
-        { id: 'latex', name: 'LaTeX', icon: 'FileType2', description: '查询、读取、编辑 LaTeX 文件和模板（需授权分类）' },
+        { id: 'latex', name: 'LaTeX', icon: 'FileType2', description: '管理 LaTeX 文件、模板和分类，支持从模板新建文件' },
       ],
     },
   },

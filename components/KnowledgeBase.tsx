@@ -42,6 +42,8 @@ import {
 import { MarkdownContent } from './MarkdownContent';
 import type { PromptRecord } from '../types';
 import { loadProfiles, API_PROVIDER_LABELS } from '../utils/apiProfileService';
+import { buildConversationContextMessages, trimConversationForStorage } from '../services/conversationMemory';
+import { maybeCompactConversationMemory } from '../services/conversationCompaction';
 
 // Quiz System services
 import {
@@ -250,10 +252,22 @@ const KB_AI_CONVERSATIONS_KEY = 'guyue_kb_ai_conversations';
 const KB_QA_CONVERSATIONS_KEY = 'guyue_kb_qa_conversations';
 
 function loadKbConversations(key: string): ChatConversation[] {
-  try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : []; } catch { return []; }
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed.map(conv => ({ ...conv, messages: trimConversationForStorage(conv.messages || [], { maxMessages: 200 }) }))
+      : [];
+  } catch {
+    return [];
+  }
 }
 function saveKbConversations(key: string, convs: ChatConversation[]) {
-  localStorage.setItem(key, JSON.stringify(convs.slice(0, 50)));
+  const trimmed = convs.slice(0, 50).map(conv => ({
+    ...conv,
+    messages: trimConversationForStorage(conv.messages || [], { maxMessages: 200, maxStoredChars: 300000 }),
+  }));
+  localStorage.setItem(key, JSON.stringify(trimmed));
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1094,19 +1108,52 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
 
     const effectiveSystemPrompt = conv.systemPrompt !== undefined ? conv.systemPrompt : (chatConfig.systemPrompt || '');
     const effectiveTurnPrompt = aiTurnPrompt.trim();
-    const apiMessages: ChatMessage[] = effectiveSystemPrompt
+    let apiMessages: ChatMessage[] = effectiveSystemPrompt
       ? [{ id: 'system', role: 'system', content: effectiveSystemPrompt, timestamp: 0 }, ...apiUpdatedMessages]
       : [...apiUpdatedMessages];
     if (effectiveTurnPrompt) {
       const lastIdx = apiMessages.length - 1;
       apiMessages[lastIdx] = { ...apiMessages[lastIdx], content: `[本轮指令] ${effectiveTurnPrompt}\n\n${apiMessages[lastIdx].content}` };
     }
+    let nextMemoryState = conv.memoryState || null;
+    const compaction = await maybeCompactConversationMemory({
+      messages: apiUpdatedMessages,
+      memoryState: nextMemoryState,
+      chatService: chatServiceRef.current,
+      provider: chatConfig.provider,
+      model: chatConfig.model,
+      options: {
+        domainLabel: '知识库普通 AI 对话',
+        keepRecentTurns: 8,
+        minMessagesForCompaction: 12,
+        minCharsForCompaction: 22000,
+        memoryInstruction: '重点保留用户长期偏好、持续任务、文件/知识库相关约束、已经确认过的结论。',
+      },
+    });
+    if (compaction.compacted) {
+      nextMemoryState = compaction.memoryState;
+      setAiConversations(prev => prev.map(c => c.id === conv!.id ? { ...c, memoryState: nextMemoryState, updatedAt: Date.now() } : c));
+    }
+    apiMessages = buildConversationContextMessages(apiMessages, {
+      keepRecentTurns: 8,
+      maxContextChars: 80000,
+      memoryState: nextMemoryState,
+      memoryMessageId: 'kb-ai-conversation-memory',
+      memoryTitle: '以下是较早的 AI 对话摘要。继续回答时保持这些上下文、用户偏好和已经形成的结论。',
+    });
 
     const dbg: Record<string, any> = {
       query: rawContent, timestamp: new Date().toISOString(),
       model: chatConfig.model, provider: chatConfig.provider, temperature: chatConfig.temperature,
       turnPrompt: effectiveTurnPrompt || '(none)',
       systemPrompt: effectiveSystemPrompt || '(none)', messageCount: apiMessages.length,
+      compaction: {
+        compacted: compaction.compacted,
+        usedFallback: compaction.usedFallback,
+        compactedMessageCount: compaction.compactedMessageCount,
+        compactedCharCount: compaction.compactedCharCount,
+        error: compaction.error,
+      },
       fullMessages: apiMessages.map(m => ({ role: m.role, content: m.content })),
       attachments: currentAttachments.map(a => ({ name: a.name, type: a.type, size: a.size })),
     };
@@ -1122,7 +1169,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
             if (c.id === conv!.id) {
               const newMsgs = [...updatedMessages, assistantMsg];
               const title = newMsgs.length === 2 ? userMsg.content.substring(0, 30) + (userMsg.content.length > 30 ? '...' : '') : c.title;
-              return { ...c, messages: newMsgs, title, updatedAt: Date.now() };
+              return { ...c, messages: newMsgs, memoryState: nextMemoryState, title, updatedAt: Date.now() };
             }
             return c;
           }));
@@ -1248,23 +1295,63 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
         ? { ...c, messages: c.messages.map(m => m.id === placeholderId ? { ...m, content: '正在生成回答...' } : m) }
         : c));
 
-      const historyMsgs = prevMessages.filter(m => m.role !== 'system').slice(-6);
-      const chatMessages: ChatMessage[] = [
-        { id: 'system', role: 'system', content: kbSystemPrompt, timestamp: 0 },
-        ...historyMsgs.map(m => ({ id: m.id, role: m.role as 'user' | 'assistant', content: m.content, timestamp: m.timestamp })),
-        { id: userMsg.id, role: 'user', content: userMsg.content, timestamp: userMsg.timestamp },
-      ];
-      if (qaTurnPrompt.trim()) {
-        const lastIdx = chatMessages.length - 1;
-        chatMessages[lastIdx] = { ...chatMessages[lastIdx], content: `[本轮指令] ${qaTurnPrompt.trim()}\n\n${userMsg.content}` };
-      }
       // Use per-feature QA config if available, otherwise fall back to AI config
       const qaConfig: ChatConfig = qaLlmConfig?.apiKey
         ? { ...loadChatConfig(), provider: qaLlmConfig.provider as any, apiKey: qaLlmConfig.apiKey, model: qaLlmConfig.model, baseUrl: qaLlmConfig.baseUrl }
         : chatConfig;
       const qaService = qaLlmConfig?.apiKey ? new ChatService(qaConfig) : chatServiceRef.current;
+      const qaHistoryForContext = [
+        ...prevMessages
+          .filter(m => m.role !== 'system')
+          .map(m => ({ id: m.id, role: m.role as 'user' | 'assistant', content: m.content, timestamp: m.timestamp })),
+        { id: userMsg.id, role: 'user' as const, content: userMsg.content, timestamp: userMsg.timestamp },
+      ];
+      let nextMemoryState = conv.memoryState || null;
+      const compaction = await maybeCompactConversationMemory({
+        messages: qaHistoryForContext,
+        memoryState: nextMemoryState,
+        chatService: qaService,
+        provider: qaConfig.provider,
+        model: qaConfig.model,
+        options: {
+          domainLabel: '知识库 RAG 问答',
+          keepRecentTurns: 6,
+          minMessagesForCompaction: 12,
+          minCharsForCompaction: 22000,
+          memoryInstruction: '重点保留用户连续追问的意图、已引用过的知识库结论、检索范围、仍需澄清的问题。不要把本轮检索片段原文完整写入长期记忆。',
+        },
+      });
+      if (compaction.compacted) {
+        nextMemoryState = compaction.memoryState;
+        setQaConversations(prev => prev.map(c => c.id === conv!.id ? { ...c, memoryState: nextMemoryState, updatedAt: Date.now() } : c));
+      }
+      const contextualMessages = buildConversationContextMessages(
+        qaHistoryForContext,
+        {
+          keepRecentTurns: 6,
+          maxContextChars: 50000,
+          memoryState: nextMemoryState,
+          memoryMessageId: 'kb-qa-conversation-memory',
+          memoryTitle: '以下是较早的知识库问答摘要。回答当前问题时可用于延续上下文，但必须优先依据本轮检索结果。',
+        },
+      );
+      const chatMessages: ChatMessage[] = [
+        { id: 'system', role: 'system', content: kbSystemPrompt, timestamp: 0 },
+        ...contextualMessages,
+      ];
+      if (qaTurnPrompt.trim()) {
+        const lastIdx = chatMessages.length - 1;
+        chatMessages[lastIdx] = { ...chatMessages[lastIdx], content: `[本轮指令] ${qaTurnPrompt.trim()}\n\n${userMsg.content}` };
+      }
 
       dbg.llmRequest = { model: qaConfig.model, provider: qaConfig.provider, baseUrl: qaConfig.baseUrl, temperature: qaConfig.temperature, messageCount: chatMessages.length };
+      dbg.compaction = {
+        compacted: compaction.compacted,
+        usedFallback: compaction.usedFallback,
+        compactedMessageCount: compaction.compactedMessageCount,
+        compactedCharCount: compaction.compactedCharCount,
+        error: compaction.error,
+      };
       dbg.fullMessages = chatMessages.map(m => ({ role: m.role, content: m.content }));
 
       const reply = await qaService.completeText(chatMessages);
@@ -1273,7 +1360,7 @@ export function KnowledgeBase({ compact = false }: { compact?: boolean }) {
       const newTitle = isFirstMsg ? msg.substring(0, 30) + (msg.length > 30 ? '...' : '') : undefined;
 
       setQaConversations(prev => prev.map(c => c.id === conv!.id
-        ? { ...c, title: newTitle || c.title, messages: c.messages.map(m => m.id === placeholderId ? { ...m, content: reply || '未获得回复。' } : m), updatedAt: Date.now() }
+        ? { ...c, title: newTitle || c.title, memoryState: nextMemoryState, messages: c.messages.map(m => m.id === placeholderId ? { ...m, content: reply || '未获得回复。' } : m), updatedAt: Date.now() }
         : c));
     } catch (err: any) {
       dbg.error = err?.message || String(err);

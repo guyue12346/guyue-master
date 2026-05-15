@@ -185,6 +185,30 @@ export const LeetCodeManager: React.FC<LeetCodeManagerProps> = ({ onCreateNote, 
     localStorage.setItem(STORAGE_KEY_EXPANDED_CATEGORIES, JSON.stringify(expandedCategoriesMap));
   }, [expandedCategoriesMap]);
 
+  useEffect(() => {
+    const reloadLeetCodeData = () => {
+      try {
+        const savedLists = localStorage.getItem(STORAGE_KEY_LISTS);
+        if (savedLists) {
+          const parsedLists = JSON.parse(savedLists) as ILeetCodeList[];
+          setLists(parsedLists.sort((a, b) => (a.priority ?? 10) - (b.priority ?? 10)));
+        }
+      } catch (error) {
+        console.error('Failed to reload LeetCode lists', error);
+      }
+
+      try {
+        const savedProgress = localStorage.getItem(STORAGE_KEY_PROGRESS);
+        setProgress(savedProgress ? JSON.parse(savedProgress) : {});
+      } catch (error) {
+        console.error('Failed to reload LeetCode progress', error);
+      }
+    };
+
+    window.addEventListener('leetcode-data-updated', reloadLeetCodeData);
+    return () => window.removeEventListener('leetcode-data-updated', reloadLeetCodeData);
+  }, []);
+
   const handleSetExpandedCategories = (listId: string, categories: string[]) => {
     setExpandedCategoriesMap(prev => ({
       ...prev,

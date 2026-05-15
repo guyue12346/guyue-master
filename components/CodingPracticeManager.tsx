@@ -112,6 +112,7 @@ const STORAGE_KEY_FONT_SIZE = 'coding_practice_font_size_v1';
 const STORAGE_KEY_WRAP = 'coding_practice_word_wrap_v1';
 const STORAGE_KEY_HIGHLIGHT_LINE = 'coding_practice_highlight_line_v1';
 const STORAGE_KEY_RUNNERS = 'coding_practice_runner_configs_v1';
+const CODE_PRACTICE_UPDATED_EVENT = 'guyue-coding-practice-updated';
 const DEFAULT_CATEGORY_ID = 'coding-practice-default-category';
 const DEFAULT_INPUT_TEMPLATE = '=== case 1 ===\n';
 
@@ -1026,6 +1027,37 @@ export const CodingPracticeManager: React.FC<CodingPracticeManagerProps> = ({ he
     window.addEventListener('mousedown', handlePointerDown);
     return () => window.removeEventListener('mousedown', handlePointerDown);
   }, [settingsOpen]);
+
+  useEffect(() => {
+    const handleExternalUpdate = () => {
+      const nextCategories = loadCategories();
+      const nextSessions = loadSessions(nextCategories);
+      setCategories(nextCategories);
+      setSessions(nextSessions);
+      setExpandedCategories((prev) => {
+        const nextExpanded: Record<string, boolean> = {};
+        nextCategories.forEach((category) => {
+          nextExpanded[category.id] = prev[category.id] ?? true;
+        });
+        return nextExpanded;
+      });
+      setActiveCategoryNoteId((current) => (
+        current && nextCategories.some(category => category.id === current) ? current : null
+      ));
+      try {
+        const storedActiveId = localStorage.getItem(STORAGE_KEY_ACTIVE);
+        setActiveSessionId(
+          storedActiveId && nextSessions.some(session => session.id === storedActiveId)
+            ? storedActiveId
+            : nextSessions[0]?.id || '',
+        );
+      } catch {
+        setActiveSessionId(nextSessions[0]?.id || '');
+      }
+    };
+    window.addEventListener(CODE_PRACTICE_UPDATED_EVENT, handleExternalUpdate);
+    return () => window.removeEventListener(CODE_PRACTICE_UPDATED_EVENT, handleExternalUpdate);
+  }, []);
 
   const applySessionGrouping = useCallback((mutator: (groups: Map<string, CodingPracticeSession[]>) => void) => {
     setSessions((prev) => {

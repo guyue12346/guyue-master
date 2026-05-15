@@ -1,5 +1,6 @@
 import type { ToolRegistration } from '../toolRegistry';
 import { CANVAS_TOOL_REGISTRATIONS } from './canvasTools';
+import { CODE_TOOL_REGISTRATIONS } from './codeTools';
 import { DATA_CENTER_TOOL_REGISTRATIONS } from './dataCenterTools';
 import { EMAIL_TOOL_REGISTRATIONS } from './emailTools';
 import { FILE_TOOL_REGISTRATIONS } from './fileTools';
@@ -22,6 +23,7 @@ export const BUILTIN_TOOL_REGISTRATIONS: ToolRegistration[] = [
   ...LEARNING_TOOL_REGISTRATIONS,
   ...FILE_TOOL_REGISTRATIONS,
   ...QUESTION_BANK_TOOL_REGISTRATIONS,
+  ...CODE_TOOL_REGISTRATIONS,
   ...CANVAS_TOOL_REGISTRATIONS,
   ...GIT_TOOL_REGISTRATIONS,
   ...IMAGE_TOOL_REGISTRATIONS,

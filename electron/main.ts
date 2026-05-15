@@ -1780,6 +1780,59 @@ ipcMain.handle('upload-image', async (event, { accessToken, owner, repo, path: f
   }
 });
 
+ipcMain.handle('fetch-image-url', async (_event, params: { url: string; maxBytes?: number }) => {
+  const maxBytes = Math.min(Math.max(Number(params?.maxBytes) || 2 * 1024 * 1024, 1), 8 * 1024 * 1024);
+  try {
+    const target = new URL(params.url);
+    if (!['http:', 'https:'].includes(target.protocol)) {
+      return { success: false, error: '仅支持 http(s) 图片链接。' };
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const response = await fetch(target.toString(), {
+      headers: {
+        'User-Agent': 'Guyue-Master/1.0 image-fetch',
+        Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      return { success: false, error: `图片读取失败：HTTP ${response.status}` };
+    }
+
+    const mimeType = (response.headers.get('content-type') || '').split(';')[0].trim() || 'application/octet-stream';
+    if (!mimeType.startsWith('image/')) {
+      return { success: false, error: `链接不是图片类型：${mimeType}` };
+    }
+
+    const contentLength = Number(response.headers.get('content-length') || 0);
+    if (contentLength > maxBytes) {
+      return { success: false, error: `图片过大：${contentLength} bytes，超过限制 ${maxBytes} bytes。` };
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > maxBytes) {
+      return { success: false, error: `图片过大：${buffer.byteLength} bytes，超过限制 ${maxBytes} bytes。` };
+    }
+
+    const base64 = buffer.toString('base64');
+    return {
+      success: true,
+      source: 'electron-fetch',
+      url: target.toString(),
+      mimeType,
+      byteLength: buffer.byteLength,
+      base64,
+      dataUrl: `data:${mimeType};base64,${base64}`,
+    };
+  } catch (error) {
+    return { success: false, error: (error as Error).message || '图片读取失败。' };
+  }
+});
+
 // --- LeetCode API ---
 ipcMain.handle('leetcode-api', async (event, { query, variables, session }) => {
   try {

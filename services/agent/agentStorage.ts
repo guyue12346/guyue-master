@@ -2,6 +2,8 @@ import {
   ChatConfig,
   DEFAULT_CHAT_CONFIG,
 } from '../chatService';
+import { trimConversationForStorage } from '../conversationMemory';
+import type { ConversationMemoryState } from '../conversationMemory';
 import {
   AgentFullAccessPermissions,
   AgentToolPermissions,
@@ -18,6 +20,7 @@ export const STORAGE_KEY_AGENT_CONFIG = 'guyue_agent_config';
 export const STORAGE_KEY_AGENT_ROUTER_CONFIG = 'guyue_agent_router_config';
 export const STORAGE_KEY_AGENT_SEARCH_CONFIG = 'guyue_agent_search_config';
 export const STORAGE_KEY_AGENT_HISTORY = 'guyue_agent_history';
+export const STORAGE_KEY_AGENT_MEMORY = 'guyue_agent_memory';
 export const STORAGE_KEY_AGENT_PERMISSIONS = 'guyue_agent_permissions';
 export const STORAGE_KEY_MODULE_PROMPTS = 'guyue_agent_module_prompts';
 export const STORAGE_KEY_CONTACTS = 'guyue_agent_contacts';
@@ -27,6 +30,7 @@ const STORE_KEY_AGENT_CONFIG = 'agent-config';
 const STORE_KEY_AGENT_ROUTER_CONFIG = 'agent-router-config';
 const STORE_KEY_AGENT_SEARCH_CONFIG = 'agent-search-config';
 const STORE_KEY_AGENT_HISTORY = 'agent-history';
+const STORE_KEY_AGENT_MEMORY = 'agent-memory';
 const STORE_KEY_AGENT_PERMISSIONS = 'agent-permissions';
 const STORE_KEY_MODULE_PROMPTS = 'agent-module-prompts';
 const STORE_KEY_CONTACTS = 'agent-contacts';
@@ -266,6 +270,21 @@ const normalizeContacts = (value: any): Contact[] => {
     .filter((item): item is Contact => Boolean(item));
 };
 
+const normalizeConversationMemory = (value: any): ConversationMemoryState | null => {
+  if (!value || typeof value !== 'object' || typeof value.summary !== 'string') return null;
+  return {
+    summary: value.summary,
+    compactedUntilMessageId: typeof value.compactedUntilMessageId === 'string' ? value.compactedUntilMessageId : undefined,
+    compactedUntilTimestamp: typeof value.compactedUntilTimestamp === 'number' ? value.compactedUntilTimestamp : undefined,
+    sourceMessageCount: typeof value.sourceMessageCount === 'number' ? value.sourceMessageCount : undefined,
+    sourceCharCount: typeof value.sourceCharCount === 'number' ? value.sourceCharCount : undefined,
+    updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : Date.now(),
+    provider: typeof value.provider === 'string' ? value.provider : undefined,
+    model: typeof value.model === 'string' ? value.model : undefined,
+    version: 1,
+  };
+};
+
 export const loadAgentConfig = (): ChatConfig =>
   loadLocalJson({
     localStorageKey: STORAGE_KEY_AGENT_CONFIG,
@@ -344,35 +363,56 @@ export const loadAgentHistory = <T = any>(): T[] =>
   loadLocalJson<T[]>({
     localStorageKey: STORAGE_KEY_AGENT_HISTORY,
     defaultValue: () => [],
-    normalize: value => Array.isArray(value) ? value.slice(-20) : [],
+    normalize: value => Array.isArray(value) ? trimConversationForStorage(value as any[], { maxMessages: 200 }) as T[] : [],
   });
 
 export const saveAgentHistory = <T>(messages: T[]): void => {
-  const trimmed = Array.isArray(messages) ? messages.slice(-20) : [];
+  const trimmed = Array.isArray(messages) ? trimConversationForStorage(messages as any[], { maxMessages: 200 }) as T[] : [];
   saveUnifiedJson(
     {
       appDataKey: STORE_KEY_AGENT_HISTORY,
       localStorageKey: STORAGE_KEY_AGENT_HISTORY,
       defaultValue: () => [],
-      normalize: value => Array.isArray(value) ? value.slice(-20) : [],
+      normalize: value => Array.isArray(value) ? trimConversationForStorage(value as any[], { maxMessages: 200 }) as T[] : [],
     },
     trimmed,
+  );
+};
+
+export const loadAgentMemory = (): ConversationMemoryState | null =>
+  loadLocalJson<ConversationMemoryState | null>({
+    localStorageKey: STORAGE_KEY_AGENT_MEMORY,
+    defaultValue: () => null,
+    normalize: normalizeConversationMemory,
+  });
+
+export const saveAgentMemory = (memory: ConversationMemoryState | null): void => {
+  saveUnifiedJson(
+    {
+      appDataKey: STORE_KEY_AGENT_MEMORY,
+      localStorageKey: STORAGE_KEY_AGENT_MEMORY,
+      defaultValue: () => null,
+      normalize: normalizeConversationMemory,
+    },
+    memory,
   );
 };
 
 export const clearAgentHistory = (): void => {
   if (typeof localStorage !== 'undefined') {
     localStorage.removeItem(STORAGE_KEY_AGENT_HISTORY);
+    localStorage.removeItem(STORAGE_KEY_AGENT_MEMORY);
   }
   saveUnifiedJson(
     {
       appDataKey: STORE_KEY_AGENT_HISTORY,
       localStorageKey: STORAGE_KEY_AGENT_HISTORY,
       defaultValue: () => [],
-      normalize: value => Array.isArray(value) ? value.slice(-20) : [],
+      normalize: value => Array.isArray(value) ? trimConversationForStorage(value as any[], { maxMessages: 200 }) : [],
     },
     [],
   );
+  saveAgentMemory(null);
 };
 
 export const loadAgentPermissions = (): StoredAgentPermissions =>

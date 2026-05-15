@@ -81,6 +81,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listDir: (path: string) => ipcRenderer.invoke('list-dir', path),
   getUserInfo: () => ipcRenderer.invoke('get-user-info'),
   uploadImage: (params: any) => ipcRenderer.invoke('upload-image', params),
+  fetchImageUrl: (params: { url: string; maxBytes?: number }) => ipcRenderer.invoke('fetch-image-url', params),
 
   // Plugins
   getPlugins: () => ipcRenderer.invoke('get-plugins'),

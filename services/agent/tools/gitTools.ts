@@ -18,12 +18,43 @@ const resolveGitRepoForTool = (args: Record<string, any>) => {
   return repo;
 };
 
+const normalizeRepoRelativePath = (value: unknown, label = 'relativePath') => {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw || raw === '.' || raw === './') return '';
+  if (raw.includes('\0') || /^([a-zA-Z]:)?[\\/]/.test(raw)) {
+    throw new Error(`${label} 必须是仓库内相对路径。`);
+  }
+  const parts = raw
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(part => part && part !== '.');
+  if (parts.some(part => part === '..')) {
+    throw new Error(`${label} 不能包含 ..。`);
+  }
+  return parts.join('/');
+};
+
+const joinRepoPath = (repoPath: string, relativePath: string) => {
+  const root = repoPath.replace(/[\\/]+$/, '');
+  return relativePath ? `${root}/${relativePath}` : root;
+};
+
+const getRelativePathFromAbsolute = (repoPath: string, absolutePath: string) => {
+  const root = repoPath.replace(/\\/g, '/').replace(/\/+$/, '');
+  const target = String(absolutePath || '').replace(/\\/g, '/');
+  if (target === root) return '';
+  return target.startsWith(`${root}/`) ? target.slice(root.length + 1) : target;
+};
+
+const isHiddenGitEntry = (name: string) => name === '.git';
+
 export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
   // ─── Git 管理工具 ───
   {
     name: 'git_add_repository',
     module: 'git',
     permission: { module: 'git', action: 'create' },
+    safety: { confirm: true },
     tool: {
       name: 'git_add_repository',
       description: '把一个本地 Git 仓库路径加入 Git 管理中心。repoPath 必须是已有本地路径。',
@@ -53,6 +84,7 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
     name: 'git_remove_repository',
     module: 'git',
     permission: { module: 'git', action: 'delete' },
+    safety: { confirm: true },
     tool: {
       name: 'git_remove_repository',
       description: '从 Git 管理中心移除一个仓库记录。只移除 App 记录，不删除磁盘文件。',
@@ -101,6 +133,33 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
     },
   },
   {
+    name: 'discover_git_repositories',
+    module: 'git',
+    tool: {
+      name: 'discover_git_repositories',
+      description: '扫描指定本地文件夹下的 Git 仓库。只返回发现结果，不会自动加入 Git 管理中心；加入前使用 git_add_repository 并等待用户确认。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          rootPath: { type: 'string', description: '要扫描的本地文件夹路径。' },
+          maxDepth: { type: 'number', description: '最大扫描深度，默认 4。' },
+        },
+        required: ['rootPath'],
+      },
+    },
+    execute: async (args) => {
+      const rootPath = typeof args.rootPath === 'string' ? args.rootPath.trim() : '';
+      if (!rootPath) return { success: false, error: 'rootPath 不能为空。' };
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.gitDiscoverRepositories) return { success: false, error: 'Git 仓库扫描 API 不可用。' };
+      const repositories = await electronAPI.gitDiscoverRepositories({
+        rootPath,
+        maxDepth: normalizeLimit(args.maxDepth, 4, 10),
+      });
+      return { success: true, rootPath, total: repositories.length, repositories };
+    },
+  },
+  {
     name: 'query_git_status',
     module: 'git',
     tool: {
@@ -129,6 +188,214 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
         result.log = await electronAPI.gitLog({ repoPath: status.path, limit: normalizeLimit(args.logLimit, 20, 120) });
       }
       return result;
+    },
+  },
+  {
+    name: 'query_git_repository_info',
+    module: 'git',
+    tool: {
+      name: 'query_git_repository_info',
+      description: '汇总查看一个 Git 仓库的信息：状态、远程、分支、最近提交和 stash。只有一个仓库时可不传 repoPath/repoName。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          repoPath: { type: 'string' },
+          repoName: { type: 'string' },
+          logLimit: { type: 'number' },
+        },
+      },
+    },
+    execute: async (args) => {
+      const repo = resolveGitRepoForTool(args);
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.gitStatus) return { success: false, error: 'Git API 不可用。' };
+      const status = await electronAPI.gitStatus(repo.path);
+      const [branches, log, stash] = await Promise.all([
+        electronAPI.gitBranches ? electronAPI.gitBranches(status.path).catch((error: unknown) => ({ error: error instanceof Error ? error.message : String(error) })) : null,
+        electronAPI.gitLog ? electronAPI.gitLog({ repoPath: status.path, limit: normalizeLimit(args.logLimit, 20, 80) }).catch(() => []) : [],
+        electronAPI.gitStash ? electronAPI.gitStash({ repoPath: status.path, action: 'list' }).catch(() => null) : null,
+      ]);
+      return {
+        success: true,
+        repository: { name: repo.name, path: status.path },
+        status,
+        branches,
+        remotes: status.remotes || [],
+        defaultRemote: status.defaultRemote || null,
+        log,
+        stashes: stash?.stashes || [],
+      };
+    },
+  },
+  {
+    name: 'query_git_log',
+    module: 'git',
+    tool: {
+      name: 'query_git_log',
+      description: '查询 Git 仓库提交历史。只有一个仓库时可不传 repoPath/repoName。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          repoPath: { type: 'string' },
+          repoName: { type: 'string' },
+          limit: { type: 'number' },
+        },
+      },
+    },
+    execute: async (args) => {
+      const repo = resolveGitRepoForTool(args);
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.gitLog) return { success: false, error: 'Git log API 不可用。' };
+      const log = await electronAPI.gitLog({ repoPath: repo.path, limit: normalizeLimit(args.limit, 30, 200) });
+      return { success: true, repository: repo, total: log.length, log };
+    },
+  },
+  {
+    name: 'query_git_remotes',
+    module: 'git',
+    tool: {
+      name: 'query_git_remotes',
+      description: '查询 Git 仓库远程仓库、当前 upstream、ahead/behind 信息。',
+      inputSchema: { type: 'object', properties: { repoPath: { type: 'string' }, repoName: { type: 'string' } } },
+    },
+    execute: async (args) => {
+      const repo = resolveGitRepoForTool(args);
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.gitStatus) return { success: false, error: 'Git status API 不可用。' };
+      const status = await electronAPI.gitStatus(repo.path);
+      return {
+        success: true,
+        repository: { name: repo.name, path: status.path },
+        branch: status.branch,
+        upstream: status.upstream,
+        upstreamRemoteName: status.upstreamRemoteName,
+        upstreamBranch: status.upstreamBranch,
+        ahead: status.ahead,
+        behind: status.behind,
+        remotes: status.remotes || [],
+        defaultRemote: status.defaultRemote || null,
+      };
+    },
+  },
+  {
+    name: 'query_git_tree',
+    module: 'git',
+    tool: {
+      name: 'query_git_tree',
+      description: '查看 Git 管理中心已登记仓库内的文件夹/文件列表。路径必须是仓库内相对路径；默认不进入 .git。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          repoPath: { type: 'string' },
+          repoName: { type: 'string' },
+          directory: { type: 'string', description: '仓库内相对目录，默认仓库根目录。' },
+          recursive: { type: 'boolean' },
+          maxDepth: { type: 'number' },
+          includeHidden: { type: 'boolean', description: '是否显示点开头文件；.git 永远不会展开。' },
+          limit: { type: 'number' },
+        },
+      },
+    },
+    execute: async (args) => {
+      const repo = resolveGitRepoForTool(args);
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.listDir) return { success: false, error: '目录读取 API 不可用。' };
+      const directory = normalizeRepoRelativePath(args.directory, 'directory');
+      const limit = normalizeLimit(args.limit, 80, 500);
+      const maxDepth = normalizeLimit(args.maxDepth, 3, 8);
+      const includeHidden = Boolean(args.includeHidden);
+      const status = electronAPI.gitStatus ? await electronAPI.gitStatus(repo.path).catch(() => null) : null;
+      const statusByPath = new Map<string, any>((status?.files || []).map((file: any) => [String(file.path).replace(/\\/g, '/'), file]));
+      const entries: any[] = [];
+
+      const walk = async (relativeDir: string, depth: number): Promise<void> => {
+        if (entries.length >= limit) return;
+        const absoluteDir = joinRepoPath(repo.path, relativeDir);
+        const children = await electronAPI.listDir(absoluteDir);
+        const sorted = Array.isArray(children)
+          ? [...children].sort((a, b) => Number(b.isDirectory) - Number(a.isDirectory) || String(a.name).localeCompare(String(b.name)))
+          : [];
+        for (const child of sorted) {
+          if (entries.length >= limit) break;
+          const name = String(child.name || '');
+          if (!name || isHiddenGitEntry(name)) continue;
+          if (!includeHidden && name.startsWith('.')) continue;
+          const relativePath = normalizeRepoRelativePath(
+            getRelativePathFromAbsolute(repo.path, child.path) || (relativeDir ? `${relativeDir}/${name}` : name),
+            'entryPath',
+          );
+          const gitFile = statusByPath.get(relativePath);
+          entries.push({
+            name,
+            relativePath,
+            type: child.isDirectory ? 'directory' : 'file',
+            size: child.size ?? null,
+            mtime: child.mtime ?? null,
+            gitStatus: gitFile ? {
+              status: gitFile.status,
+              staged: gitFile.staged,
+              unstaged: gitFile.unstaged,
+              untracked: gitFile.untracked,
+              conflict: gitFile.conflict,
+            } : null,
+          });
+          if (args.recursive && child.isDirectory && depth < maxDepth) {
+            await walk(relativePath, depth + 1);
+          }
+        }
+      };
+
+      await walk(directory, 0);
+      return {
+        success: true,
+        repository: repo,
+        directory,
+        recursive: Boolean(args.recursive),
+        returned: entries.length,
+        truncated: entries.length >= limit,
+        entries,
+      };
+    },
+  },
+  {
+    name: 'read_git_file',
+    module: 'git',
+    tool: {
+      name: 'read_git_file',
+      description: '读取 Git 管理中心已登记仓库内的文本文件内容。filePath 必须是仓库内相对路径，建议先 query_git_tree。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          repoPath: { type: 'string' },
+          repoName: { type: 'string' },
+          filePath: { type: 'string' },
+          maxBytes: { type: 'number', description: '最多返回字符数，默认 120000。' },
+        },
+        required: ['filePath'],
+      },
+    },
+    execute: async (args) => {
+      const repo = resolveGitRepoForTool(args);
+      const relativePath = normalizeRepoRelativePath(args.filePath, 'filePath');
+      if (!relativePath) return { success: false, error: 'filePath 不能为空。' };
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.readFile) return { success: false, error: '文件读取 API 不可用。' };
+      const absolutePath = joinRepoPath(repo.path, relativePath);
+      const stats = electronAPI.getFileStats ? await electronAPI.getFileStats(absolutePath) : null;
+      if (stats?.isDirectory) return { success: false, error: '目标路径是目录，请使用 query_git_tree。' };
+      const content = await electronAPI.readFile(absolutePath);
+      if (typeof content !== 'string') return { success: false, error: '文件读取失败，或不是可读文本文件。' };
+      const maxBytes = normalizeLimit(args.maxBytes, 120000, 500000);
+      const truncated = content.length > maxBytes;
+      return {
+        success: true,
+        repository: repo,
+        filePath: relativePath,
+        size: stats?.size ?? content.length,
+        mtime: stats?.mtime ?? null,
+        truncated,
+        content: truncated ? content.slice(0, maxBytes) : content,
+      };
     },
   },
   {
@@ -165,6 +432,22 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
     },
   },
   {
+    name: 'query_git_stashes',
+    module: 'git',
+    tool: {
+      name: 'query_git_stashes',
+      description: '查询 Git stash 列表。只有一个仓库时可不传 repoPath/repoName。',
+      inputSchema: { type: 'object', properties: { repoPath: { type: 'string' }, repoName: { type: 'string' } } },
+    },
+    execute: async (args) => {
+      const repo = resolveGitRepoForTool(args);
+      const electronAPI = (window as any).electronAPI;
+      if (!electronAPI?.gitStash) return { success: false, error: 'Git stash API 不可用。' };
+      const result = await electronAPI.gitStash({ repoPath: repo.path, action: 'list' });
+      return { success: true, repository: repo, stashes: result.stashes || [], output: result.output || '' };
+    },
+  },
+  {
     name: 'query_git_commit',
     module: 'git',
     tool: {
@@ -186,6 +469,7 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
     name: 'git_stage_files',
     module: 'git',
     permission: { module: 'git', action: 'update' },
+    safety: { confirm: true },
     tool: {
       name: 'git_stage_files',
       description: '暂存 Git 文件。该操作会触发确认；paths 必须是明确文件列表。',
@@ -206,6 +490,7 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
     name: 'git_unstage_files',
     module: 'git',
     permission: { module: 'git', action: 'update' },
+    safety: { confirm: true },
     tool: {
       name: 'git_unstage_files',
       description: '取消暂存 Git 文件。该操作会触发确认；paths 必须是明确文件列表。',
@@ -226,6 +511,7 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
     name: 'git_discard_file',
     module: 'git',
     permission: { module: 'git', action: 'delete' },
+    safety: { confirm: true },
     tool: {
       name: 'git_discard_file',
       description: '丢弃一个文件的本地更改，或删除未跟踪文件。该操作不可逆，会触发确认。',
@@ -245,6 +531,7 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
     name: 'git_commit',
     module: 'git',
     permission: { module: 'git', action: 'update' },
+    safety: { confirm: true },
     tool: {
       name: 'git_commit',
       description: '在仓库中提交已暂存更改。该操作会触发确认。',
@@ -265,6 +552,7 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
     name: 'git_fetch',
     module: 'git',
     permission: { module: 'git', action: 'update' },
+    safety: { confirm: true },
     tool: {
       name: 'git_fetch',
       description: '执行 git fetch --prune。该操作会触发确认。',
@@ -283,6 +571,7 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
     name: 'git_pull',
     module: 'git',
     permission: { module: 'git', action: 'update' },
+    safety: { confirm: true },
     tool: {
       name: 'git_pull',
       description: '执行 git pull --ff-only。该操作会触发确认。',
@@ -301,6 +590,7 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
     name: 'git_push',
     module: 'git',
     permission: { module: 'git', action: 'update' },
+    safety: { confirm: true },
     tool: {
       name: 'git_push',
       description: '执行 git push。该操作会触发确认。',
@@ -319,6 +609,7 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
     name: 'git_checkout_branch',
     module: 'git',
     permission: { module: 'git', action: 'update' },
+    safety: { confirm: true },
     tool: {
       name: 'git_checkout_branch',
       description: '切换到指定 Git 分支。也可 create=true 创建并切换到新分支。',
@@ -338,6 +629,7 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
     name: 'git_create_branch',
     module: 'git',
     permission: { module: 'git', action: 'create' },
+    safety: { confirm: true },
     tool: {
       name: 'git_create_branch',
       description: '创建 Git 分支，可选择创建后立即 checkout。',
@@ -357,6 +649,7 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
     name: 'git_delete_branch',
     module: 'git',
     permission: { module: 'git', action: 'delete' },
+    safety: { confirm: true },
     tool: {
       name: 'git_delete_branch',
       description: '删除 Git 本地分支。force=true 使用 -D 强制删除。该操作会触发确认。',
@@ -376,6 +669,7 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
     name: 'git_merge_branch',
     module: 'git',
     permission: { module: 'git', action: 'update' },
+    safety: { confirm: true },
     tool: {
       name: 'git_merge_branch',
       description: '将指定分支合并到当前分支，默认 --no-edit。该操作会触发确认。',
@@ -395,15 +689,16 @@ export const GIT_TOOL_REGISTRATIONS: ToolRegistration[] = [
     name: 'git_stash',
     module: 'git',
     permission: { module: 'git', action: 'update' },
+    safety: { confirm: true },
     tool: {
       name: 'git_stash',
-      description: '管理 Git stash。action=list/push/pop/drop；push/pop/drop 会触发确认。',
+      description: '执行 Git stash 写操作。action=push/pop/drop；查询 stash 请使用 query_git_stashes。该操作会触发确认。',
       inputSchema: {
         type: 'object',
         properties: {
           repoPath: { type: 'string' },
           repoName: { type: 'string' },
-          action: { type: 'string', enum: ['list', 'push', 'pop', 'drop'] },
+          action: { type: 'string', enum: ['push', 'pop', 'drop'] },
           message: { type: 'string' },
           index: { type: 'number' },
           includeUntracked: { type: 'boolean' },

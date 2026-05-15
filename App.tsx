@@ -2000,6 +2000,17 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const handleCategoriesUpdated = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.categoriesMap && typeof detail.categoriesMap === 'object') {
+        setCategoriesMap(prev => ({ ...prev, ...detail.categoriesMap }));
+      }
+    };
+    window.addEventListener('guyue:categories-updated', handleCategoriesUpdated);
+    return () => window.removeEventListener('guyue:categories-updated', handleCategoriesUpdated);
+  }, []);
+
+  useEffect(() => {
     // 只在初始加载完成后才保存配置
     if (!imageDataLoadedRef.current) return;
     saveToStorage(STORAGE_KEY_IMAGE_CONFIG, imageHostingConfig);

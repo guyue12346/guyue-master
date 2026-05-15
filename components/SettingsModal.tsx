@@ -27,6 +27,19 @@ const APP_THEME_OPTIONS = [
   { key: 'candy', label: '五彩', desc: '多彩渐变', note: '恢复更明显的粉紫蓝渐变风格。' },
 ] as const;
 
+const SETTINGS_SECTIONS = [
+  { id: 'settings-profile', label: '个人资料' },
+  { id: 'settings-appearance', label: '外观' },
+  { id: 'settings-api', label: 'API' },
+  { id: 'settings-modules', label: '模块' },
+  { id: 'settings-plugins', label: '插件' },
+  { id: 'settings-ai', label: 'AI 与网络' },
+  { id: 'settings-paths', label: '路径' },
+  { id: 'settings-data', label: '数据' },
+] as const;
+
+type SettingsSectionId = typeof SETTINGS_SECTIONS[number]['id'];
+
 const parseStoredSplashQuotes = () => {
   if (typeof window === 'undefined') return [DEFAULT_SPLASH_QUOTE];
   const raw = localStorage.getItem('linkmaster_splash_text_v1');
@@ -121,7 +134,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [sidebarTheme, setSidebarTheme] = useState<string>(() => normalizeAppTheme(localStorage.getItem('guyue_sidebar_theme')));
   const [mdEngine, setMdEngine] = useState<string>(() => localStorage.getItem('guyue_md_engine') || 'default');
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>('settings-profile');
   const iconSelectorRef = useRef<HTMLDivElement>(null);
+  const settingsContentRef = useRef<HTMLDivElement>(null);
 
   // API Profile Management
   const [apiProfiles, setApiProfiles] = useState<ApiProfile[]>([]);
@@ -190,6 +205,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (window.electronAPI) {
       window.electronAPI.getPlugins().then(setPlugins);
     }
+    setActiveSection('settings-profile');
   }, [isOpen]);
 
   const handleInstallPlugin = async () => {
@@ -338,6 +354,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setUserName(name);
     localStorage.setItem('guyue_user_name', name);
   };
+
+  const syncActiveSettingsSection = () => {
+    const container = settingsContentRef.current;
+    if (!container) return;
+
+    const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 4;
+    if (atBottom) {
+      setActiveSection(SETTINGS_SECTIONS[SETTINGS_SECTIONS.length - 1].id);
+      return;
+    }
+
+    const containerTop = container.getBoundingClientRect().top;
+    const threshold = containerTop + 64;
+    let nextActive: SettingsSectionId = SETTINGS_SECTIONS[0].id;
+
+    for (const section of SETTINGS_SECTIONS) {
+      const element = container.querySelector<HTMLElement>(`#${section.id}`);
+      if (!element) continue;
+      if (element.getBoundingClientRect().top <= threshold) {
+        nextActive = section.id;
+      } else {
+        break;
+      }
+    }
+
+    setActiveSection(prev => (prev === nextActive ? prev : nextActive));
+  };
+
+  const handleSettingsNavClick = (event: React.MouseEvent<HTMLAnchorElement>, id: SettingsSectionId) => {
+    event.preventDefault();
+    setActiveSection(id);
+    const element = settingsContentRef.current?.querySelector<HTMLElement>(`#${id}`);
+    element?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  };
   
   const handleExportAppBackup = async () => {
     setIsExporting(true);
@@ -437,30 +487,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         <div className="grid min-h-0 flex-1 grid-cols-[180px_1fr] overflow-hidden">
           <aside className="hidden border-r p-4 md:block" style={{ borderColor: 'var(--t-border-light)', background: 'var(--t-bg-secondary)' }}>
             <nav className="sticky top-0 space-y-1 text-sm">
-              {[
-                ['settings-profile', '个人资料'],
-                ['settings-appearance', '外观'],
-                ['settings-api', 'API'],
-                ['settings-modules', '模块'],
-                ['settings-plugins', '插件'],
-                ['settings-ai', 'AI 与网络'],
-                ['settings-paths', '路径'],
-                ['settings-data', '数据'],
-              ].map(([id, label]) => (
-                <a
-                  key={id}
-                  href={`#${id}`}
-                  className="block rounded-lg px-3 py-2 transition-colors hover:bg-white"
-                  style={{ color: 'var(--t-text-muted)' }}
-                >
-                  {label}
-                </a>
-              ))}
+              {SETTINGS_SECTIONS.map(section => {
+                const isActive = activeSection === section.id;
+                return (
+                  <a
+                    key={section.id}
+                    href={`#${section.id}`}
+                    onClick={(event) => handleSettingsNavClick(event, section.id)}
+                    className={`block rounded-lg border px-3 py-2 transition-all ${isActive ? 'font-semibold' : ''}`}
+                    style={{
+                      background: isActive ? 'var(--t-list-active-bg)' : 'transparent',
+                      borderColor: isActive ? 'var(--t-list-active-border)' : 'transparent',
+                      boxShadow: isActive ? 'var(--t-list-active-shadow)' : 'none',
+                      color: isActive ? 'var(--t-list-active-text)' : 'var(--t-text-muted)',
+                    }}
+                  >
+                    {section.label}
+                  </a>
+                );
+              })}
             </nav>
           </aside>
 
           {/* Scrollable Content */}
-          <div className="min-h-0 space-y-8 overflow-y-auto p-6">
+          <div ref={settingsContentRef} onScroll={syncActiveSettingsSection} className="min-h-0 space-y-8 overflow-y-auto p-6">
 
           {/* Section: User Profile */}
           <div id="settings-profile" className="space-y-4 scroll-mt-4">

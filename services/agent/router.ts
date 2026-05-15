@@ -46,6 +46,7 @@ export const detectModuleScopeLocally = (input: string): string[] => {
   if (/网站管理|网站账号|密码|账号密码|登录信息|网址账号|password|credential/.test(text)) add('dc-website');
   if (/课程|学习|讲义|练习|知识点|学习中心/.test(text)) add('learning');
   if (/题单|leetcode|算法题|刷题计划/.test(text)) add('leetcode');
+  if (/code|编码练习|代码练习|编程练习|练习文件|input\.in|output\.out|notes\.md|main\.(ts|js|py|cpp|go|rs|swift)/.test(text)) add('code');
   if (/题库|题目|解题方法|解答|难度系数|组题|试卷|数学题|物理题|化学题/.test(text)) add('question-bank');
   if (/画布|绘图|白板|excalidraw|流程图|mermaid/.test(text)) add('canvas');
   if (/git|github|仓库|分支|提交|commit|push|pull|fetch|diff|暂存|远程仓库/.test(text)) add('git');

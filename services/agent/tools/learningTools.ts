@@ -1,11 +1,23 @@
 import type { ToolRegistration } from '../toolRegistry';
 import { ensureDirectory, getModulePath, sanitizeName, type SectionType } from '../../../utils/learningStorage';
+import { parseLeetCodeMarkdown } from '../../../utils/leetcodeParser';
+import { LEETCODE_DATA } from '../../../components/LeetCodeData';
+import { LEETCODE_HOT100_DATA } from '../../../components/LeetCodeHot100Data';
+import { LUOGU_9391_DATA } from '../../../components/Luogu9391Data';
 
 const LEARNING_CATEGORIES_STORAGE_KEY = 'learning_categories_v1';
 const LEARNING_COURSES_STORAGE_KEY = 'learning_courses_v1';
+const LEETCODE_LISTS_STORAGE_KEY = 'leetcode_lists';
+const LEETCODE_PROGRESS_STORAGE_KEY = 'leetcode_progress';
 type LearningSection = 'resources' | 'assignments' | 'personal' | 'custom';
 
 const agentLearningId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+const BUILTIN_LEARNING_SECTIONS = [
+  { id: 'resources', title: '学习内容', kind: 'builtin', description: '课程讲义和学习内容' },
+  { id: 'assignments', title: '学习练习', kind: 'builtin', description: '课程练习、作业和实践资源' },
+  { id: 'personal', title: '其它资源', kind: 'builtin', description: '其它资料、链接和个人资源' },
+] as const;
 
 const loadLearningCategories = (): any[] => {
   try {
@@ -49,6 +61,55 @@ const summarizeLearningCourse = (course: any, categories: any[]) => ({
   priority: course.priority ?? 10,
 });
 
+const summarizeLearningCategory = (category: any, courses: any[] = []) => ({
+  id: category.id,
+  name: category.name,
+  description: category.description || '',
+  icon: category.icon || 'BookOpen',
+  color: category.color || 'blue',
+  priority: category.priority ?? 50,
+  courseCount: courses.filter((course: any) => course.categoryId === category.id).length,
+});
+
+const summarizeLearningModule = (module: any, section: LearningSection) => ({
+  id: module.id,
+  title: module.title,
+  description: module.description || '',
+  order: module.order ?? 0,
+  itemCount: section === 'resources' ? (module.lectures || []).length : (module.items || []).length,
+});
+
+const summarizeLearningSection = (course: any, sectionId: string) => {
+  if (sectionId === 'resources' || sectionId === 'assignments' || sectionId === 'personal') {
+    const section = sectionId as LearningSection;
+    const meta = BUILTIN_LEARNING_SECTIONS.find(item => item.id === sectionId);
+    const modules = getLearningSectionModules(course, section) || [];
+    return {
+      ...meta,
+      moduleCount: modules.length,
+      itemCount: modules.reduce((total: number, module: any) => (
+        total + (section === 'resources' ? (module.lectures || []).length : (module.items || []).length)
+      ), 0),
+      modules: modules.map((module: any) => summarizeLearningModule(module, section)),
+    };
+  }
+
+  const customSection = (Array.isArray(course.customSections) ? course.customSections : []).find((item: any) => item.id === sectionId);
+  if (!customSection) return null;
+  const modules = Array.isArray(customSection.modules) ? customSection.modules : [];
+  return {
+    id: customSection.id,
+    title: customSection.title,
+    kind: 'custom',
+    icon: customSection.icon || 'Star',
+    color: customSection.color || 'blue',
+    order: customSection.order ?? 0,
+    moduleCount: modules.length,
+    itemCount: modules.reduce((total: number, module: any) => total + (module.items || []).length, 0),
+    modules: modules.map((module: any) => summarizeLearningModule(module, 'custom')),
+  };
+};
+
 const getLearningCourse = (courses: any[], args: Record<string, any>) => {
   const id = typeof args.courseId === 'string' ? args.courseId.trim() : '';
   const title = typeof args.courseTitle === 'string' ? args.courseTitle.trim() : '';
@@ -74,6 +135,38 @@ const getLearningSectionModules = (course: any, section: LearningSection, custom
   if (!customSection) return null;
   customSection.modules = Array.isArray(customSection.modules) ? customSection.modules : [];
   return customSection.modules;
+};
+
+const getLearningSection = (course: any, args: Record<string, any>) => {
+  const sectionId = typeof args.sectionId === 'string' ? args.sectionId.trim() : '';
+  const title = typeof args.title === 'string' ? args.title.trim() : '';
+  course.customSections = Array.isArray(course.customSections) ? course.customSections : [];
+  return (sectionId ? course.customSections.find((item: any) => item.id === sectionId) : undefined)
+    || (title ? course.customSections.find((item: any) => item.title === title) : undefined);
+};
+
+const getLearningModule = (course: any, args: Record<string, any>) => {
+  const section = normalizeLearningSection(args.section);
+  const customSectionId = typeof args.customSectionId === 'string' ? args.customSectionId.trim() : undefined;
+  const modules = getLearningSectionModules(course, section, customSectionId);
+  if (!modules) return { section, modules: null, module: null };
+  const moduleId = typeof args.moduleId === 'string' ? args.moduleId.trim() : '';
+  const moduleTitle = typeof args.moduleTitle === 'string' ? args.moduleTitle.trim() : '';
+  const module = (moduleId ? modules.find((item: any) => item.id === moduleId) : undefined)
+    || (moduleTitle ? modules.find((item: any) => item.title === moduleTitle) : undefined)
+    || null;
+  return { section, modules, module };
+};
+
+const getLearningItem = (module: any, section: LearningSection, args: Record<string, any>) => {
+  const collectionKey = section === 'resources' ? 'lectures' : 'items';
+  module[collectionKey] = Array.isArray(module[collectionKey]) ? module[collectionKey] : [];
+  const itemId = typeof args.itemId === 'string' ? args.itemId.trim() : '';
+  const itemTitle = typeof args.itemTitle === 'string' ? args.itemTitle.trim() : '';
+  const item = (itemId ? module[collectionKey].find((entry: any) => entry.id === itemId) : undefined)
+    || (itemTitle ? module[collectionKey].find((entry: any) => entry.title === itemTitle) : undefined)
+    || null;
+  return { collectionKey, item };
 };
 
 const normalizeLearningSection = (value: unknown): LearningSection => {
@@ -118,6 +211,201 @@ const writeLearningMarkdownForItem = async (
   }
 };
 
+const readLearningMarkdownForItem = async (section: LearningSection, item: any) => {
+  const path = section === 'resources' ? item?.materials : item?.link;
+  if (typeof path !== 'string' || !path.trim() || /^https?:\/\//i.test(path)) return null;
+  if (!window.electronAPI?.readFile) return null;
+  try {
+    return await window.electronAPI.readFile(path);
+  } catch {
+    return null;
+  }
+};
+
+const notifyLeetCodeUpdated = () => {
+  window.dispatchEvent(new CustomEvent('leetcode-data-updated'));
+};
+
+const getDefaultLeetCodeLists = () => [
+  {
+    id: 'default',
+    title: '基础算法精讲',
+    description: '灵茶山艾府 - 基础算法精讲 · 题目汇总',
+    categories: parseLeetCodeMarkdown(LEETCODE_DATA),
+    createdAt: Date.now(),
+    rawMarkdown: LEETCODE_DATA,
+    priority: 0,
+  },
+  {
+    id: 'luogu-9391',
+    title: '能力全面提升综合题单',
+    description: '洛谷 - 能力全面提升综合题单 · 题目汇总',
+    categories: parseLeetCodeMarkdown(LUOGU_9391_DATA),
+    createdAt: Date.now(),
+    rawMarkdown: LUOGU_9391_DATA,
+    priority: 1,
+  },
+  {
+    id: 'leetcode-hot-100',
+    title: 'LeetCode 热题 100',
+    description: 'LeetCode 热题 100 · 题目汇总',
+    categories: parseLeetCodeMarkdown(LEETCODE_HOT100_DATA),
+    createdAt: Date.now(),
+    rawMarkdown: LEETCODE_HOT100_DATA,
+    priority: 2,
+  },
+];
+
+const mergeDefaultLeetCodeLists = (lists: any[]) => {
+  const merged = [...lists];
+  for (const defaultList of getDefaultLeetCodeLists()) {
+    const index = merged.findIndex((list: any) => list.id === defaultList.id);
+    if (index >= 0) {
+      merged[index] = {
+        ...merged[index],
+        title: defaultList.title,
+        description: defaultList.description,
+        categories: defaultList.categories,
+        rawMarkdown: defaultList.rawMarkdown,
+        priority: merged[index].priority ?? defaultList.priority,
+      };
+    } else {
+      merged.push(defaultList);
+    }
+  }
+  return merged;
+};
+
+const loadLeetCodeLists = (): any[] => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LEETCODE_LISTS_STORAGE_KEY) || '[]');
+    return mergeDefaultLeetCodeLists(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return getDefaultLeetCodeLists();
+  }
+};
+
+const saveLeetCodeLists = (lists: any[]) => {
+  const normalized = lists
+    .map(list => ({
+      ...list,
+      categories: Array.isArray(list.categories) ? list.categories : [],
+      priority: Number.isFinite(Number(list.priority)) ? Number(list.priority) : 10,
+    }))
+    .sort((a, b) => (a.priority ?? 10) - (b.priority ?? 10));
+  localStorage.setItem(LEETCODE_LISTS_STORAGE_KEY, JSON.stringify(normalized));
+  notifyLeetCodeUpdated();
+};
+
+const loadLeetCodeProgress = (): Record<string, boolean> => {
+  try {
+    return JSON.parse(localStorage.getItem(LEETCODE_PROGRESS_STORAGE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+};
+
+const saveLeetCodeProgress = (progress: Record<string, boolean>) => {
+  localStorage.setItem(LEETCODE_PROGRESS_STORAGE_KEY, JSON.stringify(progress));
+  notifyLeetCodeUpdated();
+};
+
+const getLeetCodeList = (lists: any[], args: Record<string, any>) => {
+  const id = typeof args.listId === 'string' ? args.listId.trim() : '';
+  const title = typeof args.listTitle === 'string' ? args.listTitle.trim() : '';
+  return (id ? lists.find((list: any) => list.id === id) : undefined)
+    || (title ? lists.find((list: any) => list.title === title) : undefined)
+    || null;
+};
+
+const getLeetCodeCategoryIndex = (list: any, args: Record<string, any>) => {
+  list.categories = Array.isArray(list.categories) ? list.categories : [];
+  if (typeof args.categoryIndex === 'number' && args.categoryIndex >= 0 && args.categoryIndex < list.categories.length) {
+    return Math.floor(args.categoryIndex);
+  }
+  const title = typeof args.categoryTitle === 'string' ? args.categoryTitle.trim() : '';
+  if (!title) return -1;
+  return list.categories.findIndex((category: any) => category.title === title);
+};
+
+const getLeetCodeProblemIndex = (category: any, args: Record<string, any>) => {
+  category.problems = Array.isArray(category.problems) ? category.problems : [];
+  if (typeof args.problemIndex === 'number' && args.problemIndex >= 0 && args.problemIndex < category.problems.length) {
+    return Math.floor(args.problemIndex);
+  }
+  const url = typeof args.url === 'string' ? args.url.trim() : '';
+  const title = typeof args.problemTitle === 'string' ? args.problemTitle.trim() : '';
+  return category.problems.findIndex((problem: any) => (
+    (url && problem.url === url) ||
+    (title && problem.title === title)
+  ));
+};
+
+const formatLeetCodeMarkdownLink = (text: string, url?: string) => {
+  const label = String(text || '').trim();
+  const href = String(url || '').trim();
+  if (!label || !href) return '';
+  return `[${label.replace(/\|/g, '\\|')}](${href})`;
+};
+
+const buildLeetCodeMarkdown = (categories: any[]) => (Array.isArray(categories) ? categories : [])
+  .map(category => {
+    const lines = [
+      `### ${String(category.title || '未命名分组').trim()}`,
+      '|题目|相关链接|备注|',
+      '|---|---|---|',
+    ];
+    (Array.isArray(category.problems) ? category.problems : []).forEach((problem: any) => {
+      const problemLink = formatLeetCodeMarkdownLink(problem.title, problem.url);
+      const codeLink = formatLeetCodeMarkdownLink(problem.codeText || '相关链接', problem.codeUrl);
+      const note = String(problem.note || '').replace(/\n/g, ' ').replace(/\|/g, '\\|');
+      lines.push(`|${problemLink}|${codeLink}|${note}|`);
+    });
+    return lines.join('\n');
+  })
+  .join('\n\n');
+
+const syncLeetCodeRawMarkdown = (list: any) => {
+  list.categories = Array.isArray(list.categories) ? list.categories : [];
+  list.rawMarkdown = buildLeetCodeMarkdown(list.categories);
+};
+
+const makeLeetCodeProblem = (args: Record<string, any>) => {
+  const title = String(args.title || args.problemTitle || '').trim();
+  const url = String(args.url || '').trim();
+  if (!title) return { error: '题目标题不能为空。' };
+  if (!url) return { error: '题目 URL 不能为空。' };
+  return {
+    problem: {
+      title,
+      url,
+      codeUrl: typeof args.codeUrl === 'string' && args.codeUrl.trim() ? args.codeUrl.trim() : undefined,
+      codeText: typeof args.codeText === 'string' && args.codeText.trim() ? args.codeText.trim() : undefined,
+      note: typeof args.note === 'string' ? args.note.trim() : '',
+    },
+  };
+};
+
+const summarizeLeetCodeList = (list: any, progress: Record<string, boolean>) => {
+  const categories = Array.isArray(list.categories) ? list.categories : [];
+  const total = categories.reduce((count: number, category: any) => count + (Array.isArray(category.problems) ? category.problems.length : 0), 0);
+  const completed = categories.reduce((count: number, category: any) => (
+    count + (Array.isArray(category.problems) ? category.problems.filter((problem: any) => progress[problem.url]).length : 0)
+  ), 0);
+  return {
+    id: list.id,
+    title: list.title,
+    description: list.description || null,
+    priority: list.priority ?? 10,
+    categoryCount: categories.length,
+    problemCount: total,
+    completedCount: completed,
+    pendingCount: Math.max(total - completed, 0),
+    completionPercent: total === 0 ? 0 : Math.round((completed / total) * 100),
+    createdAt: list.createdAt ? new Date(list.createdAt).toLocaleString('zh-CN') : null,
+  };
+};
+
 export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
   {
       name: 'create_leetcode_list',
@@ -145,6 +433,8 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
                       properties: {
                         title: { type: 'string', description: '题目完整标题，如 "70. 爬楼梯"' },
                         url: { type: 'string', description: 'LeetCode 题目链接，如 "https://leetcode.cn/problems/climbing-stairs/"' },
+                        codeUrl: { type: 'string', description: '题解、代码或笔记链接（可选）' },
+                        codeText: { type: 'string', description: '题解链接显示文字（可选）' },
                         note: { type: 'string', description: '备注信息（可选）' },
                       },
                       required: ['title', 'url'],
@@ -161,17 +451,30 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
       execute: async (args, _ctx) => {
         const groups = Array.isArray(args.groups) ? args.groups : [];
         const mdLines: string[] = [];
-        const categories: { title: string; problems: { title: string; url: string; note?: string }[] }[] = [];
+        const categories: { title: string; problems: { title: string; url: string; codeUrl?: string; codeText?: string; note?: string }[] }[] = [];
         for (const group of groups) {
-          mdLines.push(`### ${group.name}`);
+          const groupName = String(group.name || '').trim() || '未命名分组';
+          mdLines.push(`### ${groupName}`);
           mdLines.push('| 题目 | 相关链接 | 备注 |');
           mdLines.push('|---|---|---|');
-          const problems: { title: string; url: string; note?: string }[] = [];
+          const problems: { title: string; url: string; codeUrl?: string; codeText?: string; note?: string }[] = [];
           for (const p of (Array.isArray(group.problems) ? group.problems : [])) {
-            mdLines.push(`| [${p.title}](${p.url}) | | ${p.note || ''} |`);
-            problems.push({ title: p.title, url: p.url, note: p.note || undefined });
+            const title = String(p.title || '').trim();
+            const url = String(p.url || '').trim();
+            if (!title || !url) continue;
+            const problem = {
+              title,
+              url,
+              codeUrl: typeof p.codeUrl === 'string' && p.codeUrl.trim() ? p.codeUrl.trim() : undefined,
+              codeText: typeof p.codeText === 'string' && p.codeText.trim() ? p.codeText.trim() : undefined,
+              note: typeof p.note === 'string' ? p.note.trim() : undefined,
+            };
+            const problemLink = formatLeetCodeMarkdownLink(problem.title, problem.url);
+            const codeLink = formatLeetCodeMarkdownLink(problem.codeText || '相关链接', problem.codeUrl);
+            mdLines.push(`| ${problemLink} | ${codeLink} | ${problem.note || ''} |`);
+            problems.push(problem);
           }
-          categories.push({ title: group.name, problems });
+          categories.push({ title: groupName, problems });
           mdLines.push('');
         }
         const rawMarkdown = mdLines.join('\n');
@@ -185,10 +488,9 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
           rawMarkdown,
           createdAt: Date.now(),
         };
-        const existing: any[] = JSON.parse(localStorage.getItem('leetcode_lists') || '[]');
+        const existing: any[] = loadLeetCodeLists();
         existing.push(newList);
-        existing.sort((a: any, b: any) => (a.priority ?? 10) - (b.priority ?? 10));
-        localStorage.setItem('leetcode_lists', JSON.stringify(existing));
+        saveLeetCodeLists(existing);
         return { success: true, message: `题单「${newList.title}」已创建，包含 ${categories.length} 个分组共 ${totalProblems} 道题。` };
       },
     },
@@ -197,14 +499,13 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
       module: 'learning',
       tool: {
         name: 'create_learning_course',
-        description: '在学习中心创建一个完整的结构化课程（含学习模块、讲义、练习、个人资源、自定义分区）。调用前必须先 query_learning_courses 获取已有分类列表及其 ID，然后用 categoryId 指定分类；若需要新分类请先自行说明。',
+        description: '在学习中心创建一个完整的结构化课程（含学习模块、讲义、练习、个人资源、自定义分区）。调用前必须先 query_learning_courses 或 query_learning_categories 获取已有学习方向 ID，然后用 categoryId 指定方向；不能自动创建默认方向。',
         inputSchema: {
           type: 'object',
           properties: {
             title: { type: 'string', description: '课程标题' },
             description: { type: 'string', description: '课程简介' },
-            categoryId: { type: 'string', description: '所属分类的唯一 ID（从 query_learning_courses 返回的 categories[].id 获取）。若传入的 ID 不存在，可传 categoryName 来自动创建新分类。' },
-            categoryName: { type: 'string', description: '仅在需要创建新分类时使用。传入新分类的显示名称，会自动创建。必须与 categoryId 二选一。' },
+            categoryId: { type: 'string', description: '所属学习方向的唯一 ID（从 query_learning_courses 或 query_learning_categories 返回的 categories[].id 获取）。' },
             introMarkdown: { type: 'string', description: '课程总览 Markdown（支持 # 标题、列表等）' },
             icon: { type: 'string', description: 'Lucide 图标名，如 "BookOpen"、"Code2"' },
             priority: { type: 'number', description: '排序优先级，默认 10' },
@@ -315,7 +616,7 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
               },
             },
           },
-          required: ['title'],
+          required: ['title', 'categoryId'],
         },
       },
       execute: async (args, _ctx) => {
@@ -330,14 +631,8 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
             const available = cats.map((c: any) => `${c.name}(${c.id})`).join('、') || '（暂无）';
             return { success: false, error: `分类 ID「${args.categoryId}」不存在。当前可用分类：${available}。请先调用 query_learning_courses 获取正确的分类 ID。` };
           }
-        } else if (args.categoryName) {
-          // 创建新分类
-          const catName = String(args.categoryName).trim();
-          targetCategory = { id: `cat_${Date.now()}`, name: catName, icon: args.icon || 'BookOpen', color: 'blue', priority: 10 };
-          cats.push(targetCategory);
-          localStorage.setItem('learning_categories_v1', JSON.stringify(cats));
         } else {
-          return { success: false, error: '必须提供 categoryId（已有分类）或 categoryName（创建新分类）。请先调用 query_learning_courses 查看已有分类。' };
+          return { success: false, error: '必须提供已有学习方向的 categoryId。若没有合适方向，请先调用 create_learning_category 创建方向。' };
         }
 
         const genId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -445,20 +740,494 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
       },
       execute: async (_args, ctx) => {
         if (!ctx.dataPermissions.leetcodeLists.read) return { success: false, error: '题单查询未授权。请点击 🔒 按钮，在权限面板中开启「题单」读取权限。' };
-        const lists: any[] = JSON.parse(localStorage.getItem('leetcode_lists') || '[]');
+        const lists = loadLeetCodeLists();
+        const progress = loadLeetCodeProgress();
         return {
           success: true,
           total: lists.length,
-          lists: lists.map((l: any) => ({
-            id: l.id,
-            title: l.title,
-            description: l.description || null,
-            priority: l.priority ?? 10,
-            groupCount: (l.categories || []).length,
-            problemCount: (l.categories || []).reduce((n: number, g: any) => n + (g.problems || []).length, 0),
-            createdAt: l.createdAt ? new Date(l.createdAt).toLocaleString('zh-CN') : null,
-          })),
+          lists: lists.map((list: any) => summarizeLeetCodeList(list, progress)),
         };
+      },
+    },
+  {
+      name: 'read_leetcode_list',
+      module: 'leetcode',
+      tool: {
+        name: 'read_leetcode_list',
+        description: '读取一个题单的完整内容，包括分组、题目和每道题完成状态。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            listId: { type: 'string', description: '题单 ID，优先使用 query_leetcode_lists 返回的 id。' },
+            listTitle: { type: 'string', description: '题单标题，未提供 listId 时可用。' },
+          },
+          required: [],
+        },
+      },
+      execute: async (args, ctx) => {
+        if (!ctx.dataPermissions.leetcodeLists.read) return { success: false, error: '题单读取未授权。' };
+        const lists = loadLeetCodeLists();
+        const progress = loadLeetCodeProgress();
+        const list = getLeetCodeList(lists, args);
+        if (!list) return { success: false, error: '未找到题单。请先调用 query_leetcode_lists 获取 listId。' };
+        const categories = (Array.isArray(list.categories) ? list.categories : []).map((category: any, categoryIndex: number) => ({
+          title: category.title,
+          categoryIndex,
+          problems: (Array.isArray(category.problems) ? category.problems : []).map((problem: any, problemIndex: number) => ({
+            ...problem,
+            problemIndex,
+            completed: Boolean(progress[problem.url]),
+          })),
+        }));
+        return {
+          success: true,
+          summary: summarizeLeetCodeList(list, progress),
+          list: { ...list, categories },
+        };
+      },
+    },
+  {
+      name: 'update_leetcode_list',
+      module: 'leetcode',
+      tool: {
+        name: 'update_leetcode_list',
+        description: '修改题单基础信息；若传 categories 会整体替换题单内容。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            listId: { type: 'string' },
+            listTitle: { type: 'string' },
+            title: { type: 'string' },
+            description: { type: 'string' },
+            priority: { type: 'number' },
+            categories: {
+              type: 'array',
+              description: '可选：整体替换题单分组内容。',
+              items: {
+                type: 'object',
+                properties: {
+                  title: { type: 'string' },
+                  problems: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        title: { type: 'string' },
+                        url: { type: 'string' },
+                        codeUrl: { type: 'string' },
+                        codeText: { type: 'string' },
+                        note: { type: 'string' },
+                      },
+                      required: ['title', 'url'],
+                    },
+                  },
+                },
+                required: ['title'],
+              },
+            },
+          },
+        },
+      },
+      execute: async (args) => {
+        const lists = loadLeetCodeLists();
+        const list = getLeetCodeList(lists, args);
+        if (!list) return { success: false, error: '未找到题单。' };
+        if (typeof args.title === 'string' && args.title.trim()) list.title = args.title.trim();
+        if (typeof args.description === 'string') list.description = args.description.trim();
+        if (typeof args.priority === 'number') list.priority = args.priority;
+        if (Array.isArray(args.categories)) {
+          list.categories = args.categories.map((category: any) => ({
+            title: String(category.title || '').trim() || '未命名分组',
+            problems: (Array.isArray(category.problems) ? category.problems : []).map((problem: any) => ({
+              title: String(problem.title || '').trim(),
+              url: String(problem.url || '').trim(),
+              codeUrl: typeof problem.codeUrl === 'string' && problem.codeUrl.trim() ? problem.codeUrl.trim() : undefined,
+              codeText: typeof problem.codeText === 'string' && problem.codeText.trim() ? problem.codeText.trim() : undefined,
+              note: typeof problem.note === 'string' ? problem.note.trim() : '',
+            })).filter((problem: any) => problem.title && problem.url),
+          }));
+          syncLeetCodeRawMarkdown(list);
+        }
+        saveLeetCodeLists(lists);
+        return { success: true, message: `题单「${list.title}」已更新`, list: summarizeLeetCodeList(list, loadLeetCodeProgress()) };
+      },
+    },
+  {
+      name: 'delete_leetcode_list',
+      module: 'leetcode',
+      tool: {
+        name: 'delete_leetcode_list',
+        description: '删除一个题单。默认保留全局完成状态；若 clearProgress=true，会清除该题单内题目的完成状态。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            listId: { type: 'string' },
+            listTitle: { type: 'string' },
+            clearProgress: { type: 'boolean' },
+          },
+        },
+      },
+      execute: async (args) => {
+        const lists = loadLeetCodeLists();
+        const list = getLeetCodeList(lists, args);
+        if (!list) return { success: false, error: '未找到题单。' };
+        if (args.clearProgress === true) {
+          const progress = loadLeetCodeProgress();
+          (list.categories || []).forEach((category: any) => {
+            (category.problems || []).forEach((problem: any) => {
+              if (problem.url) delete progress[problem.url];
+            });
+          });
+          saveLeetCodeProgress(progress);
+        }
+        saveLeetCodeLists(lists.filter((item: any) => item.id !== list.id));
+        return { success: true, message: `题单「${list.title}」已删除` };
+      },
+    },
+  {
+      name: 'create_leetcode_group',
+      module: 'leetcode',
+      tool: {
+        name: 'create_leetcode_group',
+        description: '在题单中新增一个分组。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            listId: { type: 'string' },
+            title: { type: 'string', description: '分组标题。' },
+            index: { type: 'number', description: '插入位置；不传则追加。' },
+          },
+          required: ['listId', 'title'],
+        },
+      },
+      execute: async (args) => {
+        const lists = loadLeetCodeLists();
+        const list = getLeetCodeList(lists, args);
+        if (!list) return { success: false, error: '未找到题单。' };
+        list.categories = Array.isArray(list.categories) ? list.categories : [];
+        const title = String(args.title || '').trim();
+        if (!title) return { success: false, error: '分组标题不能为空。' };
+        if (list.categories.some((category: any) => category.title === title)) {
+          return { success: false, error: `题单中已存在分组「${title}」。` };
+        }
+        const group = { title, problems: [] };
+        const index = typeof args.index === 'number' ? Math.max(0, Math.min(Math.floor(args.index), list.categories.length)) : list.categories.length;
+        list.categories.splice(index, 0, group);
+        syncLeetCodeRawMarkdown(list);
+        saveLeetCodeLists(lists);
+        return { success: true, message: `题单「${list.title}」已新增分组「${title}」`, group };
+      },
+    },
+  {
+      name: 'update_leetcode_group',
+      module: 'leetcode',
+      tool: {
+        name: 'update_leetcode_group',
+        description: '修改题单分组标题或调整分组顺序。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            listId: { type: 'string' },
+            categoryTitle: { type: 'string' },
+            categoryIndex: { type: 'number' },
+            title: { type: 'string', description: '新的分组标题。' },
+            index: { type: 'number', description: '新的分组位置。' },
+          },
+          required: ['listId'],
+        },
+      },
+      execute: async (args) => {
+        const lists = loadLeetCodeLists();
+        const list = getLeetCodeList(lists, args);
+        if (!list) return { success: false, error: '未找到题单。' };
+        const categoryIndex = getLeetCodeCategoryIndex(list, args);
+        if (categoryIndex < 0) return { success: false, error: '未找到分组。请提供 categoryTitle 或 categoryIndex。' };
+        const category = list.categories[categoryIndex];
+        if (typeof args.title === 'string' && args.title.trim()) category.title = args.title.trim();
+        if (typeof args.index === 'number') {
+          const [moved] = list.categories.splice(categoryIndex, 1);
+          const nextIndex = Math.max(0, Math.min(Math.floor(args.index), list.categories.length));
+          list.categories.splice(nextIndex, 0, moved);
+        }
+        syncLeetCodeRawMarkdown(list);
+        saveLeetCodeLists(lists);
+        return { success: true, message: `题单分组「${category.title}」已更新`, group: category };
+      },
+    },
+  {
+      name: 'delete_leetcode_group',
+      module: 'leetcode',
+      tool: {
+        name: 'delete_leetcode_group',
+        description: '删除题单中的一个分组。若分组内有题目，需要 deleteProblems=true 才会连同题目删除。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            listId: { type: 'string' },
+            categoryTitle: { type: 'string' },
+            categoryIndex: { type: 'number' },
+            deleteProblems: { type: 'boolean' },
+            clearProgress: { type: 'boolean' },
+          },
+          required: ['listId'],
+        },
+      },
+      execute: async (args) => {
+        const lists = loadLeetCodeLists();
+        const list = getLeetCodeList(lists, args);
+        if (!list) return { success: false, error: '未找到题单。' };
+        const categoryIndex = getLeetCodeCategoryIndex(list, args);
+        if (categoryIndex < 0) return { success: false, error: '未找到分组。' };
+        const category = list.categories[categoryIndex];
+        const problemCount = Array.isArray(category.problems) ? category.problems.length : 0;
+        if (problemCount > 0 && args.deleteProblems !== true) {
+          return { success: false, error: `分组「${category.title}」下还有 ${problemCount} 道题。若确认删除，请传 deleteProblems=true。` };
+        }
+        if (args.clearProgress === true) {
+          const progress = loadLeetCodeProgress();
+          (category.problems || []).forEach((problem: any) => {
+            if (problem.url) delete progress[problem.url];
+          });
+          saveLeetCodeProgress(progress);
+        }
+        list.categories.splice(categoryIndex, 1);
+        syncLeetCodeRawMarkdown(list);
+        saveLeetCodeLists(lists);
+        return { success: true, message: `题单分组「${category.title}」已删除` };
+      },
+    },
+  {
+      name: 'create_leetcode_problem',
+      module: 'leetcode',
+      tool: {
+        name: 'create_leetcode_problem',
+        description: '向题单分组中新增一道题。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            listId: { type: 'string' },
+            categoryTitle: { type: 'string' },
+            categoryIndex: { type: 'number' },
+            title: { type: 'string' },
+            url: { type: 'string' },
+            codeUrl: { type: 'string' },
+            codeText: { type: 'string' },
+            note: { type: 'string' },
+            index: { type: 'number', description: '插入位置；不传则追加。' },
+            completed: { type: 'boolean', description: '是否同时设置完成状态。' },
+          },
+          required: ['listId', 'title', 'url'],
+        },
+      },
+      execute: async (args) => {
+        const lists = loadLeetCodeLists();
+        const list = getLeetCodeList(lists, args);
+        if (!list) return { success: false, error: '未找到题单。' };
+        const categoryIndex = getLeetCodeCategoryIndex(list, args);
+        if (categoryIndex < 0) return { success: false, error: '未找到分组。请先创建分组或提供 categoryTitle/categoryIndex。' };
+        const category = list.categories[categoryIndex];
+        const built = makeLeetCodeProblem(args);
+        if ('error' in built) return { success: false, error: built.error };
+        const problem = built.problem;
+        category.problems = Array.isArray(category.problems) ? category.problems : [];
+        if (category.problems.some((item: any) => item.url === problem.url)) {
+          return { success: false, error: `分组「${category.title}」中已存在该题目 URL。` };
+        }
+        const index = typeof args.index === 'number' ? Math.max(0, Math.min(Math.floor(args.index), category.problems.length)) : category.problems.length;
+        category.problems.splice(index, 0, problem);
+        syncLeetCodeRawMarkdown(list);
+        saveLeetCodeLists(lists);
+        if (typeof args.completed === 'boolean') {
+          const progress = loadLeetCodeProgress();
+          if (args.completed) progress[problem.url] = true;
+          else delete progress[problem.url];
+          saveLeetCodeProgress(progress);
+        }
+        return { success: true, message: `题单「${list.title}」已新增题目「${problem.title}」`, problem };
+      },
+    },
+  {
+      name: 'update_leetcode_problem',
+      module: 'leetcode',
+      tool: {
+        name: 'update_leetcode_problem',
+        description: '修改题单中的一道题，可改标题、URL、题解链接、备注、顺序和所属分组。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            listId: { type: 'string' },
+            categoryTitle: { type: 'string' },
+            categoryIndex: { type: 'number' },
+            problemTitle: { type: 'string' },
+            problemIndex: { type: 'number' },
+            url: { type: 'string', description: '用于定位题目的旧 URL；如果同时传 newUrl，则会更新为 newUrl。' },
+            title: { type: 'string', description: '新题目标题。' },
+            newUrl: { type: 'string', description: '新题目 URL。' },
+            codeUrl: { type: 'string' },
+            codeText: { type: 'string' },
+            note: { type: 'string' },
+            index: { type: 'number', description: '新位置。' },
+            targetCategoryTitle: { type: 'string', description: '移动到另一个分组。' },
+            targetCategoryIndex: { type: 'number', description: '移动到另一个分组下标。' },
+            completed: { type: 'boolean', description: '可同时修改完成状态。' },
+          },
+          required: ['listId'],
+        },
+      },
+      execute: async (args) => {
+        const lists = loadLeetCodeLists();
+        const list = getLeetCodeList(lists, args);
+        if (!list) return { success: false, error: '未找到题单。' };
+        const categoryIndex = getLeetCodeCategoryIndex(list, args);
+        if (categoryIndex < 0) return { success: false, error: '未找到源分组。' };
+        const category = list.categories[categoryIndex];
+        const problemIndex = getLeetCodeProblemIndex(category, args);
+        if (problemIndex < 0) return { success: false, error: '未找到题目。请提供 url、problemTitle 或 problemIndex。' };
+        const [problem] = category.problems.splice(problemIndex, 1);
+        const oldUrl = problem.url;
+        if (typeof args.title === 'string' && args.title.trim()) problem.title = args.title.trim();
+        if (typeof args.newUrl === 'string' && args.newUrl.trim()) problem.url = args.newUrl.trim();
+        if (typeof args.codeUrl === 'string') problem.codeUrl = args.codeUrl.trim() || undefined;
+        if (typeof args.codeText === 'string') problem.codeText = args.codeText.trim() || undefined;
+        if (typeof args.note === 'string') problem.note = args.note.trim();
+        const targetArgs = {
+          categoryTitle: args.targetCategoryTitle,
+          categoryIndex: args.targetCategoryIndex,
+        };
+        const targetIndex = (args.targetCategoryTitle || typeof args.targetCategoryIndex === 'number')
+          ? getLeetCodeCategoryIndex(list, targetArgs)
+          : categoryIndex;
+        if (targetIndex < 0) {
+          category.problems.splice(problemIndex, 0, problem);
+          return { success: false, error: '未找到目标分组。' };
+        }
+        const targetCategory = list.categories[targetIndex];
+        targetCategory.problems = Array.isArray(targetCategory.problems) ? targetCategory.problems : [];
+        const insertIndex = typeof args.index === 'number' ? Math.max(0, Math.min(Math.floor(args.index), targetCategory.problems.length)) : targetCategory.problems.length;
+        targetCategory.problems.splice(insertIndex, 0, problem);
+        syncLeetCodeRawMarkdown(list);
+        saveLeetCodeLists(lists);
+        if (typeof args.completed === 'boolean' || oldUrl !== problem.url) {
+          const progress = loadLeetCodeProgress();
+          const previousDone = Boolean(progress[oldUrl]);
+          if (oldUrl !== problem.url) delete progress[oldUrl];
+          const nextDone = typeof args.completed === 'boolean' ? args.completed : previousDone;
+          if (nextDone) progress[problem.url] = true;
+          else delete progress[problem.url];
+          saveLeetCodeProgress(progress);
+        }
+        return { success: true, message: `题目「${problem.title}」已更新`, problem };
+      },
+    },
+  {
+      name: 'delete_leetcode_problem',
+      module: 'leetcode',
+      tool: {
+        name: 'delete_leetcode_problem',
+        description: '删除题单中的一道题。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            listId: { type: 'string' },
+            categoryTitle: { type: 'string' },
+            categoryIndex: { type: 'number' },
+            problemTitle: { type: 'string' },
+            problemIndex: { type: 'number' },
+            url: { type: 'string' },
+            clearProgress: { type: 'boolean', description: '是否同时清除完成状态，默认 true。' },
+          },
+          required: ['listId'],
+        },
+      },
+      execute: async (args) => {
+        const lists = loadLeetCodeLists();
+        const list = getLeetCodeList(lists, args);
+        if (!list) return { success: false, error: '未找到题单。' };
+        const categoryIndex = getLeetCodeCategoryIndex(list, args);
+        if (categoryIndex < 0) return { success: false, error: '未找到分组。' };
+        const category = list.categories[categoryIndex];
+        const problemIndex = getLeetCodeProblemIndex(category, args);
+        if (problemIndex < 0) return { success: false, error: '未找到题目。' };
+        const [problem] = category.problems.splice(problemIndex, 1);
+        syncLeetCodeRawMarkdown(list);
+        saveLeetCodeLists(lists);
+        if (args.clearProgress !== false && problem.url) {
+          const progress = loadLeetCodeProgress();
+          delete progress[problem.url];
+          saveLeetCodeProgress(progress);
+        }
+        return { success: true, message: `题目「${problem.title}」已删除` };
+      },
+    },
+  {
+      name: 'query_leetcode_progress',
+      module: 'leetcode',
+      tool: {
+        name: 'query_leetcode_progress',
+        description: '查询题单完成情况。可按题单或单道题查询。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            listId: { type: 'string' },
+            listTitle: { type: 'string' },
+            url: { type: 'string', description: '可选：查询单个 URL 是否完成。' },
+          },
+        },
+      },
+      execute: async (args, ctx) => {
+        if (!ctx.dataPermissions.leetcodeLists.read) return { success: false, error: '题单完成情况查询未授权。' };
+        const progress = loadLeetCodeProgress();
+        if (typeof args.url === 'string' && args.url.trim()) {
+          const url = args.url.trim();
+          return { success: true, url, completed: Boolean(progress[url]) };
+        }
+        const lists = loadLeetCodeLists();
+        const list = getLeetCodeList(lists, args);
+        if (!list) {
+          return {
+            success: true,
+            lists: lists.map((entry: any) => summarizeLeetCodeList(entry, progress)),
+          };
+        }
+        const summary = summarizeLeetCodeList(list, progress);
+        const categories = (list.categories || []).map((category: any) => {
+          const total = (category.problems || []).length;
+          const completed = (category.problems || []).filter((problem: any) => progress[problem.url]).length;
+          return {
+            title: category.title,
+            total,
+            completed,
+            pending: Math.max(total - completed, 0),
+            completionPercent: total === 0 ? 0 : Math.round((completed / total) * 100),
+          };
+        });
+        return { success: true, summary, categories };
+      },
+    },
+  {
+      name: 'set_leetcode_problem_progress',
+      module: 'leetcode',
+      permission: { module: 'leetcode', action: 'update' },
+      tool: {
+        name: 'set_leetcode_problem_progress',
+        description: '设置一道题的完成状态。完成状态按题目 URL 全局记录。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            url: { type: 'string' },
+            completed: { type: 'boolean' },
+          },
+          required: ['url', 'completed'],
+        },
+      },
+      execute: async (args) => {
+        const url = String(args.url || '').trim();
+        if (!url) return { success: false, error: '题目 URL 不能为空。' };
+        const progress = loadLeetCodeProgress();
+        if (args.completed) progress[url] = true;
+        else delete progress[url];
+        saveLeetCodeProgress(progress);
+        return { success: true, message: args.completed ? '题目已标记完成' : '题目已标记未完成', url, completed: Boolean(args.completed) };
       },
     },
   {
@@ -478,15 +1247,35 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
       execute: async (args, ctx) => {
         if (!ctx.dataPermissions.learningCourses.read) return { success: false, error: '学习课程查询未授权。请点击 🔒 按钮，在权限面板中开启「学习课程」读取权限。' };
         const cats: any[] = JSON.parse(localStorage.getItem('learning_categories_v1') || '[]');
-        let courses: any[] = JSON.parse(localStorage.getItem('learning_courses_v1') || '[]');
+        const allCourses: any[] = JSON.parse(localStorage.getItem('learning_courses_v1') || '[]');
+        let courses: any[] = allCourses;
         if (args.categoryId) {
           const catId = String(args.categoryId).trim();
           courses = courses.filter((c: any) => c.categoryId === catId);
         }
         return {
           success: true,
-          categories: cats.map((c: any) => ({ id: c.id, name: c.name })),
+          categories: cats.map((c: any) => summarizeLearningCategory(c, allCourses)),
           courses: courses.map((c: any) => summarizeLearningCourse(c, cats)),
+        };
+      },
+    },
+  {
+      name: 'query_learning_categories',
+      module: 'learning',
+      tool: {
+        name: 'query_learning_categories',
+        description: '查询学习空间的所有学习方向，返回方向 ID、名称、备注、图标、颜色、优先级和课程数量。',
+        inputSchema: { type: 'object', properties: {}, required: [] },
+      },
+      execute: async (_args, ctx) => {
+        if (!ctx.dataPermissions.learningCourses.read) return { success: false, error: '学习方向查询未授权。请在权限中心开启「学习课程」读取权限。' };
+        const categories = loadLearningCategories();
+        const courses = loadLearningCourses();
+        return {
+          success: true,
+          total: categories.length,
+          categories: categories.map((category: any) => summarizeLearningCategory(category, courses)),
         };
       },
     },
@@ -500,6 +1289,7 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
           type: 'object',
           properties: {
             name: { type: 'string' },
+            description: { type: 'string', description: '学习方向备注说明。' },
             icon: { type: 'string', description: 'Lucide 图标名，默认 BookOpen。' },
             color: { type: 'string', description: '颜色键，默认 blue。' },
             priority: { type: 'number' },
@@ -517,6 +1307,7 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
         const category = {
           id: agentLearningId('cat'),
           name,
+          description: typeof args.description === 'string' ? args.description.trim() : '',
           icon: typeof args.icon === 'string' && args.icon.trim() ? args.icon.trim() : 'BookOpen',
           color: typeof args.color === 'string' && args.color.trim() ? args.color.trim() : 'blue',
           priority: typeof args.priority === 'number' ? args.priority : categories.length + 1,
@@ -536,6 +1327,7 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
           properties: {
             id: { type: 'string' },
             name: { type: 'string' },
+            description: { type: 'string' },
             icon: { type: 'string' },
             color: { type: 'string' },
             priority: { type: 'number' },
@@ -549,7 +1341,7 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
         const category = categories.find((item: any) => item.id === id);
         if (!category) return { success: false, error: `未找到学习分类「${id}」。` };
         const updates: Record<string, any> = {};
-        for (const field of ['name', 'icon', 'color']) {
+        for (const field of ['name', 'description', 'icon', 'color']) {
           if (typeof args[field] === 'string') updates[field] = args[field].trim();
         }
         if (typeof args.priority === 'number') updates.priority = args.priority;
@@ -610,6 +1402,148 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
         const course = getLearningCourse(courses, args);
         if (!course) return { success: false, error: '未找到课程。请先 query_learning_courses 获取 courseId。' };
         return { success: true, category: categories.find((cat: any) => cat.id === course.categoryId) || null, course };
+      },
+    },
+  {
+      name: 'query_learning_sections',
+      module: 'learning',
+      tool: {
+        name: 'query_learning_sections',
+        description: '查询课程内部顶层分区。返回固定分区（学习内容、学习练习、其它资源）和用户自定义分区，并列出每个分区下的章节/模块摘要。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            courseId: { type: 'string' },
+            courseTitle: { type: 'string' },
+          },
+        },
+      },
+      execute: async (args) => {
+        const courses = loadLearningCourses();
+        const course = getLearningCourse(courses, args);
+        if (!course) return { success: false, error: '未找到课程。请先 query_learning_courses 获取 courseId。' };
+        course.customSections = Array.isArray(course.customSections) ? course.customSections : [];
+        const builtInSections = BUILTIN_LEARNING_SECTIONS
+          .map(section => summarizeLearningSection(course, section.id))
+          .filter(Boolean);
+        const customSections = course.customSections
+          .map((section: any) => summarizeLearningSection(course, section.id))
+          .filter(Boolean);
+        return {
+          success: true,
+          courseId: course.id,
+          courseTitle: course.title,
+          sections: [...builtInSections, ...customSections],
+        };
+      },
+    },
+  {
+      name: 'create_learning_section',
+      module: 'learning',
+      tool: {
+        name: 'create_learning_section',
+        description: '在课程中创建一个顶层自定义分区。该分区与「学习内容 / 学习练习 / 其它资源」同级，用于扩展新的课程目录板块。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            courseId: { type: 'string' },
+            title: { type: 'string' },
+            icon: { type: 'string', description: 'Lucide 图标名，默认 Star。' },
+            color: { type: 'string', description: '颜色键，默认 blue。' },
+            order: { type: 'number', description: '分区顺序，数字越小越靠前。' },
+          },
+          required: ['courseId', 'title'],
+        },
+      },
+      execute: async (args) => {
+        const courses = loadLearningCourses();
+        const course = getLearningCourse(courses, args);
+        if (!course) return { success: false, error: '未找到课程。' };
+        const title = String(args.title || '').trim();
+        if (!title) return { success: false, error: '分区标题不能为空。' };
+        course.customSections = Array.isArray(course.customSections) ? course.customSections : [];
+        if (course.customSections.some((section: any) => section.title === title)) {
+          return { success: false, error: `课程「${course.title}」中已存在分区「${title}」。` };
+        }
+        const section = {
+          id: agentLearningId('csec'),
+          order: typeof args.order === 'number' ? args.order : course.customSections.length,
+          title,
+          icon: typeof args.icon === 'string' && args.icon.trim() ? args.icon.trim() : 'Star',
+          color: typeof args.color === 'string' && args.color.trim() ? args.color.trim() : 'blue',
+          modules: [],
+        };
+        course.customSections.push(section);
+        course.customSections.sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
+        saveLearningCourses(courses.map((item: any) => item.id === course.id ? course : item));
+        return { success: true, message: `课程「${course.title}」已新增顶层分区「${section.title}」`, section };
+      },
+    },
+  {
+      name: 'update_learning_section',
+      module: 'learning',
+      tool: {
+        name: 'update_learning_section',
+        description: '修改课程顶层自定义分区的标题、图标、颜色或顺序。固定分区不能修改。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            courseId: { type: 'string' },
+            sectionId: { type: 'string' },
+            title: { type: 'string' },
+            icon: { type: 'string' },
+            color: { type: 'string' },
+            order: { type: 'number' },
+          },
+          required: ['courseId', 'sectionId'],
+        },
+      },
+      execute: async (args) => {
+        const courses = loadLearningCourses();
+        const course = getLearningCourse(courses, args);
+        if (!course) return { success: false, error: '未找到课程。' };
+        const section = getLearningSection(course, args);
+        if (!section) return { success: false, error: `未找到自定义分区「${args.sectionId}」。` };
+        for (const field of ['title', 'icon', 'color']) {
+          if (typeof args[field] === 'string') section[field] = args[field].trim();
+        }
+        if (typeof args.order === 'number') {
+          section.order = args.order;
+          course.customSections.sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
+        }
+        saveLearningCourses(courses.map((item: any) => item.id === course.id ? course : item));
+        return { success: true, message: `顶层分区「${section.title}」已更新`, section };
+      },
+    },
+  {
+      name: 'delete_learning_section',
+      module: 'learning',
+      tool: {
+        name: 'delete_learning_section',
+        description: '删除课程顶层自定义分区。若分区下有章节/模块，需要 deleteModules=true 才会连同内容删除。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            courseId: { type: 'string' },
+            sectionId: { type: 'string' },
+            deleteModules: { type: 'boolean', description: '分区下有内容时必须显式传 true。' },
+          },
+          required: ['courseId', 'sectionId'],
+        },
+      },
+      execute: async (args) => {
+        const courses = loadLearningCourses();
+        const course = getLearningCourse(courses, args);
+        if (!course) return { success: false, error: '未找到课程。' };
+        const section = getLearningSection(course, args);
+        if (!section) return { success: false, error: `未找到自定义分区「${args.sectionId}」。` };
+        const moduleCount = Array.isArray(section.modules) ? section.modules.length : 0;
+        if (moduleCount > 0 && args.deleteModules !== true) {
+          return { success: false, error: `分区「${section.title}」下还有 ${moduleCount} 个章节/模块。若确认删除，请传 deleteModules=true。` };
+        }
+        course.customSections = (course.customSections || []).filter((item: any) => item.id !== section.id);
+        saveLearningCourses(courses.map((item: any) => item.id === course.id ? course : item));
+        return { success: true, message: `顶层分区「${section.title}」已删除` };
       },
     },
   {
@@ -787,6 +1721,39 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
       },
     },
   {
+      name: 'read_learning_module',
+      module: 'learning',
+      tool: {
+        name: 'read_learning_module',
+        description: '读取课程某个分区下的单个章节/模块及其内部条目。section=resources/assignments/personal/custom；custom 分区必须提供 customSectionId。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            courseId: { type: 'string' },
+            moduleId: { type: 'string' },
+            moduleTitle: { type: 'string' },
+            section: { type: 'string', enum: ['resources', 'assignments', 'personal', 'custom'] },
+            customSectionId: { type: 'string' },
+          },
+          required: ['courseId'],
+        },
+      },
+      execute: async (args) => {
+        const courses = loadLearningCourses();
+        const course = getLearningCourse(courses, args);
+        if (!course) return { success: false, error: '未找到课程。' };
+        const { section, module } = getLearningModule(course, args);
+        if (!module) return { success: false, error: '未找到章节/模块。请提供 moduleId 或 moduleTitle。' };
+        return {
+          success: true,
+          courseId: course.id,
+          courseTitle: course.title,
+          section,
+          module,
+        };
+      },
+    },
+  {
       name: 'create_learning_item',
       module: 'learning',
       tool: {
@@ -848,6 +1815,47 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
         module[collectionKey].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
         saveLearningCourses(courses.map((entry: any) => entry.id === course.id ? course : entry));
         return { success: true, message: `课程「${course.title}」已新增条目「${title}」`, item };
+      },
+    },
+  {
+      name: 'read_learning_item',
+      module: 'learning',
+      tool: {
+        name: 'read_learning_item',
+        description: '读取课程某个章节/模块内部的单个讲义或资源条目，可返回其关联 Markdown 正文。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            courseId: { type: 'string' },
+            moduleId: { type: 'string' },
+            moduleTitle: { type: 'string' },
+            itemId: { type: 'string' },
+            itemTitle: { type: 'string' },
+            section: { type: 'string', enum: ['resources', 'assignments', 'personal', 'custom'] },
+            customSectionId: { type: 'string' },
+            includeContent: { type: 'boolean', description: '是否尝试读取条目关联的本地 Markdown 正文，默认 true。' },
+          },
+          required: ['courseId'],
+        },
+      },
+      execute: async (args) => {
+        const courses = loadLearningCourses();
+        const course = getLearningCourse(courses, args);
+        if (!course) return { success: false, error: '未找到课程。' };
+        const { section, module } = getLearningModule(course, args);
+        if (!module) return { success: false, error: '未找到章节/模块。请提供 moduleId 或 moduleTitle。' };
+        const { item } = getLearningItem(module, section, args);
+        if (!item) return { success: false, error: '未找到条目。请提供 itemId 或 itemTitle。' };
+        const contentMarkdown = args.includeContent === false ? null : await readLearningMarkdownForItem(section, item);
+        return {
+          success: true,
+          courseId: course.id,
+          courseTitle: course.title,
+          section,
+          module: summarizeLearningModule(module, section),
+          item,
+          contentMarkdown,
+        };
       },
     },
   {

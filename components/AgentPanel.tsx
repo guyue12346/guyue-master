@@ -36,6 +36,8 @@ import {
   saveAgentSearchConfig,
   loadAgentHistory,
   saveAgentHistory,
+  loadAgentMemory,
+  saveAgentMemory,
   clearAgentHistory,
   loadAgentPermissions,
   saveAgentPermissions,
@@ -114,6 +116,9 @@ import {
   normalizeModuleScope,
 } from '../services/agent/router';
 import { detectSensitiveInput, redactSensitiveText } from '../services/agent/privacy';
+import { buildConversationContextMessages } from '../services/conversationMemory';
+import type { ConversationMemoryState } from '../services/conversationMemory';
+import { maybeCompactConversationMemory } from '../services/conversationCompaction';
 
 /* ─── 类型定义 ─── */
 
@@ -645,17 +650,36 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
   leetcode: `## LeetCode 刷题模块
 
 ### 核心能力
-创建和查询 LeetCode 结构化题单，每个题单由分组构成，每组包含多道题目。
+管理 LeetCode 结构化题单，每个题单由分组构成，每组包含多道题目，并支持维护完成进度。
 
 ### 可用工具
-- **create_leetcode_list** — 创建题单。必填 title，可选 description、priority、groups（分组数组，每组含 name 和 problems）。
-- **query_leetcode_lists** — 查询所有已有题单，返回标题、分组数和题目总数。
+- **query/read/create/update/delete_leetcode_list** — 查询、读取、创建、修改、删除题单。
+- **create/update/delete_leetcode_group** — 管理题单中的分组。
+- **create/update/delete_leetcode_problem** — 管理分组中的题目，可维护题目链接、题解链接和备注。
+- **query_leetcode_progress / set_leetcode_problem_progress** — 查询题单完成情况，或按题目 URL 设置完成/未完成。
 
 ### 工作流程规范
-1. 创建题单时，每组的 problems 数组中每道题应包含 id（编号如 "1"）和 title（如 "Two Sum"），可选 url。
+1. 创建题单时，每组的 problems 数组中每道题必须包含 title 和 url，可选 codeUrl、codeText、note。
 2. 如果用户给出零散题目列表，主动按主题分组（如 "数组"、"链表"、"动态规划"）。
-3. 合理设置 priority（排序用），数字越小越靠前。
-4. 创建前可先 query_leetcode_lists 查看已有题单，避免重复创建。`,
+3. 修改题单内容前先 query_leetcode_lists 再 read_leetcode_list，拿到 listId、分组标题和题目 URL 后再操作。
+4. 完成情况以题目 URL 为 key 全局记录；设置完成状态时优先使用 set_leetcode_problem_progress。`,
+
+  code: `## Code 编码练习模块
+
+### 核心能力
+管理 Code 页中的编码练习分类、分类笔记、练习卡片，以及每个练习下的 input / code / output / notes 文件。
+
+### 可用工具
+- **query/create/update/delete_code_category** — 管理编码练习分类。
+- **query/read/update/delete_code_category_note** — 管理分类笔记 Markdown 内容。
+- **query/read/create/update/delete_code_exercise** — 管理编码练习。
+- **read/update/clear_code_exercise_file** — 读取、修改、清空练习文件。fileId 可为 input、code、output、notes；界面中的 io 对应 input/output。
+
+### 工作流程规范
+1. 创建练习前必须先 query_code_categories 获取已有 categoryId；没有合适分类时先 create_code_category。
+2. 修改或删除练习前先 query_code_exercises，再用 read_code_exercise 确认完整文件结构。
+3. 修改单个文件优先用 update_code_exercise_file，不要整题覆盖。
+4. 删除分类时如果分类下有练习，必须指定 fallbackCategoryId 迁移练习。`,
 
   learning: `## 学习中心模块
 
@@ -663,21 +687,22 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
 管理结构化学习课程，支持完整的课程体系（学习模块 → 讲义、练习模块、个人资源模块、自定义分区）。
 
 ### 可用工具
-- **create_learning_course** — 创建课程。必填 title，必须指定 categoryId（已有分类 ID）或 categoryName（创建新分类），二选一。可选完整结构：modules（学习模块及其讲义）、assignmentModules（练习模块）、personalModules（个人资源模块）、customSections（自定义分区）。
-- **query_learning_courses** — 查询所有分类（含唯一 ID）和课程列表。创建课程前**必须**先调用此工具获取分类 ID。
+- **query_learning_categories / create/update/delete_learning_category** — 管理学习方向。
+- **query_learning_courses** — 查询所有方向（含唯一 ID）和课程列表。创建课程前**必须**先调用此工具或 query_learning_categories 获取方向 ID。
+- **create_learning_course** — 创建课程。必填 title、categoryId；categoryId 必须来自已有学习方向。可选完整结构：modules（学习内容章节及其讲义）、assignmentModules（学习练习章节）、personalModules（其它资源章节）、customSections（自定义顶层分区）。
 - **read_learning_course** — 读取课程完整结构。
-- **create/update/delete_learning_category** — 管理学习分类。
 - **update/delete_learning_course** — 修改或删除课程。
-- **create/update/delete_learning_module** — 管理课程模块。
-- **create/update/delete_learning_item** — 管理模块中的讲义或资源条目。
+- **query/create/update/delete_learning_section** — 管理课程内与「学习内容 / 学习练习 / 其它资源」同级的自定义顶层分区。
+- **create/read/update/delete_learning_module** — 管理课程分区下的章节/模块。section=resources 表示学习内容，assignments 表示学习练习，personal 表示其它资源，custom 表示自定义分区且必须传 customSectionId。
+- **create/read/update/delete_learning_item** — 管理章节/模块中的讲义或资源条目，支持写入和读取关联 Markdown 正文。
 
 ### 工作流程规范
-1. **创建课程前**：**必须**先调用 query_learning_courses 获取 categories 列表及其 ID，然后用 categoryId 指定所属分类。绝对不要猜测分类名。
-2. **创建新分类**：如果所有已有分类都不合适，可在 create_learning_course 中传 categoryName 自动创建新分类。
+1. **创建课程前**：**必须**先调用 query_learning_courses 或 query_learning_categories 获取 categories 列表及其 ID，然后用 categoryId 指定所属学习方向。绝对不要猜测分类名。
+2. **创建新方向**：如果所有已有方向都不合适，先调用 create_learning_category 创建方向，再用返回的 id 创建课程。
 3. **课程结构**：一个课程可包含多个 module（如"第一章 概述"），每个 module 下有 lectures（讲义，标题+可选 Markdown 内容）。
 4. **练习模块**：assignmentModules 用于放作业和练习。
 5. **个人资源**：personalModules 用于存放个人笔记、参考资料等。
-6. **自定义分区**：customSections 允许用户定义额外的知识分区。
+6. **自定义分区**：customSections 是顶层分区，和学习内容/学习练习/其它资源同级；先创建分区，再在该分区下创建章节/模块和条目。
 7. 生成课程时应有完整的模块结构，而不只是一个空壳标题。`,
 
   files: `## 文件管理模块
@@ -715,20 +740,24 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
   image: `## 图床模块
 
 ### 核心能力
-查询、上传和管理图床图片记录。
+管理图床分类和图片记录，上传用户附件，读取图片记录，访问图片链接并返回图片数据。
 
 ### 可用工具
-- **query_images** — 查询图床中已有图片，返回 URL 和 Markdown 格式链接。
-- **create_image_record** — 为外部图片 URL 创建本地图床记录。
-- **upload_image** — 将用户消息中附带的图片上传到图床，返回访问链接。
+- **query/create/update/delete_image_category** — 管理图床分类。新增图片必须选择已有分类。
+- **query_images** — 查询图床中已有图片，返回 ID、URL 和 Markdown 格式链接。
+- **read_image_record** — 读取单条图床图片记录详情，可用 id、url 或 name 定位。
+- **read_image_url** — 访问图片链接，返回 MIME、大小和可选 dataUrl；需要把图片展示给用户时 includeDataUrl=true。
+- **create_image_record** — 为外部图片 URL 创建本地图床记录，必须指定已有 categoryId 或 category。
+- **upload_image** — 将用户消息中附带的图片上传到图床，必须指定已有分类，返回访问链接。
 - **update_image_record / delete_image_record** — 修改或删除本地图床记录。
-- **rename_image_category** — 批量重命名图床分类。
+- **rename_image_category** — 兼容旧接口，推荐优先使用 update_image_category。
 
 ### 工作流程规范
-1. upload_image 需要用户在消息中附带图片（粘贴或拖拽），不能凭空上传。
-2. 上传成功后返回图片的 URL 和 Markdown 引用格式，方便用户直接使用。
-3. 如果用户问"我之前上传过什么图片"，用 query_images 查询。
-4. 图床基于 Gitee，需要系统已配置好图床仓库信息。`,
+1. 新增图片或上传图片前先 query_image_categories；没有合适分类时先 create_image_category。
+2. 不能把图片放到“默认/未分类/全部”；必须使用已有分类。
+3. upload_image 需要用户在消息中附带图片（粘贴或拖拽），不能凭空上传。
+4. 用户要“看图片/打开图片链接”时，先 read_image_record 或 read_image_url，回复中可使用返回的 Markdown 图片引用。
+5. 图床上传基于 Gitee，需要系统已配置好图床仓库信息。`,
 
   email: `## 邮件模块
 
@@ -766,32 +795,30 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
   latex: `## LaTeX 模块
 
 ### 核心能力
-查询、读取和编辑 LaTeX 托管文件和模板（由 Agent 权限中心控制读/建/改权限）。
+管理 LaTeX 托管文件、文件分类、模板和模板分类；支持读取模板后用模板内容新建 .tex 文件。
 
 ### 可用工具
-- **query_latex_file_categories** — 查询 LaTeX 文件分类列表（含唯一 ID）。操作文件前**必须**先调用。
-- **create_latex_file_category** — 创建新的文件分类（提供名称，自动生成 ID）。
-- **query_latex_files** — 查询 LaTeX 文件列表，可按分类 ID 筛选。需要「LaTeX」读取权限。返回结果中 writable 字段表示是否有编辑权限。
-- **read_latex_file** — 读取某个 LaTeX 文件的内容（需「LaTeX」读取权限）。返回 result 中 writable 字段表示是否有编辑权限。
-- **edit_latex_file** — 修改 LaTeX 文件内容（需「LaTeX」修改权限）。
-- **query_latex_template_categories** — 查询模板分类列表（含唯一 ID）。
-- **create_latex_template_category** — 创建新的模板分类。
-- **query_latex_templates** — 查询模板列表，可按分类筛选。
-- **read_latex_template** — 读取模板的完整内容（通过模板 ID）。
-- **create_latex_template** — 创建新模板（提供名称、分类、完整 .tex 源码）。
-- **edit_latex_template** — 修改已有模板的名称、描述、分类或内容。
+- **query/create/update/delete_latex_file_category** — 管理 LaTeX 托管文件分类。新建文件必须选择已有分类。
+- **query_latex_files** — 查询 LaTeX 托管文件列表，可按 categoryId 或 keyword 筛选。
+- **create_latex_file** — 在托管目录新建 .tex 文件，必须传已有 categoryId，可传 content 覆盖默认内容。
+- **create_latex_file_from_template** — 读取模板内容并新建托管文件，支持 {{key}} 变量替换。
+- **read/edit/rename/move/delete_latex_file** — 读取、完整覆盖、重命名、移动分类或删除托管文件。
+- **query/create/rename/delete_latex_template_category** — 管理 LaTeX 模板分类。模板分类 ID 即分类名称字符串。
+- **query/read/create/edit/delete_latex_template** — 管理模板元数据与完整 .tex 内容。
 
 ### 权限说明
 - 文件读取由「LaTeX」读取权限控制。
-- 文件/模板编辑由「LaTeX」修改权限控制。
-- 模板创建由「LaTeX」创建权限控制。
+- 文件/模板创建由「LaTeX」创建权限控制。
+- 文件/模板编辑、重命名、移动、分类调整由「LaTeX」修改权限控制。
+- 删除文件、删除模板、删除分类由「LaTeX」删除权限控制。
+- 修改和删除类操作会进入确认流程，并保留快照用于回退。
 
 ### 工作流程规范
-1. 需要在 Agent 权限中心开启 LaTeX 对应权限后才能操作。未授权会返回错误，请提示用户去权限中心开启。
-2. **分类必须用 ID**：查询分类获取 id 列表后，在查询/创建文件时用 categoryId 参数指定。不要用分类名称代替 ID。
-3. 如果用户指定的分类不存在，先 create_latex_file_category 或 create_latex_template_category 创建。
-4. 操作流程：先 query_latex_file_categories → query_latex_files → read_latex_file / edit_latex_file。
-5. 编辑文件时需提供完整的文件内容，不能只传部分内容。`,
+1. 操作文件前先 query_latex_file_categories，再用返回的 categoryId；不要用分类名称代替文件分类 ID。
+2. 操作模板前先 query_latex_template_categories / query_latex_templates；模板分类用 category 字符串。
+3. 从模板新建文件的推荐流程：query_latex_templates → read_latex_template（如需确认内容）→ query_latex_file_categories → create_latex_file_from_template。
+4. 如果用户指定的分类不存在，先创建分类；不要把文件或模板放进“默认/未分类/全部”。
+5. edit_latex_file 和 edit_latex_template 都是完整内容覆盖，不能只传局部片段。`,
 
   'question-bank': `## 题库模块
 
@@ -832,29 +859,35 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
   git: `## Git 管理模块
 
 ### 核心能力
-查询本地 Git 管理中心登记的仓库、查看状态/日志/diff，并执行仓库、分支、暂存区、提交、远程同步和 stash 操作。
+查询本地 Git 管理中心登记的仓库，查看仓库内文件夹项目、文件内容、状态/日志/diff/远程/分支/stash，并执行仓库、分支、暂存区、提交、远程同步和 stash 操作。
 
 ### 可用工具
 - **git_add_repository / git_remove_repository** — 添加或移除 Git 管理中心仓库记录。
 - **query_git_repositories** — 查询已登记仓库，refresh=true 可同步状态。
-- **query_git_status** — 查询仓库分支、远程、ahead/behind 和工作区文件。
+- **discover_git_repositories** — 扫描本地文件夹下的 Git 仓库，只返回发现结果，不自动加入。
+- **query_git_repository_info** — 汇总查看仓库状态、远程、分支、最近提交和 stash。
+- **query_git_status / query_git_log / query_git_remotes** — 查询仓库状态、提交历史和远程信息。
+- **query_git_tree / read_git_file** — 查看已登记仓库内的文件夹项目和读取仓库内文本文件。
 - **query_git_diff** — 查看指定文件 diff。
-- **query_git_branches / query_git_commit** — 查询分支和提交详情。
+- **query_git_branches / query_git_stashes / query_git_commit** — 查询分支、stash 和提交详情。
 - **git_stage_files / git_unstage_files** — 暂存或取消暂存明确文件列表。
 - **git_commit / git_fetch / git_pull / git_push** — 执行提交和远程同步操作。
 - **git_checkout_branch / git_create_branch / git_delete_branch / git_merge_branch** — 分支切换、创建、删除、合并。
 - **git_discard_file / git_stash** — 丢弃文件更改或管理 stash。
 
 ### 工作流程规范
-1. 先 query_git_repositories 或 query_git_status 确认仓库、分支、远程和变更列表。
-2. 暂存/提交/拉取/推送都属于修改操作，会进入用户确认流程；不要在用户只问状态时执行。
-3. commit 前应确认已暂存文件和提交信息。pull 使用 ff-only，遇到冲突要提示用户手动处理。`,
+1. 先 query_git_repositories 或 query_git_repository_info 确认仓库、分支、远程和变更列表；需要扫描文件夹时用 discover_git_repositories。
+2. 用户只要求查看时只用 query/read 工具，不执行 git_* 写操作。
+3. 所有 git_* 写操作（添加仓库、暂存、提交、fetch/pull/push、切分支、建删分支、merge、stash、discard）都会进入用户确认流程。
+4. stage/unstage/discard 必须传明确 paths/filePath，不要用通配符。
+5. commit 前先 query_git_status 确认 staged 文件；没有 staged 文件时不要提交。
+6. branch/merge/pull/push 前应先 query_git_status / query_git_branches 确认当前分支和 upstream。`,
 };
 
 const createAgentWelcomeMessage = (content?: string): AgentMessage => ({
   id: 'welcome',
   role: 'assistant',
-  content: content || '👋 你好！我是 **古月助手**，你的智能工作台助理。\n\n我可以帮你管理待办与日程、整理笔记、查询学习进度、记录刷题、收发邮件等。直接描述需求即可，也可以点击右侧输入框旁的 **作用域图标** 限定一个或多个模块。\n\n**目前支持的功能**：\n- 📋 **任务与日程**：创建/更新待办、管理重复事件\n- 📝 **笔记**：创建便签与 Markdown 文档\n- 🎯 **Skills**：管理提示词技能库\n- 🗂️ **数据中心**：查询云资源、OJ 提交记录、SSH/API 记录\n- 📚 **学习空间**：查询课程与学习分类\n- 💻 **LeetCode**：记录刷题提交\n- 📁 **文件管理/知识库**：查询文件归档、检索本地知识库\n- 📧 **邮件**：发送邮件通知\n\n有什么我可以帮你的吗？',
+  content: content || '👋 你好！我是 **古月助手**，你的智能工作台助理。\n\n我可以帮你管理待办与日程、整理笔记、查询学习进度、记录刷题、收发邮件等。直接描述需求即可，也可以点击右侧输入框旁的 **作用域图标** 限定一个或多个模块。\n\n**目前支持的功能**：\n- 📋 **任务与日程**：创建/更新待办、管理重复事件\n- 📝 **笔记**：创建便签与 Markdown 文档\n- 🎯 **Skills**：管理提示词技能库\n- 🗂️ **数据中心**：查询云资源、OJ 提交记录、SSH/API 记录\n- 📚 **学习空间**：查询课程与学习分类\n- 💻 **LeetCode**：记录刷题提交\n- 🧑‍💻 **Code**：管理编码练习、分类笔记和练习文件\n- 📁 **文件管理/知识库**：查询文件归档、检索本地知识库\n- 📧 **邮件**：发送邮件通知\n\n有什么我可以帮你的吗？',
   timestamp: Date.now(),
 });
 
@@ -1181,13 +1214,14 @@ const getAgentSystemPrompt = ({
 6. **资源管理** — 查询、创建、修改、删除云盘、AI资源、服务器、域名、订阅等资源记录
 7. **SSH 管理** — 查询、创建、修改、删除 SSH 连接记录
 8. **API 记录** — 查询、创建、修改、删除 API 接口记录，查询时不回显密钥明文
-9. **LeetCode 题单** — 创建结构化题单（含分组和题目链接）；查询已有题单
-10. **学习课程** — 在学习中心创建课程和分类；查询已有课程
-11. **发送邮件** — 编辑邮件内容并发送（支持 HTML 正文）
-12. **文件管理** — 按分类查询文件列表、读取文件内容（需用户授权文件分类）
-13. **知识库** — 构建本地文件知识库并进行语义检索
-14. **图床管理** — 查询已有图片（获取 URL / Markdown 链接），上传图片到图床指定分类
-15. **LaTeX** — 查询、读取、编辑 LaTeX 托管文件和模板（需授权分类）
+9. **LeetCode 题单** — 管理结构化题单、分组、题目和完成进度
+10. **Code 编码练习** — 管理编码练习分类、分类笔记、练习和练习文件
+11. **学习课程** — 管理学习方向、课程、顶层分区、章节和章节内资源条目
+12. **发送邮件** — 编辑邮件内容并发送（支持 HTML 正文）
+13. **文件管理** — 按分类查询文件列表、读取文件内容（需用户授权文件分类）
+14. **知识库** — 构建本地文件知识库并进行语义检索
+15. **图床管理** — 查询已有图片（获取 URL / Markdown 链接），上传图片到图床指定分类
+16. **LaTeX** — 查询、读取、编辑 LaTeX 托管文件和模板（需授权分类）
 
 ## 输出格式
 当你确定用户想要执行某个操作时，请在回复末尾输出一个特殊的 JSON 块。支持以下 action type：
@@ -1663,6 +1697,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     }
     return saved;
   });
+  const [conversationMemory, setConversationMemory] = useState<ConversationMemoryState | null>(() => loadAgentMemory());
+  const conversationMemoryRef = useRef<ConversationMemoryState | null>(conversationMemory);
   const initialPageState = useMemo(() => loadAgentPageState(), []);
   const [registryVersion, setRegistryVersion] = useState(0);
   const agentModules = useMemo(() => getAgentModules(), [registryVersion]);
@@ -1824,6 +1860,11 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const turnIndexRef = useRef(-1);
   const turnIdRef = useRef('');
 
+  useEffect(() => {
+    conversationMemoryRef.current = conversationMemory;
+    saveAgentMemory(conversationMemory);
+  }, [conversationMemory]);
+
   const resetTurnDebug = useCallback(() => {
     turnStepRef.current = 0;
     turnStartTimeRef.current = Date.now();
@@ -1863,6 +1904,55 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       level: event.stage.includes('error') ? 'error' : 'info',
     });
   }, [pushDebugItem]);
+
+  const prepareAgentContextMessages = useCallback(async (
+    dialogueMessages: ChatMessage[],
+    options?: {
+      keepRecentTurns?: number;
+      maxContextChars?: number;
+      memoryMessageId?: string;
+      memoryTitle?: string;
+    },
+  ): Promise<ChatMessage[]> => {
+    const compaction = await maybeCompactConversationMemory({
+      messages: dialogueMessages,
+      memoryState: conversationMemoryRef.current,
+      chatService: chatServiceRef.current,
+      provider: config.provider,
+      model: config.model,
+      options: {
+        domainLabel: 'Agent 对话',
+        keepRecentTurns: options?.keepRecentTurns ?? 8,
+        minMessagesForCompaction: 12,
+        minCharsForCompaction: 22000,
+        memoryInstruction: '重点保留用户目标、偏好、权限/安全约束、已经执行过的工具结果、待确认操作、未完成事项。工具输出只保留结论，不要保留大段原始 JSON。',
+      },
+    });
+
+    if (compaction.compacted) {
+      conversationMemoryRef.current = compaction.memoryState;
+      setConversationMemory(compaction.memoryState);
+      pushDebugItem({
+        stage: 'context:compacted',
+        summary: `Agent 对话上下文已压缩 ${compaction.compactedMessageCount} 条`,
+        payload: {
+          usedFallback: compaction.usedFallback,
+          compactedMessageCount: compaction.compactedMessageCount,
+          compactedCharCount: compaction.compactedCharCount,
+          error: compaction.error,
+        },
+        level: compaction.usedFallback ? 'info' : 'success',
+      });
+    }
+
+    return buildConversationContextMessages(dialogueMessages, {
+      keepRecentTurns: options?.keepRecentTurns ?? 8,
+      maxContextChars: options?.maxContextChars ?? 70000,
+      memoryState: compaction.memoryState,
+      memoryMessageId: options?.memoryMessageId || 'agent-conversation-memory',
+      memoryTitle: options?.memoryTitle || '以下是较早的 Agent 对话摘要。继续任务时优先保持这些约束、用户偏好和未完成事项。',
+    });
+  }, [config.model, config.provider, pushDebugItem]);
 
   const handleSaveEmailConfig = useCallback(() => {
     localStorage.setItem(AGENT_EMAIL_CONFIG_KEY, JSON.stringify(emailConfig));
@@ -2140,9 +2230,10 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     options: { confirmed?: boolean } = {},
   ): Promise<{ result: any; undoSnapshot?: UndoSnapshot; pendingConfirmation?: PendingConfirmation; executed: boolean }> => {
     const target = getToolPermissionTarget(registration);
-    const needsSafety = needsHumanConfirmation(target.action);
+    const forceConfirmation = Boolean(registration.safety?.confirm);
+    const needsSafety = forceConfirmation || needsHumanConfirmation(target.action);
     const snapshot = needsSafety ? await createUndoSnapshotForTool(registration.name, args) : undefined;
-    const requiresConfirmation = needsSafety && !options.confirmed && !hasFullToolAccess(registration, fullAccessPermissions);
+    const requiresConfirmation = needsSafety && !options.confirmed && (forceConfirmation || !hasFullToolAccess(registration, fullAccessPermissions));
 
     if (requiresConfirmation) {
       const pendingConfirmation = buildToolConfirmation(registration.name, args, snapshot);
@@ -2600,6 +2691,18 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     fallbackReason: string,
   ) => {
     const primaryModule = routedModules[0];
+    const contextMessages = await prepareAgentContextMessages(
+      [
+        ...messages.filter(m => m.role !== 'system' && m.id !== 'welcome').map(toSafeChatMessage),
+        toSafeChatMessage(userMessage),
+      ],
+      {
+        keepRecentTurns: 8,
+        maxContextChars: 70000,
+        memoryMessageId: 'agent-conversation-memory',
+        memoryTitle: '以下是较早的 Agent 对话摘要。继续任务时优先保持这些约束、用户偏好和未完成事项。',
+      },
+    );
     const chatMessages: ChatMessage[] = [
       {
         id: 'system',
@@ -2615,8 +2718,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         ].filter(Boolean).join('\n'),
         timestamp: 0,
       },
-      ...messages.filter(m => m.role !== 'system' && m.id !== 'welcome').slice(-6).map(toSafeChatMessage),
-      toSafeChatMessage(userMessage),
+      ...contextMessages,
     ];
 
     pushDebugItem({
@@ -3102,7 +3204,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         setIsProcessing(false);
       },
     });
-  }, [allowedActionTypes, config.model, config.provider, config.systemPrompt, messages, todos, effectiveDataPermissions, effectiveFilePermissions, fileRecords, onCreateTodo, onCreateNote, onCreatePrompt, onCreateMarkdownNote, onCreateOJSubmission, ojHeatmapData, onCreateResource, resourceData, pushDebugItem, selectedModules, isFallbackActionAllowed]);
+  }, [allowedActionTypes, config.model, config.provider, config.systemPrompt, messages, todos, effectiveDataPermissions, effectiveFilePermissions, fileRecords, onCreateTodo, onCreateNote, onCreatePrompt, onCreateMarkdownNote, onCreateOJSubmission, ojHeatmapData, onCreateResource, resourceData, pushDebugItem, selectedModules, isFallbackActionAllowed, prepareAgentContextMessages]);
 
   const evaluateAgentCompletion = useCallback(async (input: {
     goal: string;
@@ -3324,6 +3426,18 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             : message
         ));
 
+        const contextMessages = await prepareAgentContextMessages(
+          [
+            ...messages.filter(m => m.role !== 'system' && m.id !== 'welcome').map(toSafeChatMessage),
+            toSafeChatMessage(userMessage),
+          ],
+          {
+            keepRecentTurns: 8,
+            maxContextChars: 70000,
+            memoryMessageId: 'agent-conversation-memory',
+            memoryTitle: '以下是较早的 Agent 对话摘要。继续任务时优先保持这些约束、用户偏好和未完成事项。',
+          },
+        );
         const chatMessages: ChatMessage[] = [
           {
             id: 'system',
@@ -3338,8 +3452,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             }),
             timestamp: 0,
           },
-          ...messages.filter(m => m.role !== 'system' && m.id !== 'welcome').slice(-6).map(toSafeChatMessage),
-          toSafeChatMessage(userMessage),
+          ...contextMessages,
         ];
 
         {
@@ -3789,6 +3902,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     onUpdateResource,
     onUpdateTodo,
     pendingAttachments,
+    prepareAgentContextMessages,
     promptCategories,
     pushDebugItem,
     pushServiceDebugEvent,
@@ -3808,6 +3922,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     setMessages([
       createAgentWelcomeMessage('👋 对话已经清空。\n\n你可以重新选择作用域，或者直接告诉我你想做什么。'),
     ]);
+    conversationMemoryRef.current = null;
+    setConversationMemory(null);
     clearAgentHistory();
     setDebugItems([]);
     setAgentRuntimeEvents([]);

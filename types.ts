@@ -413,6 +413,15 @@ export interface ElectronAPI {
   listDir: (path: string) => Promise<Array<{ name: string; isDirectory: boolean; isFile?: boolean; path: string; size?: number; mtime?: number | null }>>;
   getUserInfo: () => Promise<{ username: string; hostname: string }>;
   uploadImage: (params: { accessToken: string; owner: string; repo: string; path: string; content: string; message: string }) => Promise<any>;
+  fetchImageUrl: (params: { url: string; maxBytes?: number }) => Promise<{
+    success: boolean;
+    url?: string;
+    mimeType?: string;
+    byteLength?: number;
+    base64?: string;
+    dataUrl?: string;
+    error?: string;
+  }>;
   // Plugins
   getPlugins: () => Promise<PluginMetadata[]>;
   getPluginPreloadPath: () => Promise<string>;

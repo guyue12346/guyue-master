@@ -1,4 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
+import { trimConversationForStorage } from './conversationMemory';
+import type { ConversationMemoryState } from './conversationMemory';
 
 // ==================== Types ====================
 
@@ -24,6 +26,7 @@ export interface ChatConversation {
   id: string;
   title: string;
   messages: ChatMessage[];
+  memoryState?: ConversationMemoryState | null;
   model: string;
   systemPrompt?: string;
   turnPrompt?: string;
@@ -1346,7 +1349,14 @@ export const saveConversations = (conversations: ChatConversation[]): void => {
   const trimmed = conversations
     .slice()
     .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
-    .slice(0, MAX_CONVERSATIONS);
+    .slice(0, MAX_CONVERSATIONS)
+    .map(conversation => ({
+      ...conversation,
+      messages: trimConversationForStorage(conversation.messages, {
+        maxMessages: 200,
+        maxStoredChars: 300000,
+      }),
+    }));
   try {
     localStorage.setItem(STORAGE_KEY_CONVERSATIONS, JSON.stringify(trimmed));
   } catch (e) {
