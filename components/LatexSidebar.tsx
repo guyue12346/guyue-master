@@ -312,7 +312,7 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
   const [saveModal, setSaveModal] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
-  const [newCat, setNewCat] = useState('custom');
+  const [newCat, setNewCat] = useState('');
   const [saving, setSaving] = useState(false);
 
   // Load category metadata
@@ -347,6 +347,12 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
   ];
   const allCategories = sortedCats; // for move-to selector
 
+  useEffect(() => {
+    if (saveModal && (!newCat || !allCategories.includes(newCat))) {
+      setNewCat(allCategories[0] || '');
+    }
+  }, [allCategories, newCat, saveModal]);
+
   // ensure ref maps are populated
   sortedCats.forEach(c => { if (!catMenuRefs.current[c]) catMenuRefs.current[c] = React.createRef(); });
   templates.forEach(t => { if (!tplMenuRefs.current[t.id]) tplMenuRefs.current[t.id] = React.createRef(); });
@@ -367,7 +373,11 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
   };
 
   const handleDeleteCategory = async (cat: string) => {
-    const moveTo = sortedCats.find(c => c !== cat) ?? 'custom';
+    const moveTo = sortedCats.find(c => c !== cat);
+    if (!moveTo) {
+      alert('至少保留一个分类');
+      return;
+    }
     // Clean up metadata
     if (catMeta[cat]) {
       const newMeta = { ...catMeta };
@@ -425,6 +435,10 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
 
   const handleSaveAsTemplate = async () => {
     if (!newName.trim()) return;
+    if (!newCat || !allCategories.includes(newCat)) {
+      alert('请先选择已有分类');
+      return;
+    }
     setSaving(true);
     const tpl: LatexTemplate = {
       id: `custom-${Date.now()}`,
@@ -439,7 +453,7 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
     await load();
     setSaving(false);
     setSaveModal(false);
-    setNewName(''); setNewDesc(''); setNewCat('custom');
+    setNewName(''); setNewDesc(''); setNewCat('');
   };
 
   return (
@@ -456,7 +470,13 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
             <FolderPlus className="w-3.5 h-3.5" />
           </button>
           <button
-            onClick={() => setSaveModal(true)}
+            onClick={() => {
+              if (allCategories.length === 0) {
+                setAddingCategory(true);
+                return;
+              }
+              setSaveModal(true);
+            }}
             className="theme-icon-btn h-7 w-7 rounded-md"
             title="将当前内容另存为模板"
           >
@@ -682,7 +702,7 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
               <button onClick={() => setSaveModal(false)} className="theme-secondary-btn flex-1 py-2 text-sm">取消</button>
               <button
                 onClick={handleSaveAsTemplate}
-                disabled={saving || !newName.trim()}
+                disabled={saving || !newName.trim() || allCategories.length === 0}
                 className="theme-primary-btn flex-1 py-2 text-sm disabled:opacity-50"
               >
                 {saving ? '保存中...' : '保存'}
@@ -697,7 +717,6 @@ const TemplateTab: React.FC<TemplateTabProps> = ({ currentContent, onEditTemplat
 
 // ─── Files Tab ────────────────────────────────────────────────────────────────
 
-const UNCATEGORIZED_KEY = '__uncategorized__';
 const LATEX_FILES_COLLAPSED_KEY = 'guyue-latex-files-collapsed';
 
 interface FilesTabProps {
@@ -709,7 +728,6 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
   const [files, setFiles] = useState<LatexManagedFile[]>([]);
   const [categories, setCategories] = useState<LatexFileCategory[]>([]);
   const [loading, setLoading] = useState(false);
-  const [addingFile, setAddingFile] = useState(false);
   const [addingFileInCat, setAddingFileInCat] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [fileMenuOpen, setFileMenuOpen] = useState<string | null>(null);
@@ -773,41 +791,28 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
   categories.forEach(c => {
     if (!catMenuRefs.current[c.id]) catMenuRefs.current[c.id] = React.createRef();
   });
-  if (!catMenuRefs.current[UNCATEGORIZED_KEY]) catMenuRefs.current[UNCATEGORIZED_KEY] = React.createRef();
 
   // Group files by category
   const grouped = files.reduce<Record<string, LatexManagedFile[]>>((acc, f) => {
-    const key = f.category || UNCATEGORIZED_KEY;
+    const key = f.category || '';
+    if (!categories.some(category => category.id === key)) return acc;
     if (!acc[key]) acc[key] = [];
     acc[key].push(f);
     return acc;
   }, {});
 
-  // Sorted category IDs: uncategorized first, then user categories in order
-  const sortedCatIds = [
-    ...(grouped[UNCATEGORIZED_KEY] ? [UNCATEGORIZED_KEY] : []),
-    ...categories.map(c => c.id).filter(id => grouped[id]),
-    ...categories.map(c => c.id).filter(id => !grouped[id]),
-  ];
   // Deduplicate (categories with and without files)
   const seenIds = new Set<string>();
   const uniqueCatIds: string[] = [];
-  // Always show uncategorized first
-  if (!seenIds.has(UNCATEGORIZED_KEY)) {
-    uniqueCatIds.push(UNCATEGORIZED_KEY);
-    seenIds.add(UNCATEGORIZED_KEY);
-  }
   for (const id of categories.map(c => c.id)) {
     if (!seenIds.has(id)) { uniqueCatIds.push(id); seenIds.add(id); }
   }
 
   const getCatName = (id: string) => {
-    if (id === UNCATEGORIZED_KEY) return '未分类';
     return categories.find(c => c.id === id)?.name ?? id;
   };
 
   const getCatIcon = (id: string) => {
-    if (id === UNCATEGORIZED_KEY) return <Folder className="w-3.5 h-3.5 text-gray-400" />;
     const meta = catMeta[id];
     if (meta) {
       const IconComp = ICON_MAP[meta.icon];
@@ -818,15 +823,15 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
 
   // ── File actions ──
   const handleNew = async (name: string, categoryId?: string) => {
-    setAddingFile(false);
     setAddingFileInCat(null);
     if (!name.trim()) return;
+    if (!categoryId || !categories.some(category => category.id === categoryId)) {
+      alert('请先选择已有分类');
+      return;
+    }
     const result = await window.electronAPI?.latexNewManagedFile?.(name).catch(() => null);
     if (result) {
-      // Assign category if needed
-      if (categoryId && categoryId !== UNCATEGORIZED_KEY) {
-        await window.electronAPI?.latexSetFileCategory?.({ filePath: result.path, categoryId }).catch(() => null);
-      }
+      await window.electronAPI?.latexSetFileCategory?.({ filePath: result.path, categoryId }).catch(() => null);
       await load();
       onOpenFile(result);
     }
@@ -851,9 +856,10 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
 
   const handleMoveFile = async (filePath: string, categoryId: string) => {
     setFileMoving(null);
+    if (!categories.some(category => category.id === categoryId)) return;
     await window.electronAPI?.latexSetFileCategory?.({
       filePath,
-      categoryId: categoryId === UNCATEGORIZED_KEY ? '' : categoryId,
+      categoryId,
     }).catch(() => null);
     load();
   };
@@ -883,10 +889,15 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
   };
 
   const handleDeleteCategory = async (catId: string) => {
-    // Move all files in this category to uncategorized
     const filesInCat = grouped[catId] || [];
+    const fallbackCategory = categories.find(c => c.id !== catId);
+    if (filesInCat.length > 0 && !fallbackCategory) {
+      alert('该分类下还有文件，请先创建另一个分类再删除');
+      return;
+    }
+    if (!confirm(`确定要删除分类「${getCatName(catId)}」吗？${filesInCat.length > 0 && fallbackCategory ? `\n分类下文件将移动到「${fallbackCategory.name}」。` : ''}`)) return;
     for (const f of filesInCat) {
-      await window.electronAPI?.latexSetFileCategory?.({ filePath: f.path, categoryId: '' }).catch(() => null);
+      await window.electronAPI?.latexSetFileCategory?.({ filePath: f.path, categoryId: fallbackCategory!.id }).catch(() => null);
     }
     const newCats = categories.filter(c => c.id !== catId);
     await window.electronAPI?.latexSaveFileCategories?.(newCats).catch(() => null);
@@ -944,7 +955,7 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
           onClick={e => e.stopPropagation()}
         >
           <p className="px-3 pt-1 pb-0.5 text-[10px] font-semibold" style={{ color: 'var(--t-text-muted)' }}>移动到分类</p>
-          {[UNCATEGORIZED_KEY, ...categories.map(c => c.id)].filter(id => id !== catId).map(id => (
+          {categories.map(c => c.id).filter(id => id !== catId).map(id => (
             <button
               key={id}
               className="theme-list-item w-full rounded-xl px-3 py-1.5 text-left text-xs"
@@ -1008,7 +1019,15 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
             <FolderPlus className="w-3.5 h-3.5" />
           </button>
           <button
-            onClick={() => setAddingFile(true)}
+            onClick={() => {
+              const firstCategory = categories[0];
+              if (!firstCategory) {
+                setAddingCategory(true);
+                return;
+              }
+              setAddingFileInCat(firstCategory.id);
+              setCollapsed(p => ({ ...p, [firstCategory.id]: false }));
+            }}
             className="theme-icon-btn h-7 w-7 rounded-md"
             title="新建文件"
           >
@@ -1027,29 +1046,16 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
           />
         )}
 
-        {/* New file (uncategorized) */}
-        {addingFile && (
-          <div className="px-3 py-1.5 flex items-center gap-2">
-            <File className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--t-text-muted)' }} />
-            <InlineEdit
-              value="untitled"
-              onCommit={name => handleNew(name)}
-              onCancel={() => setAddingFile(false)}
-            />
-          </div>
-        )}
-
-        {!loading && files.length === 0 && categories.length === 0 && !addingFile && !addingCategory && (
+        {!loading && files.length === 0 && categories.length === 0 && !addingFileInCat && !addingCategory && (
           <div className="flex h-32 flex-col items-center justify-center gap-2 px-4 text-center" style={{ color: 'var(--t-text-muted)' }}>
             <FileType2 className="w-8 h-8" />
             <p className="text-xs">暂无文件</p>
-            <p className="text-[10px]">点击 + 新建 .tex 文件</p>
+            <p className="text-[10px]">请先新建分类，再创建 .tex 文件</p>
           </div>
         )}
 
         {uniqueCatIds.map(catId => {
           const catFiles = grouped[catId] || [];
-          const isUncategorized = catId === UNCATEGORIZED_KEY;
           return (
             <div key={catId} className="mb-0.5">
               {/* Category row */}
@@ -1062,7 +1068,7 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
                     ? <ChevronRight className="w-3 h-3 shrink-0" style={{ color: 'var(--t-text-muted)' }} />
                     : <ChevronDown className="w-3 h-3 shrink-0" style={{ color: 'var(--t-text-muted)' }} />}
                   <span className="shrink-0">{getCatIcon(catId)}</span>
-                  {catRenaming === catId && !isUncategorized ? (
+                  {catRenaming === catId ? (
                     <InlineEdit
                       value={getCatName(catId)}
                       onCommit={v => handleRenameCategory(catId, v)}
@@ -1078,29 +1084,27 @@ const FilesTab: React.FC<FilesTabProps> = ({ onOpenFile, activeFilePath }) => {
                   {catFiles.length}
                 </span>
                 {/* Category menu */}
-                {!isUncategorized && (
-                  <div className="relative shrink-0 opacity-0 group-hover/cat:opacity-100 transition-opacity">
-                    <button
-                      ref={catMenuRefs.current[catId] as React.RefObject<HTMLButtonElement>}
-                      onClick={e => { e.stopPropagation(); setCatMenuOpen(catMenuOpen === catId ? null : catId); }}
-                      className="theme-icon-btn h-6 w-6 rounded-md"
-                    >
-                      <MoreHorizontal className="w-3.5 h-3.5" />
-                    </button>
-                    {catMenuOpen === catId && (
-                      <ContextMenu
-                        anchorRef={catMenuRefs.current[catId]}
-                        onClose={() => setCatMenuOpen(null)}
-                        actions={[
-                          { label: '新建文件', icon: <FilePlus className="w-3 h-3" />, onClick: () => { setAddingFileInCat(catId); setCollapsed(p => ({ ...p, [catId]: false })); } },
-                          { label: '编辑图标', icon: <Palette className="w-3 h-3" />, onClick: () => { setEditingCatMeta(catId); setCollapsed(p => ({ ...p, [catId]: false })); } },
-                          { label: '重命名', icon: <Edit2 className="w-3 h-3" />, onClick: () => { setCatRenaming(catId); setCollapsed(p => ({ ...p, [catId]: false })); } },
-                          { label: '删除分类', icon: <Trash2 className="w-3 h-3" />, danger: true, onClick: () => handleDeleteCategory(catId) },
-                        ]}
-                      />
-                    )}
-                  </div>
-                )}
+                <div className="relative shrink-0 opacity-0 group-hover/cat:opacity-100 transition-opacity">
+                  <button
+                    ref={catMenuRefs.current[catId] as React.RefObject<HTMLButtonElement>}
+                    onClick={e => { e.stopPropagation(); setCatMenuOpen(catMenuOpen === catId ? null : catId); }}
+                    className="theme-icon-btn h-6 w-6 rounded-md"
+                  >
+                    <MoreHorizontal className="w-3.5 h-3.5" />
+                  </button>
+                  {catMenuOpen === catId && (
+                    <ContextMenu
+                      anchorRef={catMenuRefs.current[catId]}
+                      onClose={() => setCatMenuOpen(null)}
+                      actions={[
+                        { label: '新建文件', icon: <FilePlus className="w-3 h-3" />, onClick: () => { setAddingFileInCat(catId); setCollapsed(p => ({ ...p, [catId]: false })); } },
+                        { label: '编辑图标', icon: <Palette className="w-3 h-3" />, onClick: () => { setEditingCatMeta(catId); setCollapsed(p => ({ ...p, [catId]: false })); } },
+                        { label: '重命名', icon: <Edit2 className="w-3 h-3" />, onClick: () => { setCatRenaming(catId); setCollapsed(p => ({ ...p, [catId]: false })); } },
+                        { label: '删除分类', icon: <Trash2 className="w-3 h-3" />, danger: true, onClick: () => handleDeleteCategory(catId) },
+                      ]}
+                    />
+                  )}
+                </div>
               </div>
 
               {/* Category meta editor */}

@@ -16,6 +16,7 @@ interface PromptModalProps {
 export const PromptModal: React.FC<PromptModalProps> = ({
   isOpen, onClose, onSave, initialData, categories,
 }) => {
+  const categoryOptions = Array.from(new Set(categories.filter(c => c && c !== '全部' && c !== '未分类' && c !== '默认')));
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('');
   const [description, setDescription] = useState('');
@@ -30,7 +31,7 @@ export const PromptModal: React.FC<PromptModalProps> = ({
   useEffect(() => {
     if (initialData) {
       setTitle(initialData.title);
-      setCategory(initialData.category);
+      setCategory(categoryOptions.includes(initialData.category) ? initialData.category : '');
       setDescription(initialData.description || initialData.note || '');
       setContent(initialData.content);
       setTags(initialData.tags || []);
@@ -42,7 +43,7 @@ export const PromptModal: React.FC<PromptModalProps> = ({
       setTags([]); setTagInput(''); setAuthor(''); setSource('');
       setContentTab('edit'); setShowDetails(false);
     }
-  }, [initialData, isOpen]);
+  }, [initialData, isOpen, categories]);
 
   const handleAddTag = () => {
     const t = tagInput.trim().replace(/^#/, '');
@@ -57,10 +58,14 @@ export const PromptModal: React.FC<PromptModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!category || !categoryOptions.includes(category)) {
+      alert('请先选择已有分类');
+      return;
+    }
     onSave({
       id: initialData?.id,
       title: title || '未命名 Skill',
-      category: category || '未分类',
+      category,
       description,
       content,
       tags,
@@ -106,14 +111,15 @@ export const PromptModal: React.FC<PromptModalProps> = ({
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wide">分类</label>
-                <input
-                  list="skill-categories" value={category} onChange={e => setCategory(e.target.value)}
-                  placeholder="选择或输入分类"
-                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
-                />
-                <datalist id="skill-categories">
-                  {categories.filter(c => c !== '全部').map(cat => <option value={cat} key={cat} />)}
-                </datalist>
+                <select
+                  required
+                  value={category}
+                  onChange={e => setCategory(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none appearance-none"
+                >
+                  <option value="" disabled>{categoryOptions.length > 0 ? '选择分类' : '请先创建分类'}</option>
+                  {categoryOptions.map(cat => <option value={cat} key={cat}>{cat}</option>)}
+                </select>
               </div>
             </div>
 
@@ -224,7 +230,11 @@ export const PromptModal: React.FC<PromptModalProps> = ({
             <button type="button" onClick={onClose} className="px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-xl transition-colors">
               取消
             </button>
-            <button type="submit" className="px-5 py-2.5 text-sm font-medium bg-purple-600 text-white rounded-xl shadow-lg shadow-purple-600/20 hover:bg-purple-700 active:scale-95 transition-all">
+            <button
+              type="submit"
+              disabled={categoryOptions.length === 0}
+              className="px-5 py-2.5 text-sm font-medium bg-purple-600 text-white rounded-xl shadow-lg shadow-purple-600/20 hover:bg-purple-700 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               保存
             </button>
           </div>

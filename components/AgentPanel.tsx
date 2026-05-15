@@ -14,6 +14,7 @@ import {
 } from '../services/chatService';
 import { AgentSettingsModal } from './AgentSettingsModal';
 import { AgentHelpModal } from './AgentHelpModal';
+import { AgentPluginDocsModal } from './AgentPluginDocsModal';
 import { AgentPermissionCenterModal } from './AgentPermissionCenterModal';
 import { MarkdownContent } from './MarkdownContent';
 import {
@@ -112,6 +113,7 @@ import {
   getRouterSignature,
   normalizeModuleScope,
 } from '../services/agent/router';
+import { detectSensitiveInput, redactSensitiveText } from '../services/agent/privacy';
 
 /* ─── 类型定义 ─── */
 
@@ -154,6 +156,8 @@ interface AgentPanelProps {
   onOpenSettings?: () => void;
   isOpen?: boolean;
   onClose?: () => void;
+  compact?: boolean;
+  onRuntimeStatusChange?: (status: AgentRuntimeStatusState & { isProcessing: boolean }) => void;
   todos: TodoItem[];
   notes: Note[];
   onCreateTodo: (todoData: Partial<TodoItem>) => void;
@@ -592,14 +596,16 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
 
 ### 可用工具
 - **query_ssh_records** — 查询 SSH 连接记录和可用分类。
-- **create_ssh_record** — 创建 SSH 连接记录。
+- **create_ssh_category** — 创建 SSH 分类。
+- **create_ssh_record** — 创建 SSH 连接记录，必须使用已有分类。
 - **update_ssh_record** — 修改 SSH 连接记录。
 - **delete_ssh_record** — 删除 SSH 连接记录。
 
 ### 工作流程规范
 1. 修改或删除前先 query_ssh_records 获取 id。
-2. 创建时如果用户没给 command，根据 host、username、port 自动生成。
-3. 不确定字段时保留为空或默认值，不要猜测真实服务器信息。`,
+2. 创建 SSH 记录前必须确认已有分类；没有合适分类时先调用 create_ssh_category。
+3. 创建时如果用户没给 command，根据 host、username、port 自动生成。
+4. 不确定字段时保留为空，不要猜测真实服务器信息。`,
 
   'dc-api': `## API 记录模块
 
@@ -607,15 +613,17 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
 管理数据中心 API 接口记录。
 
 ### 可用工具
-- **query_api_records** — 查询 API 记录和可用分类；默认只返回 hasApiKey，includeSecret=true 时可返回密钥明文。
-- **create_api_record** — 创建 API 记录，可保存用户明确提供的 apiKey。
-- **update_api_record** — 修改 API 记录；不传 apiKey 时保留原密钥。
+- **query_api_records** — 查询 API 记录和可用分类；只返回 hasApiKey，不返回密钥明文。
+- **create_api_category** — 创建 API 分类。
+- **create_api_record** — 创建 API 记录，必须使用已有分类；不要传 apiKey 明文，需要保存密钥时传 needsSecret=true。
+- **update_api_record** — 修改 API 记录；不要传 apiKey 明文，需要修改密钥时传 needsSecret=true。
 - **delete_api_record** — 删除 API 记录。
 
 ### 工作流程规范
 1. 修改或删除前先 query_api_records 获取 id。
-2. 读取 API Key 明文前确认用户确实需要；权限中心关闭读取时不会提供工具。
-3. 只有用户明确提供密钥时，才把它写入 create/update 参数。`,
+2. 创建 API 记录前必须确认已有分类；没有合适分类时先调用 create_api_category。
+3. API Key、token、密钥永远不要写入模型回复或工具参数；让宿主创建本地填写卡片。
+4. 用户要求保存密钥时，先创建/修改记录空位并设置 needsSecret=true，由用户在本地卡片中填写，也可以选择不保存。`,
 
   'dc-website': `## 网站管理模块
 
@@ -623,14 +631,16 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
 管理数据中心的网站账号记录、密码、标签和备注。应用离线存储，访问由 Agent 权限中心控制。
 
 ### 可用工具
-- **query_website_records** — 查询网站记录和标签，可返回密码明文。
-- **create_website_record / update_website_record / delete_website_record** — 创建、修改、删除网站账号记录。
+- **query_website_records** — 查询网站记录和标签；只返回 hasPassword，不返回密码明文。
+- **create_website_record / update_website_record / delete_website_record** — 创建、修改、删除网站账号记录；需要保存密码时传 needsSecret=true。
 - **create_website_tag / update_website_tag / delete_website_tag** — 管理网站标签。
 
 ### 工作流程规范
 1. 修改或删除前先 query_website_records 获取 id。
-2. 用户明确要求查看账号密码时，可以在权限允许下返回完整记录。
-3. 删除标签时如果标签下有记录，要给出 fallbackTag 或让工具迁移到默认标签。`,
+2. 密码永远不要写入模型回复或工具参数；让宿主创建本地填写卡片。
+3. 创建网站记录前必须先确认已有标签；没有合适标签时先调用 create_website_tag，再用该标签创建网站记录。
+4. 用户要求保存密码时，先创建/修改记录空位并设置 needsSecret=true，由用户在本地卡片中填写，也可以选择不保存。
+5. 删除标签时如果标签下有记录，必须指定另一个已有标签作为 fallbackTag；不能清空标签，也不能迁移到不存在的标签。`,
 
   leetcode: `## LeetCode 刷题模块
 
@@ -846,6 +856,20 @@ const createAgentWelcomeMessage = (content?: string): AgentMessage => ({
   role: 'assistant',
   content: content || '👋 你好！我是 **古月助手**，你的智能工作台助理。\n\n我可以帮你管理待办与日程、整理笔记、查询学习进度、记录刷题、收发邮件等。直接描述需求即可，也可以点击右侧输入框旁的 **作用域图标** 限定一个或多个模块。\n\n**目前支持的功能**：\n- 📋 **任务与日程**：创建/更新待办、管理重复事件\n- 📝 **笔记**：创建便签与 Markdown 文档\n- 🎯 **Skills**：管理提示词技能库\n- 🗂️ **数据中心**：查询云资源、OJ 提交记录、SSH/API 记录\n- 📚 **学习空间**：查询课程与学习分类\n- 💻 **LeetCode**：记录刷题提交\n- 📁 **文件管理/知识库**：查询文件归档、检索本地知识库\n- 📧 **邮件**：发送邮件通知\n\n有什么我可以帮你的吗？',
   timestamp: Date.now(),
+});
+
+const sanitizeAgentMessageForHistory = (message: AgentMessage): AgentMessage => {
+  if (typeof message.content !== 'string') return message;
+  const redactedContent = redactSensitiveText(message.content);
+  return redactedContent === message.content ? message : { ...message, content: redactedContent };
+};
+
+const toSafeChatMessage = (message: AgentMessage): ChatMessage => ({
+  id: message.id,
+  role: message.role as 'user' | 'assistant',
+  content: redactSensitiveText(message.content || ''),
+  timestamp: message.timestamp,
+  attachments: message.attachments,
 });
 
 /* ─── Agent System Prompt ─── */
@@ -1629,9 +1653,11 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   markdownCategories,
   onAddCategory,
   knowledgeBaseFileIds = new Set<string>(),
+  compact = false,
+  onRuntimeStatusChange,
 }) => {
   const [messages, setMessages] = useState<AgentMessage[]>(() => {
-    const saved = loadAgentHistory();
+    const saved = loadAgentHistory<AgentMessage>().map(sanitizeAgentMessageForHistory);
     if (saved.length === 0) {
       return [createAgentWelcomeMessage()];
     }
@@ -1650,6 +1676,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showPluginDocs, setShowPluginDocs] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [config, setConfig] = useState<ChatConfig>(() => loadAgentConfig());
   const [routerConfig, setRouterConfig] = useState<ChatConfig>(() => loadAgentRouterConfig());
@@ -1659,11 +1686,11 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const [storedAgentPermissions] = useState(() => loadAgentPermissions());
   const [toolPermissions, setToolPermissions] = useState<AgentToolPermissions>(() => storedAgentPermissions.tools || DEFAULT_AGENT_TOOL_PERMISSIONS);
   const [fullAccessPermissions, setFullAccessPermissions] = useState<AgentFullAccessPermissions>(() => storedAgentPermissions.fullAccess || DEFAULT_AGENT_FULL_ACCESS_PERMISSIONS);
+  const [showPermissions, setShowPermissions] = useState(false);
   const effectiveDataPermissions = useMemo<DataPermissions>(
     () => deriveDataPermissionsFromToolPermissions(toolPermissions),
     [toolPermissions],
   );
-  const [showPermissions, setShowPermissions] = useState(false);
   const [showModuleSelector, setShowModuleSelector] = useState(false);
   const [emailConfig, setEmailConfig] = useState<AgentEmailConfig>(() => {
     try { const s = localStorage.getItem(AGENT_EMAIL_CONFIG_KEY); return s ? JSON.parse(s) : DEFAULT_AGENT_EMAIL_CONFIG; } catch { return DEFAULT_AGENT_EMAIL_CONFIG; }
@@ -1684,6 +1711,11 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     title: 'Agent 空闲',
     active: false,
   });
+
+  useEffect(() => {
+    onRuntimeStatusChange?.({ ...agentRuntimeStatus, isProcessing });
+  }, [agentRuntimeStatus, isProcessing, onRuntimeStatusChange]);
+
   const [enableWebSearch, setEnableWebSearch] = useState(() => initialPageState.enableWebSearch);
   const webSearchPermissionEnabled = Boolean(toolPermissions.web?.read);
   const effectiveWebSearchEnabled = enableWebSearch && webSearchPermissionEnabled;
@@ -1711,6 +1743,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   }, [permissionModules]);
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollMessagesRef = useRef(true);
   const inputRef = useRef<HTMLInputElement>(null);
   const chatServiceRef = useRef<ChatService | null>(null);
   const supportsNativeTools = useMemo(() => isStepwiseNativeProvider(config.provider), [config.provider]);
@@ -2000,16 +2033,27 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       return electronAPI.agentWebSearch({
         ...searchConfig,
         ...args,
+        provider: args.provider || searchConfig.provider,
+        fallbackProviders: Array.isArray(args.fallbackProviders) ? args.fallbackProviders : searchConfig.fallbackProviders,
       });
     },
     executeSpecializedSearch: async (args: Record<string, any>) => {
       const electronAPI = (window as any).electronAPI;
-      if (!electronAPI?.agentSpecializedSearch) return { success: false, error: '专用搜索功能不可用（非桌面端）。' };
-      return electronAPI.agentSpecializedSearch({
+      if (!electronAPI?.agentWebSearch) return { success: false, error: '联网搜索功能不可用（非桌面端）。' };
+      const source = typeof args.source === 'string' ? args.source : '';
+      const domainMap: Record<string, string[]> = {
+        github: ['github.com'],
+        npm: ['npmjs.com', 'registry.npmjs.org'],
+        stackoverflow: ['stackoverflow.com', 'stackexchange.com'],
+        arxiv: ['arxiv.org'],
+      };
+      return electronAPI.agentWebSearch({
+        ...searchConfig,
         ...args,
-        language: searchConfig.language,
-        country: searchConfig.country,
-        specialized: searchConfig.specialized,
+        provider: args.provider || searchConfig.provider,
+        fallbackProviders: Array.isArray(args.fallbackProviders) ? args.fallbackProviders : searchConfig.fallbackProviders,
+        searchMode: args.searchMode || 'deep',
+        includeDomains: domainMap[source] || args.includeDomains,
       });
     },
   }), [
@@ -2268,17 +2312,25 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   }, [searchConfig]);
 
   useEffect(() => {
-    saveAgentHistory(messages.filter(m => m.id !== 'welcome'));
+    saveAgentHistory(messages.filter(m => m.id !== 'welcome').map(sanitizeAgentMessageForHistory));
   }, [messages]);
 
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
+    if (!shouldAutoScrollMessagesRef.current) return;
 
     requestAnimationFrame(() => {
       container.scrollTop = container.scrollHeight;
     });
   }, [messages]);
+
+  const handleMessagesScroll = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    shouldAutoScrollMessagesRef.current = distanceToBottom < 120;
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
@@ -2545,6 +2597,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     assistantId: string,
     userMessage: AgentMessage,
     routedModules: string[],
+    fallbackReason: string,
   ) => {
     const primaryModule = routedModules[0];
     const chatMessages: ChatMessage[] = [
@@ -2553,22 +2606,17 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         role: 'system',
         content: [
           '你是「Guyue-Master-Agent」，Guyue Master 应用的内置智能助理。',
-          '当前模型不支持本应用的逐步 Function Calling runtime，本轮只能进行自然语言回复，不会执行本地应用工具。',
+          '本轮没有进入逐步 Function Calling runtime，只能进行自然语言回复，不会执行本地应用工具。',
+          `原因：${fallbackReason}`,
           '不要输出 ```action``` JSON 块，不要声称已经创建、修改、删除、发送或读取了应用内数据。',
-          '如果用户要求执行本地操作，请明确说明需要切换到支持逐步 Function Calling 的模型（OpenAI / ZenMux / Moonshot）并开启对应权限后再执行。',
+          '如果用户要求执行本地操作，请提醒用户检查 Agent 模型配置、作用域、联网开关和权限中心授权后再执行。',
           `当前参考作用域：${routedModules.length > 0 ? getModuleScopeLabel(routedModules) : '未限定'}`,
           config.systemPrompt?.trim() ? `\n## 用户自定义系统提示\n${config.systemPrompt.trim()}` : '',
         ].filter(Boolean).join('\n'),
         timestamp: 0,
       },
-      ...messages.filter(m => m.role !== 'system' && m.id !== 'welcome').slice(-6).map(m => ({
-        id: m.id,
-        role: m.role as 'user' | 'assistant',
-        content: m.content,
-        timestamp: m.timestamp,
-        attachments: m.attachments,
-      })),
-      { id: userMessage.id, role: 'user', content: userMessage.content, timestamp: userMessage.timestamp, attachments: userMessage.attachments },
+      ...messages.filter(m => m.role !== 'system' && m.id !== 'welcome').slice(-6).map(toSafeChatMessage),
+      toSafeChatMessage(userMessage),
     ];
 
     pushDebugItem({
@@ -3111,6 +3159,40 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     const trimmedInput = inputValue.trim();
     if ((!trimmedInput && pendingAttachments.length === 0) || isProcessing) return;
 
+    const sensitiveDetection = trimmedInput ? detectSensitiveInput(trimmedInput) : { matched: false, kinds: [], redactedText: trimmedInput };
+    if (sensitiveDetection.matched) {
+      const userMessage: AgentMessage = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: sensitiveDetection.redactedText,
+        timestamp: Date.now(),
+      };
+      const assistantMessage: AgentMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: [
+          '检测到疑似 API Key、密码或令牌，原文没有发送给模型，也不会写入对话记录。',
+          '',
+          `拦截类型：${sensitiveDetection.kinds.join('、')}`,
+          '',
+          '请重新发送不包含敏感值的请求，例如只写网站地址、账号、用途等信息。',
+          '',
+          '后续 Agent 会创建空位并弹出本地填写卡片；你可以在本地保存密码/API Key，也可以选择“不保存”。',
+        ].join('\n'),
+        timestamp: Date.now(),
+      };
+      setMessages(prev => [...prev, userMessage, assistantMessage]);
+      setInputValue('');
+      setPendingAttachments([]);
+      pushDebugItem({
+        stage: 'send:blocked-sensitive',
+        summary: '已拦截疑似敏感输入',
+        payload: { kinds: sensitiveDetection.kinds },
+        level: 'info',
+      });
+      return;
+    }
+
     if (!config.apiKey) {
       pushDebugItem({
         stage: 'send:blocked',
@@ -3256,14 +3338,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             }),
             timestamp: 0,
           },
-          ...messages.filter(m => m.role !== 'system' && m.id !== 'welcome').slice(-6).map(m => ({
-            id: m.id,
-            role: m.role as 'user' | 'assistant',
-            content: m.content,
-            timestamp: m.timestamp,
-            attachments: m.attachments,
-          })),
-          { id: userMessage.id, role: 'user', content: userMessage.content, timestamp: userMessage.timestamp, attachments: userMessage.attachments },
+          ...messages.filter(m => m.role !== 'system' && m.id !== 'welcome').slice(-6).map(toSafeChatMessage),
+          toSafeChatMessage(userMessage),
         ];
 
         {
@@ -3629,7 +3705,17 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         title: '兼容模式执行中',
         active: true,
       });
-      await runFallbackConversation(assistantId, userMessage, fallbackScope);
+      const fallbackReason = !supportsNativeTools
+        ? `当前提供商「${config.provider}」暂未接入本应用的逐步 Function Calling runtime。`
+        : nativeTools.length === 0
+          ? [
+              '本轮没有可用工具。',
+              effectiveWebSearchEnabled
+                ? '可能是自动路由未命中可执行模块，或权限中心没有开启对应工具。'
+                : '如果需要联网搜索，请同时打开右侧联网开关，并在权限中心开启「联网 / 读取」。',
+            ].join('')
+          : '逐步工具 runtime 未启动。';
+      await runFallbackConversation(assistantId, userMessage, fallbackScope, fallbackReason);
       finalizeAgentExecutionLog(agentRunLogId, {
         status: 'completed',
         finalText: '兼容模式执行完成',
@@ -3858,11 +3944,94 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     pushDebugItem,
   ]);
 
-  const handleConfirmAction = useCallback(async (messageId: string) => {
+  const handleConfirmAction = useCallback(async (messageId: string, payload?: { secretValue?: string }) => {
     const msg = messages.find(m => m.id === messageId);
     if (!msg?.pendingConfirmation || msg.pendingConfirmation.status !== 'pending') return;
 
     const pc = msg.pendingConfirmation;
+    if (pc.type === 'local_secret') {
+      const secretValue = payload?.secretValue || '';
+      if (!secretValue) {
+        setMessages(prev => prev.map(m =>
+          m.id === messageId
+            ? { ...m, content: `${m.content}\n\n❌ 保存失败：请输入本地密钥或密码。` }
+            : m
+        ));
+        return;
+      }
+
+      setMessages(prev => prev.map(m =>
+        m.id === messageId
+          ? {
+              ...m,
+              pendingConfirmation: { ...pc, status: 'processing' },
+              action: { ...(m.action || { type: pc.data.toolName || 'local_secret' }), type: m.action?.type || pc.data.toolName || 'local_secret', status: 'pending' },
+            }
+          : m
+      ));
+
+      try {
+        if (pc.data.operation === 'update_api_record_secret') {
+          const targetId = String(pc.data.targetId || '');
+          if (!targetId) throw new Error('缺少 API 记录 ID');
+          onSaveAPI({ id: targetId, apiKey: secretValue.trim() });
+        } else if (pc.data.operation === 'update_website_record_password') {
+          const targetId = String(pc.data.targetId || '');
+          if (!targetId) throw new Error('缺少网站记录 ID');
+          const storageKey = 'linkmaster_passwords_v1';
+          const records = JSON.parse(localStorage.getItem(storageKey) || '[]') as Array<Record<string, any>>;
+          const nextRecords = records.map(record =>
+            record.id === targetId
+              ? { ...record, password: secretValue, updatedAt: Date.now() }
+              : record
+          );
+          if (!records.some(record => record.id === targetId)) throw new Error('未找到对应网站记录');
+          localStorage.setItem(storageKey, JSON.stringify(nextRecords));
+          window.dispatchEvent(new CustomEvent('guyue-password-manager-updated'));
+        } else {
+          throw new Error(`不支持的本地密钥操作：${pc.data.operation || 'unknown'}`);
+        }
+
+        setMessages(prev => prev.map(m =>
+          m.id === messageId
+            ? {
+                ...m,
+                content: `${m.content}\n\n✅ 已在本地保存，不会回传给模型。`,
+                action: { ...(m.action || { type: pc.data.toolName || 'local_secret' }), type: m.action?.type || pc.data.toolName || 'local_secret', status: 'success' },
+                pendingConfirmation: { ...pc, status: 'confirmed' },
+              }
+            : m
+        ));
+        pushDebugItem({ stage: 'confirm:local-secret', summary: `本地密钥已保存：${pc.data.targetLabel || pc.data.targetId}`, payload: { operation: pc.data.operation, targetId: pc.data.targetId }, level: 'success' });
+        setAgentRuntimeStatus({
+          stage: 'reporting',
+          status: 'success',
+          title: '本地保存已完成',
+          active: false,
+        });
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        setMessages(prev => prev.map(m =>
+          m.id === messageId
+            ? {
+                ...m,
+                content: `${m.content}\n\n❌ 保存失败：${errMsg}`,
+                action: m.action ? { ...m.action, status: 'error', error: errMsg } : m.action,
+                pendingConfirmation: { ...pc, status: 'cancelled' },
+              }
+            : m
+        ));
+        pushDebugItem({ stage: 'confirm:local-secret', summary: `本地密钥保存失败: ${errMsg}`, payload: { operation: pc.data.operation }, level: 'error' });
+        setAgentRuntimeStatus({
+          stage: 'error',
+          status: 'error',
+          title: errMsg,
+          active: false,
+        });
+      }
+      return;
+    }
+
     if (pc.type === 'agent_tool') {
       const toolName = pc.data.toolName;
       const args = pc.data.arguments || {};
@@ -4029,16 +4198,16 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         });
       }
     }
-  }, [buildToolExecContext, executeRegisteredToolWithSafety, messages, pushDebugItem, toolPermissions, toolRegistry]);
+  }, [buildToolExecContext, executeRegisteredToolWithSafety, messages, onSaveAPI, pushDebugItem, toolPermissions, toolRegistry]);
 
   const handleCancelAction = useCallback((messageId: string) => {
     setMessages(prev => prev.map(m =>
       m.id === messageId && m.pendingConfirmation?.status === 'pending'
         ? {
             ...m,
-            content: m.content + `\n\n🚫 已取消${m.pendingConfirmation?.type === 'send_email' ? '发送' : '执行'}。`,
+            content: m.content + `\n\n🚫 已取消${m.pendingConfirmation?.type === 'send_email' ? '发送' : m.pendingConfirmation?.type === 'local_secret' ? '本地保存' : '执行'}。`,
             action: m.action
-              ? { ...m.action, status: 'error', error: m.pendingConfirmation?.type === 'send_email' ? '用户取消发送' : '用户取消执行' }
+              ? { ...m.action, status: 'error', error: m.pendingConfirmation?.type === 'send_email' ? '用户取消发送' : m.pendingConfirmation?.type === 'local_secret' ? '用户取消本地保存' : '用户取消执行' }
               : m.action,
             pendingConfirmation: { ...m.pendingConfirmation!, status: 'cancelled' },
           }
@@ -4092,6 +4261,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             <div className="flex-1 min-w-0 min-h-0 flex flex-col" style={{ background: 'var(--t-bg-main)' }}>
               <div
                 ref={messagesContainerRef}
+                onScroll={handleMessagesScroll}
                 className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 py-5 space-y-4"
                 style={{ overflowAnchor: 'none' }}
               >
@@ -4277,7 +4447,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             </div>
 
             {/* 执行过程可视化面板 */}
-            {!isExecutionVizCollapsed && (
+            {!compact && !isExecutionVizCollapsed && (
               <AgentExecutionProcessPanel
                 status={agentRuntimeStatus}
                 events={agentRuntimeEvents}
@@ -4290,7 +4460,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             )}
 
             {/* 调试内容面板 */}
-            {!isDebugCollapsed && (
+            {!compact && !isDebugCollapsed && (
               <div className="shrink-0 w-[310px] border-l flex flex-col min-h-0 overflow-hidden" style={{ borderColor: 'var(--t-border)', background: 'var(--t-bg-secondary)' }}>
                 <div className="shrink-0 border-b flex items-center justify-between px-3" style={{ minHeight: '48px', borderColor: 'var(--t-border)', background: 'var(--t-header-bg)' }}>
                   <div className="flex items-center gap-1.5">
@@ -4406,6 +4576,14 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                 title="帮助"
               >
                 <HelpCircle className="w-4 h-4" />
+              </button>
+              {/* 插件开发说明 */}
+              <button
+                onClick={() => setShowPluginDocs(true)}
+                className="w-8 h-8 flex items-center justify-center rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                title="Agent 插件开发说明"
+              >
+                <FileText className="w-4 h-4" />
               </button>
               {/* 设置(齿轮) */}
               <button
@@ -4664,6 +4842,11 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       <AgentHelpModal
         isOpen={showHelp}
         onClose={() => setShowHelp(false)}
+      />
+
+      <AgentPluginDocsModal
+        isOpen={showPluginDocs}
+        onClose={() => setShowPluginDocs(false)}
       />
 
       <ConfirmDialog
@@ -5039,7 +5222,7 @@ const MessageBubble: React.FC<{
   message: AgentMessage;
   onDelete?: (messageId: string) => void;
   onUndo?: (messageId: string) => void;
-  onConfirm?: (messageId: string) => void;
+  onConfirm?: (messageId: string, payload?: { secretValue?: string }) => void;
   onCancelConfirm?: (messageId: string) => void;
 }> = ({ message, onDelete, onUndo, onConfirm, onCancelConfirm }) => {
   const isUser = message.role === 'user';
@@ -5054,6 +5237,7 @@ const MessageBubble: React.FC<{
   }).filter(Boolean) as Array<Pick<AgentModule, 'id' | 'name'>>;
   const canDelete = message.id !== 'welcome';
   const pc = message.pendingConfirmation;
+  const [localSecretValue, setLocalSecretValue] = useState('');
   const userAvatar = useUserAvatar();
   const snapshotLabel = (pc?.data?.snapshot as UndoSnapshot | undefined)?.label || message.undoSnapshot?.label || '';
   const toolArgumentsPreview = pc?.type === 'agent_tool'
@@ -5234,7 +5418,7 @@ const MessageBubble: React.FC<{
                   pc.status === 'confirmed' ? 'bg-green-100 text-green-700' :
                   'bg-gray-100 text-gray-500'
                 }`}>
-                  {pc.status === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : pc.type === 'send_email' ? <Mail className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4" />}
+                  {pc.status === 'processing' ? <Loader2 className="w-4 h-4 animate-spin" /> : pc.type === 'send_email' ? <Mail className="w-4 h-4" /> : pc.type === 'local_secret' ? <Lock className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4" />}
                 </div>
                 <div className="min-w-0">
                   <p className={`text-xs font-semibold ${
@@ -5245,7 +5429,9 @@ const MessageBubble: React.FC<{
                   }`}>
                     {pc.type === 'send_email'
                       ? (pc.status === 'pending' ? '邮件发送确认' : pc.status === 'processing' ? '邮件发送中' : pc.status === 'confirmed' ? '邮件已发送' : '邮件发送已取消')
-                      : (pc.status === 'pending' ? '工具执行确认' : pc.status === 'processing' ? '工具执行中' : pc.status === 'confirmed' ? '工具已执行' : '工具执行已取消')}
+                      : pc.type === 'local_secret'
+                        ? (pc.status === 'pending' ? '本地密钥填写' : pc.status === 'processing' ? '本地保存中' : pc.status === 'confirmed' ? '本地已保存' : '本地保存已取消')
+                        : (pc.status === 'pending' ? '工具执行确认' : pc.status === 'processing' ? '工具执行中' : pc.status === 'confirmed' ? '工具已执行' : '工具执行已取消')}
                   </p>
                   <p className="mt-0.5 text-[11px] text-slate-500 line-clamp-2">{pc.summary}</p>
                 </div>
@@ -5264,6 +5450,20 @@ const MessageBubble: React.FC<{
                 <div className="grid grid-cols-[56px,1fr] gap-2"><span className="text-gray-500">主题</span><span className="font-medium">{pc.data.subject}</span></div>
                 {pc.data.contentPreview && (
                   <div className="grid grid-cols-[56px,1fr] gap-2"><span className="text-gray-500">正文</span><span className="text-gray-600 line-clamp-3">{pc.data.contentPreview}</span></div>
+                )}
+              </div>
+            ) : pc.type === 'local_secret' ? (
+              <div className="space-y-2 text-xs text-gray-700">
+                <div className="grid grid-cols-[56px,1fr] gap-2"><span className="text-gray-500">对象</span><span className="font-medium truncate">{pc.data.targetLabel || pc.data.targetId}</span></div>
+                <div className="grid grid-cols-[56px,1fr] gap-2"><span className="text-gray-500">字段</span><span className="font-mono text-[11px] text-slate-700">{pc.data.secretField || pc.data.secretKind}</span></div>
+                {pc.status === 'pending' && (
+                  <input
+                    type="password"
+                    value={localSecretValue}
+                    onChange={e => setLocalSecretValue(e.target.value)}
+                    placeholder={pc.data.secretKind === 'password' ? '在本地输入密码' : '在本地输入 API Key'}
+                    className="mt-1 w-full rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  />
                 )}
               </div>
             ) : (
@@ -5285,18 +5485,18 @@ const MessageBubble: React.FC<{
             {pc.status === 'pending' && (
               <div className="flex items-center gap-2 mt-3">
                 <button
-                  onClick={() => onConfirm?.(message.id)}
+                  onClick={() => onConfirm?.(message.id, pc.type === 'local_secret' ? { secretValue: localSecretValue } : undefined)}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-colors shadow-sm"
                 >
-                  {pc.type === 'send_email' ? <Send className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />}
-                  {pc.type === 'send_email' ? '发送' : '执行'}
+                  {pc.type === 'send_email' ? <Send className="w-3 h-3" /> : pc.type === 'local_secret' ? <Lock className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />}
+                  {pc.type === 'send_email' ? '发送' : pc.type === 'local_secret' ? '本地保存' : '执行'}
                 </button>
                 <button
                   onClick={() => onCancelConfirm?.(message.id)}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium bg-white hover:bg-gray-100 text-gray-600 rounded-xl transition-colors border border-gray-200"
                 >
                   <X className="w-3 h-3" />
-                  取消
+                  {pc.type === 'local_secret' ? (pc.data.secretKind === 'password' ? '不保存密码' : '不保存密钥') : '取消'}
                 </button>
               </div>
             )}

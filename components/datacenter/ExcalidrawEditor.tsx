@@ -927,9 +927,10 @@ const CanvasEditModal: React.FC<{
           <CategoryPickerFields
             categories={categories}
             selectedCategory={selectedCategory}
-            customCategory={customCategory}
+            customCategory=""
             onSelectedCategoryChange={setSelectedCategory}
-            onCustomCategoryChange={setCustomCategory}
+            onCustomCategoryChange={() => undefined}
+            allowCustom={false}
           />
           <div className="flex justify-end gap-2">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl">取消</button>
@@ -1817,20 +1818,29 @@ export const ExcalidrawEditor: React.FC = () => {
   }, []);
 
   const handleNewDrawing = useCallback(() => {
+    if (visibleCanvasCategories.length === 0) {
+      setIsCategoryManagerOpen(true);
+      showToast('请先创建画布分类', 'error');
+      return;
+    }
     const defaultCategory =
       canvasCategoryFilter !== ALL_CANVAS_CATEGORY
         ? canvasCategoryFilter
-        : '';
+        : visibleCanvasCategories[0].name;
     setNewCanvasDefaultCategory(defaultCategory);
     setIsNewCanvasModalOpen(true);
     setIsCanvasManagerOpen(true);
-  }, [canvasCategoryFilter]);
+  }, [canvasCategoryFilter, showToast, visibleCanvasCategories]);
 
   // 创建画布
   const handleCreateDrawing = useCallback((name: string, category: string) => {
     const finalCategory = category.trim();
     if (isReservedCanvasCategory(finalCategory)) {
       showToast('新建画布必须选择分类', 'error');
+      return;
+    }
+    if (!visibleCanvasCategoryNames.includes(finalCategory)) {
+      showToast('请选择已有分类', 'error');
       return;
     }
 
@@ -1853,13 +1863,10 @@ export const ExcalidrawEditor: React.FC = () => {
     saveDrawings(updated);
     setActiveId(newDrawing.id);
     saveActiveId(newDrawing.id);
-    if (!visibleCanvasCategoryNames.includes(finalCategory)) {
-      updateCanvasCategories([...canvasCategories, finalCategory]);
-    }
     setCanvasCategoryFilter(finalCategory);
     setIsCanvasManagerOpen(true);
     setIsNewCanvasModalOpen(false);
-  }, [activeId, canvasCategories, drawings, getCurrentSceneSnapshot, showToast, updateCanvasCategories, visibleCanvasCategoryNames]);
+  }, [activeId, drawings, getCurrentSceneSnapshot, showToast, visibleCanvasCategoryNames]);
 
   // 切换画布前先保存当前画布
   const saveCurrentScene = useCallback(() => {
@@ -2003,6 +2010,10 @@ export const ExcalidrawEditor: React.FC = () => {
       showToast('画布必须选择分类', 'error');
       return;
     }
+    if (!visibleCanvasCategoryNames.includes(finalCategory)) {
+      showToast('请选择已有分类', 'error');
+      return;
+    }
 
     const snapshot = getCurrentSceneSnapshot();
     const baseDrawings = snapshot && activeId
@@ -2015,12 +2026,9 @@ export const ExcalidrawEditor: React.FC = () => {
     );
     setDrawings(updated);
     saveDrawings(updated);
-    if (!visibleCanvasCategoryNames.includes(finalCategory)) {
-      updateCanvasCategories([...canvasCategories, finalCategory]);
-    }
     setRenameTarget(null);
     showToast('已保存');
-  }, [activeId, canvasCategories, drawings, getCurrentSceneSnapshot, renameTarget, showToast, updateCanvasCategories, visibleCanvasCategoryNames]);
+  }, [activeId, drawings, getCurrentSceneSnapshot, renameTarget, showToast, visibleCanvasCategoryNames]);
 
   const handleAddCanvasCategory = useCallback((category: CanvasCategoryMeta) => {
     const name = category.name.trim();

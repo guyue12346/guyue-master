@@ -14,6 +14,7 @@ export const LECTURE_ICONS: { value: LectureIcon; label: string }[] = [
 
 export interface Lecture {
   id: string;
+  order?: number;
   title: string;
   lecturer: string;
   materials: string; // Filename for the note/plan
@@ -26,6 +27,7 @@ export interface Lecture {
 
 export interface Module {
   id: string;
+  order?: number;
   title: string;
   description: string;
   lectures: Lecture[];
@@ -34,6 +36,7 @@ export interface Module {
 // Generic resource item for assignments and personal resources
 export interface ResourceItem {
   id: string;
+  order?: number;
   title: string;
   link: string;
   icon?: LectureIcon; // 图标类型
@@ -42,6 +45,7 @@ export interface ResourceItem {
 // Module for assignments section (independent from course modules)
 export interface AssignmentModule {
   id: string;
+  order?: number;
   title: string;
   description: string;
   items: ResourceItem[];
@@ -50,6 +54,7 @@ export interface AssignmentModule {
 // Module for personal resources section (independent from course modules)
 export interface PersonalModule {
   id: string;
+  order?: number;
   title: string;
   description: string;
   items: ResourceItem[];
@@ -76,6 +81,7 @@ export interface PersonalResource {
 // Custom user-defined section (supports arbitrary modules + resource items)
 export interface CustomSection {
   id: string;
+  order?: number;
   title: string;
   icon: string;  // Lucide icon name from AVAILABLE_ICONS
   color: string; // color key from AVAILABLE_COLORS
@@ -84,6 +90,7 @@ export interface CustomSection {
 
 export interface CourseData {
   id: string;
+  order?: number;
   title: string;
   description: string;
   categoryId: string;

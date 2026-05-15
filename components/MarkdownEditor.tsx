@@ -807,7 +807,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
               <h1 className="text-xl font-bold text-gray-800">{note.title}</h1>
               {!hideMetadata && !hideCategory && (
                 <span className="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full">
-                  {note.category || '未分类'}
+                  {note.category}
                 </span>
               )}
             </div>

@@ -16,6 +16,7 @@ interface FileModalProps {
 type StorageType = 'reference' | 'local_archive' | 'cloud';
 
 export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, initialData, categories, mode = 'file', defaultCategory }) => {
+  const categoryOptions = Array.from(new Set(categories.filter(c => c && c !== '全部' && c !== '未分类' && c !== '默认')));
   const [name, setName] = useState('');
   const [path, setPath] = useState('');
   const [size, setSize] = useState<number>(0);
@@ -34,13 +35,13 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
       setPath(initialData.path);
       setSize(initialData.size);
       setType(initialData.type);
-      setCategory(initialData.category);
+      setCategory(categoryOptions.includes(initialData.category) ? initialData.category : '');
       setNote(initialData.note);
       setImportance(initialData.importance);
       setStorageType('reference'); // Default to reference for existing items
     } else {
       resetForm();
-      if (defaultCategory) {
+      if (defaultCategory && categoryOptions.includes(defaultCategory)) {
         setCategory(defaultCategory);
       }
       if (mode === 'note') {
@@ -49,7 +50,7 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
         setPath('internal://new');
       }
     }
-  }, [initialData, isOpen, mode, defaultCategory]);
+  }, [initialData, isOpen, mode, defaultCategory, categories]);
 
   const resetForm = () => {
     setName('');
@@ -103,6 +104,11 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
     // Validate .md extension for note mode
     if (mode === 'note' && !name.toLowerCase().endsWith('.md')) {
       alert('文件名必须以 .md 结尾');
+      return;
+    }
+
+    if (!category || !categoryOptions.includes(category)) {
+      alert('请先选择已有分类');
       return;
     }
     
@@ -298,16 +304,15 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   {mode ? <FolderOpen className="h-4 w-4 text-gray-400" /> : <Tag className="h-4 w-4 text-gray-400" />}
                 </div>
-                <input
-                  list="categories"
+                <select
+                  required
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  placeholder={mode ? "选择或输入文件夹" : "选择或输入分类"}
-                  className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm"
-                />
-                <datalist id="categories">
-                  {categories.filter(c => c !== '全部').map(c => <option key={c} value={c} />)}
-                </datalist>
+                  className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm appearance-none"
+                >
+                  <option value="" disabled>{categoryOptions.length > 0 ? '选择分类' : '请先创建分类'}</option>
+                  {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
             </div>
 
@@ -356,7 +361,7 @@ export const FileModal: React.FC<FileModalProps> = ({ isOpen, onClose, onSave, i
             </button>
             <button
               type="submit"
-              disabled={isProcessing}
+              disabled={isProcessing || categoryOptions.length === 0}
               className="px-5 py-2.5 text-sm font-medium bg-gray-900 text-white rounded-xl shadow-lg shadow-gray-900/20 hover:bg-black hover:scale-105 active:scale-95 transition-all disabled:opacity-70 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {isProcessing ? (

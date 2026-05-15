@@ -27,6 +27,8 @@ const PASSWORD_STORAGE_KEY = 'linkmaster_passwords_v1';
 const PASSWORD_TAGS_STORAGE_KEY = 'linkmaster_password_tags_v1';
 const WEBSITE_EVENT_NAME = 'guyue-password-manager-updated';
 const WEBSITE_TAG_COLORS = ['#6366f1', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#64748b'];
+const LEGACY_DEFAULT_WEBSITE_TAG = '默认';
+const RESERVED_RECORD_CATEGORY_NAMES = new Set(['全部', '未分类', '默认']);
 
 const readLocalJson = <T,>(key: string, fallback: T): T => {
   try {
@@ -46,8 +48,10 @@ const notifyWebsiteRecordsChanged = () => {
   window.dispatchEvent(new CustomEvent(WEBSITE_EVENT_NAME));
 };
 
-const readWebsiteRecords = () => readLocalJson<WebsiteRecord[]>(PASSWORD_STORAGE_KEY, []);
-const readWebsiteTags = () => readLocalJson<WebsiteTag[]>(PASSWORD_TAGS_STORAGE_KEY, []);
+const readWebsiteRecords = () => readLocalJson<WebsiteRecord[]>(PASSWORD_STORAGE_KEY, [])
+  .map(record => record.tag === LEGACY_DEFAULT_WEBSITE_TAG ? { ...record, tag: '' } : record);
+const readWebsiteTags = () => readLocalJson<WebsiteTag[]>(PASSWORD_TAGS_STORAGE_KEY, [])
+  .filter(tag => tag.name !== LEGACY_DEFAULT_WEBSITE_TAG);
 
 const saveWebsiteRecords = (records: WebsiteRecord[]) => {
   writeLocalJson(PASSWORD_STORAGE_KEY, records);
@@ -55,24 +59,82 @@ const saveWebsiteRecords = (records: WebsiteRecord[]) => {
 };
 
 const saveWebsiteTags = (tags: WebsiteTag[]) => {
-  writeLocalJson(PASSWORD_TAGS_STORAGE_KEY, tags);
+  writeLocalJson(PASSWORD_TAGS_STORAGE_KEY, tags.filter(tag => tag.name !== LEGACY_DEFAULT_WEBSITE_TAG));
   notifyWebsiteRecordsChanged();
 };
 
-const ensureWebsiteTag = (tagName: string) => {
-  const name = tagName.trim() || '默认';
-  const tags = readWebsiteTags();
-  if (tags.some(tag => tag.name === name)) return name;
-  const nextTag: WebsiteTag = {
-    id: `tag_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    name,
-    color: WEBSITE_TAG_COLORS[tags.length % WEBSITE_TAG_COLORS.length],
-    icon: 'Tag',
-    sortOrder: tags.length,
-  };
-  saveWebsiteTags([...tags, nextTag]);
+const normalizeWebsiteTagName = (tagName: string) => {
+  const name = tagName.trim();
+  if (!name || name === LEGACY_DEFAULT_WEBSITE_TAG) return '';
   return name;
 };
+
+const resolveExistingWebsiteTag = (tagName: string) => {
+  const name = normalizeWebsiteTagName(tagName);
+  if (!name) return null;
+  const tags = readWebsiteTags();
+  return tags.some(tag => tag.name === name) ? name : null;
+};
+
+const hasSecretValue = (value: unknown) => typeof value === 'string' && value.trim().length > 0;
+
+const normalizeStrictRecordCategory = (value: unknown) => {
+  const category = typeof value === 'string' ? value.trim() : '';
+  if (!category || RESERVED_RECORD_CATEGORY_NAMES.has(category)) return '';
+  return category;
+};
+
+const resolveExistingRecordCategory = (categories: string[], value: unknown) => {
+  const category = normalizeStrictRecordCategory(value);
+  if (!category) return null;
+  return categories.includes(category) ? category : null;
+};
+
+const formatAvailableCategories = (categories: string[]) =>
+  categories.filter(category => !RESERVED_RECORD_CATEGORY_NAMES.has(category)).join('、') || '暂无';
+
+const buildApiRecordSecretConfirmation = (record: APIRecord) => ({
+  pendingConfirmation: true,
+  confirmationId: crypto.randomUUID(),
+  confirmationType: 'local_secret' as const,
+  secretKind: 'apiKey',
+  secretField: 'apiKey',
+  operation: 'update_api_record_secret',
+  targetId: record.id,
+  targetLabel: record.title,
+  toolName: 'update_api_record_secret',
+  actionLabel: `本地填写 API Key：${record.title}`,
+  message: `API 记录「${record.title}」已创建空位，请在本地卡片中填写 API Key 后保存。`,
+  record: toSafeApiRecord(record),
+});
+
+const toSafeWebsiteRecord = (record: WebsiteRecord) => ({
+  id: record.id,
+  shortName: record.shortName,
+  url: record.url,
+  account: record.account,
+  hasPassword: Boolean(record.password),
+  tag: record.tag,
+  note: record.note,
+  sortOrder: record.sortOrder,
+  createdAt: record.createdAt,
+  updatedAt: record.updatedAt,
+});
+
+const buildWebsitePasswordConfirmation = (record: WebsiteRecord) => ({
+  pendingConfirmation: true,
+  confirmationId: crypto.randomUUID(),
+  confirmationType: 'local_secret' as const,
+  secretKind: 'password',
+  secretField: 'password',
+  operation: 'update_website_record_password',
+  targetId: record.id,
+  targetLabel: record.shortName,
+  toolName: 'update_website_record_password',
+  actionLabel: `本地填写密码：${record.shortName}`,
+  message: `网站记录「${record.shortName}」已创建空位，请在本地卡片中填写密码后保存。`,
+  record: toSafeWebsiteRecord(record),
+});
 
 const normalizeOjDate = (value: unknown) => {
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
@@ -364,11 +426,34 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
       },
     },
   {
+      name: 'create_ssh_category',
+      module: 'dc-ssh',
+      tool: {
+        name: 'create_ssh_category',
+        description: '创建 SSH 管理分类。创建 SSH 连接记录前必须先有可用分类。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: '分类名称，不能是 全部、未分类、默认。' },
+          },
+          required: ['name'],
+        },
+      },
+      execute: async (args, ctx) => {
+        const name = normalizeStrictRecordCategory(args.name);
+        if (!name) return { success: false, error: '分类名称不能为空，也不能使用“全部”“未分类”“默认”。' };
+        if (ctx.sshCategories.includes(name)) return { success: false, error: `SSH 分类「${name}」已存在。` };
+        ctx.onAddCategory('ssh', name);
+        ctx.sshCategories.push(name);
+        return { success: true, message: `SSH 分类「${name}」已创建`, category: name };
+      },
+    },
+  {
       name: 'create_ssh_record',
       module: 'dc-ssh',
       tool: {
         name: 'create_ssh_record',
-        description: '在数据中心 SSH 管理中创建一条连接记录。缺少 command 时会自动生成 ssh -p 端口 用户名@主机。',
+        description: '在数据中心 SSH 管理中创建一条连接记录。必须传已有分类 category；缺少 command 时会自动生成 ssh -p 端口 用户名@主机。',
         inputSchema: {
           type: 'object',
           properties: {
@@ -377,25 +462,32 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
             username: { type: 'string', description: '用户名，默认 root。' },
             port: { type: 'string', description: '端口，默认 22。' },
             command: { type: 'string', description: '完整 SSH 命令（可选）。' },
-            category: { type: 'string', description: '分类名称，可使用已有分类，也可传新分类。' },
+            category: { type: 'string', description: '必填，已有分类名称。不存在时请先调用 create_ssh_category。' },
             networkType: { type: 'string', description: '网络类型，如 局域网、公网、内网穿透。' },
             note: { type: 'string', description: '备注。' },
             priority: { type: 'number', description: '排序优先级，数字越小越靠前。' },
           },
-          required: ['title', 'host'],
+          required: ['title', 'host', 'category'],
         },
       },
       execute: async (args, ctx) => {
         const title = String(args.title || '').trim();
         const host = String(args.host || '').trim();
         if (!title || !host) return { success: false, error: '创建 SSH 记录需要 title 和 host。' };
+        const category = resolveExistingRecordCategory(ctx.sshCategories, args.category);
+        if (!category) {
+          return {
+            success: false,
+            error: `创建 SSH 记录必须选择一个已有分类。当前可用分类：${formatAvailableCategories(ctx.sshCategories)}。如需新分类，请先调用 create_ssh_category。`,
+          };
+        }
         const record: SSHRecord = {
           id: crypto.randomUUID(),
           title,
           host,
           username: typeof args.username === 'string' && args.username.trim() ? args.username.trim() : 'root',
           port: typeof args.port === 'string' && args.port.trim() ? args.port.trim() : '22',
-          category: typeof args.category === 'string' && args.category.trim() ? args.category.trim() : '未分类',
+          category,
           command: '',
           note: typeof args.note === 'string' ? args.note.trim() : '',
           priority: typeof args.priority === 'number' ? args.priority : undefined,
@@ -425,7 +517,7 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
             username: { type: 'string', description: '新用户名。' },
             port: { type: 'string', description: '新端口。' },
             command: { type: 'string', description: '新 SSH 命令；不传且主机/端口/用户名变化时自动重算。' },
-            category: { type: 'string', description: '新分类名称。' },
+            category: { type: 'string', description: '已有分类名称。不存在时请先调用 create_ssh_category。' },
             networkType: { type: 'string', description: '新网络类型。' },
             note: { type: 'string', description: '新备注。' },
             priority: { type: 'number', description: '新排序优先级。' },
@@ -442,6 +534,16 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
         ];
         for (const field of stringFields) {
           if (typeof args[field] === 'string') updates[field] = args[field].trim() as any;
+        }
+        if (typeof args.category === 'string') {
+          const category = resolveExistingRecordCategory(ctx.sshCategories, args.category);
+          if (!category) {
+            return {
+              success: false,
+              error: `SSH 分类「${args.category}」不存在。当前可用分类：${formatAvailableCategories(ctx.sshCategories)}。如需新分类，请先调用 create_ssh_category。`,
+            };
+          }
+          updates.category = category;
         }
         if (typeof args.priority === 'number') updates.priority = args.priority;
         const shouldRebuildCommand = !updates.command && (updates.host || updates.username || updates.port);
@@ -481,21 +583,20 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
       module: 'dc-api',
       tool: {
         name: 'query_api_records',
-        description: '查询数据中心 API 管理中的接口记录。默认只返回 hasApiKey；传 includeSecret=true 时在权限允许下返回 apiKey 明文。',
+        description: '查询数据中心 API 管理中的接口记录。只返回 hasApiKey，不会返回 apiKey 明文。',
         inputSchema: {
           type: 'object',
           properties: {
             keyword: { type: 'string', description: '按标题、URL、endpoint、用途、备注搜索（可选）。' },
             category: { type: 'string', description: '按分类名称筛选（可选）。' },
             method: { type: 'string', description: '按 HTTP 方法筛选，如 GET、POST（可选）。' },
-            includeSecret: { type: 'boolean', description: '是否尝试返回密钥。安全原因下此工具不会返回密钥明文。' },
+            includeSecret: { type: 'boolean', description: '兼容字段。安全原因下此工具不会返回密钥明文。' },
             limit: { type: 'number', description: '最多返回条数，默认 20，最大 100。' },
           },
           required: [],
         },
       },
       execute: async (args, ctx) => {
-        const includeSecret = args.includeSecret === true;
         const keyword = typeof args.keyword === 'string' ? args.keyword.trim() : '';
         const category = typeof args.category === 'string' ? args.category.trim() : '';
         const method = typeof args.method === 'string' ? args.method.trim().toUpperCase() : '';
@@ -515,8 +616,31 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
         const result = [...records]
           .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0) || b.createdAt - a.createdAt)
           .slice(0, limit)
-          .map(record => includeSecret ? { ...toSafeApiRecord(record), apiKey: record.apiKey } : toSafeApiRecord(record));
+          .map(record => toSafeApiRecord(record));
         return { success: true, total: records.length, returned: result.length, availableCategories: ctx.apiCategories, records: result };
+      },
+    },
+  {
+      name: 'create_api_category',
+      module: 'dc-api',
+      tool: {
+        name: 'create_api_category',
+        description: '创建 API 管理分类。创建 API 记录前必须先有可用分类。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: '分类名称，不能是 全部、未分类、默认。' },
+          },
+          required: ['name'],
+        },
+      },
+      execute: async (args, ctx) => {
+        const name = normalizeStrictRecordCategory(args.name);
+        if (!name) return { success: false, error: '分类名称不能为空，也不能使用“全部”“未分类”“默认”。' };
+        if (ctx.apiCategories.includes(name)) return { success: false, error: `API 分类「${name}」已存在。` };
+        ctx.onAddCategory('api', name);
+        ctx.apiCategories.push(name);
+        return { success: true, message: `API 分类「${name}」已创建`, category: name };
       },
     },
   {
@@ -524,7 +648,7 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
       module: 'dc-api',
       tool: {
         name: 'create_api_record',
-        description: '在数据中心 API 管理中创建一条接口记录。可以保存用户明确提供的 apiKey；查询工具不会回显密钥。',
+        description: '在数据中心 API 管理中创建一条接口记录。必须传已有分类 category。不要传 apiKey 明文；如需保存密钥，传 needsSecret=true，系统会创建空位并让用户在本地卡片填写。',
         inputSchema: {
           type: 'object',
           properties: {
@@ -532,34 +656,45 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
             baseUrl: { type: 'string', description: '基础 URL。' },
             endpoint: { type: 'string', description: '接口路径或完整 URL。' },
             method: { type: 'string', description: 'HTTP 方法，默认 GET，如 GET、POST、PUT、PATCH、DELETE。' },
-            apiKey: { type: 'string', description: '用户明确提供时保存的 API Key。' },
+            apiKey: { type: 'string', description: '兼容字段。不要传明文；若传入也不会直接发送给模型或回显。' },
+            needsSecret: { type: 'boolean', description: '需要用户在本地卡片填写 API Key 时设为 true。' },
             usage: { type: 'string', description: '用途说明。' },
-            category: { type: 'string', description: '分类名称，可使用已有分类，也可传新分类。' },
+            category: { type: 'string', description: '必填，已有分类名称。不存在时请先调用 create_api_category。' },
             note: { type: 'string', description: '备注。' },
             priority: { type: 'number', description: '排序优先级，数字越小越靠前。' },
           },
-          required: ['title', 'endpoint'],
+          required: ['title', 'endpoint', 'category'],
         },
       },
       execute: async (args, ctx) => {
         const title = String(args.title || '').trim();
         const endpoint = String(args.endpoint || '').trim();
         if (!title || !endpoint) return { success: false, error: '创建 API 记录需要 title 和 endpoint。' };
+        const category = resolveExistingRecordCategory(ctx.apiCategories, args.category);
+        if (!category) {
+          return {
+            success: false,
+            error: `创建 API 记录必须选择一个已有分类。当前可用分类：${formatAvailableCategories(ctx.apiCategories)}。如需新分类，请先调用 create_api_category。`,
+          };
+        }
         const record: APIRecord = {
           id: crypto.randomUUID(),
           title,
           baseUrl: typeof args.baseUrl === 'string' ? args.baseUrl.trim() : '',
           endpoint,
           method: typeof args.method === 'string' ? args.method.toUpperCase() : 'GET',
-          apiKey: typeof args.apiKey === 'string' ? args.apiKey : '',
+          apiKey: '',
           usage: typeof args.usage === 'string' ? args.usage.trim() : '',
-          category: typeof args.category === 'string' && args.category.trim() ? args.category.trim() : '未分类',
+          category,
           note: typeof args.note === 'string' ? args.note.trim() : '',
           priority: typeof args.priority === 'number' ? args.priority : undefined,
           createdAt: Date.now(),
         };
         ctx.onSaveAPI(record);
         ctx.apiRecords.unshift(record);
+        if (args.needsSecret === true || hasSecretValue(args.apiKey)) {
+          return { success: true, ...buildApiRecordSecretConfirmation(record) };
+        }
         return { success: true, message: `API 记录「${record.title}」已创建`, record: toSafeApiRecord(record) };
       },
     },
@@ -568,7 +703,7 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
       module: 'dc-api',
       tool: {
         name: 'update_api_record',
-        description: '修改数据中心 API 管理中的接口记录。需要先 query_api_records 获取 id。不传 apiKey 时保留原密钥。',
+        description: '修改数据中心 API 管理中的接口记录。需要先 query_api_records 获取 id。不要传 apiKey 明文；如需修改密钥，传 needsSecret=true，系统会让用户在本地卡片填写。',
         inputSchema: {
           type: 'object',
           properties: {
@@ -577,9 +712,10 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
             baseUrl: { type: 'string', description: '新基础 URL。' },
             endpoint: { type: 'string', description: '新接口路径或完整 URL。' },
             method: { type: 'string', description: '新 HTTP 方法，如 GET、POST、PUT、PATCH、DELETE。' },
-            apiKey: { type: 'string', description: '新 API Key；不传则不修改。' },
+            apiKey: { type: 'string', description: '兼容字段。不要传明文；若传入也不会直接回显或保存。' },
+            needsSecret: { type: 'boolean', description: '需要用户在本地卡片填写新 API Key 时设为 true。' },
             usage: { type: 'string', description: '新用途说明。' },
-            category: { type: 'string', description: '新分类名称。' },
+            category: { type: 'string', description: '已有分类名称。不存在时请先调用 create_api_category。' },
             note: { type: 'string', description: '新备注。' },
             priority: { type: 'number', description: '新排序优先级。' },
           },
@@ -590,17 +726,30 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
         const record = ctx.apiRecords.find(item => item.id === args.id);
         if (!record) return { success: false, error: `未找到 id 为「${args.id}」的 API 记录。` };
         const updates: Partial<APIRecord> = {};
-        const stringFields: Array<keyof Pick<APIRecord, 'title' | 'baseUrl' | 'endpoint' | 'method' | 'apiKey' | 'usage' | 'category' | 'note'>> = [
-          'title', 'baseUrl', 'endpoint', 'method', 'apiKey', 'usage', 'category', 'note',
+        const stringFields: Array<keyof Pick<APIRecord, 'title' | 'baseUrl' | 'endpoint' | 'method' | 'usage' | 'category' | 'note'>> = [
+          'title', 'baseUrl', 'endpoint', 'method', 'usage', 'category', 'note',
         ];
         for (const field of stringFields) {
           if (typeof args[field] === 'string') {
             updates[field] = field === 'method' ? args[field].toUpperCase() as any : args[field].trim() as any;
           }
         }
+        if (typeof args.category === 'string') {
+          const category = resolveExistingRecordCategory(ctx.apiCategories, args.category);
+          if (!category) {
+            return {
+              success: false,
+              error: `API 分类「${args.category}」不存在。当前可用分类：${formatAvailableCategories(ctx.apiCategories)}。如需新分类，请先调用 create_api_category。`,
+            };
+          }
+          updates.category = category;
+        }
         if (typeof args.priority === 'number') updates.priority = args.priority;
         ctx.onSaveAPI({ id: record.id, ...updates });
         Object.assign(record, updates);
+        if (args.needsSecret === true || hasSecretValue(args.apiKey)) {
+          return { success: true, ...buildApiRecordSecretConfirmation(record) };
+        }
         return { success: true, message: `API 记录「${record.title}」已更新`, updated: toSafeApiRecord(record) };
       },
     },
@@ -931,13 +1080,13 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
       module: 'dc-website',
       tool: {
         name: 'query_website_records',
-        description: '查询数据中心网站管理中的网站账号记录。离线本地权限开启后可返回密码明文。',
+        description: '查询数据中心网站管理中的网站账号记录。只返回 hasPassword，不会把密码明文发给模型。',
         inputSchema: {
           type: 'object',
           properties: {
-            keyword: { type: 'string', description: '按网站名、URL、账号、密码、备注搜索。' },
+            keyword: { type: 'string', description: '按网站名、URL、账号、备注搜索。' },
             tag: { type: 'string', description: '按标签名称筛选。' },
-            includePassword: { type: 'boolean', description: '是否返回密码明文，默认 true。' },
+            includePassword: { type: 'boolean', description: '兼容字段。安全原因下此工具不会返回密码明文。' },
             limit: { type: 'number', description: '最多返回条数，默认 50，最大 200。' },
           },
         },
@@ -945,12 +1094,11 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
       execute: async (args) => {
         const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
         const tag = typeof args.tag === 'string' ? args.tag.trim() : '';
-        const includePassword = args.includePassword !== false;
         let records = readWebsiteRecords();
         if (tag) records = records.filter(item => item.tag === tag);
         if (keyword) {
           records = records.filter(item =>
-            [item.shortName, item.url, item.account, item.password, item.note, item.tag]
+            [item.shortName, item.url, item.account, item.note, item.tag]
               .some(value => String(value || '').toLowerCase().includes(keyword))
           );
         }
@@ -959,18 +1107,7 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
         const result = [...records]
           .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || b.updatedAt - a.updatedAt)
           .slice(0, limit)
-          .map(item => ({
-            id: item.id,
-            shortName: item.shortName,
-            url: item.url,
-            account: item.account,
-            password: includePassword ? item.password : undefined,
-            tag: item.tag,
-            note: item.note,
-            sortOrder: item.sortOrder,
-            createdAt: item.createdAt,
-            updatedAt: item.updatedAt,
-          }));
+          .map(item => toSafeWebsiteRecord(item));
         return { success: true, total: records.length, returned: result.length, tags, records: result };
       },
     },
@@ -979,25 +1116,30 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
       module: 'dc-website',
       tool: {
         name: 'create_website_record',
-        description: '在网站管理中创建一条网站账号/密码记录。',
+        description: '在网站管理中创建一条网站账号记录。不要传 password 明文；如需保存密码，传 needsSecret=true，系统会创建空位并让用户在本地卡片填写。',
         inputSchema: {
           type: 'object',
           properties: {
             shortName: { type: 'string', description: '网站简称或显示名。' },
             url: { type: 'string', description: '网站 URL。' },
             account: { type: 'string', description: '账号。' },
-            password: { type: 'string', description: '密码。' },
+            password: { type: 'string', description: '兼容字段。不要传明文；若传入也不会直接回显或保存。' },
+            needsSecret: { type: 'boolean', description: '需要用户在本地卡片填写密码时设为 true。' },
             note: { type: 'string', description: '备注。' },
-            tag: { type: 'string', description: '标签名称。不存在时会自动创建。' },
+            tag: { type: 'string', description: '必填，已有标签名称。不能留空；不存在时请先调用 create_website_tag 创建标签。' },
           },
-          required: ['shortName'],
+          required: ['shortName', 'tag'],
         },
       },
       execute: async (args) => {
         const shortName = String(args.shortName || '').trim();
         if (!shortName) return { success: false, error: '网站名称不能为空。' };
         const records = readWebsiteRecords();
-        const tag = ensureWebsiteTag(typeof args.tag === 'string' && args.tag.trim() ? args.tag.trim() : '默认');
+        const tag = typeof args.tag === 'string' ? resolveExistingWebsiteTag(args.tag) : null;
+        if (!tag) {
+          const available = readWebsiteTags().map(item => item.name).join('、') || '暂无';
+          return { success: false, error: `创建网站记录必须选择一个已有标签。当前可用标签：${available}。如需新标签，请先调用 create_website_tag。` };
+        }
         const sameTagRecords = records.filter(item => item.tag === tag);
         const now = Date.now();
         const record: WebsiteRecord = {
@@ -1005,7 +1147,7 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
           shortName,
           url: typeof args.url === 'string' ? args.url.trim() : '',
           account: typeof args.account === 'string' ? args.account.trim() : '',
-          password: typeof args.password === 'string' ? args.password : '',
+          password: '',
           note: typeof args.note === 'string' ? args.note.trim() : '',
           tag,
           sortOrder: sameTagRecords.reduce((max, item) => Math.max(max, item.sortOrder ?? 0), 0) + 1,
@@ -1013,7 +1155,10 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
           updatedAt: now,
         };
         saveWebsiteRecords([record, ...records]);
-        return { success: true, message: `网站记录「${record.shortName}」已创建`, record };
+        if (args.needsSecret === true || hasSecretValue(args.password)) {
+          return { success: true, ...buildWebsitePasswordConfirmation(record) };
+        }
+        return { success: true, message: `网站记录「${record.shortName}」已创建`, record: toSafeWebsiteRecord(record) };
       },
     },
   {
@@ -1021,7 +1166,7 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
       module: 'dc-website',
       tool: {
         name: 'update_website_record',
-        description: '修改网站管理中的网站账号/密码记录。需要先 query_website_records 获取 id。',
+        description: '修改网站管理中的网站账号记录。需要先 query_website_records 获取 id。不要传 password 明文；如需修改密码，传 needsSecret=true，系统会让用户在本地卡片填写。',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1030,8 +1175,9 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
             url: { type: 'string' },
             account: { type: 'string' },
             password: { type: 'string' },
+            needsSecret: { type: 'boolean' },
             note: { type: 'string' },
-            tag: { type: 'string' },
+            tag: { type: 'string', description: '已有标签名称。不能清空；不存在时请先调用 create_website_tag 创建标签。' },
             sortOrder: { type: 'number' },
           },
           required: ['id'],
@@ -1043,13 +1189,23 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
         const record = records.find(item => item.id === id);
         if (!record) return { success: false, error: `未找到网站记录「${id}」。` };
         const updates: Partial<WebsiteRecord> = { updatedAt: Date.now() };
-        for (const field of ['shortName', 'url', 'account', 'password', 'note'] as const) {
-          if (typeof args[field] === 'string') updates[field] = field === 'password' ? args[field] : args[field].trim();
+        for (const field of ['shortName', 'url', 'account', 'note'] as const) {
+          if (typeof args[field] === 'string') updates[field] = args[field].trim();
         }
-        if (typeof args.tag === 'string') updates.tag = ensureWebsiteTag(args.tag.trim());
+        if (typeof args.tag === 'string') {
+          const nextTag = resolveExistingWebsiteTag(args.tag);
+          if (!nextTag) {
+            const available = readWebsiteTags().map(item => item.name).join('、') || '暂无';
+            return { success: false, error: `标签「${args.tag}」不存在。当前可用标签：${available}。如需新标签，请先调用 create_website_tag。` };
+          }
+          updates.tag = nextTag;
+        }
         if (typeof args.sortOrder === 'number') updates.sortOrder = args.sortOrder;
         const nextRecords = records.map(item => item.id === id ? { ...item, ...updates } : item);
         saveWebsiteRecords(nextRecords);
+        if (args.needsSecret === true || hasSecretValue(args.password)) {
+          return { success: true, ...buildWebsitePasswordConfirmation({ ...record, ...updates }) };
+        }
         return { success: true, message: `网站记录「${record.shortName}」已更新`, updated: { id, ...updates } };
       },
     },
@@ -1091,7 +1247,8 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
         },
       },
       execute: async (args) => {
-        const name = String(args.name || '').trim();
+        const rawName = String(args.name || '').trim();
+        const name = normalizeWebsiteTagName(rawName);
         if (!name) return { success: false, error: '标签名称不能为空。' };
         const tags = readWebsiteTags();
         if (tags.some(item => item.name === name)) return { success: false, error: `标签「${name}」已存在。` };
@@ -1129,7 +1286,10 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
         const tags = readWebsiteTags();
         const tag = tags.find(item => item.id === id);
         if (!tag) return { success: false, error: `未找到网站标签「${id}」。` };
-        const nextName = typeof args.name === 'string' && args.name.trim() ? args.name.trim() : tag.name;
+        const nextName = typeof args.name === 'string' && args.name.trim()
+          ? normalizeWebsiteTagName(args.name)
+          : tag.name;
+        if (!nextName) return { success: false, error: '标签名称不能为空。' };
         const updates: Partial<WebsiteTag> = { name: nextName };
         if (typeof args.color === 'string') updates.color = args.color.trim();
         if (typeof args.icon === 'string') updates.icon = args.icon.trim();
@@ -1147,12 +1307,12 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
       module: 'dc-website',
       tool: {
         name: 'delete_website_tag',
-        description: '删除网站管理标签，并将使用该标签的记录移动到 fallbackTag 或默认标签。',
+        description: '删除网站管理标签。若标签下有记录，必须传 fallbackTag 将记录迁移到另一个已有标签。',
         inputSchema: {
           type: 'object',
           properties: {
             id: { type: 'string' },
-            fallbackTag: { type: 'string', description: '被删除标签下记录迁移到的新标签。' },
+            fallbackTag: { type: 'string', description: '被删除标签下记录迁移到的已有标签。删除空标签时可省略。' },
           },
           required: ['id'],
         },
@@ -1163,22 +1323,34 @@ export const DATA_CENTER_TOOL_REGISTRATIONS: ToolRegistration[] = [
         const tag = tags.find(item => item.id === id);
         if (!tag) return { success: false, error: `未找到网站标签「${id}」。` };
         let remaining = tags.filter(item => item.id !== id);
-        const fallbackTag = typeof args.fallbackTag === 'string' && args.fallbackTag.trim()
-          ? args.fallbackTag.trim()
-          : remaining[0]?.name || '默认';
-        if (!remaining.some(item => item.name === fallbackTag)) {
-          remaining = [...remaining, {
-            id: `tag_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            name: fallbackTag,
-            color: WEBSITE_TAG_COLORS[remaining.length % WEBSITE_TAG_COLORS.length],
-            icon: 'Tag',
-            sortOrder: remaining.length,
-          }];
+        const records = readWebsiteRecords();
+        const affectedCount = records.filter(item => item.tag === tag.name).length;
+        const fallbackTag = typeof args.fallbackTag === 'string'
+          ? normalizeWebsiteTagName(args.fallbackTag)
+          : '';
+        if (affectedCount > 0) {
+          if (!fallbackTag) {
+            const available = remaining.map(item => item.name).join('、') || '暂无';
+            return { success: false, error: `标签「${tag.name}」下有 ${affectedCount} 条网站记录，删除前必须提供 fallbackTag 迁移到另一个已有标签。当前可用迁移标签：${available}。` };
+          }
+          if (fallbackTag === tag.name) {
+            return { success: false, error: 'fallbackTag 不能与被删除标签相同。' };
+          }
+          if (!remaining.some(item => item.name === fallbackTag)) {
+            const available = remaining.map(item => item.name).join('、') || '暂无';
+            return { success: false, error: `fallbackTag「${fallbackTag}」不是已有标签。当前可用迁移标签：${available}。` };
+          }
         }
         saveWebsiteTags(remaining);
-        const records = readWebsiteRecords();
-        saveWebsiteRecords(records.map(item => item.tag === tag.name ? { ...item, tag: fallbackTag, updatedAt: Date.now() } : item));
-        return { success: true, message: `网站标签「${tag.name}」已删除，相关记录已迁移到「${fallbackTag}」` };
+        if (affectedCount > 0) {
+          saveWebsiteRecords(records.map(item => item.tag === tag.name ? { ...item, tag: fallbackTag, updatedAt: Date.now() } : item));
+        }
+        return {
+          success: true,
+          message: affectedCount > 0
+            ? `网站标签「${tag.name}」已删除，相关记录已迁移到「${fallbackTag}」`
+            : `网站标签「${tag.name}」已删除`,
+        };
       },
     },
 ];

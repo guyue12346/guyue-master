@@ -463,7 +463,7 @@ export const migrateToIdBasedPaths = async (
 // ==================== 课程包导入导出 ====================
 
 /** 课程包格式版本 */
-const COURSE_PACK_VERSION = 1;
+const COURSE_PACK_VERSION = 2;
 
 /** 内嵌文件项 */
 interface PackFile {
@@ -473,8 +473,44 @@ interface PackFile {
   contentBase64: string;
 }
 
+interface CoursePackDocument {
+  id: string;
+  ownerType: 'course-intro' | 'lecture' | 'assignment-item' | 'personal-item' | 'custom-item';
+  ownerId: string;
+  section: SectionType | 'custom';
+  moduleId?: string;
+  fileName: string;
+  relativePath: string;
+  contentBase64: string;
+  order: number;
+}
+
+interface CoursePackModuleManifest {
+  id: string;
+  title: string;
+  description?: string;
+  order: number;
+  items: Array<{
+    id: string;
+    title: string;
+    order: number;
+    fileName?: string;
+    relativePath?: string;
+    type: 'lecture' | 'item';
+  }>;
+}
+
+interface CoursePackSectionManifest {
+  id: string;
+  title: string;
+  type: SectionType | 'custom';
+  order: number;
+  modules: CoursePackModuleManifest[];
+}
+
 /** 课程包结构 */
 export interface CoursePack {
+  schema?: 'guyue.learning.course-pack';
   version: number;
   exportedAt: string;
   category: {
@@ -488,7 +524,63 @@ export interface CoursePack {
   course: any; // CourseData (使用 any 避免循环引用问题)
   progress: Record<string, boolean>;
   files: PackFile[];
+  manifest?: {
+    courseId: string;
+    categoryId: string;
+    sections: CoursePackSectionManifest[];
+  };
+  documents?: CoursePackDocument[];
 }
+
+const normalizeOrder = (value: unknown, fallback: number) => {
+  const order = Number(value);
+  return Number.isFinite(order) ? order : fallback;
+};
+
+const safeMarkdownFileName = (order: number, title: string, id: string) => {
+  const name = sanitizeName(title || id || 'content').replace(/\s+/g, '-').slice(0, 64) || id || 'content';
+  return `${String(order + 1).padStart(2, '0')}-${name}.md`;
+};
+
+const makeDefaultMarkdown = (title: string, description?: string) => [
+  `# ${title || '未命名内容'}`,
+  '',
+  description ? description : '',
+  '',
+].join('\n');
+
+const cloneWithStableOrders = (course: any) => {
+  const cloned = JSON.parse(JSON.stringify(course || {}));
+  cloned.order = normalizeOrder(cloned.order, 0);
+  (cloned.modules || []).forEach((module: any, moduleIndex: number) => {
+    module.order = normalizeOrder(module.order, moduleIndex);
+    (module.lectures || []).forEach((lecture: any, itemIndex: number) => {
+      lecture.order = normalizeOrder(lecture.order, itemIndex);
+    });
+  });
+  (cloned.assignmentModules || []).forEach((module: any, moduleIndex: number) => {
+    module.order = normalizeOrder(module.order, moduleIndex);
+    (module.items || []).forEach((item: any, itemIndex: number) => {
+      item.order = normalizeOrder(item.order, itemIndex);
+    });
+  });
+  (cloned.personalModules || []).forEach((module: any, moduleIndex: number) => {
+    module.order = normalizeOrder(module.order, moduleIndex);
+    (module.items || []).forEach((item: any, itemIndex: number) => {
+      item.order = normalizeOrder(item.order, itemIndex);
+    });
+  });
+  (cloned.customSections || []).forEach((section: any, sectionIndex: number) => {
+    section.order = normalizeOrder(section.order, sectionIndex);
+    (section.modules || []).forEach((module: any, moduleIndex: number) => {
+      module.order = normalizeOrder(module.order, moduleIndex);
+      (module.items || []).forEach((item: any, itemIndex: number) => {
+        item.order = normalizeOrder(item.order, itemIndex);
+      });
+    });
+  });
+  return cloned;
+};
 
 /**
  * 导出课程包：收集课程 JSON 数据 + 磁盘上的笔记/资源文件（base64 内嵌）
@@ -498,12 +590,13 @@ export const exportCoursePack = async (
   category: { id: string; name: string; icon: string; description: string; color: string; priority?: number },
   progress: Record<string, boolean>
 ): Promise<CoursePack> => {
+  const exportCourse = cloneWithStableOrders(course);
   // 收集所有讲义/资源的 ID，过滤出与本课程相关的进度
   const relevantIds = new Set<string>();
-  (course.modules || []).forEach((m: any) => (m.lectures || []).forEach((l: any) => relevantIds.add(l.id)));
-  (course.assignmentModules || []).forEach((m: any) => (m.items || []).forEach((i: any) => relevantIds.add(i.id)));
-  (course.personalModules || []).forEach((m: any) => (m.items || []).forEach((i: any) => relevantIds.add(i.id)));
-  (course.customSections || []).forEach((s: any) => (s.modules || []).forEach((m: any) => (m.items || []).forEach((i: any) => relevantIds.add(i.id))));
+  (exportCourse.modules || []).forEach((m: any) => (m.lectures || []).forEach((l: any) => relevantIds.add(l.id)));
+  (exportCourse.assignmentModules || []).forEach((m: any) => (m.items || []).forEach((i: any) => relevantIds.add(i.id)));
+  (exportCourse.personalModules || []).forEach((m: any) => (m.items || []).forEach((i: any) => relevantIds.add(i.id)));
+  (exportCourse.customSections || []).forEach((s: any) => (s.modules || []).forEach((m: any) => (m.items || []).forEach((i: any) => relevantIds.add(i.id))));
 
   const courseProgress: Record<string, boolean> = {};
   for (const id of relevantIds) {
@@ -512,10 +605,11 @@ export const exportCoursePack = async (
 
   // 收集磁盘文件
   const files: PackFile[] = [];
+  const documents: CoursePackDocument[] = [];
   const sections: Array<{ key: SectionType; modules: any[] }> = [
-    { key: 'resources', modules: course.modules || [] },
-    { key: 'assignments', modules: course.assignmentModules || [] },
-    { key: 'personal', modules: course.personalModules || [] },
+    { key: 'resources', modules: exportCourse.modules || [] },
+    { key: 'assignments', modules: exportCourse.assignmentModules || [] },
+    { key: 'personal', modules: exportCourse.personalModules || [] },
   ];
 
   for (const { key, modules } of sections) {
@@ -530,6 +624,22 @@ export const exportCoursePack = async (
               relativePath: `${SECTION_NAMES[key]}/${mod.id}/${f.name}`,
               contentBase64: base64,
             });
+            const owner = key === 'resources'
+              ? (mod.lectures || []).find((item: any) => item.materials === f.name || String(item.materials || '').endsWith('/' + f.name))
+              : (mod.items || []).find((item: any) => item.link === f.name || String(item.link || '').endsWith('/' + f.name));
+            if (owner && /\.md$/i.test(f.name)) {
+              documents.push({
+                id: `${key}_${owner.id}`,
+                ownerType: key === 'resources' ? 'lecture' : key === 'assignments' ? 'assignment-item' : 'personal-item',
+                ownerId: owner.id,
+                section: key,
+                moduleId: mod.id,
+                fileName: f.name,
+                relativePath: `${SECTION_NAMES[key]}/${mod.id}/${f.name}`,
+                contentBase64: base64,
+                order: normalizeOrder(owner.order, 0),
+              });
+            }
           } catch { /* 文件读取失败跳过 */ }
         }
       } catch { /* 目录不存在跳过 */ }
@@ -537,7 +647,7 @@ export const exportCoursePack = async (
   }
 
   // customSections 的文件存在 personal 目录下（使用 section id 作为命名空间）
-  for (const section of (course.customSections || [])) {
+  for (const section of (exportCourse.customSections || [])) {
     for (const mod of (section.modules || [])) {
       try {
         const dirFiles = await getFilesInModule(category.id, course.id, 'personal', mod.id, false);
@@ -549,6 +659,20 @@ export const exportCoursePack = async (
               relativePath: `custom_${section.id}/${mod.id}/${f.name}`,
               contentBase64: base64,
             });
+            const owner = (mod.items || []).find((item: any) => item.link === f.name || String(item.link || '').endsWith('/' + f.name));
+            if (owner && /\.md$/i.test(f.name)) {
+              documents.push({
+                id: `custom_${owner.id}`,
+                ownerType: 'custom-item',
+                ownerId: owner.id,
+                section: 'custom',
+                moduleId: mod.id,
+                fileName: f.name,
+                relativePath: `custom_${section.id}/${mod.id}/${f.name}`,
+                contentBase64: base64,
+                order: normalizeOrder(owner.order, 0),
+              });
+            }
           } catch { /* skip */ }
         }
       } catch { /* skip */ }
@@ -556,7 +680,7 @@ export const exportCoursePack = async (
   }
 
   // 清理课程数据中的绝对路径，改为相对路径
-  const cleanCourse = JSON.parse(JSON.stringify(course));
+  const cleanCourse = JSON.parse(JSON.stringify(exportCourse));
   const stripAbsPath = (p?: string) => {
     if (!p || !p.startsWith('/')) return p;
     // 只保留文件名
@@ -580,13 +704,52 @@ export const exportCoursePack = async (
   delete cleanCourse.assignments;
   delete cleanCourse.personalResources;
 
+  const buildModuleManifest = (modules: any[], sectionType: SectionType | 'custom'): CoursePackModuleManifest[] =>
+    (modules || []).map((module: any, moduleIndex: number) => ({
+      id: module.id,
+      title: module.title || '',
+      description: module.description || '',
+      order: normalizeOrder(module.order, moduleIndex),
+      items: ((sectionType === 'resources' ? module.lectures : module.items) || []).map((item: any, itemIndex: number) => {
+        const fileName = sectionType === 'resources' ? item.materials : item.link;
+        return {
+          id: item.id,
+          title: item.title || '',
+          order: normalizeOrder(item.order, itemIndex),
+          fileName: typeof fileName === 'string' && fileName ? fileName.split('/').pop() : undefined,
+          relativePath: typeof fileName === 'string' && fileName && !/^https?:\/\//i.test(fileName) ? fileName : undefined,
+          type: sectionType === 'resources' ? 'lecture' : 'item',
+        };
+      }),
+    }));
+
+  const manifest: CoursePack['manifest'] = {
+    courseId: cleanCourse.id,
+    categoryId: category.id,
+    sections: [
+      { id: 'resources', title: SECTION_NAMES.resources, type: 'resources', order: 0, modules: buildModuleManifest(cleanCourse.modules || [], 'resources') },
+      { id: 'assignments', title: SECTION_NAMES.assignments, type: 'assignments', order: 1, modules: buildModuleManifest(cleanCourse.assignmentModules || [], 'assignments') },
+      { id: 'personal', title: SECTION_NAMES.personal, type: 'personal', order: 2, modules: buildModuleManifest(cleanCourse.personalModules || [], 'personal') },
+      ...(cleanCourse.customSections || []).map((section: any, index: number) => ({
+        id: section.id,
+        title: section.title || '',
+        type: 'custom' as const,
+        order: normalizeOrder(section.order, index + 3),
+        modules: buildModuleManifest(section.modules || [], 'custom'),
+      })),
+    ],
+  };
+
   return {
+    schema: 'guyue.learning.course-pack',
     version: COURSE_PACK_VERSION,
     exportedAt: new Date().toISOString(),
     category,
     course: cleanCourse,
     progress: courseProgress,
     files,
+    manifest,
+    documents,
   };
 };
 
@@ -732,6 +895,55 @@ export const importCoursePack = async (
       updatePathInCourse(course, oldModId, newModId, fileName, destPath);
     } catch (e) {
       console.warn(`[Import] 写入文件失败: ${file.relativePath}`, e);
+    }
+  }
+
+  const ensureMarkdownDocument = async (
+    section: SectionType,
+    moduleId: string,
+    item: any,
+    field: 'materials' | 'link',
+    order: number,
+  ) => {
+    const current = typeof item[field] === 'string' ? item[field].trim() : '';
+    if (/^https?:\/\//i.test(current) || current.startsWith('/')) return;
+    if (current && !/\.md$/i.test(current)) return;
+
+    const fileName = current || safeMarkdownFileName(order, item.title || item.id, item.id);
+    const modulePath = await getModulePath(categoryId, newCourseId, section, moduleId);
+    await ensureDirectory(modulePath);
+    const destPath = await window.electronAPI.pathJoin(modulePath, fileName);
+    const exists = await window.electronAPI.checkFileExists(destPath).catch(() => false);
+    if (!exists) {
+      await window.electronAPI.writeFile(destPath, makeDefaultMarkdown(item.title || '未命名内容', item.desc || item.note || item.description));
+    }
+    item[field] = destPath;
+  };
+
+  for (const module of (course.modules || [])) {
+    for (const [index, lecture] of (module.lectures || []).entries()) {
+      lecture.order = normalizeOrder(lecture.order, index);
+      await ensureMarkdownDocument('resources', module.id, lecture, 'materials', lecture.order);
+    }
+  }
+  for (const module of (course.assignmentModules || [])) {
+    for (const [index, item] of (module.items || []).entries()) {
+      item.order = normalizeOrder(item.order, index);
+      await ensureMarkdownDocument('assignments', module.id, item, 'link', item.order);
+    }
+  }
+  for (const module of (course.personalModules || [])) {
+    for (const [index, item] of (module.items || []).entries()) {
+      item.order = normalizeOrder(item.order, index);
+      await ensureMarkdownDocument('personal', module.id, item, 'link', item.order);
+    }
+  }
+  for (const section of (course.customSections || [])) {
+    for (const module of (section.modules || [])) {
+      for (const [index, item] of (module.items || []).entries()) {
+        item.order = normalizeOrder(item.order, index);
+        await ensureMarkdownDocument('personal', module.id, item, 'link', item.order);
+      }
     }
   }
 

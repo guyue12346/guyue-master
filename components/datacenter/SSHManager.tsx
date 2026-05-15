@@ -7,6 +7,7 @@ import { CategoryManagerModal } from '../CategoryManagerModal';
 
 // 动态导入 SSHModal（避免循环依赖）
 const SSHModal = React.lazy(() => import('../SSHModal').then(m => ({ default: m.SSHModal })));
+const RESERVED_CATEGORY_NAMES = ['全部', '未分类', '默认'];
 
 interface SSHManagerProps {
   records: SSHRecord[];
@@ -34,7 +35,9 @@ export const SSHManager: React.FC<SSHManagerProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>('全部');
 
   const categoryNames = useMemo(
-    () => categories.map(c => c.name),
+    () => categories
+      .filter(c => !c.isSystem && c.id !== 'all' && !RESERVED_CATEGORY_NAMES.includes(c.name))
+      .map(c => c.name),
     [categories]
   );
 
@@ -61,6 +64,10 @@ export const SSHManager: React.FC<SSHManagerProps> = ({
   };
 
   const handleAdd = () => {
+    if (categoryNames.length === 0) {
+      setIsCategoryManagerOpen(true);
+      return;
+    }
     setEditingRecord(null);
     setIsModalOpen(true);
   };
@@ -71,6 +78,7 @@ export const SSHManager: React.FC<SSHManagerProps> = ({
   };
 
   const handleSave = (record: Partial<SSHRecord>) => {
+    if (!record.category || !categoryNames.includes(record.category)) return;
     onSave(record);
     handleClose();
   };
@@ -78,10 +86,10 @@ export const SSHManager: React.FC<SSHManagerProps> = ({
   // 所有存在的分类
   const allCategories = useMemo(() => {
     return Array.from(new Set([
-      ...categories.map(c => c.name).filter(name => name && name !== '全部'),
-      ...records.map(r => r.category).filter(Boolean),
+      ...categoryNames,
+      ...records.map(r => r.category).filter((name): name is string => Boolean(name) && !RESERVED_CATEGORY_NAMES.includes(name)),
     ]));
-  }, [categories, records]);
+  }, [categoryNames, records]);
 
   const activeCategoryCount = selectedCategory === '全部'
     ? records.length
@@ -197,6 +205,7 @@ export const SSHManager: React.FC<SSHManagerProps> = ({
         categories={categories}
         onUpdateCategories={onUpdateCategories}
         onDeleteCategory={onDeleteCategory}
+        forbiddenNames={RESERVED_CATEGORY_NAMES}
       />
     </div>
   );

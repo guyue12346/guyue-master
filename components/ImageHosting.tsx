@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ImageRecord, ImageHostingConfig } from '../types';
-import { Upload, Settings, Copy, Trash2, ExternalLink, Image as ImageIcon, Loader2, X, FileText, Edit2, HelpCircle } from 'lucide-react';
+import { Upload, Settings, Copy, Trash2, ExternalLink, Image as ImageIcon, Loader2, X, FileText, Edit2, HelpCircle, FolderPlus } from 'lucide-react';
 
 interface ImageHostingProps {
   records: ImageRecord[];
@@ -9,10 +9,12 @@ interface ImageHostingProps {
   categories: string[];
   onUpdateRecords: (records: ImageRecord[]) => void;
   onUpdateConfig: (config: ImageHostingConfig) => void;
+  onManageCategories?: () => void;
   onHelp?: () => void;
 }
 
-export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, selectedCategory, categories, onUpdateRecords, onUpdateConfig, onHelp }) => {
+export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, selectedCategory, categories, onUpdateRecords, onUpdateConfig, onManageCategories, onHelp }) => {
+  const categoryOptions = Array.from(new Set(categories.filter(c => c && c !== '全部' && c !== '未分类' && c !== '默认')));
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -50,7 +52,20 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
     setIsSettingsOpen(false);
   };
 
+  const getInitialCategory = () => {
+    if (selectedCategory !== '全部' && categoryOptions.includes(selectedCategory)) return selectedCategory;
+    return categoryOptions[0] || '';
+  };
+
+  const ensureCategoryReady = () => {
+    if (categoryOptions.length > 0) return true;
+    alert('请先创建图床分类');
+    onManageCategories?.();
+    return false;
+  };
+
   const handleUpload = async () => {
+    if (!ensureCategoryReady()) return;
     if (!config.accessToken || !config.owner || !config.repo) {
       alert('请先配置 Gitee 图床信息');
       setIsSettingsOpen(true);
@@ -64,7 +79,7 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
       const defaultName = file.name.substring(0, file.name.lastIndexOf('.'));
       setPendingFile(file);
       setCustomName(defaultName);
-      setSelectedUploadCategory(selectedCategory === '全部' ? '未分类' : selectedCategory);
+      setSelectedUploadCategory(getInitialCategory());
       setIsNameModalOpen(true);
     } catch (error: any) {
       console.error('File selection error:', error);
@@ -72,15 +87,20 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
   };
 
   const handleAddLink = () => {
+    if (!ensureCategoryReady()) return;
     setLinkUrl('');
     setLinkName('');
-    setSelectedLinkCategory(selectedCategory === '全部' ? '未分类' : selectedCategory);
+    setSelectedLinkCategory(getInitialCategory());
     setIsAddLinkModalOpen(true);
   };
 
   const confirmAddLink = () => {
     if (!linkUrl.trim()) {
       alert('请输入图片链接');
+      return;
+    }
+    if (!categoryOptions.includes(selectedLinkCategory)) {
+      alert('请先选择已有分类');
       return;
     }
 
@@ -91,7 +111,7 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
       url: linkUrl.trim(),
       sha: '', // External link doesn't have sha
       path: '', // External link doesn't have path
-      category: selectedLinkCategory || '未分类',
+      category: selectedLinkCategory,
       createdAt: Date.now(),
     };
 
@@ -104,12 +124,16 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
   const handleEditRecord = (record: ImageRecord) => {
     setEditingRecord(record);
     setEditName(record.name || record.filename);
-    setEditCategory(record.category || '未分类');
+    setEditCategory(categoryOptions.includes(record.category || '') ? record.category || '' : getInitialCategory());
     setIsEditModalOpen(true);
   };
 
   const confirmEditRecord = () => {
     if (!editingRecord) return;
+    if (!categoryOptions.includes(editCategory)) {
+      alert('请先选择已有分类');
+      return;
+    }
 
     const updatedRecords = records.map(r => 
       r.id === editingRecord.id 
@@ -125,6 +149,10 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
 
   const confirmUpload = async () => {
     if (!pendingFile) return;
+    if (!categoryOptions.includes(selectedUploadCategory)) {
+      alert('请先选择已有分类');
+      return;
+    }
     
     setIsNameModalOpen(false);
     setIsUploading(true);
@@ -157,7 +185,7 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
         url: data.content.download_url,
         sha: data.content.sha,
         path: data.content.path,
-        category: selectedUploadCategory || '未分类',
+        category: selectedUploadCategory,
         createdAt: Date.now(),
       };
 
@@ -203,6 +231,13 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
               <HelpCircle className="w-5 h-5" />
             </button>
           )}
+          <button
+            onClick={onManageCategories}
+            className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
+            title="管理分类"
+          >
+            <FolderPlus className="w-5 h-5" />
+          </button>
           <button
             onClick={() => setIsSettingsOpen(true)}
             className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
@@ -363,7 +398,7 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
                   onChange={e => setSelectedUploadCategory(e.target.value)}
                   className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
                 >
-                  {categories.filter(c => c !== '全部').map(cat => (
+                  {categoryOptions.map(cat => (
                     <option key={cat} value={cat}>{cat}</option>
                   ))}
                 </select>
@@ -379,7 +414,8 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
               </button>
               <button
                 onClick={confirmUpload}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/30"
+                disabled={categoryOptions.length === 0}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 确认上传
               </button>
@@ -436,7 +472,7 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
                   onChange={e => setSelectedLinkCategory(e.target.value)}
                   className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
                 >
-                  {categories.filter(c => c !== '全部').map(cat => (
+                  {categoryOptions.map(cat => (
                     <option key={cat} value={cat}>{cat}</option>
                   ))}
                 </select>
@@ -452,7 +488,8 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
               </button>
               <button
                 onClick={confirmAddLink}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors shadow-lg shadow-green-500/30"
+                disabled={categoryOptions.length === 0}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors shadow-lg shadow-green-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 添加
               </button>
@@ -495,7 +532,7 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
                   onChange={e => setEditCategory(e.target.value)}
                   className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
                 >
-                  {categories.filter(c => c !== '全部').map(cat => (
+                  {categoryOptions.map(cat => (
                     <option key={cat} value={cat}>{cat}</option>
                   ))}
                 </select>
@@ -511,7 +548,8 @@ export const ImageHosting: React.FC<ImageHostingProps> = ({ records, config, sel
               </button>
               <button
                 onClick={confirmEditRecord}
-                className="px-4 py-2 bg-orange-600 text-white rounded-lg text-sm font-medium hover:bg-orange-700 transition-colors shadow-lg shadow-orange-500/30"
+                disabled={categoryOptions.length === 0}
+                className="px-4 py-2 bg-orange-600 text-white rounded-lg text-sm font-medium hover:bg-orange-700 transition-colors shadow-lg shadow-orange-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 保存
               </button>

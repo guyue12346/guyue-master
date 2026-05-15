@@ -22,6 +22,7 @@ export const SSHModal: React.FC<SSHModalProps> = ({ isOpen, onClose, onSave, ini
   const [isCustomCommand, setIsCustomCommand] = useState(false);
   const [priority, setPriority] = useState<string>('');
   const [networkType, setNetworkType] = useState<string>('局域网');
+  const [categoryError, setCategoryError] = useState('');
 
   useEffect(() => {
     if (initialData) {
@@ -29,7 +30,7 @@ export const SSHModal: React.FC<SSHModalProps> = ({ isOpen, onClose, onSave, ini
       setHost(initialData.host);
       setUsername(initialData.username);
       setPort(initialData.port);
-      setCategory(initialData.category);
+      setCategory(categories.includes(initialData.category) ? initialData.category : '');
       setNote(initialData.note);
       setCustomCommand(initialData.command);
       setPriority(initialData.priority ? initialData.priority.toString() : '');
@@ -44,7 +45,7 @@ export const SSHModal: React.FC<SSHModalProps> = ({ isOpen, onClose, onSave, ini
     } else {
       resetForm();
     }
-  }, [initialData, isOpen]);
+  }, [initialData, isOpen, categories]);
 
   const resetForm = () => {
     setTitle('');
@@ -57,6 +58,7 @@ export const SSHModal: React.FC<SSHModalProps> = ({ isOpen, onClose, onSave, ini
     setIsCustomCommand(false);
     setPriority('');
     setNetworkType('局域网');
+    setCategoryError('');
   };
 
   const generatedCommand = `ssh -p ${port} ${username}@${host}`;
@@ -64,6 +66,14 @@ export const SSHModal: React.FC<SSHModalProps> = ({ isOpen, onClose, onSave, ini
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (categories.length === 0) {
+      setCategoryError('请先创建分类');
+      return;
+    }
+    if (!category || !categories.includes(category)) {
+      setCategoryError('请选择一个已有分类');
+      return;
+    }
     onSave({
       id: initialData?.id,
       title: title || host,
@@ -121,16 +131,19 @@ export const SSHModal: React.FC<SSHModalProps> = ({ isOpen, onClose, onSave, ini
             
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wide">分类</label>
-              <input
-                list="categories"
+              <select
                 value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                placeholder="选择或输入"
-                className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm"
-              />
-              <datalist id="categories">
-                {categories.filter(c => c !== '全部').map(c => <option key={c} value={c} />)}
-              </datalist>
+                onChange={(e) => {
+                  setCategory(e.target.value);
+                  setCategoryError('');
+                }}
+                disabled={categories.length === 0}
+                className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <option value="" disabled>{categories.length === 0 ? '请先创建分类' : '请选择分类'}</option>
+                {categories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              {categoryError && <p className="mt-1 text-xs text-red-500">{categoryError}</p>}
             </div>
           </div>
 
@@ -175,7 +188,7 @@ export const SSHModal: React.FC<SSHModalProps> = ({ isOpen, onClose, onSave, ini
                   max="100"
                   value={priority}
                   onChange={(e) => setPriority(e.target.value)}
-                  placeholder="默认排最后"
+                  placeholder="留空排最后"
                   className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm"
                 />
               </div>
@@ -290,7 +303,8 @@ export const SSHModal: React.FC<SSHModalProps> = ({ isOpen, onClose, onSave, ini
             </button>
             <button
               type="submit"
-              className="px-5 py-2.5 text-sm font-medium bg-gray-900 text-white rounded-xl shadow-lg shadow-gray-900/20 hover:bg-black hover:scale-105 active:scale-95 transition-all"
+              disabled={categories.length === 0 || !category}
+              className="px-5 py-2.5 text-sm font-medium bg-gray-900 text-white rounded-xl shadow-lg shadow-gray-900/20 hover:bg-black hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
             >
               保存
             </button>

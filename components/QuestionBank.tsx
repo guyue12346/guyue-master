@@ -193,32 +193,17 @@ function normalizeUiState(source: any): QuestionBankUiState {
 }
 
 const defaultData = (): QuestionBankData => ({
-  categories: [
-    {
-      id: nowId('cat'),
-      name: '数学',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    },
-  ],
+  categories: [],
   questions: [],
 });
 
 const defaultMethodData = (): MethodLibraryData => ({
-  categories: [
-    {
-      id: nowId('cat'),
-      name: '解题方法',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    },
-  ],
+  categories: [],
   methods: [],
 });
 
 const normalizeQuestionBankData = (source: any): QuestionBankData => {
-  const fallback = defaultData();
-  const rawCategories = Array.isArray(source?.categories) ? source.categories : fallback.categories;
+  const rawCategories = Array.isArray(source?.categories) ? source.categories : [];
   const categories = rawCategories
     .map((category: any): QuestionCategory | null => {
       const name = String(category?.name || '').trim();
@@ -232,16 +217,15 @@ const normalizeQuestionBankData = (source: any): QuestionBankData => {
       };
     })
     .filter((category: QuestionCategory | null): category is QuestionCategory => !!category);
-  const finalCategories = categories.length > 0 ? categories : fallback.categories;
+  const finalCategories = categories;
   const validCategoryIds = new Set(finalCategories.map(category => category.id));
-  const fallbackCategoryId = finalCategories[0].id;
   const questions = Array.isArray(source?.questions)
     ? source.questions.map((question: any): QuestionItem => {
         const rawCategoryId = typeof question?.categoryId === 'string' ? question.categoryId : '';
         return {
           id: String(question?.id || nowId('q')),
           title: String(question?.title || '未命名题目'),
-          categoryId: validCategoryIds.has(rawCategoryId) ? rawCategoryId : fallbackCategoryId,
+          categoryId: validCategoryIds.has(rawCategoryId) ? rawCategoryId : '',
           question: String(question?.question || ''),
           answer: String(question?.answer || ''),
           solutions: normalizeSolutions(question?.solutions, question?.answer),
@@ -262,8 +246,7 @@ const normalizeQuestionBankData = (source: any): QuestionBankData => {
 };
 
 const normalizeMethodLibraryData = (source: any): MethodLibraryData => {
-  const fallback = defaultMethodData();
-  const rawCategories = Array.isArray(source?.categories) ? source.categories : fallback.categories;
+  const rawCategories = Array.isArray(source?.categories) ? source.categories : [];
   const categories = rawCategories
     .map((category: any): QuestionCategory | null => {
       const name = String(category?.name || '').trim();
@@ -277,16 +260,15 @@ const normalizeMethodLibraryData = (source: any): MethodLibraryData => {
       };
     })
     .filter((category: QuestionCategory | null): category is QuestionCategory => !!category);
-  const finalCategories = categories.length > 0 ? categories : fallback.categories;
+  const finalCategories = categories;
   const validCategoryIds = new Set(finalCategories.map(category => category.id));
-  const fallbackCategoryId = finalCategories[0].id;
   const methods = Array.isArray(source?.methods)
     ? source.methods.map((method: any): MethodItem => {
         const rawCategoryId = typeof method?.categoryId === 'string' ? method.categoryId : '';
         return {
           id: String(method?.id || nowId('method')),
           title: String(method?.title || '未命名方法'),
-          categoryId: validCategoryIds.has(rawCategoryId) ? rawCategoryId : fallbackCategoryId,
+          categoryId: validCategoryIds.has(rawCategoryId) ? rawCategoryId : '',
           content: String(method?.content || ''),
           summary: String(method?.summary || ''),
           tags: Array.isArray(method?.tags) ? method.tags.map((tag: unknown) => String(tag).trim()).filter(Boolean) : [],
@@ -1276,8 +1258,29 @@ export const QuestionBank: React.FC = () => {
     const sourceCategories = collection === 'questions' ? categories : methodCategories;
     const deletedIds = getDescendants(sourceCategories, category.id);
     const remainingCategories = sourceCategories.filter(item => !deletedIds.has(item.id));
+    const hasAffectedItems = collection === 'questions'
+      ? data.questions.some(question => deletedIds.has(question.categoryId))
+      : methodData.methods.some(method => deletedIds.has(method.categoryId));
     if (remainingCategories.length === 0) {
-      showToast('至少保留一个分类');
+      if (hasAffectedItems) {
+        showToast('该分类下还有内容，请先创建另一个分类再删除');
+        return;
+      }
+      if (collection === 'questions') {
+        updateData(current => ({
+          categories: current.categories.filter(item => !deletedIds.has(item.id)),
+          questions: current.questions,
+        }));
+        if (deletedIds.has(activeCategoryId)) setActiveCategoryId('');
+        showToast('分类已删除');
+      } else {
+        updateMethodData(current => ({
+          categories: current.categories.filter(item => !deletedIds.has(item.id)),
+          methods: current.methods,
+        }));
+        if (deletedIds.has(activeMethodCategoryId)) setActiveMethodCategoryId('');
+        showToast('分类已删除');
+      }
       return;
     }
     const remainingParentIds = new Set(remainingCategories.map(item => item.parentId).filter(Boolean) as string[]);
@@ -2760,7 +2763,7 @@ export const QuestionBank: React.FC = () => {
                             </button>
                             <div className="min-w-0 flex-1">
                               <div className="truncate text-sm font-medium text-gray-900">{method.title || '未命名方法'}</div>
-                              <div className="mt-1 truncate text-xs text-gray-400">{categoryPath(methodCategories, method.categoryId) || '未分类'}</div>
+                              <div className="mt-1 truncate text-xs text-gray-400">{categoryPath(methodCategories, method.categoryId)}</div>
                               {method.summary.trim() && <div className="mt-1 truncate text-xs text-gray-500">{method.summary}</div>}
                             </div>
                           </div>
@@ -2785,7 +2788,7 @@ export const QuestionBank: React.FC = () => {
                   <div className="mb-5">
                     <h2 className="text-xl font-semibold text-gray-900">{methodPickerPreview.title || '未命名方法'}</h2>
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-400">
-                      <span>{categoryPath(methodCategories, methodPickerPreview.categoryId) || '未分类'}</span>
+                      <span>{categoryPath(methodCategories, methodPickerPreview.categoryId)}</span>
                       {methodPickerPreview.tags.map(tag => (
                         <span key={tag} className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-600">{tag}</span>
                       ))}
@@ -2814,7 +2817,7 @@ export const QuestionBank: React.FC = () => {
               <div className="min-w-0">
                 <h2 className="truncate text-lg font-semibold">{previewMethod.title || '未命名方法'}</h2>
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
-                  <span>{categoryPath(methodCategories, previewMethod.categoryId) || '未分类'}</span>
+                  <span>{categoryPath(methodCategories, previewMethod.categoryId)}</span>
                   <span>{formatDate(previewMethod.updatedAt)}</span>
                   {previewMethod.summary.trim() && <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600">{previewMethod.summary}</span>}
                   {previewMethod.tags.map(tag => (

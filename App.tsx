@@ -3,8 +3,8 @@ import { NavRail } from './components/NavRail';
 import { Sidebar } from './components/Sidebar';
 import { TodoSidebar, TodoSubMode } from './components/TodoSidebar';
 import { SplashScreen } from './components/SplashScreen';
-import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig, RecurringEvent, RecurringCategory, DEFAULT_RECURRING_CATEGORIES, STORAGE_KEY_RECURRING_CATS, MusicTrack, MusicPlaylist, DEFAULT_MUSIC_PLAYLISTS } from './types';
-import { Plus, Search, Command, Loader2, ChevronRight, Upload, Edit3, Save, List, HelpCircle } from 'lucide-react';
+import { Category, Note, SSHRecord, APIRecord, TodoItem, FileRecord, PromptRecord, MarkdownNote, ImageRecord, ImageHostingConfig, DEFAULT_CATEGORIES, AppMode, ModuleConfig, DEFAULT_MODULE_CONFIG, PluginMetadata, HeatmapData, OJHeatmapData, ResourceCenterData, EmailConfig, RecurringEvent, RecurringCategory, STORAGE_KEY_RECURRING_CATS, MusicTrack, MusicPlaylist, DEFAULT_MUSIC_PLAYLISTS } from './types';
+import { Plus, Search, Command, Loader2, ChevronRight, Upload, Edit3, Save, List, HelpCircle, X, Bot } from 'lucide-react';
 import type { VaultFileEntry } from './components/VaultImportModal';
 import { FloatingChatWindow } from './components/FloatingChatWindow';
 import {
@@ -90,9 +90,29 @@ const STORAGE_KEY_TODO_SUBMODE = 'guyue_todo_submode';
 const STORAGE_KEY_MODE_SNAPSHOTS = 'guyue_mode_snapshots';
 const STORAGE_KEY_MODULE_SIDEBARS = 'guyue_module_sidebar_visibility_v1';
 
+interface AgentActivityState {
+  stage: string;
+  status: string;
+  title: string;
+  active: boolean;
+  isProcessing: boolean;
+}
+
+const getAgentActivityGlowColor = (activity?: Partial<AgentActivityState>, isOpen = false) => {
+  const stage = String(activity?.stage || '').toLowerCase();
+  const status = String(activity?.status || '').toLowerCase();
+  if (status.includes('error') || stage.includes('error')) return '#ef4444';
+  if (stage.includes('approval') || status.includes('user')) return '#f97316';
+  if (stage.includes('execution')) return '#3b82f6';
+  if (stage.includes('verification') || stage.includes('inspection') || stage.includes('reporting')) return '#10b981';
+  if (stage.includes('reflection')) return '#f59e0b';
+  if (stage.includes('routing') || stage.includes('planning') || stage.includes('decision')) return '#8b5cf6';
+  return isOpen ? '#6366f1' : '#94a3b8';
+};
+
 const normalizeAppTheme = (theme: string | null | undefined) => {
   if (theme === 'minimal') return 'pure';
-  return theme || 'default';
+  return theme || 'pure';
 };
 
 const normalizeAppMode = (mode: AppMode | null | undefined) => {
@@ -249,8 +269,35 @@ const safeJSONParse = <T,>(data: string | null, defaultValue: T): T => {
 };
 
 const STORAGE_RESCUE_MARKER_KEY = 'guyue_storage_rescue_20260513_v1';
-const SYSTEM_CATEGORY_NAMES = new Set(['全部', '未分类']);
+const SYSTEM_CATEGORY_NAMES = new Set(['全部', '未分类', '默认']);
 const DEFAULT_CATEGORY_NAMES = new Set(DEFAULT_CATEGORIES.map(category => category.name));
+const STRICT_CATEGORY_MODULES = new Set(['ssh', 'api', 'todo', 'files', 'prompts', 'markdown', 'image-hosting']);
+const RESERVED_STRICT_CATEGORY_NAMES = new Set(['全部', '未分类', '默认']);
+
+const ALL_CATEGORY: Category = { id: 'all', name: '全部', icon: 'LayoutGrid', isSystem: true };
+
+const createDerivedCategory = (name: string, icon = 'Folder'): Category => ({
+  id: `cat_${name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '') || crypto.randomUUID()}`,
+  name,
+  icon,
+  isSystem: false,
+});
+
+const isValidStrictCategoryName = (name?: string) => {
+  const trimmed = name?.trim();
+  return Boolean(trimmed && !RESERVED_STRICT_CATEGORY_NAMES.has(trimmed));
+};
+
+const normalizeStrictCategories = (categories: Category[] = []) =>
+  categories.filter(category =>
+    category &&
+    category.id !== 'all' &&
+    !category.isSystem &&
+    isValidStrictCategoryName(category.name),
+  );
+
+const getStrictCategoryNames = (categories: Category[] = []) =>
+  normalizeStrictCategories(categories).map(category => category.name);
 
 const shouldRunOneTimeStorageRescue = () => {
   if (typeof localStorage === 'undefined') return false;
@@ -611,12 +658,13 @@ const App: React.FC = () => {
   
   // Categories now managed per app mode
   const [categoriesMap, setCategoriesMap] = useState<Record<string, Category[]>>({
-    ssh: DEFAULT_CATEGORIES,
-    api: DEFAULT_CATEGORIES,
-    todo: DEFAULT_CATEGORIES,
-    files: DEFAULT_CATEGORIES,
-    prompts: DEFAULT_CATEGORIES,
-    'image-hosting': DEFAULT_CATEGORIES,
+    ssh: [],
+    api: [],
+    todo: [],
+    files: [],
+    prompts: [],
+    markdown: [],
+    'image-hosting': [],
     notes: []
   });
   
@@ -639,6 +687,103 @@ const App: React.FC = () => {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isFloatingChatOpen, setIsFloatingChatOpen] = useState(false);
   const [floatingChatSource, setFloatingChatSource] = useState<'leetcode' | null>(null);
+  const [isAgentFloatingOpen, setIsAgentFloatingOpen] = useState(false);
+  const [agentSummonGlow, setAgentSummonGlow] = useState(false);
+  const [agentActivity, setAgentActivity] = useState<AgentActivityState>({
+    stage: 'idle',
+    status: 'idle',
+    title: 'Agent 空闲',
+    active: false,
+    isProcessing: false,
+  });
+  const agentGlowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const agentFloatingRef = useRef<HTMLDivElement | null>(null);
+  const agentFloatingDragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
+  const [agentFloatingPosition, setAgentFloatingPosition] = useState<{ x: number; y: number } | null>(null);
+
+  const getDefaultAgentFloatingPosition = useCallback(() => {
+    if (typeof window === 'undefined') return { x: 96, y: 80 };
+    const width = Math.min(520, Math.max(320, window.innerWidth - 48));
+    const height = Math.min(680, Math.max(420, window.innerHeight - 88));
+    return {
+      x: Math.max(24, Math.round((window.innerWidth - width) / 2)),
+      y: Math.max(24, Math.round((window.innerHeight - height) / 2)),
+    };
+  }, []);
+
+  const clampAgentFloatingPosition = useCallback((position: { x: number; y: number }) => {
+    if (typeof window === 'undefined') return position;
+    const width = Math.min(520, Math.max(320, window.innerWidth - 48));
+    const height = Math.min(680, Math.max(420, window.innerHeight - 88));
+    const maxX = Math.max(16, window.innerWidth - width - 16);
+    const maxY = Math.max(16, window.innerHeight - height - 16);
+    return {
+      x: Math.min(Math.max(16, Math.round(position.x)), maxX),
+      y: Math.min(Math.max(16, Math.round(position.y)), maxY),
+    };
+  }, []);
+
+  const ensureAgentFloatingPosition = useCallback(() => {
+    setAgentFloatingPosition(prev => prev ? clampAgentFloatingPosition(prev) : getDefaultAgentFloatingPosition());
+  }, [clampAgentFloatingPosition, getDefaultAgentFloatingPosition]);
+
+  const triggerAgentSummonGlow = useCallback(() => {
+    setAgentSummonGlow(false);
+    window.requestAnimationFrame(() => setAgentSummonGlow(true));
+    if (agentGlowTimerRef.current) clearTimeout(agentGlowTimerRef.current);
+    agentGlowTimerRef.current = setTimeout(() => setAgentSummonGlow(false), 1400);
+  }, []);
+
+  const openFloatingAgent = useCallback(() => {
+    setHasAgentMounted(true);
+    ensureAgentFloatingPosition();
+    setIsAgentFloatingOpen(true);
+    triggerAgentSummonGlow();
+  }, [ensureAgentFloatingPosition, triggerAgentSummonGlow]);
+
+  const toggleFloatingAgent = useCallback(() => {
+    setHasAgentMounted(true);
+    if (isAgentFloatingOpen) {
+      setIsAgentFloatingOpen(false);
+      return;
+    }
+    ensureAgentFloatingPosition();
+    setIsAgentFloatingOpen(true);
+    triggerAgentSummonGlow();
+  }, [ensureAgentFloatingPosition, isAgentFloatingOpen, triggerAgentSummonGlow]);
+
+  const handleAgentFloatingPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button, input, textarea, select, a')) return;
+    const rect = agentFloatingRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    agentFloatingDragRef.current = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }, []);
+
+  const handleAgentFloatingPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = agentFloatingDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    setAgentFloatingPosition(clampAgentFloatingPosition({
+      x: event.clientX - drag.offsetX,
+      y: event.clientY - drag.offsetY,
+    }));
+  }, [clampAgentFloatingPosition]);
+
+  const handleAgentFloatingPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = agentFloatingDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    agentFloatingDragRef.current = null;
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {}
+  }, []);
 
   const handleToggleFloatingChat = useCallback((source: 'leetcode') => {
     if (isFloatingChatOpen && floatingChatSource === source) {
@@ -648,6 +793,18 @@ const App: React.FC = () => {
       setIsFloatingChatOpen(true);
     }
   }, [isFloatingChatOpen, floatingChatSource]);
+
+  useEffect(() => () => {
+    if (agentGlowTimerRef.current) clearTimeout(agentGlowTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setAgentFloatingPosition(prev => prev ? clampAgentFloatingPosition(prev) : prev);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [clampAgentFloatingPosition]);
 
   const [vaultImportFiles, setVaultImportFiles] = useState<VaultFileEntry[] | null>(null);
   
@@ -712,8 +869,8 @@ const App: React.FC = () => {
   const [recurringCategories, setRecurringCategories] = useState<RecurringCategory[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_RECURRING_CATS);
-      return saved ? JSON.parse(saved) : DEFAULT_RECURRING_CATEGORIES;
-    } catch { return DEFAULT_RECURRING_CATEGORIES; }
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
   });
 
   const handleUpdateRecurringCategories = (cats: RecurringCategory[]) => {
@@ -722,13 +879,47 @@ const App: React.FC = () => {
   };
 
   const handleAddCategory = useCallback((moduleKey: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (STRICT_CATEGORY_MODULES.has(moduleKey) && RESERVED_STRICT_CATEGORY_NAMES.has(trimmed)) return;
     setCategoriesMap(prev => {
-      const current = prev[moduleKey] || DEFAULT_CATEGORIES;
-      if (current.some(c => c.name === name)) return prev;
-      const newCat: Category = { id: crypto.randomUUID(), name, icon: 'Folder', isSystem: false };
+      const current = STRICT_CATEGORY_MODULES.has(moduleKey)
+        ? normalizeStrictCategories(prev[moduleKey] || [])
+        : (prev[moduleKey] || DEFAULT_CATEGORIES);
+      if (current.some(c => c.name === trimmed)) return prev;
+      const newCat: Category = { id: crypto.randomUUID(), name: trimmed, icon: 'Folder', isSystem: false };
       return { ...prev, [moduleKey]: [...current, newCat] };
     });
   }, []);
+
+  const mergeStrictCategoriesFromNames = useCallback((moduleKey: string, names: Array<string | undefined | null>, icon = 'Folder') => {
+    if (!STRICT_CATEGORY_MODULES.has(moduleKey)) return;
+    const cleanedNames = Array.from(new Set(
+      names
+        .map(name => (typeof name === 'string' ? name.trim() : ''))
+        .filter(name => isValidStrictCategoryName(name)),
+    ));
+    if (cleanedNames.length === 0) return;
+    setCategoriesMap(prev => {
+      const current = normalizeStrictCategories(prev[moduleKey] || []);
+      const existing = new Set(current.map(category => category.name));
+      const additions = cleanedNames
+        .filter(name => !existing.has(name))
+        .map(name => createDerivedCategory(name, icon));
+      if (additions.length === 0 && current.length === (prev[moduleKey] || []).length) return prev;
+      return { ...prev, [moduleKey]: [...current, ...additions] };
+    });
+  }, []);
+
+  const ensureStrictCategorySelected = useCallback((moduleKey: string, categoryName: string | undefined, label: string) => {
+    const normalized = (categoryName || '').trim();
+    const names = getStrictCategoryNames(categoriesMap[moduleKey] || []);
+    if (!normalized || !names.includes(normalized)) {
+      window.alert(`请先选择已有${label}分类。没有分类时，请先创建分类。`);
+      return '';
+    }
+    return normalized;
+  }, [categoriesMap]);
 
   // File Editing State
   const [isEditingFile, setIsEditingFile] = useState(false);
@@ -779,8 +970,8 @@ const App: React.FC = () => {
       loadUnifiedJson({
         appDataKey: appDataMirrorKeyForLocalStorageKey(STORAGE_KEY_RECURRING_CATS),
         localStorageKey: STORAGE_KEY_RECURRING_CATS,
-        defaultValue: () => DEFAULT_RECURRING_CATEGORIES,
-        normalize: value => (Array.isArray(value) ? value : DEFAULT_RECURRING_CATEGORIES),
+        defaultValue: () => [] as RecurringCategory[],
+        normalize: value => (Array.isArray(value) ? value : []),
       }),
       loadUnifiedJson({
         appDataKey: appDataMirrorKeyForLocalStorageKey(STORAGE_KEY_MUSIC_TRACKS),
@@ -1061,7 +1252,7 @@ const App: React.FC = () => {
         if (now - lastAgentKeyTime.current < 350) {
           // Double-tap detected
           lastAgentKeyTime.current = 0;
-          setAppMode(prev => prev === 'agent' ? 'todo' : 'agent');
+          toggleFloatingAgent();
         } else {
           lastAgentKeyTime.current = now;
         }
@@ -1099,7 +1290,7 @@ const App: React.FC = () => {
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [handleAppModeChange, moduleConfig]);
+  }, [handleAppModeChange, moduleConfig, toggleFloatingAgent]);
 
   // Initial Load - Performance: Batch load all data
   useEffect(() => {
@@ -1670,6 +1861,15 @@ const App: React.FC = () => {
   // Save on change - with debounce
   useEffect(() => {
     if (!isCoreStorageReady) return;
+    mergeStrictCategoriesFromNames('todo', todos.map(todo => todo.category), 'Tag');
+    mergeStrictCategoriesFromNames('files', fileRecords.map(file => file.category), 'Folder');
+    mergeStrictCategoriesFromNames('prompts', prompts.map(prompt => prompt.category), 'Sparkles');
+    mergeStrictCategoriesFromNames('markdown', markdownNotes.map(note => note.category), 'BookOpen');
+    mergeStrictCategoriesFromNames('image-hosting', imageRecords.map(record => record.category), 'Image');
+  }, [fileRecords, imageRecords, isCoreStorageReady, markdownNotes, mergeStrictCategoriesFromNames, prompts, todos]);
+
+  useEffect(() => {
+    if (!isCoreStorageReady) return;
     if (Object.keys(categoriesMap).length > 0) {
       saveToStorage(STORAGE_KEY_CATEGORIES, categoriesMap);
     }
@@ -1842,7 +2042,9 @@ const App: React.FC = () => {
   // Determine which categories to pass to sidebar
   const activeCategories = useMemo(() => {
     if (appMode === 'notes') return noteCategories;
-    if (appMode === 'files') return categoriesMap['files'] || DEFAULT_CATEGORIES;
+    if (STRICT_CATEGORY_MODULES.has(appMode)) {
+      return [...normalizeStrictCategories(categoriesMap[appMode] || []), ALL_CATEGORY];
+    }
     if (appMode === 'prompts') {
       const base = categoriesMap['prompts'] || DEFAULT_CATEGORIES;
       const baseNames = new Set(base.map(c => c.name));
@@ -1939,7 +2141,7 @@ const App: React.FC = () => {
   const filteredImageRecords = useMemo(() => {
     if (appMode !== 'image-hosting') return [];
     return imageRecords
-      .filter(r => selectedCategory === '全部' || r.category === selectedCategory || (!r.category && selectedCategory === '未分类'))
+      .filter(r => selectedCategory === '全部' || r.category === selectedCategory)
       .filter(r => {
         const q = searchQuery.toLowerCase();
         return r.filename.toLowerCase().includes(q);
@@ -2002,7 +2204,8 @@ const App: React.FC = () => {
   };
 
   const ensureCategoryExists = (categoryName: string) => {
-    if (categoryName === '全部' || categoryName === '未分类') return;
+    if (STRICT_CATEGORY_MODULES.has(appMode)) return;
+    if (!isValidStrictCategoryName(categoryName)) return;
     
     setCategoriesMap(prev => {
       const currentCategories = prev[appMode] || DEFAULT_CATEGORIES;
@@ -2055,19 +2258,13 @@ const App: React.FC = () => {
   // --- Handlers: SSH ---
 
   const handleSaveSSH = (record: Partial<SSHRecord>) => {
-    const catName = record.category || '未分类';
-    if (catName !== '全部' && catName !== '未分类') {
-      setCategoriesMap(prev => {
-        const currentCategories = prev['ssh'] || DEFAULT_CATEGORIES;
-        if (currentCategories.some(c => c.name === catName)) return prev;
-        const newCategory: Category = {
-          id: crypto.randomUUID(),
-          name: catName,
-          icon: 'Server',
-          isSystem: false,
-        };
-        return { ...prev, ssh: [...currentCategories, newCategory] };
-      });
+    const catName = (record.category || '').trim();
+    const sshCategoryNames = (categoriesMap['ssh'] || [])
+      .filter(category => !category.isSystem && category.id !== 'all' && !RESERVED_STRICT_CATEGORY_NAMES.has(category.name))
+      .map(category => category.name);
+    if (!catName || !sshCategoryNames.includes(catName)) {
+      console.warn('SSH record save blocked: category must be an existing SSH category.', { category: catName });
+      return;
     }
 
     const buildCommand = (next: Pick<SSHRecord, 'host' | 'username' | 'port'>) =>
@@ -2115,11 +2312,12 @@ const App: React.FC = () => {
   };
 
   const handleUpdateSSHCategories = (newCategories: Category[]) => {
-    const oldCategories = categoriesMap['ssh'] || DEFAULT_CATEGORIES;
+    const strictCategories = newCategories.filter(category => !RESERVED_STRICT_CATEGORY_NAMES.has(category.name) && category.id !== 'all');
+    const oldCategories = categoriesMap['ssh'] || [];
     const oldNameMap = new Map(oldCategories.map(category => [category.id, category.name]));
     const renamedPairs = new Map<string, string>();
 
-    newCategories.forEach(category => {
+    strictCategories.forEach(category => {
       const oldName = oldNameMap.get(category.id);
       if (oldName && oldName !== category.name) {
         renamedPairs.set(oldName, category.name);
@@ -2135,44 +2333,57 @@ const App: React.FC = () => {
 
     setCategoriesMap(prev => ({
       ...prev,
-      ssh: newCategories,
+      ssh: strictCategories,
     }));
   };
 
   const handleDeleteSSHCategory = (id: string) => {
-    const currentCategories = categoriesMap['ssh'] || DEFAULT_CATEGORIES;
+    const currentCategories = categoriesMap['ssh'] || [];
     const category = currentCategories.find(item => item.id === id);
     if (!category) return;
-    if (!window.confirm(`确定要删除分类“${category.name}”吗？该分类下的 SSH 记录会移动到“未分类”。`)) {
+    const affectedCount = sshRecords.filter(record => record.category === category.name).length;
+    let fallbackCategory = '';
+    if (affectedCount > 0) {
+      const available = currentCategories
+        .filter(item => item.id !== id && !item.isSystem && item.id !== 'all' && !RESERVED_STRICT_CATEGORY_NAMES.has(item.name))
+        .map(item => item.name);
+      if (available.length === 0) {
+        window.alert(`分类“${category.name}”下有 SSH 记录。请先创建另一个分类，再删除该分类。`);
+        return;
+      }
+      const input = window.prompt(`分类“${category.name}”下有 ${affectedCount} 条 SSH 记录。请输入要迁移到的已有分类：\n${available.join('、')}`, available[0]);
+      if (!input) return;
+      fallbackCategory = input.trim();
+      if (!available.includes(fallbackCategory)) {
+        window.alert(`分类“${fallbackCategory}”不存在，请选择已有分类。`);
+        return;
+      }
+    }
+    if (!window.confirm(`确定要删除分类“${category.name}”吗？`)) {
       return;
     }
 
-    setSSHRecords(prev => prev.map(record =>
-      record.category === category.name ? { ...record, category: '未分类' } : record
-    ));
+    if (affectedCount > 0) {
+      setSSHRecords(prev => prev.map(record =>
+        record.category === category.name ? { ...record, category: fallbackCategory } : record
+      ));
+    }
     setCategoriesMap(prev => ({
       ...prev,
-      ssh: (prev['ssh'] || DEFAULT_CATEGORIES).filter(item => item.id !== id),
+      ssh: (prev['ssh'] || []).filter(item => item.id !== id),
     }));
   };
 
   // --- Handlers: API ---
 
   const handleSaveAPI = (record: Partial<APIRecord>) => {
-    const catName = record.category || '未分类';
-    // 直接更新 api 分类（不依赖 appMode）
-    if (catName !== '全部' && catName !== '未分类') {
-      setCategoriesMap(prev => {
-        const currentCategories = prev['api'] || DEFAULT_CATEGORIES;
-        if (currentCategories.some(c => c.name === catName)) return prev;
-        const newCategory: Category = {
-          id: crypto.randomUUID(),
-          name: catName,
-          icon: 'Folder',
-          isSystem: false
-        };
-        return { ...prev, api: [...currentCategories, newCategory] };
-      });
+    const catName = (record.category || '').trim();
+    const apiCategoryNames = (categoriesMap['api'] || [])
+      .filter(category => !category.isSystem && category.id !== 'all' && !RESERVED_STRICT_CATEGORY_NAMES.has(category.name))
+      .map(category => category.name);
+    if (!catName || !apiCategoryNames.includes(catName)) {
+      console.warn('API record save blocked: category must be an existing API category.', { category: catName });
+      return;
     }
 
     setApiRecords(prev => {
@@ -2201,11 +2412,12 @@ const App: React.FC = () => {
   };
 
   const handleUpdateAPICategories = (newCategories: Category[]) => {
-    const oldCategories = categoriesMap['api'] || DEFAULT_CATEGORIES;
+    const strictCategories = newCategories.filter(category => !RESERVED_STRICT_CATEGORY_NAMES.has(category.name) && category.id !== 'all');
+    const oldCategories = categoriesMap['api'] || [];
     const oldNameMap = new Map(oldCategories.map(category => [category.id, category.name]));
     const renamedPairs = new Map<string, string>();
 
-    newCategories.forEach(category => {
+    strictCategories.forEach(category => {
       const oldName = oldNameMap.get(category.id);
       if (oldName && oldName !== category.name) {
         renamedPairs.set(oldName, category.name);
@@ -2221,24 +2433,44 @@ const App: React.FC = () => {
 
     setCategoriesMap(prev => ({
       ...prev,
-      api: newCategories,
+      api: strictCategories,
     }));
   };
 
   const handleDeleteAPICategory = (id: string) => {
-    const currentCategories = categoriesMap['api'] || DEFAULT_CATEGORIES;
+    const currentCategories = categoriesMap['api'] || [];
     const category = currentCategories.find(item => item.id === id);
     if (!category) return;
-    if (!window.confirm(`确定要删除分类“${category.name}”吗？该分类下的 API 会移动到“未分类”。`)) {
+    const affectedCount = apiRecords.filter(record => record.category === category.name).length;
+    let fallbackCategory = '';
+    if (affectedCount > 0) {
+      const available = currentCategories
+        .filter(item => item.id !== id && !item.isSystem && item.id !== 'all' && !RESERVED_STRICT_CATEGORY_NAMES.has(item.name))
+        .map(item => item.name);
+      if (available.length === 0) {
+        window.alert(`分类“${category.name}”下有 API 记录。请先创建另一个分类，再删除该分类。`);
+        return;
+      }
+      const input = window.prompt(`分类“${category.name}”下有 ${affectedCount} 条 API 记录。请输入要迁移到的已有分类：\n${available.join('、')}`, available[0]);
+      if (!input) return;
+      fallbackCategory = input.trim();
+      if (!available.includes(fallbackCategory)) {
+        window.alert(`分类“${fallbackCategory}”不存在，请选择已有分类。`);
+        return;
+      }
+    }
+    if (!window.confirm(`确定要删除分类“${category.name}”吗？`)) {
       return;
     }
 
-    setApiRecords(prev => prev.map(record =>
-      record.category === category.name ? { ...record, category: '未分类' } : record
-    ));
+    if (affectedCount > 0) {
+      setApiRecords(prev => prev.map(record =>
+        record.category === category.name ? { ...record, category: fallbackCategory } : record
+      ));
+    }
     setCategoriesMap(prev => ({
       ...prev,
-      api: (prev['api'] || DEFAULT_CATEGORIES).filter(item => item.id !== id),
+      api: (prev['api'] || []).filter(item => item.id !== id),
     }));
   };
 
@@ -2251,11 +2483,11 @@ const App: React.FC = () => {
   // --- Handlers: Todo ---
 
   const handleSaveTodo = (todoData: Partial<TodoItem>) => {
-    const catName = todoData.category || '未分类';
-    ensureCategoryExists(catName);
+    const catName = ensureStrictCategorySelected('todo', todoData.category, '待办');
+    if (!catName) return;
 
     if (todoData.id) {
-      setTodos(prev => prev.map(t => t.id === todoData.id ? { ...t, ...todoData } as TodoItem : t));
+      setTodos(prev => prev.map(t => t.id === todoData.id ? { ...t, ...todoData, category: catName } as TodoItem : t));
     } else {
       const newTodo: TodoItem = {
         id: crypto.randomUUID(),
@@ -2285,11 +2517,16 @@ const App: React.FC = () => {
 
   // ─── Recurring Event handlers ───
   const handleCreateRecurring = useCallback((data: Partial<RecurringEvent>) => {
+    const categoryName = (data.category || '').trim();
+    if (!categoryName || !recurringCategories.some(category => category.name === categoryName)) {
+      window.alert('请先选择已有日程分类。没有分类时，请先创建分类。');
+      return;
+    }
     const newEvent: RecurringEvent = {
       id: crypto.randomUUID(),
       title: data.title || '新重复事件',
       description: data.description,
-      category: data.category || '未分类',
+      category: categoryName,
       color: data.color,
       allDay: data.allDay ?? false,
       startDate: data.startDate ?? Date.now(),
@@ -2307,7 +2544,7 @@ const App: React.FC = () => {
       try { saveLocalStorageMirror(STORAGE_KEY_RECURRING, next); } catch {}
       return next;
     });
-  }, []);
+  }, [recurringCategories]);
 
   const handleUpdateRecurring = useCallback((id: string, data: Partial<RecurringEvent>) => {
     setRecurringEvents(prev => {
@@ -2351,8 +2588,8 @@ const App: React.FC = () => {
   // --- Handlers: Files ---
 
   const handleSaveFile = async (fileData: Partial<FileRecord>) => {
-     const catName = fileData.category || '未分类';
-     ensureCategoryExists(catName);
+     const catName = ensureStrictCategorySelected('files', fileData.category, fileModalMode === 'note' ? '文件' : '文件');
+     if (!catName) return;
 
      if (fileData.id) {
        // 检查是否需要重命名文件
@@ -2372,7 +2609,7 @@ const App: React.FC = () => {
            // 即使重命名失败，也继续更新记录（可能是记录与实际文件不同步的情况）
          }
        }
-       setFileRecords(prev => prev.map(f => f.id === fileData.id ? { ...f, ...fileData } as FileRecord : f));
+       setFileRecords(prev => prev.map(f => f.id === fileData.id ? { ...f, ...fileData, category: catName } as FileRecord : f));
      } else {
        const newFile: FileRecord = {
          id: crypto.randomUUID(),
@@ -2532,9 +2769,7 @@ const App: React.FC = () => {
       createdAt: Date.now(),
     }));
 
-    // Ensure categories exist
-    const newCategories = new Set(importedRecords.map(r => r.category));
-    newCategories.forEach(cat => ensureCategoryExists(cat));
+    mergeStrictCategoriesFromNames('files', importedRecords.map(record => record.category), 'Folder');
 
     setFileRecords(prev => [...importedRecords, ...prev]);
     setVaultImportFiles(null);
@@ -2544,8 +2779,8 @@ const App: React.FC = () => {
   // --- Handlers: Prompts ---
 
   const handleSavePrompt = (promptData: Partial<PromptRecord>) => {
-    const catName = promptData.category || '未分类';
-    ensureCategoryExists(catName);
+    const catName = ensureStrictCategorySelected('prompts', promptData.category, 'Skill');
+    if (!catName) return;
 
     if (promptData.id) {
       setPrompts(prev => prev.map(p => p.id === promptData.id ? {
@@ -2580,6 +2815,7 @@ const App: React.FC = () => {
   };
 
   const handleImportSkills = (newSkills: PromptRecord[]) => {
+    mergeStrictCategoriesFromNames('prompts', newSkills.map(skill => skill.category), 'Sparkles');
     setPrompts(prev => [...newSkills, ...prev]);
   };
 
@@ -2609,10 +2845,15 @@ const App: React.FC = () => {
 
   // Markdown Handlers
   const handleAddMarkdownNote = () => {
+    const category = ensureStrictCategorySelected('markdown', selectedCategory === '全部' ? '' : selectedCategory, 'Markdown');
+    if (!category) {
+      setIsCategoryManagerOpen(true);
+      return;
+    }
     const newNote: MarkdownNote = {
       id: Date.now().toString(),
       title: '新笔记',
-      category: '',
+      category,
       content: '# 新笔记\n\n开始编写...',
       createdAt: Date.now(),
       updatedAt: Date.now()
@@ -2622,6 +2863,11 @@ const App: React.FC = () => {
   };
 
   const handleUpdateMarkdownNote = (id: string, updates: Partial<MarkdownNote>) => {
+    if (typeof updates.category === 'string') {
+      const category = ensureStrictCategorySelected('markdown', updates.category, 'Markdown');
+      if (!category) return;
+      updates = { ...updates, category };
+    }
     setMarkdownNotes(markdownNotes.map(note => 
       note.id === id ? { ...note, ...updates } : note
     ));
@@ -2638,6 +2884,8 @@ const App: React.FC = () => {
   };
 
   const handleCreateNoteInFolder = async (categoryName: string) => {
+    const category = ensureStrictCategorySelected('files', categoryName, '文件');
+    if (!category) return;
     if (!window.electronAPI) return;
     const archiveRoot = localStorage.getItem('linkmaster_archive_path');
     if (!archiveRoot) {
@@ -2657,7 +2905,7 @@ const App: React.FC = () => {
     
     try {
       // Construct path
-      const safeCategory = categoryName.replace(/[\\/:*?"<>|]/g, '_');
+      const safeCategory = category.replace(/[\\/:*?"<>|]/g, '_');
       const targetDir = await window.electronAPI.pathJoin(archiveRoot, safeCategory, 'MARKDOWN');
       await window.electronAPI.ensureDir(targetDir);
       const targetPath = await window.electronAPI.pathJoin(targetDir, fileName);
@@ -2673,7 +2921,7 @@ const App: React.FC = () => {
          size: 0,
          type: 'MARKDOWN',
          importance: 50,
-         category: categoryName,
+         category,
          note: '',
          createdAt: Date.now(),
        };
@@ -2691,63 +2939,65 @@ const App: React.FC = () => {
   };
 
   const handleDeleteCategory = async (id: string) => {
-    // 获取分类名称
-    const category = (categoriesMap[appMode] || []).find(c => c.id === id);
+    const currentCategories = categoriesMap[appMode] || [];
+    const category = currentCategories.find(c => c.id === id);
     if (!category) return;
-    
-    // 对于文件管理模块，检查是否要删除对应的文件夹
-    if (appMode === 'files') {
-      const archiveRoot = localStorage.getItem('linkmaster_archive_path');
-      if (archiveRoot && window.electronAPI) {
-        const confirmDelete = window.confirm(
-          `确定要删除分类"${category.name}"吗？\n\n⚠️ 警告：这将同时删除该分类下的文件夹及所有文件！`
-        );
-        
-        if (confirmDelete) {
-          // 删除该分类下所有文件类型的文件夹
-          const filesInCategory = fileRecords.filter(f => f.category === category.name);
-          const fileTypes = [...new Set(filesInCategory.map(f => f.type))];
-          
-          // 删除分类文件夹（包含所有子文件夹）
-          const safeCategoryName = category.name.replace(/[\\/:*?"<>|]/g, '_');
-          const categoryDir = await window.electronAPI.pathJoin(archiveRoot, safeCategoryName);
-          
-          console.log('Deleting category directory:', categoryDir);
-          
-          const deleteSuccess = await window.electronAPI.deleteDir(categoryDir);
-          console.log('Delete result:', deleteSuccess);
-          
-          if (!deleteSuccess) {
-            console.error('Failed to delete category directory:', categoryDir);
-          }
-          
-          // 删除该分类下的文件记录
-          setFileRecords(prev => prev.filter(f => f.category !== category.name));
-          
-          // 删除分类
-          setCategoriesMap(prev => ({
-            ...prev,
-            [appMode]: prev[appMode].filter(c => c.id !== id)
-          }));
+
+    if (STRICT_CATEGORY_MODULES.has(appMode)) {
+      const available = normalizeStrictCategories(currentCategories)
+        .filter(item => item.id !== id)
+        .map(item => item.name);
+
+      let affectedCount = 0;
+      let migrateRecords: ((target: string) => void) | null = null;
+
+      if (appMode === 'todo') {
+        affectedCount = todos.filter(item => item.category === category.name).length;
+        migrateRecords = target => setTodos(prev => prev.map(item => item.category === category.name ? { ...item, category: target } : item));
+      } else if (appMode === 'files') {
+        affectedCount = fileRecords.filter(item => item.category === category.name).length;
+        migrateRecords = target => setFileRecords(prev => prev.map(item => item.category === category.name ? { ...item, category: target } : item));
+      } else if (appMode === 'prompts') {
+        affectedCount = prompts.filter(item => item.category === category.name).length;
+        migrateRecords = target => setPrompts(prev => prev.map(item => item.category === category.name ? { ...item, category: target } : item));
+      } else if (appMode === 'markdown') {
+        affectedCount = markdownNotes.filter(item => item.category === category.name).length;
+        migrateRecords = target => setMarkdownNotes(prev => prev.map(item => item.category === category.name ? { ...item, category: target } : item));
+      } else if (appMode === 'image-hosting') {
+        affectedCount = imageRecords.filter(item => item.category === category.name).length;
+        migrateRecords = target => setImageRecords(prev => prev.map(item => item.category === category.name ? { ...item, category: target } : item));
+      }
+
+      let fallbackCategory = '';
+      if (affectedCount > 0) {
+        if (available.length === 0) {
+          window.alert(`分类“${category.name}”下还有内容。请先创建另一个分类，再删除该分类。`);
+          return;
         }
-      } else {
-        // 没有归档目录，只删除记录
-        if (window.confirm('确定要删除这个分类吗？分类下的文件记录将被删除。')) {
-          setFileRecords(prev => prev.filter(f => f.category !== category.name));
-          setCategoriesMap(prev => ({
-            ...prev,
-            [appMode]: prev[appMode].filter(c => c.id !== id)
-          }));
+        const input = window.prompt(`分类“${category.name}”下有 ${affectedCount} 条内容。请输入要迁移到的已有分类：\n${available.join('、')}`, available[0]);
+        if (!input) return;
+        fallbackCategory = input.trim();
+        if (!available.includes(fallbackCategory)) {
+          window.alert(`分类“${fallbackCategory}”不存在，请选择已有分类。`);
+          return;
         }
       }
-    } else {
-      // 其他模块，只删除分类
-      if (window.confirm('确定要删除这个分类吗？')) {
-        setCategoriesMap(prev => ({
-          ...prev,
-          [appMode]: prev[appMode].filter(c => c.id !== id)
-        }));
-      }
+
+      if (!window.confirm(`确定要删除分类“${category.name}”吗？`)) return;
+      if (affectedCount > 0 && migrateRecords) migrateRecords(fallbackCategory);
+      setCategoriesMap(prev => ({
+        ...prev,
+        [appMode]: normalizeStrictCategories(prev[appMode] || []).filter(c => c.id !== id),
+      }));
+      if (selectedCategory === category.name) setSelectedCategory('全部');
+      return;
+    }
+
+    if (window.confirm('确定要删除这个分类吗？')) {
+      setCategoriesMap(prev => ({
+        ...prev,
+        [appMode]: prev[appMode].filter(c => c.id !== id)
+      }));
     }
   };
 
@@ -2781,6 +3031,20 @@ const App: React.FC = () => {
     );
   };
 
+  const isAgentPageOpen = appMode === 'agent';
+  const shouldMountAgentHost = hasAgentMounted || isAgentPageOpen;
+  const agentUiGlowColor = getAgentActivityGlowColor(agentActivity, isAgentPageOpen || isAgentFloatingOpen);
+  const agentFloatingPositionForRender = agentFloatingPosition ?? getDefaultAgentFloatingPosition();
+  const agentFloatingStyle = !isAgentPageOpen && isAgentFloatingOpen
+    ? ({
+        left: agentFloatingPositionForRender.x,
+        top: agentFloatingPositionForRender.y,
+        borderColor: 'color-mix(in srgb, var(--agent-glow-color) 34%, var(--t-border))',
+        background: 'var(--t-bg-elevated)',
+        '--agent-glow-color': agentUiGlowColor,
+      } as React.CSSProperties)
+    : undefined;
+
   return (
     <>
       {showSplash ? (
@@ -2790,14 +3054,20 @@ const App: React.FC = () => {
           onComplete={() => setShowSplash(false)}
         />
       ) : (
-        <div className="theme-app-shell fixed inset-0 flex overflow-hidden" data-theme={appTheme}>
+        <div
+          className="theme-app-shell fixed inset-0 flex overflow-hidden"
+          data-theme={appTheme}
+          style={{ '--agent-glow-color': agentUiGlowColor } as React.CSSProperties}
+        >
+          {agentSummonGlow && <div className="agent-summon-edge-glow" aria-hidden="true" />}
           {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen || isLatexFullscreen) && isSidebarVisible && (
             <NavRail 
               currentMode={appMode} 
               onModeChange={handleAppModeChange}
               onOpenSettings={() => setIsSettingsOpen(true)}
-              onOpenAgent={() => setAppMode('agent')}
-              isAgentOpen={appMode === 'agent'}
+              onOpenAgent={openFloatingAgent}
+              isAgentOpen={appMode === 'agent' || isAgentFloatingOpen}
+              agentActivity={agentActivity}
               moduleConfig={moduleConfig}
               onReorderModules={setModuleConfig}
             />
@@ -2808,7 +3078,7 @@ const App: React.FC = () => {
           <Suspense fallback={<div className="w-64 bg-gray-50 border-r border-gray-200" />}>
             <MarkdownSidebar
               notes={filteredMarkdownNotes}
-              categories={categoriesMap[appMode] || DEFAULT_CATEGORIES}
+              categories={activeCategories}
               selectedNoteId={activeTipId}
               onSelectNote={setActiveTipId}
               onAddNote={handleAddMarkdownNote}
@@ -2822,7 +3092,7 @@ const App: React.FC = () => {
             <Suspense fallback={<div className="w-64 bg-gray-50 border-r border-gray-200" />}>
               <ArchiveSidebar
                 archives={filteredFileRecords}
-                categories={categoriesMap[appMode] || DEFAULT_CATEGORIES}
+                categories={normalizeStrictCategories(categoriesMap['files'] || [])}
                 activeFileId={activeRenderFileId}
                 onOpen={(file) => {
                 setActiveRenderFileId(file.id);
@@ -2833,11 +3103,23 @@ const App: React.FC = () => {
                   setIsCategoryManagerOpen(true);
                 }}
                 onUploadFile={() => {
+                  if (getStrictCategoryNames(categoriesMap['files'] || []).length === 0) {
+                    window.alert('请先创建文件分类。');
+                    setInitialCategoryEditId(null);
+                    setIsCategoryManagerOpen(true);
+                    return;
+                  }
                   setEditingFile(null);
                   setFileModalMode('file');
                   setIsFileModalOpen(true);
                 }}
                 onCreateNote={() => {
+                  if (getStrictCategoryNames(categoriesMap['files'] || []).length === 0) {
+                    window.alert('请先创建文件分类。');
+                    setInitialCategoryEditId(null);
+                    setIsCategoryManagerOpen(true);
+                    return;
+                  }
                   setEditingFile(null);
                   setFileModalMode('note');
                   setIsFileModalOpen(true);
@@ -2915,12 +3197,55 @@ const App: React.FC = () => {
         ), '分类栏')
       ) : null}
 
-      {(hasAgentMounted || appMode === 'agent') && (
-        <div className={appMode === 'agent' ? 'flex-1 min-w-0 min-h-0' : 'hidden'}>
+      {shouldMountAgentHost && (
+        <div
+          className={
+            isAgentPageOpen
+              ? 'flex-1 min-w-0 min-h-0 h-full flex flex-col overflow-hidden'
+              : isAgentFloatingOpen
+                ? 'agent-floating-window fixed z-[95] flex h-[min(680px,calc(100vh-5.5rem))] w-[min(520px,calc(100vw-3rem))] flex-col overflow-hidden rounded-[28px] border bg-white/95 backdrop-blur-xl'
+                : 'hidden'
+          }
+          ref={agentFloatingRef}
+          style={agentFloatingStyle}
+        >
+          {!isAgentPageOpen && isAgentFloatingOpen && (
+            <div
+              className="shrink-0 flex cursor-move select-none items-center justify-between border-b px-4 py-2.5"
+              style={{ borderColor: 'var(--t-border)', background: 'var(--t-bg-secondary)' }}
+              onPointerDown={handleAgentFloatingPointerDown}
+              onPointerMove={handleAgentFloatingPointerMove}
+              onPointerUp={handleAgentFloatingPointerUp}
+              onPointerCancel={handleAgentFloatingPointerUp}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="relative flex h-7 w-7 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                  <Bot className="h-4 w-4" />
+                  {(agentActivity.active || agentActivity.isProcessing) && (
+                    <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.85)]" />
+                  )}
+                </span>
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-semibold" style={{ color: 'var(--t-text)' }}>Agent</p>
+                  <p className="truncate text-[10px]" style={{ color: 'var(--t-text-muted)' }}>{agentActivity.title || '对话窗口'}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsAgentFloatingOpen(false)}
+                className="theme-icon-btn h-7 w-7 rounded-lg"
+                title="关闭浮窗，任务会继续在后台运行"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+          <div className="min-h-0 flex-1">
         <Suspense fallback={<div className="flex-1 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-gray-400" /></div>}>
           <AgentPanel
-            isOpen={appMode === 'agent'}
-            onClose={() => setAppMode('todo')}
+            isOpen={isAgentPageOpen || isAgentFloatingOpen}
+            compact={!isAgentPageOpen}
+            onRuntimeStatusChange={setAgentActivity}
+            onClose={() => isAgentPageOpen ? setAppMode('todo') : setIsAgentFloatingOpen(false)}
             todos={todos}
             notes={notes}
             onCreateTodo={(todoData) => {
@@ -3029,13 +3354,13 @@ const App: React.FC = () => {
             }}
             resourceData={resourceData}
             sshRecords={sshRecords}
-            sshCategories={(categoriesMap['ssh'] || DEFAULT_CATEGORIES).filter(c => c.id !== 'all').map(c => c.name)}
+            sshCategories={(categoriesMap['ssh'] || []).filter(c => c.id !== 'all' && !RESERVED_STRICT_CATEGORY_NAMES.has(c.name)).map(c => c.name)}
             onSaveSSH={handleSaveSSH}
             onDeleteSSH={(id) => {
               setSSHRecords(prev => prev.filter(record => record.id !== id));
             }}
             apiRecords={apiRecords}
-            apiCategories={(categoriesMap['api'] || DEFAULT_CATEGORIES).filter(c => c.id !== 'all').map(c => c.name)}
+            apiCategories={(categoriesMap['api'] || []).filter(c => c.id !== 'all' && !RESERVED_STRICT_CATEGORY_NAMES.has(c.name)).map(c => c.name)}
             onSaveAPI={handleSaveAPI}
             onDeleteAPI={(id) => {
               setApiRecords(prev => prev.filter(record => record.id !== id));
@@ -3058,6 +3383,7 @@ const App: React.FC = () => {
             onOpenSettings={() => setIsSettingsOpen(true)}
           />
         </Suspense>
+        </div>
         </div>
       )}
 
@@ -3095,15 +3421,30 @@ const App: React.FC = () => {
                       setIsNoteModalOpen(true); 
                       break;
                     case 'todo': 
+                      if (getStrictCategoryNames(categoriesMap['todo'] || []).length === 0) {
+                        window.alert('请先创建待办分类。');
+                        setIsCategoryManagerOpen(true);
+                        break;
+                      }
                       setEditingTodo(null);
                       setIsTodoModalOpen(true); 
                       break;
                     case 'files': 
+                      if (getStrictCategoryNames(categoriesMap['files'] || []).length === 0) {
+                        window.alert('请先创建文件分类。');
+                        setIsCategoryManagerOpen(true);
+                        break;
+                      }
                       setEditingFile(null);
                       setFileModalMode('file');
                       setIsFileModalOpen(true); 
                       break;
                     case 'prompts': 
+                      if (getStrictCategoryNames(categoriesMap['prompts'] || []).length === 0) {
+                        window.alert('请先创建 Skill 分类。');
+                        setIsCategoryManagerOpen(true);
+                        break;
+                      }
                       setEditingPrompt(null);
                       setIsPromptModalOpen(true); 
                       break;
@@ -3284,9 +3625,13 @@ const App: React.FC = () => {
                 records={filteredImageRecords}
                 config={imageHostingConfig}
                 selectedCategory={selectedCategory}
-                categories={(categoriesMap[appMode] || DEFAULT_CATEGORIES).map(c => c.name)}
+                categories={getStrictCategoryNames(categoriesMap['image-hosting'] || [])}
                 onUpdateRecords={setImageRecords}
                 onUpdateConfig={setImageHostingConfig}
+                onManageCategories={() => {
+                  setInitialCategoryEditId(null);
+                  setIsCategoryManagerOpen(true);
+                }}
                 onHelp={() => setIsHelpOpen(true)}
               />
             )}
@@ -3370,14 +3715,14 @@ const App: React.FC = () => {
                   resourceData={resourceData}
                   onUpdateResourceData={setResourceData}
                   sshRecords={sshRecords}
-                  sshCategories={categoriesMap['ssh'] || DEFAULT_CATEGORIES}
+                  sshCategories={categoriesMap['ssh'] || []}
                   onSaveSSH={handleSaveSSH}
                   onDeleteSSH={handleDeleteSSH}
                   onOpenSSHInTerminal={handleOpenSSHInTerminal}
                   onUpdateSSHCategories={handleUpdateSSHCategories}
                   onDeleteSSHCategory={handleDeleteSSHCategory}
                   apiRecords={apiRecords}
-                  apiCategories={categoriesMap['api'] || DEFAULT_CATEGORIES}
+                  apiCategories={categoriesMap['api'] || []}
                   onSaveAPI={handleSaveAPI}
                   onDeleteAPI={handleDeleteAPI}
                   onUpdateAPICategories={handleUpdateAPICategories}
@@ -3486,7 +3831,7 @@ const App: React.FC = () => {
           onClose={() => setIsSSHModalOpen(false)}
           onSave={handleSaveSSH}
           initialData={editingSSH}
-          categories={(categoriesMap['ssh'] || DEFAULT_CATEGORIES).map(c => c.name)}
+          categories={(categoriesMap['ssh'] || []).map(c => c.name)}
         />
 
         <TodoModal
@@ -3495,7 +3840,7 @@ const App: React.FC = () => {
           onSave={handleSaveTodo}
           onAutoSave={handleAutoSaveTodoSubtasks}
           initialData={editingTodo}
-          categories={(categoriesMap[appMode] || DEFAULT_CATEGORIES).map(c => c.name)}
+          categories={getStrictCategoryNames(categoriesMap['todo'] || [])}
         />
 
         <FileModal
@@ -3503,7 +3848,7 @@ const App: React.FC = () => {
           onClose={() => setIsFileModalOpen(false)}
           onSave={handleSaveFile}
           initialData={editingFile}
-          categories={(categoriesMap[appMode] || DEFAULT_CATEGORIES).map(c => c.name)}
+          categories={getStrictCategoryNames(categoriesMap['files'] || [])}
           mode={fileModalMode}
         />
 
@@ -3512,7 +3857,7 @@ const App: React.FC = () => {
           onClose={() => setIsPromptModalOpen(false)}
           onSave={handleSavePrompt}
           initialData={editingPrompt}
-          categories={(categoriesMap[appMode] || DEFAULT_CATEGORIES).map(c => c.name)}
+          categories={getStrictCategoryNames(categoriesMap['prompts'] || [])}
         />
 
         <CategoryManagerModal
@@ -3521,10 +3866,10 @@ const App: React.FC = () => {
             setIsCategoryManagerOpen(false);
             setInitialCategoryEditId(null);
           }}
-          categories={categoriesMap[appMode] || DEFAULT_CATEGORIES}
+          categories={STRICT_CATEGORY_MODULES.has(appMode) ? normalizeStrictCategories(categoriesMap[appMode] || []) : (categoriesMap[appMode] || DEFAULT_CATEGORIES)}
           initialEditId={initialCategoryEditId}
           onUpdateCategories={newCategories => {
-            const oldCategories = categoriesMap[appMode] || DEFAULT_CATEGORIES;
+            const oldCategories = STRICT_CATEGORY_MODULES.has(appMode) ? normalizeStrictCategories(categoriesMap[appMode] || []) : (categoriesMap[appMode] || DEFAULT_CATEGORIES);
             
             // 检测分类名称是否有变化
             const categoryNameChanges = new Map<string, string>(); // oldName -> newName
@@ -3574,7 +3919,7 @@ const App: React.FC = () => {
                     return newName ? { ...item, category: newName } : item;
                   }));
                   break;
-                case 'image':
+                case 'image-hosting':
                   setImageRecords(prev => prev.map(item => {
                     const newName = categoryNameChanges.get(item.category || '');
                     return newName ? { ...item, category: newName } : item;
@@ -3583,10 +3928,14 @@ const App: React.FC = () => {
               }
             }
             
-            setCategoriesMap(prev => ({ ...prev, [appMode]: newCategories }));
+            setCategoriesMap(prev => ({
+              ...prev,
+              [appMode]: STRICT_CATEGORY_MODULES.has(appMode) ? normalizeStrictCategories(newCategories) : newCategories,
+            }));
             setSelectedCategory('全部');
           }}
           onDeleteCategory={handleDeleteCategory}
+          forbiddenNames={STRICT_CATEGORY_MODULES.has(appMode) ? Array.from(RESERVED_STRICT_CATEGORY_NAMES) : undefined}
         />
 
         {vaultImportFiles && (

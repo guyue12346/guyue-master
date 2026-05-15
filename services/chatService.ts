@@ -271,7 +271,7 @@ export class ChatService {
   }
 
   supportsStepwiseNativeTools(): boolean {
-    return ['openai', 'zenmux', 'moonshot', 'deepseek'].includes(this.config.provider);
+    return ['openai', 'zenmux', 'moonshot', 'deepseek', 'custom'].includes(this.config.provider);
   }
 
   createOpenAIToolSession(messages: ChatMessage[], maxIterations = 10): ChatToolSessionState {

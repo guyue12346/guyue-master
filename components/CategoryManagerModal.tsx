@@ -16,6 +16,7 @@ interface CategoryManagerModalProps {
   onUpdateCategories: (categories: Category[]) => void;
   onDeleteCategory: (id: string) => void;
   initialEditId?: string | null;
+  forbiddenNames?: string[];
 }
 
 export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
@@ -24,7 +25,8 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   categories,
   onUpdateCategories,
   onDeleteCategory,
-  initialEditId
+  initialEditId,
+  forbiddenNames = []
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -33,6 +35,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   const [isAdding, setIsAdding] = useState(false);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (isOpen && initialEditId) {
@@ -55,6 +58,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
     setEditIcon(cat.icon);
     setEditColor(cat.color || '#3b82f6');
     setIsAdding(false);
+    setError('');
   };
 
   const startAdd = () => {
@@ -63,15 +67,26 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
     setEditIcon('Folder');
     setEditColor('#3b82f6');
     setIsAdding(true);
+    setError('');
   };
 
   const saveCategory = () => {
-    if (!editName.trim()) return;
+    const nextName = editName.trim();
+    if (!nextName) return;
+    if (forbiddenNames.includes(nextName)) {
+      setError(`不能使用「${nextName}」作为分类名`);
+      return;
+    }
+    const duplicate = categories.some(c => c.name === nextName && c.id !== editingId);
+    if (duplicate) {
+      setError(`分类「${nextName}」已存在`);
+      return;
+    }
 
     if (isAdding) {
       const newCat: Category = {
         id: crypto.randomUUID(),
-        name: editName,
+        name: nextName,
         icon: editIcon,
         color: editColor,
       };
@@ -79,7 +94,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
     } else if (editingId) {
       onUpdateCategories(
         categories.map((c) =>
-          c.id === editingId ? { ...c, name: editName, icon: editIcon, color: editColor } : c
+          c.id === editingId ? { ...c, name: nextName, icon: editIcon, color: editColor } : c
         )
       );
     }
@@ -123,6 +138,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
     setEditName('');
     setEditIcon('');
     setEditColor('#3b82f6');
+    setError('');
   };
 
   if (!isOpen) return null;
@@ -218,11 +234,15 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                        <input
                          type="text"
                          value={editName}
-                         onChange={(e) => setEditName(e.target.value)}
+                         onChange={(e) => {
+                           setEditName(e.target.value);
+                           setError('');
+                         }}
                          className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm"
                          placeholder="例如: 常用工具"
                          autoFocus
                        />
+                       {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
                      </div>
 
                      <div>

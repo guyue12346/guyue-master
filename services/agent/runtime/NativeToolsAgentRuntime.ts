@@ -34,6 +34,7 @@ interface NativeToolsAgentRuntimeState {
   error?: string;
   maxIterations: number;
   supplementCount: number;
+  correctionCount: number;
   pendingConfirmations: any[];
   undoSnapshots: any[];
 }
@@ -122,6 +123,7 @@ const NativeToolsAgentRuntimeAnnotation = Annotation.Root({
   error: Annotation<string | undefined>(),
   maxIterations: Annotation<number>(),
   supplementCount: Annotation<number>(),
+  correctionCount: Annotation<number>(),
   pendingConfirmations: Annotation<any[]>(),
   undoSnapshots: Annotation<any[]>(),
 });
@@ -154,6 +156,7 @@ const createInitialState = (options: NativeToolsAgentRuntimeOptions): GraphState
   error: undefined,
   maxIterations: options.maxIterations ?? 10,
   supplementCount: 0,
+  correctionCount: 0,
   pendingConfirmations: [],
   undoSnapshots: [],
 });
@@ -179,6 +182,12 @@ const appendSupplementMessage = (
     ],
   };
 };
+
+const TOOL_CAPABILITY_DENIAL_PATTERN =
+  /无法(?:直接)?(?:访问互联网|浏览网页|联网|执行真实的?联网搜索|调用工具|使用工具)|不能(?:联网|浏览网页|调用工具|使用工具)|当前模型不支持逐步\s*Function Calling|无法确定.*搜索引擎/i;
+
+const isSearchToolName = (name?: string) =>
+  name === 'web_search' || name === 'specialized_search';
 
 export const createNativeToolsAgentRuntime = (options: NativeToolsAgentRuntimeOptions) => {
   const withTrace = (
@@ -541,6 +550,41 @@ export const createNativeToolsAgentRuntime = (options: NativeToolsAgentRuntimeOp
         status: 'failed' as AgentRunStatus,
         error: '模型没有生成最终回复。',
         trace: [...runtimeState.trace, traceStart, traceError],
+      };
+    }
+
+    const successfulSearchResults = runtimeState.toolResults.filter(item =>
+      isSearchToolName(item.toolCall?.name) && item.result?.success !== false,
+    );
+    if (
+      successfulSearchResults.length > 0 &&
+      TOOL_CAPABILITY_DENIAL_PATTERN.test(runtimeState.finalText) &&
+      runtimeState.correctionCount < 1
+    ) {
+      const traceCorrection = withTrace(runtimeState, {
+        stage: 'inspection',
+        title: '拦截了错误的工具能力声明',
+        detail: '联网搜索工具已经成功执行，但最终回复仍声称无法联网或无法调用工具。系统将让模型基于工具结果重新回答。',
+        status: 'error',
+        payload: {
+          finalText: runtimeState.finalText,
+          searchResults: successfulSearchResults,
+        },
+      });
+      return {
+        status: 'executing' as AgentRunStatus,
+        finalText: '',
+        error: undefined,
+        correctionCount: runtimeState.correctionCount + 1,
+        session: appendSupplementMessage(
+          runtimeState.session,
+          [
+            '系统检查：上一轮已经成功执行联网搜索工具，工具结果已经在上下文中。',
+            '请直接基于这些工具结果回答原始问题；不要声称无法联网、无法访问网页、无法调用工具或当前模型不支持 Function Calling。',
+            '如果工具结果质量不足，请说明已获得的结果有什么不足，而不是否认工具能力。',
+          ].join('\n'),
+        ),
+        trace: [...runtimeState.trace, traceStart, traceCorrection],
       };
     }
 

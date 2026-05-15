@@ -43,6 +43,7 @@ const STORAGE_KEY = 'linkmaster_passwords_v1';
 const STORAGE_KEY_TAGS = 'linkmaster_password_tags_v1';
 const STORAGE_KEY_MIGRATED = 'linkmaster_passwords_plain_v2';
 const ALL_TAG = '__all__';
+const LEGACY_DEFAULT_TAG = '默认';
 
 // ======== 预设颜色 ========
 const TAG_COLORS = [
@@ -133,6 +134,7 @@ const TagModal: React.FC<{
     e.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) { setError('标签名不能为空'); return; }
+    if (trimmed === LEGACY_DEFAULT_TAG) { setError('不能使用“默认”作为标签名'); return; }
     const otherNames = initial ? existingNames.filter(n => n !== initial.name) : existingNames;
     if (otherNames.includes(trimmed)) { setError('标签名已存在'); return; }
     onSave(trimmed, color, icon);
@@ -228,6 +230,7 @@ const PasswordModal: React.FC<{
   const [password, setPassword] = useState('');
   const [note, setNote] = useState('');
   const [tag, setTag] = useState('');
+  const [tagError, setTagError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
@@ -237,7 +240,9 @@ const PasswordModal: React.FC<{
       setAccount(initial?.account || '');
       setPassword(initial?.password || '');
       setNote(initial?.note || '');
-      setTag(initial?.tag || (tags.length > 0 ? tags[0].name : ''));
+      const initialTag = initial?.tag && tags.some(t => t.name === initial.tag) ? initial.tag : '';
+      setTag(initialTag);
+      setTagError('');
       setShowPassword(false);
     }
   }, [isOpen, initial, tags]);
@@ -246,6 +251,14 @@ const PasswordModal: React.FC<{
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (tags.length === 0) {
+      setTagError('请先创建标签');
+      return;
+    }
+    if (!tag || !tags.some(t => t.name === tag)) {
+      setTagError('请选择一个已有标签');
+      return;
+    }
     if (!url.trim() && !account.trim() && !password.trim()) return;
     onSave({ url: url.trim(), shortName: shortName.trim(), account: account.trim(), password: password.trim(), note: note.trim(), tag });
   };
@@ -327,10 +340,16 @@ const PasswordModal: React.FC<{
             <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
               <Tag className="w-4 h-4 text-gray-400" />标签
             </label>
-            <select value={tag} onChange={e => setTag(e.target.value)}
-              className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500">
+            <select
+              value={tag}
+              onChange={e => { setTag(e.target.value); setTagError(''); }}
+              disabled={tags.length === 0}
+              className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <option value="" disabled>{tags.length === 0 ? '请先新增标签' : '请选择标签'}</option>
               {tags.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
             </select>
+            {tagError && <p className="text-xs text-red-500 mt-1">{tagError}</p>}
           </div>
 
           {/* 备注 */}
@@ -344,7 +363,11 @@ const PasswordModal: React.FC<{
 
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl">取消</button>
-            <button type="submit" className="px-4 py-2 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-xl flex items-center gap-2">
+            <button
+              type="submit"
+              disabled={tags.length === 0 || !tag}
+              className="px-4 py-2 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-xl flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               <Save className="w-4 h-4" />{initial ? '保存修改' : '添加'}
             </button>
           </div>
@@ -360,7 +383,9 @@ const DeleteConfirmModal: React.FC<{
   onClose: () => void;
   onConfirm: () => void;
   itemName: string;
-}> = ({ isOpen, onClose, onConfirm, itemName }) => {
+  confirmDisabled?: boolean;
+  children?: React.ReactNode;
+}> = ({ isOpen, onClose, onConfirm, itemName, confirmDisabled = false, children }) => {
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
@@ -376,9 +401,16 @@ const DeleteConfirmModal: React.FC<{
             </p>
           </div>
         </div>
+        {children && <div className="mb-4">{children}</div>}
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl">取消</button>
-          <button onClick={onConfirm} className="px-4 py-2 text-sm bg-red-500 hover:bg-red-600 text-white rounded-xl">删除</button>
+          <button
+            onClick={onConfirm}
+            disabled={confirmDisabled}
+            className="px-4 py-2 text-sm bg-red-500 hover:bg-red-600 text-white rounded-xl disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            删除
+          </button>
         </div>
       </div>
     </div>
@@ -706,6 +738,7 @@ export const PasswordManager: React.FC = () => {
   const [editingTag, setEditingTag] = useState<PasswordTag | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PasswordEntry | null>(null);
   const [deleteTagTarget, setDeleteTagTarget] = useState<PasswordTag | null>(null);
+  const [deleteTagFallback, setDeleteTagFallback] = useState('');
   const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
 
   const sensors = useSensors(
@@ -717,13 +750,23 @@ export const PasswordManager: React.FC = () => {
   const loadTags = useCallback(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY_TAGS);
-      if (raw) setTags(JSON.parse(raw));
+      if (!raw) {
+        setTags([]);
+        return;
+      }
+      const parsed: PasswordTag[] = JSON.parse(raw);
+      const normalized = parsed.filter(tag => tag.name !== LEGACY_DEFAULT_TAG);
+      setTags(normalized);
+      if (normalized.length !== parsed.length) {
+        localStorage.setItem(STORAGE_KEY_TAGS, JSON.stringify(normalized));
+      }
     } catch { setTags([]); }
   }, []);
 
   const saveTags = useCallback((newTags: PasswordTag[]) => {
-    setTags(newTags);
-    localStorage.setItem(STORAGE_KEY_TAGS, JSON.stringify(newTags));
+    const normalized = newTags.filter(tag => tag.name !== LEGACY_DEFAULT_TAG);
+    setTags(normalized);
+    localStorage.setItem(STORAGE_KEY_TAGS, JSON.stringify(normalized));
   }, []);
 
   const saveEntries = useCallback((newEntries: PasswordEntry[]) => {
@@ -732,6 +775,7 @@ export const PasswordManager: React.FC = () => {
   }, []);
 
   const handleSaveTag = useCallback((name: string, color: string, icon: string) => {
+    if (name === LEGACY_DEFAULT_TAG) return;
     if (editingTag) {
       const oldName = editingTag.name;
       const updated = tags.map(t => t.id === editingTag.id ? { ...t, name, color, icon } : t);
@@ -749,16 +793,19 @@ export const PasswordManager: React.FC = () => {
     setEditingTag(null);
   }, [editingTag, tags, entries, saveTags, saveEntries, activeTag]);
 
-  const handleDeleteTag = useCallback((tag: PasswordTag) => {
+  const handleDeleteTag = useCallback((tag: PasswordTag, fallbackTag?: string) => {
     const remainingTags = tags.filter(t => t.id !== tag.id);
-    const fallbackTag = remainingTags.length > 0 ? remainingTags[0].name : '';
-    if (fallbackTag) {
-      const updatedEntries = entries.map(e => e.tag === tag.name ? { ...e, tag: fallbackTag } : e);
+    const affectedCount = entries.filter(e => e.tag === tag.name).length;
+    if (affectedCount > 0) {
+      const nextTag = fallbackTag?.trim() || '';
+      if (!nextTag || !remainingTags.some(t => t.name === nextTag)) return;
+      const updatedEntries = entries.map(e => e.tag === tag.name ? { ...e, tag: nextTag, updatedAt: Date.now() } : e);
       saveEntries(updatedEntries);
     }
     saveTags(remainingTags);
     if (activeTag === tag.name) setActiveTag(ALL_TAG);
     setDeleteTagTarget(null);
+    setDeleteTagFallback('');
   }, [tags, entries, activeTag, saveTags, saveEntries]);
 
   // ---- 一次性数据迁移：解密旧加密数据 → 明文存储 ----
@@ -790,7 +837,11 @@ export const PasswordManager: React.FC = () => {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) { setEntries([]); return; }
       const parsed: PasswordEntry[] = JSON.parse(raw);
-      setEntries(parsed);
+      const normalized = parsed.map(entry => entry.tag === LEGACY_DEFAULT_TAG ? { ...entry, tag: '' } : entry);
+      setEntries(normalized);
+      if (normalized.some((entry, index) => entry.tag !== parsed[index]?.tag)) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+      }
     } catch (err) {
       console.error('Failed to load passwords:', err);
       setEntries([]);
@@ -814,6 +865,7 @@ export const PasswordManager: React.FC = () => {
   }, [loadTags, loadEntries]);
 
   const handleSave = useCallback((data: { url: string; shortName: string; account: string; password: string; note: string; tag: string }) => {
+    if (!data.tag || !tags.some(t => t.name === data.tag)) return;
     const now = Date.now();
     let newEntries: PasswordEntry[];
     if (editingEntry) {
@@ -834,7 +886,7 @@ export const PasswordManager: React.FC = () => {
     saveEntries(newEntries);
     setIsModalOpen(false);
     setEditingEntry(null);
-  }, [editingEntry, entries, saveEntries]);
+  }, [editingEntry, entries, saveEntries, tags]);
 
   const handleDelete = useCallback((id: string) => {
     saveEntries(entries.filter(e => e.id !== id));
@@ -873,6 +925,12 @@ export const PasswordManager: React.FC = () => {
     });
     return counts;
   }, [entries, tags]);
+
+  const deleteTagAffectedCount = deleteTagTarget ? (tagCounts[deleteTagTarget.name] || 0) : 0;
+  const deleteTagFallbackOptions = useMemo(
+    () => deleteTagTarget ? tags.filter(t => t.id !== deleteTagTarget.id) : [],
+    [deleteTagTarget, tags],
+  );
 
   const getTagColor = useCallback((tagName: string) => {
     return tags.find(t => t.name === tagName)?.color || '#64748b';
@@ -928,8 +986,16 @@ export const PasswordManager: React.FC = () => {
             标签管理
           </button>
           <button
-            onClick={() => { setEditingEntry(null); setIsModalOpen(true); }}
+            onClick={() => {
+              if (tags.length === 0) {
+                setIsTagManagerOpen(true);
+                return;
+              }
+              setEditingEntry(null);
+              setIsModalOpen(true);
+            }}
             className="flex items-center gap-1.5 px-3 py-2 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-xl transition-colors shadow-sm"
+            title={tags.length === 0 ? '请先创建标签' : '新增网站'}
           >
             <Plus className="w-4 h-4" />
             新增网站
@@ -1046,10 +1112,34 @@ export const PasswordManager: React.FC = () => {
 
       <DeleteConfirmModal
         isOpen={!!deleteTagTarget}
-        onClose={() => setDeleteTagTarget(null)}
-        onConfirm={() => deleteTagTarget && handleDeleteTag(deleteTagTarget)}
-        itemName={`标签「${deleteTagTarget?.name}」（条目将归入第一个标签）`}
-      />
+        onClose={() => { setDeleteTagTarget(null); setDeleteTagFallback(''); }}
+        onConfirm={() => deleteTagTarget && handleDeleteTag(deleteTagTarget, deleteTagFallback)}
+        itemName={`标签「${deleteTagTarget?.name}」`}
+        confirmDisabled={deleteTagAffectedCount > 0 && !deleteTagFallback}
+      >
+        {deleteTagTarget && deleteTagAffectedCount > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              该标签下有 {deleteTagAffectedCount} 条网站，删除前必须迁移到另一个已有标签。
+            </p>
+            {deleteTagFallbackOptions.length > 0 ? (
+              <select
+                value={deleteTagFallback}
+                onChange={e => setDeleteTagFallback(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
+              >
+                {deleteTagFallbackOptions.map(tag => (
+                  <option key={tag.id} value={tag.name}>{tag.name}</option>
+                ))}
+              </select>
+            ) : (
+              <p className="text-xs text-red-500">
+                当前没有其他标签可迁移，请先创建一个新标签。
+              </p>
+            )}
+          </div>
+        )}
+      </DeleteConfirmModal>
 
       <TagManagerModal
         isOpen={isTagManagerOpen}
@@ -1058,7 +1148,11 @@ export const PasswordManager: React.FC = () => {
         tagCounts={tagCounts}
         onAddTag={() => { setEditingTag(null); setIsTagModalOpen(true); }}
         onEditTag={(tag) => { setEditingTag(tag); setIsTagModalOpen(true); }}
-        onDeleteTag={(tag) => setDeleteTagTarget(tag)}
+        onDeleteTag={(tag) => {
+          const fallback = tags.find(item => item.id !== tag.id)?.name || '';
+          setDeleteTagFallback(fallback);
+          setDeleteTagTarget(tag);
+        }}
         onReorderTags={handleTagDragEnd}
         sensors={sensors}
       />

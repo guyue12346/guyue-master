@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { X, CheckCircle2, AlertCircle, Trash2, Sparkles, ChevronDown, ChevronRight, Plus, Pencil, Mail, Server, Key, Edit3, BookUser, Send, Loader2, Globe2, Search } from 'lucide-react';
+import { X, CheckCircle2, AlertCircle, Trash2, Sparkles, ChevronDown, ChevronRight, Plus, Pencil, Mail, Server, Key, Edit3, BookUser, Send, Loader2, Globe2 } from 'lucide-react';
 import { AGENT_AVAILABLE_MODELS, ChatConfig } from '../services/chatService';
-import type { AgentEmailConfig, AgentSearchConfig, AgentSearchMode, AgentSearchProvider, AgentSpecializedSearchSource, Contact } from '../services/agent/agentStorage';
+import type { AgentEmailConfig, AgentSearchConfig, AgentSearchMode, AgentSearchProvider, Contact } from '../services/agent/agentStorage';
+import { isStepwiseNativeProvider } from '../services/agent/agentModules';
 import { loadProfiles } from '../utils/apiProfileService';
 import type { ApiProfile } from '../types';
 
@@ -34,7 +35,6 @@ interface AgentSettingsModalProps {
   onDeleteContact: (id: string) => void;
 }
 
-const NATIVE_TOOL_PROVIDERS = new Set(['openai', 'anthropic', 'gemini', 'zenmux', 'moonshot']);
 const STORAGE_KEY_AGENT_API_CONFIGS = 'guyue_agent_api_profiles_v1';
 
 type AgentProvider = ChatConfig['provider'];
@@ -86,28 +86,16 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 const SEARCH_PROVIDER_LABELS: Record<AgentSearchProvider, string> = {
   'openai-web-search': 'OpenAI Web Search',
-  tavily: 'Tavily',
-  exa: 'Exa',
-  brave: 'Brave',
-  searxng: 'SearXNG',
-  'bing-browser': 'Bing Browser',
-  'duckduckgo-browser': 'DuckDuckGo Browser',
+  'bing-web-search': 'Bing Web Search',
+  'google-cse': 'Google Custom Search',
 };
 
-const SEARCH_PROVIDERS: AgentSearchProvider[] = ['openai-web-search', 'tavily', 'exa', 'brave', 'searxng', 'duckduckgo-browser', 'bing-browser'];
+const SEARCH_PROVIDERS: AgentSearchProvider[] = ['openai-web-search', 'bing-web-search', 'google-cse'];
 const SEARCH_MODES: Array<{ key: AgentSearchMode; label: string }> = [
   { key: 'fast', label: '快速' },
   { key: 'balanced', label: '均衡' },
   { key: 'deep', label: '深入' },
 ];
-const SPECIALIZED_SEARCH_SOURCE_LABELS: Record<AgentSpecializedSearchSource, string> = {
-  github: 'GitHub',
-  npm: 'npm',
-  stackoverflow: 'StackOverflow',
-  arxiv: 'arXiv',
-};
-const SPECIALIZED_SEARCH_SOURCES: AgentSpecializedSearchSource[] = ['github', 'npm', 'stackoverflow', 'arxiv'];
-
 export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   isOpen,
   onClose,
@@ -169,7 +157,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
 
   const currentModels = AGENT_AVAILABLE_MODELS[config.provider] || [];
   const routerModels = AGENT_AVAILABLE_MODELS[routerConfig.provider] || [];
-  const supportsNativeTools = NATIVE_TOOL_PROVIDERS.has(config.provider);
+  const supportsNativeTools = isStepwiseNativeProvider(config.provider);
 
   const applyConfig = (item: SavedAgentApiConfig) => {
     const nextModel = AGENT_AVAILABLE_MODELS[item.provider]?.some(m => m.id === config.model)
@@ -267,21 +255,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   const updateSearchApiKey = (provider: keyof AgentSearchConfig['apiKeys'], apiKey: string) => {
     updateSearchConfig({ apiKeys: { ...searchConfig.apiKeys, [provider]: apiKey } });
   };
-  const updateSpecializedSearchConfig = (patch: Partial<AgentSearchConfig['specialized']>) => {
-    updateSearchConfig({ specialized: { ...searchConfig.specialized, ...patch } });
-  };
-  const updateSpecializedSearchApiKey = (provider: keyof AgentSearchConfig['specialized']['apiKeys'], apiKey: string) => {
-    updateSpecializedSearchConfig({ apiKeys: { ...searchConfig.specialized.apiKeys, [provider]: apiKey } });
-  };
-  const toggleSpecializedSearchSource = (source: AgentSpecializedSearchSource) => {
-    const current = searchConfig.specialized.enabledSources || [];
-    updateSpecializedSearchConfig({
-      enabledSources: current.includes(source)
-        ? current.filter(item => item !== source)
-        : [...current, source],
-    });
-  };
-  const toggleFallbackProvider = (provider: AgentSearchProvider) => {
+  const toggleSearchFallbackProvider = (provider: AgentSearchProvider) => {
     const current = searchConfig.fallbackProviders || [];
     updateSearchConfig({
       fallbackProviders: current.includes(provider)
@@ -599,27 +573,6 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600">
-                    <input
-                      type="checkbox"
-                      checked={searchConfig.includeAnswer}
-                      onChange={e => updateSearchConfig({ includeAnswer: e.target.checked })}
-                      className="rounded border-gray-300"
-                    />
-                    返回直答
-                  </label>
-                  <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600">
-                    <input
-                      type="checkbox"
-                      checked={searchConfig.includeRawContent}
-                      onChange={e => updateSearchConfig({ includeRawContent: e.target.checked })}
-                      className="rounded border-gray-300"
-                    />
-                    抓取正文
-                  </label>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">语言</label>
                     <input
@@ -643,56 +596,17 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
                 </div>
 
                 <div className="space-y-2">
-                  <label className="block text-xs text-gray-500">API Key</label>
-                  <input
-                    type="password"
-                    value={searchConfig.apiKeys.openai}
-                    onChange={e => updateSearchApiKey('openai', e.target.value)}
-                    placeholder="OpenAI API Key（Responses web_search）"
-                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                  />
-                  <input
-                    type="password"
-                    value={searchConfig.apiKeys.tavily}
-                    onChange={e => updateSearchApiKey('tavily', e.target.value)}
-                    placeholder="Tavily API Key"
-                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                  />
-                  <input
-                    type="password"
-                    value={searchConfig.apiKeys.exa}
-                    onChange={e => updateSearchApiKey('exa', e.target.value)}
-                    placeholder="Exa API Key"
-                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                  />
-                  <input
-                    type="password"
-                    value={searchConfig.apiKeys.brave}
-                    onChange={e => updateSearchApiKey('brave', e.target.value)}
-                    placeholder="Brave Search API Key"
-                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                  />
-                  <input
-                    type="text"
-                    value={searchConfig.searxngBaseUrl}
-                    onChange={e => updateSearchConfig({ searxngBaseUrl: e.target.value })}
-                    placeholder="SearXNG Base URL，例如 https://search.example.com"
-                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">失败回退</label>
-                  <div className="flex flex-wrap gap-1.5">
-                    {SEARCH_PROVIDERS.map(provider => (
+                  <label className="block text-xs text-gray-500">备用引擎</label>
+                  <div className="flex flex-wrap gap-2">
+                    {SEARCH_PROVIDERS.filter(provider => provider !== searchConfig.provider).map(provider => (
                       <button
                         key={provider}
                         type="button"
-                        onClick={() => toggleFallbackProvider(provider)}
+                        onClick={() => toggleSearchFallbackProvider(provider)}
                         className={`rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
                           searchConfig.fallbackProviders.includes(provider)
                             ? 'border-blue-200 bg-blue-50 text-blue-700'
-                            : 'border-gray-200 bg-white text-gray-400 hover:text-gray-600'
+                            : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50'
                         }`}
                       >
                         {SEARCH_PROVIDER_LABELS[provider]}
@@ -701,66 +615,60 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
-                  <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-                    <p className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-500">
-                      <Search className="w-3.5 h-3.5" />
-                      专用搜索配置
-                    </p>
-                    <span className="text-[11px] text-gray-400">
-                      {searchConfig.specialized.enabledSources.length} 个来源
-                    </span>
-                  </div>
-                  <div className="p-3 space-y-3">
-                    <div className="grid grid-cols-[1fr_96px] gap-3">
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">启用来源</label>
-                        <div className="flex flex-wrap gap-1.5">
-                          {SPECIALIZED_SEARCH_SOURCES.map(source => (
-                            <button
-                              key={source}
-                              type="button"
-                              onClick={() => toggleSpecializedSearchSource(source)}
-                              className={`rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
-                                searchConfig.specialized.enabledSources.includes(source)
-                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                  : 'border-gray-200 bg-white text-gray-400 hover:text-gray-600'
-                              }`}
-                            >
-                              {SPECIALIZED_SEARCH_SOURCE_LABELS[source]}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">结果数</label>
-                        <input
-                          type="number"
-                          min={3}
-                          max={20}
-                          value={searchConfig.specialized.maxResults}
-                          onChange={e => updateSpecializedSearchConfig({ maxResults: Math.min(Math.max(parseInt(e.target.value, 10) || 8, 3), 20) })}
-                          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
-                        />
-                      </div>
-                    </div>
+                <div className="space-y-2">
+                  <label className="block text-xs text-gray-500">OpenAI API Key</label>
+                  <input
+                    type="password"
+                    value={searchConfig.apiKeys.openai}
+                    onChange={e => updateSearchApiKey('openai', e.target.value)}
+                    placeholder="OpenAI API Key（Responses web_search）"
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  />
+                </div>
 
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="password"
-                        value={searchConfig.specialized.apiKeys.github}
-                        onChange={e => updateSpecializedSearchApiKey('github', e.target.value)}
-                        placeholder="GitHub Token，可选"
-                        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
-                      />
-                      <input
-                        type="password"
-                        value={searchConfig.specialized.apiKeys.stackExchange}
-                        onChange={e => updateSpecializedSearchApiKey('stackExchange', e.target.value)}
-                        placeholder="StackExchange Key，可选"
-                        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
-                      />
-                    </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Bing API Key</label>
+                    <input
+                      type="password"
+                      value={searchConfig.apiKeys.bing}
+                      onChange={e => updateSearchApiKey('bing', e.target.value)}
+                      placeholder="Ocp-Apim-Subscription-Key"
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Bing Endpoint</label>
+                    <input
+                      type="text"
+                      value={searchConfig.bingEndpoint}
+                      onChange={e => updateSearchConfig({ bingEndpoint: e.target.value })}
+                      placeholder="https://api.bing.microsoft.com/v7.0/search"
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Google API Key</label>
+                    <input
+                      type="password"
+                      value={searchConfig.apiKeys.google}
+                      onChange={e => updateSearchApiKey('google', e.target.value)}
+                      placeholder="Google Custom Search API Key"
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Google CX</label>
+                    <input
+                      type="password"
+                      value={searchConfig.googleCx}
+                      onChange={e => updateSearchConfig({ googleCx: e.target.value })}
+                      placeholder="Programmable Search Engine ID"
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
                   </div>
                 </div>
               </div>
@@ -1108,8 +1016,8 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
               <Sparkles className={`w-4 h-4 mt-0.5 shrink-0 ${supportsNativeTools ? 'text-blue-500' : 'text-gray-400'}`} />
               <p className={`text-xs leading-relaxed ${supportsNativeTools ? 'text-blue-700' : 'text-gray-500'}`}>
                 {supportsNativeTools
-                  ? '当前提供商支持原生 Function Calling，Agent 会走标准 tools 流程。'
-                  : '当前提供商走兼容模式，使用普通对话与 action block 解析。'}
+                  ? '当前提供商已接入逐步 Function Calling runtime，Agent 会走标准 tools 流程。'
+                  : '当前提供商暂未接入逐步 Function Calling runtime，会走自然语言兼容模式。'}
               </p>
             </div>
           </div>

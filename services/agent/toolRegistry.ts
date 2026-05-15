@@ -40,7 +40,7 @@ export interface AgentToolExecutionResult<T = any> {
   fatal?: boolean;
   pendingConfirmation?: boolean;
   confirmationId?: string;
-  confirmationType?: 'send_email' | 'agent_tool';
+  confirmationType?: 'send_email' | 'agent_tool' | 'local_secret';
 }
 
 export interface ToolExecutionContext {
@@ -95,7 +95,7 @@ export interface ToolExecutionContext {
 
 export const WEB_SEARCH_TOOL: ChatTool = {
   name: 'web_search',
-  description: '使用已配置的 Agent 搜索引擎检索互联网实时信息。当需要最新资讯、官方文档、新闻、事实核验、价格或时效性内容时使用。底层会按设置使用 Tavily / Exa / Brave / SearXNG / Bing / DuckDuckGo 并自动回退。',
+  description: '使用 Agent 设置中的联网搜索引擎检索互联网实时信息。当需要最新资讯、官方文档、新闻、事实核验、价格或时效性内容时使用。',
   inputSchema: {
     type: 'object',
     properties: {
@@ -113,7 +113,7 @@ export const WEB_SEARCH_TOOL: ChatTool = {
 
 export const SPECIALIZED_SEARCH_TOOL: ChatTool = {
   name: 'specialized_search',
-  description: '使用专用搜索源检索垂直数据。适合查 GitHub 仓库/代码/Issue/PR、npm 包、StackOverflow 问答、arXiv 论文；不要用它做普通网页搜索。',
+  description: '使用 Agent 设置中的联网搜索引擎做垂直搜索，并通过域名过滤限定 GitHub、npm、StackOverflow、arXiv 等来源；不要用它做普通网页搜索。',
   inputSchema: {
     type: 'object',
     properties: {
@@ -141,6 +141,60 @@ export const SPECIALIZED_SEARCH_TOOL: ChatTool = {
   },
 };
 
+const SPECIALIZED_SEARCH_DOMAINS: Record<string, string[]> = {
+  github: ['github.com'],
+  npm: ['npmjs.com', 'registry.npmjs.org'],
+  stackoverflow: ['stackoverflow.com', 'stackexchange.com'],
+  arxiv: ['arxiv.org'],
+};
+
+const buildSpecializedSearchQuery = (args: Record<string, any>, source: string, query: string) => {
+  const parts = [query];
+  if (source === 'github') {
+    if (args.githubType) parts.push(String(args.githubType).replace(/_/g, ' '));
+    if (args.owner && args.repo) parts.push(`${String(args.owner).trim()}/${String(args.repo).trim()}`);
+    else if (args.owner) parts.push(String(args.owner).trim());
+    if (args.language) parts.push(`language ${String(args.language).trim()}`);
+  }
+  if (source === 'stackoverflow' && Array.isArray(args.tags) && args.tags.length > 0) {
+    parts.push(`tags ${args.tags.map((tag: string) => String(tag).trim()).filter(Boolean).join(' ')}`);
+  }
+  if (source === 'arxiv' && (args.arxivCategory || args.language)) {
+    parts.push(`category ${String(args.arxivCategory || args.language).trim()}`);
+  }
+  if (args.sort) parts.push(`sort ${String(args.sort).trim()}`);
+  return parts.filter(Boolean).join(' ');
+};
+
+const compactText = (value: unknown, maxLength = 1600) => {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).trim()}...`;
+};
+
+const buildWebSearchToolMessage = (query: string, result: any) => {
+  if (!result || result.success === false) {
+    return `联网搜索失败：${result?.error || result?.message || '未知错误'}`;
+  }
+
+  const answer = compactText(result.directAnswer || result.answer || result.summary || '', 1800);
+  const results = Array.isArray(result.results) ? result.results.slice(0, 8) : [];
+  const sources = results
+    .map((item: any, index: number) => {
+      const title = compactText(item?.title || item?.url || `来源 ${index + 1}`, 120);
+      const url = typeof item?.url === 'string' ? item.url : '';
+      const snippet = compactText(item?.snippet || item?.content || '', 240);
+      return `${index + 1}. ${title}${url ? ` - ${url}` : ''}${snippet ? `\n   ${snippet}` : ''}`;
+    })
+    .join('\n');
+
+  return [
+    `查询：${query}`,
+    answer ? `直答：${answer}` : '',
+    sources ? `来源：\n${sources}` : '来源：OpenAI web_search 未返回可枚举引用，但已返回直答。',
+  ].filter(Boolean).join('\n\n');
+};
+
 export const WEB_SEARCH_TOOL_REGISTRATION: ToolRegistration = {
   name: WEB_SEARCH_TOOL.name,
   module: 'web',
@@ -152,7 +206,12 @@ export const WEB_SEARCH_TOOL_REGISTRATION: ToolRegistration = {
     }
     const query = typeof args.query === 'string' ? args.query.trim() : '';
     if (!query) return { success: false, error: '搜索词不能为空。' };
-    return ctx.executeWebSearch({ ...args, query });
+    const result = await ctx.executeWebSearch({ ...args, query });
+    return {
+      ...result,
+      success: result?.success !== false,
+      message: buildWebSearchToolMessage(query, result),
+    };
   },
 };
 
@@ -162,14 +221,33 @@ export const SPECIALIZED_SEARCH_TOOL_REGISTRATION: ToolRegistration = {
   permission: { module: 'web', action: 'read' },
   tool: SPECIALIZED_SEARCH_TOOL,
   execute: async (args, ctx) => {
-    if (!ctx.executeSpecializedSearch) {
-      return { success: false, error: '专用搜索执行器未配置。' };
+    if (!ctx.executeWebSearch) {
+      return { success: false, error: '联网搜索执行器未配置。' };
     }
     const query = typeof args.query === 'string' ? args.query.trim() : '';
     const source = typeof args.source === 'string' ? args.source.trim() : '';
     if (!query) return { success: false, error: '搜索词不能为空。' };
     if (!source) return { success: false, error: '专用搜索源不能为空。' };
-    return ctx.executeSpecializedSearch({ ...args, query, source });
+    const includeDomains = SPECIALIZED_SEARCH_DOMAINS[source] || [];
+    if (includeDomains.length === 0) return { success: false, error: `不支持的专用搜索源：${source}` };
+    const routedQuery = buildSpecializedSearchQuery(args, source, query);
+    const result = await ctx.executeWebSearch({
+      query: routedQuery,
+      maxResults: args.maxResults,
+      searchMode: 'deep',
+      topic: 'general',
+      includeDomains,
+    });
+    return {
+      ...result,
+      success: result?.success !== false,
+      message: buildWebSearchToolMessage(`${source}: ${query}`, result),
+      source,
+      query,
+      routedQuery,
+      provider: result?.provider || 'openai-web-search',
+      engine: 'openai-web-search',
+    };
   },
 };
 
@@ -348,8 +426,8 @@ export const generateToolCallSummary = (toolCalls: ChatToolCall[]): string => {
     send_email: '发送邮件', query_contacts: '查询通讯录',
     query_todos: '查询待办', query_notes: '查询便签', query_prompts: '查询技能卡',
     query_markdown_notes: '查询笔记', query_resources: '查询资源',
-    query_ssh_records: '查询 SSH 记录', create_ssh_record: '创建 SSH 记录',
-    query_api_records: '查询 API 记录', create_api_record: '创建 API 记录',
+    query_ssh_records: '查询 SSH 记录', create_ssh_category: '创建 SSH 分类', create_ssh_record: '创建 SSH 记录',
+    query_api_records: '查询 API 记录', create_api_category: '创建 API 分类', create_api_record: '创建 API 记录',
     update_oj_submission: '更新做题记录', delete_oj_submission: '删除做题记录',
     query_oj_heatmap: '查询 OJ 热力图', create_oj_site: '创建 OJ 网站',
     update_oj_site: '更新 OJ 网站', delete_oj_site: '删除 OJ 网站',

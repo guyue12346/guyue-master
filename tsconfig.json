@@ -25,5 +25,14 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "exclude": [
+    "Data",
+    "Doc",
+    "example_plugins",
+    "dist",
+    "dist-electron",
+    "release",
+    "node_modules"
+  ]
 }

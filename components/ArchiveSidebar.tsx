@@ -65,27 +65,26 @@ export const ArchiveSidebar: React.FC<ArchiveSidebarProps> = ({
   const groupedArchives = useMemo(() => {
     const groups: Record<string, { files: FileRecord[], category: Category }> = {};
     
+    const reservedNames = new Set(['全部', '未分类', '默认']);
+
     // Initialize with all categories
     categories.forEach(cat => {
-      if (cat.id !== 'all' && !cat.isSystem) {
+      if (cat.id !== 'all' && !cat.isSystem && !reservedNames.has(cat.name)) {
         groups[cat.name] = { files: [], category: cat };
       }
     });
 
     // Add files to groups
     archives.forEach(file => {
-      const folder = file.category || '未分类';
+      const folder = (file.category || '').trim();
+      if (!folder || reservedNames.has(folder)) return;
       if (groups[folder]) {
         groups[folder].files.push(file);
       } else {
-        // Handle files in categories that might not be in the list (shouldn't happen usually)
-        // or '未分类' if not in categories list
-        if (!groups['未分类']) {
-           // Find '未分类' category object or create dummy
-           const uncat = categories.find(c => c.name === '未分类') || { id: 'uncategorized', name: '未分类', icon: 'Folder' };
-           groups['未分类'] = { files: [], category: uncat };
-        }
-        groups['未分类'].files.push(file);
+        groups[folder] = {
+          files: [file],
+          category: { id: `derived-${folder}`, name: folder, icon: 'Folder' },
+        };
       }
     });
     

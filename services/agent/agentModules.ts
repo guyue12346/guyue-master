@@ -79,5 +79,13 @@ export const getModuleById = (moduleId?: string | null) =>
 export const isNativeProvider = (provider: ChatConfig['provider']) =>
   ['openai', 'anthropic', 'gemini', 'zenmux', 'moonshot', 'deepseek'].includes(provider);
 
+export const STEPWISE_NATIVE_TOOL_PROVIDERS: ChatConfig['provider'][] = [
+  'openai',
+  'zenmux',
+  'moonshot',
+  'deepseek',
+  'custom',
+];
+
 export const isStepwiseNativeProvider = (provider: ChatConfig['provider']) =>
-  ['openai', 'zenmux', 'moonshot', 'deepseek'].includes(provider);
+  STEPWISE_NATIVE_TOOL_PROVIDERS.includes(provider);

@@ -40,7 +40,7 @@ export const DEFAULT_AGENT_EMAIL_CONFIG = {
 
 export type AgentEmailConfig = typeof DEFAULT_AGENT_EMAIL_CONFIG;
 
-export type AgentSearchProvider = 'openai-web-search' | 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser' | 'duckduckgo-browser';
+export type AgentSearchProvider = 'openai-web-search' | 'bing-web-search' | 'google-cse';
 export type AgentSearchMode = 'fast' | 'balanced' | 'deep';
 export type AgentSpecializedSearchSource = 'github' | 'npm' | 'stackoverflow' | 'arxiv';
 
@@ -62,11 +62,11 @@ export interface AgentSearchConfig {
   includeRawContent: boolean;
   apiKeys: {
     openai: string;
-    tavily: string;
-    exa: string;
-    brave: string;
+    bing: string;
+    google: string;
   };
-  searxngBaseUrl: string;
+  bingEndpoint: string;
+  googleCx: string;
   language: string;
   country: string;
   specialized: AgentSpecializedSearchConfig;
@@ -74,18 +74,18 @@ export interface AgentSearchConfig {
 
 export const DEFAULT_AGENT_SEARCH_CONFIG: AgentSearchConfig = {
   provider: 'openai-web-search',
-  fallbackProviders: ['tavily', 'exa', 'brave', 'duckduckgo-browser', 'bing-browser'],
+  fallbackProviders: [],
   mode: 'balanced',
   maxResults: 8,
   includeAnswer: true,
   includeRawContent: false,
   apiKeys: {
     openai: '',
-    tavily: '',
-    exa: '',
-    brave: '',
+    bing: '',
+    google: '',
   },
-  searxngBaseUrl: '',
+  bingEndpoint: 'https://api.bing.microsoft.com/v7.0/search',
+  googleCx: '',
   language: 'zh-CN',
   country: 'CN',
   specialized: {
@@ -111,33 +111,26 @@ const normalizeConfig = (value: any): ChatConfig => ({
   systemPrompt: typeof value?.systemPrompt === 'string' ? value.systemPrompt : '',
 });
 
-const AGENT_SEARCH_PROVIDERS = new Set<AgentSearchProvider>(['openai-web-search', 'tavily', 'exa', 'brave', 'searxng', 'bing-browser', 'duckduckgo-browser']);
 const AGENT_SEARCH_MODES = new Set<AgentSearchMode>(['fast', 'balanced', 'deep']);
-const AGENT_SPECIALIZED_SEARCH_SOURCES = new Set<AgentSpecializedSearchSource>(['github', 'npm', 'stackoverflow', 'arxiv']);
+const AGENT_SEARCH_PROVIDERS = new Set<AgentSearchProvider>(['openai-web-search', 'bing-web-search', 'google-cse']);
 
-const normalizeSearchProvider = (value: any, fallback: AgentSearchProvider): AgentSearchProvider =>
-  AGENT_SEARCH_PROVIDERS.has(value) ? value : fallback;
-
-const normalizeSpecializedSearchSource = (value: any): AgentSpecializedSearchSource | null =>
-  AGENT_SPECIALIZED_SEARCH_SOURCES.has(value) ? value : null;
+const normalizeSearchProvider = (value: unknown): AgentSearchProvider => {
+  if (typeof value === 'string' && AGENT_SEARCH_PROVIDERS.has(value as AgentSearchProvider)) {
+    return value as AgentSearchProvider;
+  }
+  return DEFAULT_AGENT_SEARCH_CONFIG.provider;
+};
 
 const normalizeSpecializedSearchConfig = (value: any): AgentSpecializedSearchConfig => {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const apiKeys = source.apiKeys && typeof source.apiKeys === 'object' ? source.apiKeys : {};
-  const enabledSources = Array.isArray(source.enabledSources)
-    ? source.enabledSources
-        .map(normalizeSpecializedSearchSource)
-        .filter((item: AgentSpecializedSearchSource | null): item is AgentSpecializedSearchSource => Boolean(item))
-        .filter((item: AgentSpecializedSearchSource, index: number, arr: AgentSpecializedSearchSource[]) => arr.indexOf(item) === index)
-    : DEFAULT_AGENT_SEARCH_CONFIG.specialized.enabledSources;
   const maxResults = Number(source.maxResults);
 
   return {
-    enabledSources,
+    enabledSources: DEFAULT_AGENT_SEARCH_CONFIG.specialized.enabledSources,
     maxResults: Number.isFinite(maxResults) ? Math.min(Math.max(Math.floor(maxResults), 3), 20) : DEFAULT_AGENT_SEARCH_CONFIG.specialized.maxResults,
     apiKeys: {
-      github: typeof apiKeys.github === 'string' ? apiKeys.github : '',
-      stackExchange: typeof apiKeys.stackExchange === 'string' ? apiKeys.stackExchange : '',
+      github: '',
+      stackExchange: '',
     },
   };
 };
@@ -145,30 +138,26 @@ const normalizeSpecializedSearchConfig = (value: any): AgentSpecializedSearchCon
 const normalizeSearchConfig = (value: any): AgentSearchConfig => {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const apiKeys = source.apiKeys && typeof source.apiKeys === 'object' ? source.apiKeys : {};
-  const fallbackProviders = Array.isArray(source.fallbackProviders)
-    ? source.fallbackProviders
-        .map((item: any) => normalizeSearchProvider(item, 'bing-browser'))
-        .filter((item: AgentSearchProvider, index: number, arr: AgentSearchProvider[]) => arr.indexOf(item) === index)
-    : DEFAULT_AGENT_SEARCH_CONFIG.fallbackProviders;
   const maxResults = Number(source.maxResults);
-  const normalizedProvider = normalizeSearchProvider(source.provider, DEFAULT_AGENT_SEARCH_CONFIG.provider);
 
   return {
-    provider: normalizedProvider === 'bing-browser' || normalizedProvider === 'duckduckgo-browser'
-      ? DEFAULT_AGENT_SEARCH_CONFIG.provider
-      : normalizedProvider,
-    fallbackProviders,
+    provider: normalizeSearchProvider(source.provider),
+    fallbackProviders: Array.isArray(source.fallbackProviders)
+      ? source.fallbackProviders.map(normalizeSearchProvider).filter((provider, index, array) => array.indexOf(provider) === index)
+      : DEFAULT_AGENT_SEARCH_CONFIG.fallbackProviders,
     mode: AGENT_SEARCH_MODES.has(source.mode) ? source.mode : DEFAULT_AGENT_SEARCH_CONFIG.mode,
     maxResults: Number.isFinite(maxResults) ? Math.min(Math.max(Math.floor(maxResults), 3), 20) : DEFAULT_AGENT_SEARCH_CONFIG.maxResults,
     includeAnswer: source.includeAnswer !== false,
     includeRawContent: Boolean(source.includeRawContent),
     apiKeys: {
       openai: typeof apiKeys.openai === 'string' ? apiKeys.openai : '',
-      tavily: typeof apiKeys.tavily === 'string' ? apiKeys.tavily : '',
-      exa: typeof apiKeys.exa === 'string' ? apiKeys.exa : '',
-      brave: typeof apiKeys.brave === 'string' ? apiKeys.brave : '',
+      bing: typeof apiKeys.bing === 'string' ? apiKeys.bing : '',
+      google: typeof apiKeys.google === 'string' ? apiKeys.google : '',
     },
-    searxngBaseUrl: typeof source.searxngBaseUrl === 'string' ? source.searxngBaseUrl : '',
+    bingEndpoint: typeof source.bingEndpoint === 'string' && source.bingEndpoint.trim()
+      ? source.bingEndpoint.trim()
+      : DEFAULT_AGENT_SEARCH_CONFIG.bingEndpoint,
+    googleCx: typeof source.googleCx === 'string' ? source.googleCx.trim() : '',
     language: typeof source.language === 'string' && source.language.trim() ? source.language : DEFAULT_AGENT_SEARCH_CONFIG.language,
     country: typeof source.country === 'string' && source.country.trim() ? source.country : DEFAULT_AGENT_SEARCH_CONFIG.country,
     specialized: normalizeSpecializedSearchConfig(source.specialized),

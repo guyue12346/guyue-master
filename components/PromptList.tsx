@@ -81,7 +81,7 @@ const SkillCard: React.FC<{
           <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
             <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-purple-500 bg-purple-50 px-2 py-0.5 rounded-full">
               <Sparkles className="w-3 h-3" />
-              {skill.category || '未分类'}
+              {skill.category}
             </span>
             {skill.tags?.filter(Boolean).map(tag => (
               <span key={tag} className="text-[11px] text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">

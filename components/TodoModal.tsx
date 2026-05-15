@@ -20,6 +20,7 @@ const toLocalDatetime = (ts: number): string => {
 };
 
 export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, onAutoSave, initialData, categories }) => {
+  const categoryOptions = Array.from(new Set(categories.filter(c => c && c !== '全部' && c !== '未分类' && c !== '默认')));
   const [content, setContent] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
@@ -39,7 +40,7 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
     if (initialData) {
       setContent(initialData.content);
       setDescription(initialData.description || '');
-      setCategory(initialData.category);
+      setCategory(categoryOptions.includes(initialData.category) ? initialData.category : '');
       setPriority(initialData.priority);
       setSubtasks(initialData.subtasks || []);
       setEventColor(initialData.color || '');
@@ -81,7 +82,7 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
     } else {
       resetForm();
     }
-  }, [initialData, isOpen]);
+  }, [initialData, isOpen, categories]);
 
   const resetForm = () => {
     setContent('');
@@ -150,6 +151,10 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!category || !categoryOptions.includes(category)) {
+      alert('请先选择已有分类');
+      return;
+    }
 
     let timeFields: Partial<TodoItem> = {};
     if (timeMode === 'allday' && allDayDateValue) {
@@ -240,16 +245,15 @@ export const TodoModal: React.FC<TodoModalProps> = ({ isOpen, onClose, onSave, o
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <Tag className="h-4 w-4 text-gray-400" />
                   </div>
-                  <input
-                    list="categories"
+                  <select
+                    required
                     value={category}
                     onChange={(e) => setCategory(e.target.value)}
-                    placeholder="选择或输入"
-                    className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm"
-                  />
-                  <datalist id="categories">
-                    {categories.filter(c => c !== '全部').map(c => <option key={c} value={c} />)}
-                  </datalist>
+                    className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm appearance-none"
+                  >
+                    <option value="" disabled>{categoryOptions.length > 0 ? '选择分类' : '请先创建分类'}</option>
+                    {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
                 </div>
               </div>
 

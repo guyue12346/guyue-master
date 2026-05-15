@@ -151,15 +151,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Agent 网络搜索
   agentWebSearch: (params: {
     query: string;
-    provider?: 'openai-web-search' | 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser' | 'duckduckgo-browser';
-    fallbackProviders?: Array<'openai-web-search' | 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser' | 'duckduckgo-browser'>;
+    provider?: 'openai-web-search' | 'bing-web-search' | 'google-cse';
+    fallbackProviders?: Array<'openai-web-search' | 'bing-web-search' | 'google-cse'>;
     mode?: 'fast' | 'balanced' | 'deep';
     searchMode?: 'fast' | 'balanced' | 'deep';
     maxResults?: number;
     includeAnswer?: boolean;
     includeRawContent?: boolean;
-    apiKeys?: { openai?: string; tavily?: string; exa?: string; brave?: string };
-    searxngBaseUrl?: string;
+    apiKeys?: { openai?: string; bing?: string; google?: string };
+    bingEndpoint?: string;
+    googleCx?: string;
     language?: string;
     country?: string;
     timeRange?: 'day' | 'week' | 'month' | 'year';
@@ -384,15 +385,16 @@ export interface ElectronAPI {
   // Agent 网络搜索
   agentWebSearch: (params: {
     query: string;
-    provider?: 'openai-web-search' | 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser' | 'duckduckgo-browser';
-    fallbackProviders?: Array<'openai-web-search' | 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser' | 'duckduckgo-browser'>;
+    provider?: 'openai-web-search' | 'bing-web-search' | 'google-cse';
+    fallbackProviders?: Array<'openai-web-search' | 'bing-web-search' | 'google-cse'>;
     mode?: 'fast' | 'balanced' | 'deep';
     searchMode?: 'fast' | 'balanced' | 'deep';
     maxResults?: number;
     includeAnswer?: boolean;
     includeRawContent?: boolean;
-    apiKeys?: { openai?: string; tavily?: string; exa?: string; brave?: string };
-    searxngBaseUrl?: string;
+    apiKeys?: { openai?: string; bing?: string; google?: string };
+    bingEndpoint?: string;
+    googleCx?: string;
     language?: string;
     country?: string;
     timeRange?: 'day' | 'week' | 'month' | 'year';

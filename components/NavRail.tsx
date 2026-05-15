@@ -9,6 +9,13 @@ interface NavRailProps {
   onOpenSettings: () => void;
   onOpenAgent: () => void;
   isAgentOpen?: boolean;
+  agentActivity?: {
+    stage: string;
+    status: string;
+    title: string;
+    active: boolean;
+    isProcessing?: boolean;
+  };
   moduleConfig: ModuleConfig[];
   onReorderModules?: (reordered: ModuleConfig[]) => void;
 }
@@ -35,6 +42,7 @@ export const NavRail: React.FC<NavRailProps> = ({
   onOpenSettings,
   onOpenAgent,
   isAgentOpen = false,
+  agentActivity,
   moduleConfig,
   onReorderModules
 }) => {
@@ -49,6 +57,19 @@ export const NavRail: React.FC<NavRailProps> = ({
       .filter(m => m.enabled)
       .sort((a, b) => a.priority - b.priority);
   }, [moduleConfig]);
+
+  const agentIsActive = Boolean(agentActivity?.active || agentActivity?.isProcessing);
+  const agentGlowColor = (() => {
+    const stage = String(agentActivity?.stage || '').toLowerCase();
+    const status = String(agentActivity?.status || '').toLowerCase();
+    if (status.includes('error') || stage.includes('error')) return '#ef4444';
+    if (stage.includes('approval') || status.includes('user')) return '#f97316';
+    if (stage.includes('execution')) return '#3b82f6';
+    if (stage.includes('verification') || stage.includes('inspection') || stage.includes('reporting')) return '#10b981';
+    if (stage.includes('reflection')) return '#f59e0b';
+    if (stage.includes('routing') || stage.includes('planning') || stage.includes('decision')) return '#8b5cf6';
+    return isAgentOpen ? '#6366f1' : '#94a3b8';
+  })();
 
   // Pointer-based vertical-only drag reorder with threshold
   const DRAG_THRESHOLD = 8;
@@ -189,12 +210,12 @@ export const NavRail: React.FC<NavRailProps> = ({
     >
       {/* Top Logo — completely outside drag system */}
       <button 
-        onClick={() => onModeChange(sortedModules[0]?.id as AppMode || 'todo')}
+        onClick={() => agentIsActive || isAgentOpen ? onOpenAgent() : onModeChange(sortedModules[0]?.id as AppMode || 'todo')}
         className="mb-6 relative cursor-pointer hover:scale-105 active:scale-95 transition-transform duration-200"
-        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-        title="返回首页"
+        style={{ WebkitAppRegion: 'no-drag', '--agent-glow-color': agentGlowColor } as React.CSSProperties}
+        title={agentIsActive || isAgentOpen ? (agentActivity?.title || '打开 Agent') : '返回首页'}
       >
-        <div className="theme-logo-mark">
+        <div className={`theme-logo-mark ${agentIsActive ? 'agent-logo-active' : isAgentOpen ? 'agent-logo-open' : ''}`}>
           <div className="theme-logo-glyph text-sm">
             <span>古</span>
             <span>月</span>

@@ -2,7 +2,7 @@ import type { AgentCrudAction } from './agentPermissions';
 
 export interface AgentPendingConfirmation {
   id: string;
-  type: 'send_email' | 'agent_tool';
+  type: 'send_email' | 'agent_tool' | 'local_secret';
   status: 'pending' | 'processing' | 'confirmed' | 'cancelled';
   data: Record<string, any>;
   summary: string;

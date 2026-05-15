@@ -33,7 +33,8 @@ export const MarkdownSidebar: React.FC<MarkdownSidebarProps> = ({
 
   // Group notes by category
   const notesByCategory = notes.reduce((acc, note) => {
-    const cat = note.category || '未分类';
+    const cat = (note.category || '').trim();
+    if (!cat || ['全部', '未分类', '默认'].includes(cat)) return acc;
     if (!acc[cat]) acc[cat] = [];
     acc[cat].push(note);
     return acc;

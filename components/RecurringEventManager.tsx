@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { RecurringEvent, RecurringCategory } from '../types';
 import { RecurringEventModal } from './RecurringEventModal';
 import { RecurringCategoryManagerModal } from './RecurringCategoryManagerModal';
@@ -167,6 +167,54 @@ export const RecurringEventManager: React.FC<RecurringEventManagerProps> = ({
     onUpdate(event.id, { isActive: !event.isActive });
   };
 
+  const handleCreateClick = () => {
+    if (categories.length === 0) {
+      setCatModalOpen(true);
+      return;
+    }
+    setEditingEvent(null);
+    setModalOpen(true);
+  };
+
+  const handleUpdateCategories = useCallback((nextCategories: RecurringCategory[]) => {
+    const oldById = new Map(categories.map(category => [category.id, category]));
+    nextCategories.forEach(category => {
+      const oldCategory = oldById.get(category.id);
+      if (!oldCategory || oldCategory.name === category.name) return;
+      events
+        .filter(event => event.category === oldCategory.name)
+        .forEach(event => onUpdate(event.id, { category: category.name }));
+    });
+    onUpdateCategories(nextCategories.filter(category => category.name && !['全部', '未分类', '默认'].includes(category.name)));
+  }, [categories, events, onUpdate, onUpdateCategories]);
+
+  const handleBeforeDeleteCategory = useCallback((cat: RecurringCategory) => {
+    const affected = events.filter(event => event.category === cat.name);
+    const available = categories.filter(category => category.id !== cat.id);
+    if (affected.length > 0) {
+      if (available.length === 0) {
+        window.alert(`分类“${cat.name}”下有日程事项。请先创建另一个分类，再删除该分类。`);
+        return false;
+      }
+      const availableNames = available.map(category => category.name);
+      const input = window.prompt(`分类“${cat.name}”下有 ${affected.length} 个日程事项。请输入要迁移到的已有分类：\n${availableNames.join('、')}`, availableNames[0]);
+      if (!input) return false;
+      const target = input.trim();
+      if (!availableNames.includes(target)) {
+        window.alert(`分类“${target}”不存在，请选择已有分类。`);
+        return false;
+      }
+      if (!window.confirm(`确定删除分类“${cat.name}”并迁移到“${target}”吗？`)) return false;
+      affected.forEach(event => onUpdate(event.id, { category: target }));
+      const targetCategory = available.find(category => category.name === target);
+      if (selectedCatId === cat.id) setSelectedCatId(targetCategory?.id || 'all');
+      return true;
+    }
+    if (!window.confirm(`确定要删除分类“${cat.name}”吗？`)) return false;
+    if (selectedCatId === cat.id) setSelectedCatId('all');
+    return true;
+  }, [categories, events, onUpdate, selectedCatId]);
+
   return (
     <div className="h-full flex flex-col bg-white">
       {/* Header */}
@@ -180,7 +228,7 @@ export const RecurringEventManager: React.FC<RecurringEventManagerProps> = ({
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => { setEditingEvent(null); setModalOpen(true); }}
+            onClick={handleCreateClick}
             className="flex items-center gap-1.5 px-2.5 py-2 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium rounded-xl transition-colors shadow-sm"
             title="新建重复事件"
           >
@@ -367,10 +415,8 @@ export const RecurringEventManager: React.FC<RecurringEventManagerProps> = ({
         isOpen={catModalOpen}
         onClose={() => setCatModalOpen(false)}
         categories={categories}
-        onUpdateCategories={onUpdateCategories}
-        onDeleteEventsByCategory={(catName) => {
-          events.filter(e => e.category === catName).forEach(e => onDelete(e.id));
-        }}
+        onUpdateCategories={handleUpdateCategories}
+        onBeforeDeleteCategory={handleBeforeDeleteCategory}
       />
 
       <ConfirmDialog

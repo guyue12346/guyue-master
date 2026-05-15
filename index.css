@@ -677,6 +677,136 @@ textarea {
   pointer-events: none;
 }
 
+.theme-logo-mark.agent-logo-open,
+.theme-logo-mark.agent-logo-active {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--agent-glow-color, #6366f1) 42%, transparent),
+    0 0 18px color-mix(in srgb, var(--agent-glow-color, #6366f1) 52%, transparent),
+    0 12px 30px -18px var(--agent-glow-color, #6366f1),
+    var(--t-logo-shadow);
+}
+
+.theme-logo-mark.agent-logo-active {
+  animation: agent-logo-breathe 1.55s ease-in-out infinite;
+}
+
+.agent-summon-edge-glow {
+  position: absolute;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+  border-radius: inherit;
+  --agent-edge-color: var(--agent-glow-color, #6366f1);
+  --agent-edge-hot: color-mix(in srgb, var(--agent-edge-color) 68%, white);
+  overflow: hidden;
+  animation: agent-neon-edge-presence 1400ms ease-out both;
+}
+
+.agent-summon-edge-glow::before,
+.agent-summon-edge-glow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.agent-summon-edge-glow::before {
+  background:
+    linear-gradient(90deg, transparent 0%, var(--agent-edge-hot) 18%, var(--agent-edge-color) 45%, #22d3ee 68%, transparent 100%) top left / 100% 6px no-repeat,
+    linear-gradient(180deg, transparent 0%, #22d3ee 18%, var(--agent-edge-color) 48%, var(--agent-edge-hot) 74%, transparent 100%) top right / 6px 100% no-repeat,
+    linear-gradient(270deg, transparent 0%, var(--agent-edge-hot) 18%, var(--agent-edge-color) 46%, #a855f7 72%, transparent 100%) bottom right / 100% 6px no-repeat,
+    linear-gradient(0deg, transparent 0%, #a855f7 18%, var(--agent-edge-color) 50%, var(--agent-edge-hot) 74%, transparent 100%) bottom left / 6px 100% no-repeat;
+  filter:
+    drop-shadow(0 0 10px var(--agent-edge-color))
+    drop-shadow(0 0 26px color-mix(in srgb, var(--agent-edge-color) 72%, transparent))
+    drop-shadow(0 0 46px color-mix(in srgb, var(--agent-edge-color) 48%, transparent));
+  opacity: 0;
+  transform: scale(1.018);
+  animation: agent-neon-edge-scan 1400ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.agent-summon-edge-glow::after {
+  box-shadow:
+    inset 0 0 22px color-mix(in srgb, var(--agent-edge-hot) 40%, transparent),
+    inset 0 0 78px color-mix(in srgb, var(--agent-edge-color) 30%, transparent),
+    inset 0 0 160px color-mix(in srgb, #22d3ee 16%, transparent);
+  opacity: 0;
+  animation: agent-neon-edge-fill 1400ms ease-out both;
+}
+
+.agent-floating-window {
+  box-shadow:
+    0 24px 70px -32px rgba(15, 23, 42, 0.52),
+    0 0 0 1px color-mix(in srgb, var(--agent-glow-color, #6366f1) 24%, transparent),
+    0 0 44px color-mix(in srgb, var(--agent-glow-color, #6366f1) 18%, transparent);
+}
+
+@keyframes agent-logo-breathe {
+  0%, 100% {
+    transform: translateZ(0) scale(1);
+    filter: saturate(1);
+  }
+  50% {
+    transform: translateZ(0) scale(1.045);
+    filter: saturate(1.16);
+  }
+}
+
+@keyframes agent-neon-edge-presence {
+  0% {
+    opacity: 0;
+  }
+  14%, 74% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes agent-neon-edge-scan {
+  0% {
+    opacity: 0;
+    transform: scale(1.045);
+    clip-path: inset(46% 46% 46% 46% round 28px);
+  }
+  18% {
+    opacity: 1;
+    transform: scale(1.02);
+    clip-path: inset(12% 12% 12% 12% round 28px);
+  }
+  48% {
+    opacity: 1;
+    transform: scale(1);
+    clip-path: inset(0 0 0 0 round 0);
+  }
+  76% {
+    opacity: 0.86;
+    transform: scale(1);
+    clip-path: inset(0 0 0 0 round 0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.006);
+    clip-path: inset(0 0 0 0 round 0);
+  }
+}
+
+@keyframes agent-neon-edge-fill {
+  0% {
+    opacity: 0;
+  }
+  22% {
+    opacity: 0.95;
+  }
+  58% {
+    opacity: 0.62;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 .theme-logo-glyph {
   position: relative;
   z-index: 1;

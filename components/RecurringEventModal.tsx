@@ -67,6 +67,7 @@ const RECURRENCE_UNITS: Record<string, string> = {
 export const RecurringEventModal: React.FC<RecurringEventModalProps> = ({
   isOpen, onClose, onSave, initialData, categories,
 }) => {
+  const categoryOptions = categories.filter(category => category.name && !['全部', '未分类', '默认'].includes(category.name));
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState<string>('');
@@ -88,11 +89,11 @@ export const RecurringEventModal: React.FC<RecurringEventModalProps> = ({
     if (initialData) {
       setTitle(initialData.title);
       setDescription(initialData.description || '');
-      setCategory(initialData.category || (categories[0]?.id ?? ''));
+      setCategory(initialData.category || (categoryOptions[0]?.id ?? ''));
       // Handle existing events that may store category name instead of id
-      const byId = categories.find(c => c.id === initialData.category);
-      const byName = categories.find(c => c.name === initialData.category);
-      setCategory(byId?.id ?? byName?.id ?? categories[0]?.id ?? '');
+      const byId = categoryOptions.find(c => c.id === initialData.category);
+      const byName = categoryOptions.find(c => c.name === initialData.category);
+      setCategory(byId?.id ?? byName?.id ?? '');
       setColor(initialData.color || '');
       setAllDay(initialData.allDay);
       setStartDate(toDateString(initialData.startDate));
@@ -108,7 +109,7 @@ export const RecurringEventModal: React.FC<RecurringEventModalProps> = ({
     } else {
       setTitle('');
       setDescription('');
-      setCategory(categories[0]?.id ?? '');
+      setCategory(categoryOptions[0]?.id ?? '');
       setColor('');
       setAllDay(true);
       setStartDate(toDateString(Date.now()));
@@ -122,7 +123,7 @@ export const RecurringEventModal: React.FC<RecurringEventModalProps> = ({
       setLunarMonth(1);
       setLunarDay(1);
     }
-  }, [isOpen, initialData]);
+  }, [isOpen, initialData, categories]);
 
   const toggleWeekDay = (d: number) => {
     setWeekDays(prev =>
@@ -137,12 +138,16 @@ export const RecurringEventModal: React.FC<RecurringEventModalProps> = ({
     const [sh, sm] = startTime.split(':').map(Number);
     const startTimeMin = sh * 60 + sm;
 
-    const selectedCat = categories.find(c => c.id === category);
+    const selectedCat = categoryOptions.find(c => c.id === category);
+    if (!selectedCat) {
+      alert('请先选择已有分类');
+      return;
+    }
     onSave({
       id: initialData?.id,
       title: title.trim(),
       description: description.trim() || undefined,
-      category: selectedCat?.name || category || '未分类',
+      category: selectedCat.name,
       color: color || undefined,
       allDay,
       startDate: startMs,
@@ -212,25 +217,25 @@ export const RecurringEventModal: React.FC<RecurringEventModalProps> = ({
               <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wide">
                 <span className="flex items-center gap-1.5"><Tag className="w-3.5 h-3.5" />分类</span>
               </label>
-              {categories.length > 0 ? (
+              {categoryOptions.length > 0 ? (
                 <div className="relative">
                   {/* Color dot preview */}
                   <span
                     className="absolute left-3 top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full pointer-events-none"
-                    style={{ backgroundColor: categories.find(c => c.id === category)?.color ?? '#8b5cf6' }}
+                    style={{ backgroundColor: categoryOptions.find(c => c.id === category)?.color ?? '#8b5cf6' }}
                   />
                   <select
                     value={category}
                     onChange={e => setCategory(e.target.value)}
                     className="w-full pl-8 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none transition-all text-sm appearance-none"
                   >
-                    {categories.map(cat => (
+                    {categoryOptions.map(cat => (
                       <option key={cat.id} value={cat.id}>{cat.name}</option>
                     ))}
                   </select>
                 </div>
               ) : (
-                <p className="text-xs text-gray-400 py-2">暂无分类，请先在重复事件管理页面创建分类</p>
+                <p className="text-xs text-gray-400 py-2">暂无分类，请先创建分类</p>
               )}
             </div>
 
@@ -448,7 +453,8 @@ export const RecurringEventModal: React.FC<RecurringEventModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-5 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 rounded-xl transition-colors shadow-sm"
+              disabled={categoryOptions.length === 0}
+              className="px-5 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 rounded-xl transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {initialData ? '保存修改' : '创建事件'}
             </button>

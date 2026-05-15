@@ -7,7 +7,7 @@ interface Props {
   onClose: () => void;
   categories: RecurringCategory[];
   onUpdateCategories: (cats: RecurringCategory[]) => void;
-  onDeleteEventsByCategory?: (catName: string) => void;
+  onBeforeDeleteCategory?: (cat: RecurringCategory) => boolean;
 }
 
 const PRESET_COLORS = [
@@ -17,7 +17,7 @@ const PRESET_COLORS = [
 ];
 
 export const RecurringCategoryManagerModal: React.FC<Props> = ({
-  isOpen, onClose, categories, onUpdateCategories, onDeleteEventsByCategory,
+  isOpen, onClose, categories, onUpdateCategories, onBeforeDeleteCategory,
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -48,6 +48,8 @@ export const RecurringCategoryManagerModal: React.FC<Props> = ({
 
   const save = () => {
     if (!editName.trim()) return;
+    if (['全部', '未分类', '默认'].includes(editName.trim())) return;
+    if (categories.some(c => c.name === editName.trim() && c.id !== editingId)) return;
     if (isAdding) {
       const newCat: RecurringCategory = {
         id: crypto.randomUUID(),
@@ -64,8 +66,10 @@ export const RecurringCategoryManagerModal: React.FC<Props> = ({
   };
 
   const handleDelete = (id: string) => {
-    const catName = categories.find(c => c.id === id)?.name;
-    if (catName) onDeleteEventsByCategory?.(catName);
+    const cat = categories.find(c => c.id === id);
+    if (!cat) return;
+    const allowed = onBeforeDeleteCategory?.(cat);
+    if (allowed === false) return;
     onUpdateCategories(categories.filter(c => c.id !== id));
     if (editingId === id) cancelEdit();
   };

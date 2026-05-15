@@ -1,4 +1,5 @@
 import type { ToolRegistration } from '../toolRegistry';
+import { ensureDirectory, getModulePath, sanitizeName, type SectionType } from '../../../utils/learningStorage';
 
 const LEARNING_CATEGORIES_STORAGE_KEY = 'learning_categories_v1';
 const LEARNING_COURSES_STORAGE_KEY = 'learning_courses_v1';
@@ -79,6 +80,42 @@ const normalizeLearningSection = (value: unknown): LearningSection => {
   const section = String(value || 'resources');
   if (['resources', 'assignments', 'personal', 'custom'].includes(section)) return section as LearningSection;
   return 'resources';
+};
+
+const getStorageSection = (section: LearningSection): SectionType =>
+  section === 'assignments' ? 'assignments' : section === 'resources' ? 'resources' : 'personal';
+
+const safeLearningMarkdownFileName = (title: string, id: string, order: number) => {
+  const name = sanitizeName(title || id || 'content').replace(/\s+/g, '-').slice(0, 64) || id || 'content';
+  return `${String(order + 1).padStart(2, '0')}-${name}.md`;
+};
+
+const writeLearningMarkdownForItem = async (
+  course: any,
+  section: LearningSection,
+  moduleId: string,
+  item: any,
+  contentMarkdown?: string,
+) => {
+  if (typeof contentMarkdown !== 'string') return;
+  const storageSection = getStorageSection(section);
+  const modulePath = await getModulePath(course.categoryId, course.id, storageSection, moduleId);
+  await ensureDirectory(modulePath);
+  const order = Number.isFinite(Number(item.order)) ? Number(item.order) : 0;
+  const current = section === 'resources' ? item.materials : item.link;
+  const currentFile = typeof current === 'string' && current.trim() && !/^https?:\/\//i.test(current) && !current.startsWith('/')
+    ? current.trim()
+    : '';
+  const fileName = currentFile && /\.md$/i.test(currentFile)
+    ? currentFile
+    : safeLearningMarkdownFileName(item.title, item.id, order);
+  const destPath = await window.electronAPI.pathJoin(modulePath, fileName);
+  await window.electronAPI.writeFile(destPath, contentMarkdown);
+  if (section === 'resources') {
+    item.materials = destPath;
+  } else {
+    item.link = destPath;
+  }
 };
 
 export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
@@ -652,6 +689,7 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
             customSectionId: { type: 'string' },
             title: { type: 'string' },
             description: { type: 'string' },
+            order: { type: 'number', description: '模块顺序，数字越小越靠前；不传则追加到末尾。' },
           },
           required: ['courseId', 'title'],
         },
@@ -665,12 +703,14 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
         if (!modules) return { success: false, error: '未找到自定义分区。' };
         const module = {
           id: agentLearningId('mod'),
+          order: typeof args.order === 'number' ? args.order : modules.length,
           title: String(args.title || '').trim(),
           description: typeof args.description === 'string' ? args.description.trim() : '',
           ...(section === 'resources' ? { lectures: [] } : { items: [] }),
         };
         if (!module.title) return { success: false, error: '模块标题不能为空。' };
         modules.push(module);
+        modules.sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
         saveLearningCourses(courses.map((item: any) => item.id === course.id ? course : item));
         return { success: true, message: `课程「${course.title}」已新增模块「${module.title}」`, module };
       },
@@ -690,6 +730,7 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
             customSectionId: { type: 'string' },
             title: { type: 'string' },
             description: { type: 'string' },
+            order: { type: 'number', description: '模块顺序，数字越小越靠前。' },
           },
           required: ['courseId', 'moduleId'],
         },
@@ -705,6 +746,10 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
         if (!module) return { success: false, error: `未找到模块「${args.moduleId}」。` };
         if (typeof args.title === 'string') module.title = args.title.trim();
         if (typeof args.description === 'string') module.description = args.description.trim();
+        if (typeof args.order === 'number') {
+          module.order = args.order;
+          modules.sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
+        }
         saveLearningCourses(courses.map((item: any) => item.id === course.id ? course : item));
         return { success: true, message: `模块「${module.title}」已更新`, module };
       },
@@ -761,6 +806,8 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
             date: { type: 'string' },
             desc: { type: 'string' },
             icon: { type: 'string' },
+            order: { type: 'number', description: '条目顺序，数字越小越靠前；不传则追加到末尾。' },
+            contentMarkdown: { type: 'string', description: '需要创建/写入的 Markdown 正文；传入后会在课程模块目录中自动建立 .md 文档并关联到该条目。' },
           },
           required: ['courseId', 'moduleId', 'title'],
         },
@@ -775,9 +822,13 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
         if (!module) return { success: false, error: `未找到模块「${args.moduleId}」。` };
         const title = String(args.title || '').trim();
         if (!title) return { success: false, error: '条目标题不能为空。' };
+        const collectionKey = section === 'resources' ? 'lectures' : 'items';
+        module[collectionKey] = Array.isArray(module[collectionKey]) ? module[collectionKey] : [];
+        const order = typeof args.order === 'number' ? args.order : module[collectionKey].length;
         const item = section === 'resources'
           ? {
               id: agentLearningId('lec'),
+              order,
               title,
               lecturer: typeof args.lecturer === 'string' ? args.lecturer.trim() : '',
               materials: typeof args.materials === 'string' ? args.materials.trim() : '',
@@ -787,17 +838,14 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
             }
           : {
               id: agentLearningId('item'),
+              order,
               title,
               link: typeof args.link === 'string' ? args.link.trim() : '',
               icon: typeof args.icon === 'string' ? args.icon.trim() : undefined,
             };
-        if (section === 'resources') {
-          module.lectures = Array.isArray(module.lectures) ? module.lectures : [];
-          module.lectures.push(item);
-        } else {
-          module.items = Array.isArray(module.items) ? module.items : [];
-          module.items.push(item);
-        }
+        await writeLearningMarkdownForItem(course, section, args.moduleId, item, args.contentMarkdown);
+        module[collectionKey].push(item);
+        module[collectionKey].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
         saveLearningCourses(courses.map((entry: any) => entry.id === course.id ? course : entry));
         return { success: true, message: `课程「${course.title}」已新增条目「${title}」`, item };
       },
@@ -823,6 +871,8 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
             date: { type: 'string' },
             desc: { type: 'string' },
             icon: { type: 'string' },
+            order: { type: 'number', description: '条目顺序，数字越小越靠前。' },
+            contentMarkdown: { type: 'string', description: '写入该条目关联 Markdown 文档的正文；没有文档时会自动创建。' },
           },
           required: ['courseId', 'moduleId', 'itemId'],
         },
@@ -842,6 +892,11 @@ export const LEARNING_TOOL_REGISTRATIONS: ToolRegistration[] = [
         for (const field of ['title', 'link', 'lecturer', 'materials', 'date', 'desc', 'icon']) {
           if (typeof args[field] === 'string') item[field] = args[field].trim();
         }
+        if (typeof args.order === 'number') {
+          item.order = args.order;
+          module[collectionKey].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
+        }
+        await writeLearningMarkdownForItem(course, section, args.moduleId, item, args.contentMarkdown);
         saveLearningCourses(courses.map((entry: any) => entry.id === course.id ? course : entry));
         return { success: true, message: `条目「${item.title}」已更新`, item };
       },

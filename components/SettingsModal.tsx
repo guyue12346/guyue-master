@@ -16,7 +16,7 @@ const notifyPluginsUpdated = (plugins: PluginMetadata[]) => {
 
 const normalizeAppTheme = (theme: string | null | undefined) => {
   if (theme === 'minimal') return 'pure';
-  return theme || 'default';
+  return theme || 'pure';
 };
 
 const APP_THEME_OPTIONS = [

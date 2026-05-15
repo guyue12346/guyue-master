@@ -3233,7 +3233,7 @@ ipcMain.handle('test-email-config', async (_, config: EmailConfig) => {
   }
 });
 
-type AgentSearchProvider = 'openai-web-search' | 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser' | 'duckduckgo-browser';
+type AgentSearchProvider = 'openai-web-search' | 'bing-web-search' | 'google-cse' | 'tavily' | 'exa' | 'brave' | 'searxng' | 'bing-browser' | 'duckduckgo-browser';
 type AgentSearchMode = 'fast' | 'balanced' | 'deep';
 type AgentSpecializedSearchSource = 'github' | 'npm' | 'stackoverflow' | 'arxiv';
 
@@ -3248,10 +3248,14 @@ interface AgentWebSearchParams {
   includeRawContent?: boolean;
   apiKeys?: {
     openai?: string;
+    bing?: string;
+    google?: string;
     tavily?: string;
     exa?: string;
     brave?: string;
   };
+  bingEndpoint?: string;
+  googleCx?: string;
   searxngBaseUrl?: string;
   language?: string;
   country?: string;
@@ -3294,16 +3298,16 @@ interface AgentWebSearchResult {
   meta?: Record<string, any>;
 }
 
-const AGENT_SEARCH_PROVIDERS = new Set<AgentSearchProvider>(['openai-web-search', 'tavily', 'exa', 'brave', 'searxng', 'bing-browser', 'duckduckgo-browser']);
 const AGENT_SPECIALIZED_SEARCH_SOURCES = new Set<AgentSpecializedSearchSource>(['github', 'npm', 'stackoverflow', 'arxiv']);
-
-const normalizeAgentSearchProvider = (value: unknown, fallback: AgentSearchProvider): AgentSearchProvider =>
-  typeof value === 'string' && AGENT_SEARCH_PROVIDERS.has(value as AgentSearchProvider)
-    ? value as AgentSearchProvider
-    : fallback;
+const ACTIVE_AGENT_SEARCH_PROVIDERS = new Set<AgentSearchProvider>(['openai-web-search', 'bing-web-search', 'google-cse']);
 
 const normalizeAgentSearchMode = (value: unknown): AgentSearchMode =>
   value === 'fast' || value === 'deep' || value === 'balanced' ? value : 'balanced';
+
+const normalizeAgentSearchProvider = (value: unknown): AgentSearchProvider =>
+  typeof value === 'string' && ACTIVE_AGENT_SEARCH_PROVIDERS.has(value as AgentSearchProvider)
+    ? value as AgentSearchProvider
+    : 'openai-web-search';
 
 const normalizeSpecializedSearchSource = (value: unknown): AgentSpecializedSearchSource | null =>
   typeof value === 'string' && AGENT_SPECIALIZED_SEARCH_SOURCES.has(value as AgentSpecializedSearchSource)
@@ -3320,6 +3324,10 @@ const searchProviderApiKeyName = (provider: AgentSearchProvider): keyof NonNulla
   switch (provider) {
     case 'openai-web-search':
       return 'openai';
+    case 'bing-web-search':
+      return 'bing';
+    case 'google-cse':
+      return 'google';
     case 'tavily':
       return 'tavily';
     case 'exa':
@@ -3618,14 +3626,32 @@ const searchWithOpenAIWebSearch = async (params: AgentWebSearchParams): Promise<
     type: 'web_search',
     external_web_access: true,
     search_context_size: mode === 'deep' ? 'high' : mode === 'fast' ? 'low' : 'medium',
-    search_content_types: ['text'],
   };
   if (allowedDomains.length > 0) {
     webSearchTool.filters = { allowed_domains: allowedDomains };
   }
   if (params.country) {
-    webSearchTool.user_location = { type: 'approximate', country: params.country };
+    webSearchTool.user_location = {
+      type: 'approximate',
+      country: params.country,
+      timezone: params.country.toUpperCase() === 'CN' ? 'Asia/Shanghai' : undefined,
+    };
   }
+
+  const preferredLanguage = params.language || 'zh-CN';
+  const currentDate = new Date().toISOString().slice(0, 10);
+  const userPrompt = [
+    `Query: ${params.query}`,
+    `Current date: ${currentDate}`,
+    `Preferred language: ${preferredLanguage}`,
+    `Country hint: ${params.country || 'CN'}`,
+    `Search mode: ${mode}`,
+    `Max sources: ${maxResults}`,
+    params.timeRange ? `Time range hint: ${params.timeRange}` : '',
+    params.topic ? `Topic hint: ${params.topic}` : '',
+    allowedDomains.length ? `Allowed domains: ${allowedDomains.join(', ')}` : '',
+    excludedDomains.length ? `Excluded domains requested by user: ${excludedDomains.join(', ')}` : '',
+  ].filter(Boolean).join('\n');
 
   const data = await fetchJson('https://api.openai.com/v1/responses', {
     method: 'POST',
@@ -3640,30 +3666,25 @@ const searchWithOpenAIWebSearch = async (params: AgentWebSearchParams): Promise<
         {
           role: 'system',
           content: [
-            'You are a web search adapter for an agent runtime.',
-            'Use the web_search tool for current web facts.',
-            'Return only compact JSON with this shape:',
-            '{"answer": string | null, "results": [{"title": string, "url": string, "snippet": string, "publishedDate": string | null}]}',
-            'Every result must have a real source URL. Do not invent URLs.',
-          ].join(' '),
+            'You are the web search runtime for a local agent application.',
+            'Always use the hosted web_search tool before answering.',
+            'Answer the user query directly with current facts, then cite the sources that support the answer.',
+            'Prefer primary, official, or high-authority sources. Reject unrelated pages even if they rank highly.',
+            'For weather, prices, schedules, laws, versions, or news, provide concrete current values and the date/location used.',
+            'Do not return only a search directory, homepage, or generic link. Do not say you cannot browse after using web_search.',
+            'Write the answer in the preferred language. Keep it concise.',
+          ].join('\n'),
         },
         {
           role: 'user',
-          content: JSON.stringify({
-            query: params.query,
-            maxResults,
-            language: params.language || 'zh-CN',
-            country: params.country || 'CN',
-            timeRange: params.timeRange || null,
-            topic: params.topic || 'general',
-            excludedDomains,
-          }),
+          content: userPrompt,
         },
       ],
       tools: [webSearchTool],
       tool_choice: 'auto',
       temperature: 0,
-      max_output_tokens: 1600,
+      max_output_tokens: mode === 'deep' ? 2400 : 1600,
+      store: false,
     }),
   });
 
@@ -3692,6 +3713,117 @@ const searchWithOpenAIWebSearch = async (params: AgentWebSearchParams): Promise<
   return {
     directAnswer,
     results,
+  };
+};
+
+const mapBingFreshness = (timeRange?: AgentWebSearchParams['timeRange']) => {
+  if (timeRange === 'day') return 'Day';
+  if (timeRange === 'week') return 'Week';
+  if (timeRange === 'month') return 'Month';
+  return '';
+};
+
+const searchWithBingWebSearch = async (params: AgentWebSearchParams): Promise<{ directAnswer: string | null; results: AgentWebSearchResult[] }> => {
+  const apiKey = params.apiKeys?.bing?.trim();
+  if (!apiKey) throw new Error('Bing API Key 未配置');
+
+  const maxResults = normalizeSearchMaxResults(params.maxResults);
+  const endpoint = (params.bingEndpoint || 'https://api.bing.microsoft.com/v7.0/search').trim();
+  const url = new URL(endpoint);
+  url.searchParams.set('q', withDomainOperators(params.query, params.includeDomains, params.excludeDomains));
+  url.searchParams.set('count', String(maxResults));
+  url.searchParams.set('mkt', params.language || 'zh-CN');
+  url.searchParams.set('cc', params.country || 'CN');
+  url.searchParams.set('responseFilter', params.topic === 'news' ? 'News' : 'Webpages,News');
+  const freshness = mapBingFreshness(params.timeRange);
+  if (freshness) url.searchParams.set('freshness', freshness);
+
+  const data = await fetchJson(url.toString(), {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/json',
+      'Ocp-Apim-Subscription-Key': apiKey,
+    },
+  });
+
+  const results: AgentWebSearchResult[] = [];
+  const webItems = Array.isArray(data?.webPages?.value) ? data.webPages.value : [];
+  for (const item of webItems) {
+    pushUniqueSearchResult(results, {
+      title: stripMarkup(item?.name || item?.url || ''),
+      url: String(item?.url || '').trim(),
+      snippet: stripMarkup(item?.snippet || ''),
+      source: 'bing-web-search',
+      publishedDate: typeof item?.dateLastCrawled === 'string' ? item.dateLastCrawled : undefined,
+      meta: { provider: 'bing-web-search-api' },
+    }, maxResults);
+  }
+
+  const newsItems = Array.isArray(data?.news?.value) ? data.news.value : [];
+  for (const item of newsItems) {
+    pushUniqueSearchResult(results, {
+      title: stripMarkup(item?.name || item?.url || ''),
+      url: String(item?.url || '').trim(),
+      snippet: stripMarkup(item?.description || ''),
+      source: 'bing-web-search',
+      publishedDate: typeof item?.datePublished === 'string' ? item.datePublished : undefined,
+      meta: { provider: 'bing-news-api', providerName: item?.provider?.[0]?.name },
+    }, maxResults);
+  }
+
+  const directAnswer = [
+    data?.computation?.expression && data?.computation?.value ? `${data.computation.expression} = ${data.computation.value}` : '',
+    Array.isArray(data?.entities?.value) && data.entities.value[0]?.description ? stripMarkup(data.entities.value[0].description) : '',
+  ].filter(Boolean).join('\n') || null;
+
+  return { directAnswer, results };
+};
+
+const mapGoogleDateRestrict = (timeRange?: AgentWebSearchParams['timeRange']) => {
+  if (timeRange === 'day') return 'd1';
+  if (timeRange === 'week') return 'w1';
+  if (timeRange === 'month') return 'm1';
+  if (timeRange === 'year') return 'y1';
+  return '';
+};
+
+const searchWithGoogleCustomSearch = async (params: AgentWebSearchParams): Promise<{ directAnswer: string | null; results: AgentWebSearchResult[] }> => {
+  const apiKey = params.apiKeys?.google?.trim();
+  const cx = params.googleCx?.trim();
+  if (!apiKey) throw new Error('Google API Key 未配置');
+  if (!cx) throw new Error('Google Programmable Search Engine ID 未配置');
+
+  const maxResults = Math.min(normalizeSearchMaxResults(params.maxResults), 10);
+  const url = new URL('https://customsearch.googleapis.com/customsearch/v1');
+  url.searchParams.set('key', apiKey);
+  url.searchParams.set('cx', cx);
+  url.searchParams.set('q', withDomainOperators(params.query, params.includeDomains, params.excludeDomains));
+  url.searchParams.set('num', String(maxResults));
+  url.searchParams.set('safe', 'off');
+  url.searchParams.set('hl', params.language || 'zh-CN');
+  if (params.country) url.searchParams.set('gl', params.country.toLowerCase());
+  const dateRestrict = mapGoogleDateRestrict(params.timeRange);
+  if (dateRestrict) url.searchParams.set('dateRestrict', dateRestrict);
+
+  const data = await fetchJson(url.toString(), {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+  const items = Array.isArray(data?.items) ? data.items : [];
+
+  return {
+    directAnswer: null,
+    results: items.map((item: any): AgentWebSearchResult => ({
+      title: stripMarkup(item?.title || item?.link || ''),
+      url: String(item?.link || '').trim(),
+      snippet: stripMarkup(item?.snippet || item?.htmlSnippet || ''),
+      source: 'google-cse',
+      meta: {
+        provider: 'google-custom-search-json-api',
+        displayLink: item?.displayLink,
+        mime: item?.mime,
+      },
+    })).filter((item: AgentWebSearchResult) => item.title && /^https?:\/\//i.test(item.url)),
   };
 };
 
@@ -4299,20 +4431,24 @@ const runSpecializedSearch = async (params: AgentSpecializedSearchParams): Promi
 const runAgentSearchProvider = async (provider: AgentSearchProvider, params: AgentWebSearchParams) => {
   switch (provider) {
     case 'openai-web-search':
-      return searchWithOpenAIWebSearch(params);
-    case 'tavily':
-      return searchWithTavily(params);
-    case 'exa':
-      return searchWithExa(params);
-    case 'brave':
-      return searchWithBrave(params);
-    case 'searxng':
-      return searchWithSearxng(params);
-    case 'duckduckgo-browser':
-      return searchWithDuckDuckGoBrowser(params);
-    case 'bing-browser':
     default:
-      return searchWithBingBrowser(params);
+      return searchWithOpenAIWebSearch(params);
+    case 'bing-web-search':
+      return searchWithBingWebSearch(params);
+    case 'google-cse':
+      return searchWithGoogleCustomSearch(params);
+    case 'tavily':
+      throw new Error('Tavily 搜索已停用，请改用 OpenAI、Bing 或 Google。');
+    case 'exa':
+      throw new Error('Exa 搜索已停用，请改用 OpenAI、Bing 或 Google。');
+    case 'brave':
+      throw new Error('Brave 搜索已停用，请改用 OpenAI、Bing 或 Google。');
+    case 'searxng':
+      throw new Error('SearXNG 搜索已停用，请改用 OpenAI、Bing 或 Google。');
+    case 'duckduckgo-browser':
+      throw new Error('DuckDuckGo 浏览器搜索已停用，请改用 OpenAI、Bing 或 Google。');
+    case 'bing-browser':
+      throw new Error('Bing 浏览器搜索已停用，请改用 Bing Web Search API。');
   }
 };
 
@@ -4320,11 +4456,12 @@ ipcMain.handle('agent-web-search', async (_, rawParams: AgentWebSearchParams) =>
   const query = typeof rawParams.query === 'string' ? rawParams.query.trim() : '';
   if (!query) return { success: false, error: '搜索词不能为空', results: [] };
 
-  const primary = normalizeAgentSearchProvider(rawParams.provider, 'openai-web-search');
+  const primary = normalizeAgentSearchProvider(rawParams.provider);
   const fallbackProviders = Array.isArray(rawParams.fallbackProviders)
-    ? rawParams.fallbackProviders.map(item => normalizeAgentSearchProvider(item, 'bing-browser'))
-    : ['tavily', 'exa', 'brave', 'duckduckgo-browser', 'bing-browser'] as AgentSearchProvider[];
-  const providerOrder = [primary, ...fallbackProviders].filter((provider, index, arr) => arr.indexOf(provider) === index);
+    ? rawParams.fallbackProviders.map(normalizeAgentSearchProvider)
+    : [];
+  const providerOrder = [primary, ...fallbackProviders]
+    .filter((provider, index, array) => ACTIVE_AGENT_SEARCH_PROVIDERS.has(provider) && array.indexOf(provider) === index);
   const params: AgentWebSearchParams = {
     ...rawParams,
     query,
@@ -4377,44 +4514,13 @@ ipcMain.handle('agent-specialized-search', async (_, rawParams: AgentSpecialized
   const source = normalizeSpecializedSearchSource(rawParams.source);
   if (!query) return { success: false, error: '搜索词不能为空', results: [] };
   if (!source) return { success: false, error: '不支持的专用搜索源', results: [], query };
-
-  const enabledSources = Array.isArray(rawParams.specialized?.enabledSources)
-    ? rawParams.specialized.enabledSources.map(normalizeSpecializedSearchSource).filter(Boolean) as AgentSpecializedSearchSource[]
-    : ['github', 'npm', 'stackoverflow', 'arxiv'] as AgentSpecializedSearchSource[];
-  if (!enabledSources.includes(source)) {
-    return {
-      success: false,
-      source,
-      query,
-      results: [],
-      error: `${source} 专用搜索未启用，请在 Agent 设置的专用搜索配置中开启`,
-    };
-  }
-
-  const params: AgentSpecializedSearchParams = {
-    ...rawParams,
+  return {
+    success: false,
     source,
     query,
-    maxResults: normalizeSpecializedSearchMaxResults(rawParams.maxResults, rawParams.specialized?.maxResults),
+    results: [],
+    error: '专用搜索的独立外部引擎已停用。请通过 web_search 使用 OpenAI web_search 与域名过滤。',
   };
-
-  try {
-    const results = await runSpecializedSearch(params);
-    return {
-      success: true,
-      source,
-      query,
-      results: results.slice(0, params.maxResults),
-    };
-  } catch (error) {
-    return {
-      success: false,
-      source,
-      query,
-      results: [],
-      error: (error as Error).message,
-    };
-  }
 });
 
 // 代理设置：供渲染进程配置 HTTP 代理
