@@ -13,6 +13,7 @@ export type AgentRunStatus =
   | 'needs_user';
 
 export type AgentTraceStage =
+  | 'clarification'
   | 'planning'
   | 'decision'
   | 'execution'
@@ -62,6 +63,15 @@ export interface AgentCompletionEvaluation {
   confidence?: number;
   missing?: string[];
   retryable?: boolean;
+}
+
+export interface AgentClarificationResult {
+  status: 'ready' | 'needs_user';
+  message?: string;
+  questions?: string[];
+  missing?: string[];
+  confidence?: number;
+  payload?: Record<string, any>;
 }
 
 export interface AgentRuntimeInput {

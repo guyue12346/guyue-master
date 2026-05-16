@@ -132,6 +132,7 @@ export const maybeCompactConversationMemory = async (
 
   const memoryState: ConversationMemoryState = {
     summary: truncateText((summary || previousSummary || '').trim(), options.maxSummaryChars),
+    structured: input.memoryState?.structured,
     compactedUntilMessageId: selection.lastCandidate.id,
     compactedUntilTimestamp: selection.lastCandidate.timestamp,
     sourceMessageCount: (input.memoryState?.sourceMessageCount || 0) + selection.candidateMessages.length,

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, CheckCircle2, AlertCircle, Trash2, Sparkles, ChevronDown, ChevronRight, Plus, Pencil, Mail, Server, Key, Edit3, BookUser, Send, Loader2, Globe2 } from 'lucide-react';
 import { AGENT_AVAILABLE_MODELS, ChatConfig, getDefaultAgentModel } from '../services/chatService';
-import type { AgentEmailConfig, AgentSearchConfig, AgentSearchMode, AgentSearchProvider, Contact } from '../services/agent/agentStorage';
+import type { AgentComplexTaskConfig, AgentEmailConfig, AgentSearchConfig, AgentSearchMode, AgentSearchProvider, Contact } from '../services/agent/agentStorage';
 import { isStepwiseNativeProvider } from '../services/agent/agentModules';
 import { loadProfiles } from '../utils/apiProfileService';
 import type { ApiProfile } from '../types';
@@ -16,8 +16,8 @@ interface AgentSettingsModalProps {
   onClose: () => void;
   config: ChatConfig;
   onChangeConfig: (config: ChatConfig) => void;
-  routerConfig: ChatConfig;
-  onChangeRouterConfig: (config: ChatConfig) => void;
+  complexTaskConfig: AgentComplexTaskConfig;
+  onChangeComplexTaskConfig: (config: AgentComplexTaskConfig) => void;
   searchConfig: AgentSearchConfig;
   onChangeSearchConfig: (config: AgentSearchConfig) => void;
   onClearHistory: () => void;
@@ -117,8 +117,8 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   onClose,
   config,
   onChangeConfig,
-  routerConfig,
-  onChangeRouterConfig,
+  complexTaskConfig,
+  onChangeComplexTaskConfig,
   searchConfig,
   onChangeSearchConfig,
   onClearHistory,
@@ -139,7 +139,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   const [activeModuleTab, setActiveModuleTab] = useState<string | null>(null);
   const [savedApiConfigs, setSavedApiConfigs] = useState<SavedAgentApiConfig[]>([]);
   const [selectedApiConfigId, setSelectedApiConfigId] = useState<string>('');
-  const [selectedRouterApiConfigId, setSelectedRouterApiConfigId] = useState<string>('');
+  const [selectedComplexApiConfigId, setSelectedComplexApiConfigId] = useState<string>('');
   const [globalApiProfiles, setGlobalApiProfiles] = useState<ApiProfile[]>([]);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
 
@@ -162,17 +162,17 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
       item.apiKey === config.apiKey &&
       (item.baseUrl || '') === (config.baseUrl || '')
     ));
-    const matchedRouter = saved.find(item => (
-      item.provider === routerConfig.provider &&
-      item.apiKey === routerConfig.apiKey &&
-      (item.baseUrl || '') === (routerConfig.baseUrl || '')
+    const matchedComplex = saved.find(item => (
+      item.provider === complexTaskConfig.provider &&
+      item.apiKey === complexTaskConfig.apiKey &&
+      (item.baseUrl || '') === (complexTaskConfig.baseUrl || '')
     ));
     setSelectedApiConfigId(matched?.id || '');
-    setSelectedRouterApiConfigId(matchedRouter?.id || '');
-  }, [isOpen, config.provider, config.apiKey, config.baseUrl, routerConfig.provider, routerConfig.apiKey, routerConfig.baseUrl]);
+    setSelectedComplexApiConfigId(matchedComplex?.id || '');
+  }, [isOpen, config.provider, config.apiKey, config.baseUrl, complexTaskConfig.provider, complexTaskConfig.apiKey, complexTaskConfig.baseUrl]);
 
   const currentModels = AGENT_AVAILABLE_MODELS[config.provider] || [];
-  const routerModels = AGENT_AVAILABLE_MODELS[routerConfig.provider] || [];
+  const complexModels = AGENT_AVAILABLE_MODELS[complexTaskConfig.provider] || [];
   const supportsNativeTools = isStepwiseNativeProvider(config.provider);
 
   const applyConfig = (item: SavedAgentApiConfig) => {
@@ -181,18 +181,16 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
     onChangeConfig({ ...config, provider: item.provider, model: nextModel, apiKey: item.apiKey, baseUrl: item.baseUrl || '' });
   };
 
-  const applyRouterConfig = (item: SavedAgentApiConfig) => {
-    const nextModel = getDefaultAgentModel(item.provider, routerConfig.model);
-    setSelectedRouterApiConfigId(item.id);
-    onChangeRouterConfig({
-      ...routerConfig,
+  const applyComplexTaskConfig = (item: SavedAgentApiConfig) => {
+    const nextModel = getDefaultAgentModel(item.provider, complexTaskConfig.model);
+    setSelectedComplexApiConfigId(item.id);
+    onChangeComplexTaskConfig({
+      ...complexTaskConfig,
+      enabled: true,
       provider: item.provider,
       model: nextModel,
       apiKey: item.apiKey,
       baseUrl: item.baseUrl || '',
-      systemPrompt: '',
-      temperature: 0,
-      maxTokens: 1024,
     });
   };
 
@@ -242,7 +240,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
     setSavedApiConfigs(next);
     persistSavedApiConfigs(next);
     if (selectedApiConfigId === editingId) applyConfig(updated);
-    if (selectedRouterApiConfigId === editingId) applyRouterConfig(updated);
+    if (selectedComplexApiConfigId === editingId) applyComplexTaskConfig(updated);
     cancelEdit();
   };
 
@@ -251,17 +249,17 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
     setSavedApiConfigs(next);
     persistSavedApiConfigs(next);
     if (selectedApiConfigId === id) setSelectedApiConfigId('');
-    if (selectedRouterApiConfigId === id) {
-      setSelectedRouterApiConfigId('');
-      onChangeRouterConfig({ ...routerConfig, apiKey: '', baseUrl: '', systemPrompt: '', temperature: 0, maxTokens: 1024 });
+    if (selectedComplexApiConfigId === id) {
+      setSelectedComplexApiConfigId('');
+      onChangeComplexTaskConfig({ ...complexTaskConfig, enabled: false, apiKey: '', baseUrl: '' });
     }
     if (editingId === id) cancelEdit();
   };
 
   const formNeedsBaseUrl = formProvider === 'custom' || formProvider === 'ollama';
   const configNeedsBaseUrl = config.provider === 'custom' || config.provider === 'ollama';
-  const selectedRouterConfig = savedApiConfigs.find(item => item.id === selectedRouterApiConfigId);
-  const hasUnlistedRouterConfig = Boolean(routerConfig.apiKey && !selectedRouterConfig);
+  const selectedComplexConfig = savedApiConfigs.find(item => item.id === selectedComplexApiConfigId);
+  const hasUnlistedComplexConfig = Boolean(complexTaskConfig.enabled && complexTaskConfig.apiKey && !selectedComplexConfig);
   const isEditing = editingId !== null;
   const updateSearchConfig = (patch: Partial<AgentSearchConfig>) => onChangeSearchConfig({ ...searchConfig, ...patch });
   const updateSearchApiKey = (provider: keyof AgentSearchConfig['apiKeys'], apiKey: string) => {
@@ -473,69 +471,106 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
             </div>
           </div>
 
-          {/* ── 自动路由 API ── */}
+          {/* ── 复杂需求处理模型 ── */}
           <div className="px-5 pb-4">
             <div className="rounded-xl border border-gray-200 overflow-hidden">
               <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">自动路由 API</p>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">复杂需求处理模型</p>
                 <button
                   onClick={() => {
-                    setSelectedRouterApiConfigId('');
-                    onChangeRouterConfig({ ...routerConfig, apiKey: '', baseUrl: '', systemPrompt: '', temperature: 0, maxTokens: 1024 });
+                    const enabled = !complexTaskConfig.enabled;
+                    onChangeComplexTaskConfig({ ...complexTaskConfig, enabled });
                   }}
-                  className="text-[11px] text-gray-400 hover:text-gray-600"
+                  className={`h-6 px-2 rounded-full text-[11px] font-medium transition-colors ${
+                    complexTaskConfig.enabled
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                  }`}
                 >
-                  跟随主模型
+                  {complexTaskConfig.enabled ? '已启用' : '未启用'}
                 </button>
               </div>
               <div className="p-4 space-y-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">配置来源</label>
                   <select
-                    className="w-full rounded-lg border border-violet-200 bg-violet-50/40 px-3 py-2 text-sm text-gray-700 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
-                    value={selectedRouterApiConfigId}
+                    className="w-full rounded-lg border border-emerald-200 bg-emerald-50/40 px-3 py-2 text-sm text-gray-700 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                    value={selectedComplexApiConfigId}
                     onChange={e => {
                       const nextId = e.target.value;
                       if (!nextId) {
-                        setSelectedRouterApiConfigId('');
-                        onChangeRouterConfig({ ...routerConfig, apiKey: '', baseUrl: '', systemPrompt: '', temperature: 0, maxTokens: 1024 });
+                        setSelectedComplexApiConfigId('');
+                        onChangeComplexTaskConfig({ ...complexTaskConfig, enabled: false, apiKey: '', baseUrl: '' });
                         return;
                       }
                       const item = savedApiConfigs.find(p => p.id === nextId);
-                      if (item) applyRouterConfig(item);
+                      if (item) applyComplexTaskConfig(item);
                     }}
                   >
-                    <option value="">跟随主 Agent 模型</option>
+                    <option value="">不单独配置</option>
                     {savedApiConfigs.map(item => (
                       <option key={item.id} value={item.id}>{item.label} ({PROVIDER_LABELS[item.provider] || item.provider})</option>
                     ))}
                   </select>
                   {savedApiConfigs.length === 0 && (
-                    <p className="mt-1 text-[11px] text-gray-400">先在上方保存 API 配置后，可选择其中一个作为路由模型。</p>
+                    <p className="mt-1 text-[11px] text-gray-400">先在上方保存 API 配置后，可选择其中一个作为复杂模型。</p>
                   )}
-                  {hasUnlistedRouterConfig && (
-                    <p className="mt-1 text-[11px] text-amber-500">当前路由配置不在已保存列表中，建议从上方配置列表重新选择。</p>
+                  {hasUnlistedComplexConfig && (
+                    <p className="mt-1 text-[11px] text-amber-500">当前复杂模型配置不在已保存列表中，建议从上方配置列表重新选择。</p>
                   )}
                 </div>
 
-                {(selectedRouterConfig || hasUnlistedRouterConfig) && (
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">模型</label>
-                    <select
-                      value={routerConfig.model}
-                      onChange={e => onChangeRouterConfig({ ...routerConfig, model: e.target.value, systemPrompt: '', temperature: 0, maxTokens: 1024 })}
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 bg-white"
-                    >
-                      {routerModels.map(m => (
-                        <option key={m.id} value={m.id}>{m.name}{m.description ? ` — ${m.description}` : ''}</option>
-                      ))}
-                    </select>
+                {(selectedComplexConfig || hasUnlistedComplexConfig) && (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">模型</label>
+                        <select
+                          value={complexTaskConfig.model}
+                          onChange={e => onChangeComplexTaskConfig({ ...complexTaskConfig, model: e.target.value })}
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 bg-white"
+                        >
+                          {complexModels.map(m => (
+                            <option key={m.id} value={m.id}>{m.name}{m.description ? ` — ${m.description}` : ''}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">最大输出 Tokens</label>
+                        <input
+                          type="number"
+                          min={1024}
+                          max={64000}
+                          value={complexTaskConfig.maxTokens || 8192}
+                          onChange={e => onChangeComplexTaskConfig({
+                            ...complexTaskConfig,
+                            maxTokens: Math.min(Math.max(parseInt(e.target.value, 10) || 8192, 1024), 64000),
+                          })}
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 bg-white"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">温度</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={2}
+                        step={0.1}
+                        value={complexTaskConfig.temperature ?? 0.7}
+                        onChange={e => onChangeComplexTaskConfig({
+                          ...complexTaskConfig,
+                          temperature: Math.min(Math.max(parseFloat(e.target.value) || 0, 0), 2),
+                        })}
+                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 bg-white"
+                      />
+                    </div>
                   </div>
                 )}
                 <p className="text-[11px] text-gray-400">
-                  {routerConfig.apiKey
-                    ? `路由使用 ${selectedRouterConfig?.label ? `${selectedRouterConfig.label} · ` : ''}${PROVIDER_LABELS[routerConfig.provider] || routerConfig.provider} · ${routerConfig.model}`
-                    : '当前未单独配置，自动路由会使用主 Agent 模型。'}
+                  {complexTaskConfig.enabled && complexTaskConfig.apiKey
+                    ? `复杂任务使用 ${selectedComplexConfig?.label ? `${selectedComplexConfig.label} · ` : ''}${PROVIDER_LABELS[complexTaskConfig.provider] || complexTaskConfig.provider} · ${complexTaskConfig.model}`
+                    : '复杂任务默认由主 Agent 模型处理。'}
                 </p>
               </div>
             </div>

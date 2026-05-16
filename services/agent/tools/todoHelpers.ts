@@ -131,7 +131,7 @@ export const normalizeTodoPayload = (data: Record<string, any>): Partial<TodoIte
     description: typeof data.description === 'string' ? data.description : undefined,
     isCompleted: false,
     priority: data.priority === 'high' || data.priority === 'low' ? data.priority : 'medium',
-    category: typeof data.category === 'string' && data.category.trim() ? data.category.trim() : '未分类',
+    category: typeof data.category === 'string' && data.category.trim() ? data.category.trim() : undefined,
     ...schedule.updates,
   };
 };

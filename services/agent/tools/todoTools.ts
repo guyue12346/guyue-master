@@ -2,6 +2,13 @@ import type { RecurringEvent, SubTask, TodoItem } from '../../../types';
 import type { ToolRegistration } from '../toolRegistry';
 import { normalizeTodoPayload, resolveTodoMatch, resolveTodoSchedulePayload } from './todoHelpers';
 
+const RESERVED_TODO_CATEGORY_NAMES = new Set(['全部', '默认', '未分类', '__all__']);
+
+const getAvailableTodoCategories = (categories: string[]) =>
+  categories
+    .map(category => category.trim())
+    .filter(category => category && !RESERVED_TODO_CATEGORY_NAMES.has(category));
+
 export const TODO_TOOL_REGISTRATIONS: ToolRegistration[] = [
   {
       name: 'create_todo',
@@ -14,7 +21,7 @@ export const TODO_TOOL_REGISTRATIONS: ToolRegistration[] = [
           properties: {
             content: { type: 'string', description: '待办事项标题或内容' },
             description: { type: 'string', description: '补充说明' },
-            priority: { type: 'string', enum: ['high', 'medium', 'low'], description: '优先级' },
+            priority: { type: 'string', enum: ['high', 'medium', 'low'], description: '优先级，必填：high=高/紧急，medium=中/普通，low=低/不急。' },
             category: { type: 'string', description: '分类名称，必须是系统已有分类，工具执行时会校验。若已有分类均不合适，请先调用 create_category 创建新分类。' },
             dueDate: { type: 'string', description: '单个时间点或全天事项时间，格式 YYYY-MM-DDTHH:mm，如 "2026-03-15T14:00"。若仅传日期且想视为全天，可传 timeType="allday"。' },
             timeType: { type: 'string', enum: ['point', 'range', 'allday'], description: '时间类型。时间段日程请传 range。' },
@@ -22,15 +29,24 @@ export const TODO_TOOL_REGISTRATIONS: ToolRegistration[] = [
             endDateTime: { type: 'string', description: '时间段事件结束时间，格式 YYYY-MM-DDTHH:mm，例如 "2026-03-15T17:00"。' },
             durationMinutes: { type: 'number', description: '时间段事件时长（分钟）。若未提供 endDateTime，可用它配合 startDateTime 自动计算结束时间。' },
           },
-          required: ['content'],
+          required: ['content', 'category', 'priority'],
         },
       },
       execute: async (args, ctx) => {
-        if (typeof args.category === 'string' && args.category.trim()) {
-          const catName = args.category.trim();
-          if (!ctx.todoCategories.includes(catName)) {
-            return { success: false, error: `分类「${catName}」不存在。当前可用分类：${ctx.todoCategories.join('、') || '（暂无）'}。请从已有分类中选择，或先调用 create_category（module: "todo"）创建新分类后再试。` };
-          }
+        if (!ctx.dataPermissions.todos.write) return { success: false, error: '待办创建未授权。请在权限面板中开启「待办事项」写入权限。' };
+        const availableCategories = getAvailableTodoCategories(ctx.todoCategories);
+        const catName = typeof args.category === 'string' ? args.category.trim() : '';
+        if (!availableCategories.length) {
+          return { success: false, error: '当前没有可用待办分类。请先创建一个待办分类后再创建事项。' };
+        }
+        if (!catName || RESERVED_TODO_CATEGORY_NAMES.has(catName)) {
+          return { success: false, error: `创建待办必须指定一个已有分类，不能使用“全部/默认/未分类”。当前可用分类：${availableCategories.join('、')}。` };
+        }
+        if (!availableCategories.includes(catName)) {
+          return { success: false, error: `分类「${catName}」不存在。当前可用分类：${availableCategories.join('、')}。请从已有分类中选择，或先调用 create_category（module: "todo"）创建新分类后再试。` };
+        }
+        if (!['high', 'medium', 'low'].includes(args.priority)) {
+          return { success: false, error: '创建待办必须指定优先级 priority：high（高/紧急）、medium（中/普通）或 low（低/不急）。' };
         }
         const schedule = resolveTodoSchedulePayload(args);
         if (schedule.error) {
@@ -46,7 +62,7 @@ export const TODO_TOOL_REGISTRATIONS: ToolRegistration[] = [
           description: todoData.description,
           isCompleted: false,
           priority: todoData.priority || 'medium',
-          category: todoData.category || '未分类',
+          category: todoData.category || catName,
           dueDate: todoData.dueDate,
           timeType: todoData.timeType,
           timeStart: todoData.timeStart,
@@ -95,7 +111,7 @@ export const TODO_TOOL_REGISTRATIONS: ToolRegistration[] = [
           subtaskCount: t.subtasks?.length || 0,
           subtaskCompleted: t.subtasks?.filter(s => s.isCompleted).length || 0,
         }));
-        return { success: true, total: items.length, returned: result.length, availableCategories: ctx.todoCategories, todos: result };
+        return { success: true, total: items.length, returned: result.length, availableCategories: getAvailableTodoCategories(ctx.todoCategories), todos: result };
       },
     },
   {
@@ -131,9 +147,13 @@ export const TODO_TOOL_REGISTRATIONS: ToolRegistration[] = [
         if (typeof args.description === 'string') updates.description = args.description;
         if (['high', 'medium', 'low'].includes(args.priority)) updates.priority = args.priority;
         if (typeof args.category === 'string') {
+          const availableCategories = getAvailableTodoCategories(ctx.todoCategories);
           const catName = args.category.trim();
-          if (catName && !ctx.todoCategories.includes(catName)) {
-            return { success: false, error: `分类「${catName}」不存在。当前可用分类：${ctx.todoCategories.join('、') || '（暂无）'}。请从已有分类中选择，或先调用 create_category（module: "todo"）创建新分类后再试。` };
+          if (!catName || RESERVED_TODO_CATEGORY_NAMES.has(catName)) {
+            return { success: false, error: `分类名称不能为空，也不能使用“全部/默认/未分类”。当前可用分类：${availableCategories.join('、') || '（暂无）'}。` };
+          }
+          if (!availableCategories.includes(catName)) {
+            return { success: false, error: `分类「${catName}」不存在。当前可用分类：${availableCategories.join('、') || '（暂无）'}。请从已有分类中选择，或先调用 create_category（module: "todo"）创建新分类后再试。` };
           }
           updates.category = catName;
         }
@@ -375,7 +395,7 @@ export const TODO_TOOL_REGISTRATIONS: ToolRegistration[] = [
             duration: { type: 'number', description: '时长（分钟），如 90 表示 1.5 小时。allDay=false 时有效，默认 60。' },
             color: { type: 'string', description: '事件颜色 hex 值，如 "#3b82f6"（蓝）、"#8b5cf6"（紫）、"#22c55e"（绿）、"#ef4444"（红）、"#f97316"（橙）（可选）' },
           },
-          required: ['title', 'recurrence'],
+          required: ['title', 'categoryId', 'recurrence'],
         },
       },
       execute: async (args, ctx) => {
@@ -406,11 +426,15 @@ export const TODO_TOOL_REGISTRATIONS: ToolRegistration[] = [
         // 分类匹配：通过 ID 精确查找
         const catId = typeof args.categoryId === 'string' ? args.categoryId.trim() : '';
         const matchedCat = catId ? ctx.recurringCategories.find(c => c.id === catId) : null;
+        if (!catId) {
+          const available = ctx.recurringCategories.map(c => `${c.name}(${c.id})`).join('、') || '（暂无）';
+          return { success: false, error: `创建重复事件必须指定已有分类 ID。当前可用分类：${available}。请先调用 query_recurring_events 获取分类 ID。` };
+        }
         if (catId && !matchedCat) {
           const available = ctx.recurringCategories.map(c => `${c.name}(${c.id})`).join('、') || '（暂无）';
           return { success: false, error: `分类 ID「${catId}」不存在。当前可用分类：${available}。请先调用 query_recurring_events 获取正确的分类 ID。` };
         }
-        const categoryValue = matchedCat?.name || '未分类';
+        const categoryValue = matchedCat.name;
 
         const weekDays = recurrence === 'weekly' && Array.isArray(args.weekDays) && args.weekDays.length > 0
           ? args.weekDays.filter((d: number) => d >= 0 && d <= 6)
@@ -540,7 +564,7 @@ export const TODO_TOOL_REGISTRATIONS: ToolRegistration[] = [
       execute: async (args, ctx) => {
         if (!ctx.dataPermissions.todos.write) return { success: false, error: '重复事件分类创建未授权。请在权限面板中开启「待办事项」写入权限。' };
         const name = typeof args.name === 'string' ? args.name.trim() : '';
-        if (!name) return { success: false, error: '分类名称不能为空。' };
+        if (!name || RESERVED_TODO_CATEGORY_NAMES.has(name)) return { success: false, error: '分类名称不能为空，也不能使用“全部/默认/未分类”。' };
         if (ctx.recurringCategories.find(c => c.name === name)) {
           return { success: false, error: `分类「${name}」已存在，无需重复创建。` };
         }
@@ -575,7 +599,7 @@ export const TODO_TOOL_REGISTRATIONS: ToolRegistration[] = [
         const moduleKey = args.module as string;
         if (!['todo', 'prompts', 'markdown'].includes(moduleKey)) return { success: false, error: 'module 参数必须是 todo、prompts 或 markdown 之一。' };
         const name = typeof args.name === 'string' ? args.name.trim() : '';
-        if (!name) return { success: false, error: '分类名称不能为空。' };
+        if (!name || RESERVED_TODO_CATEGORY_NAMES.has(name)) return { success: false, error: '分类名称不能为空，也不能使用“全部/默认/未分类”。' };
         const currentList = moduleKey === 'todo' ? ctx.todoCategories : moduleKey === 'prompts' ? ctx.promptCategories : ctx.markdownCategories;
         if (currentList.includes(name)) {
           return { success: false, error: `分类「${name}」在「${moduleKey}」中已存在，无需重复创建。` };

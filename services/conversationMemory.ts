@@ -19,6 +19,7 @@ export interface ConversationContextOptions {
   keepRecentTurns?: number;
   maxContextChars?: number;
   maxSummaryChars?: number;
+  maxStructuredMemoryChars?: number;
   maxRecentMessageChars?: number;
   memoryState?: ConversationMemoryState | null;
   memoryMessageId?: string;
@@ -33,6 +34,7 @@ export interface ConversationStorageOptions {
 
 export interface ConversationMemoryState {
   summary: string;
+  structured?: ConversationStructuredMemory;
   compactedUntilMessageId?: string;
   compactedUntilTimestamp?: number;
   sourceMessageCount?: number;
@@ -42,6 +44,25 @@ export interface ConversationMemoryState {
   model?: string;
   version: 1;
 }
+
+export type ConversationStructuredMemoryKey =
+  | 'userPreferences'
+  | 'importantFacts'
+  | 'openTasks'
+  | 'completedTasks'
+  | 'toolResults'
+  | 'constraints';
+
+export interface ConversationStructuredMemoryEntry {
+  id: string;
+  text: string;
+  source?: string;
+  updatedAt: number;
+}
+
+export type ConversationStructuredMemory = Record<ConversationStructuredMemoryKey, ConversationStructuredMemoryEntry[]>;
+
+export type ConversationStructuredMemoryPatch = Partial<Record<ConversationStructuredMemoryKey, Array<string | Partial<ConversationStructuredMemoryEntry>>>>;
 
 export interface ConversationCompactionSelectionOptions {
   keepRecentTurns?: number;
@@ -61,6 +82,7 @@ const DEFAULT_CONTEXT_OPTIONS: Required<ConversationContextOptions> = {
   keepRecentTurns: 8,
   maxContextChars: 70000,
   maxSummaryChars: 12000,
+  maxStructuredMemoryChars: 9000,
   maxRecentMessageChars: 16000,
   memoryState: null,
   memoryMessageId: 'conversation-memory',
@@ -78,6 +100,36 @@ const DEFAULT_COMPACTION_SELECTION_OPTIONS: Required<ConversationCompactionSelec
   minMessagesForCompaction: 14,
   minCharsForCompaction: 24000,
 };
+
+const STRUCTURED_MEMORY_KEYS: ConversationStructuredMemoryKey[] = [
+  'userPreferences',
+  'importantFacts',
+  'openTasks',
+  'completedTasks',
+  'toolResults',
+  'constraints',
+];
+
+const STRUCTURED_MEMORY_LIMITS: Record<ConversationStructuredMemoryKey, number> = {
+  userPreferences: 40,
+  importantFacts: 50,
+  openTasks: 40,
+  completedTasks: 50,
+  toolResults: 60,
+  constraints: 40,
+};
+
+const STRUCTURED_MEMORY_LABELS: Record<ConversationStructuredMemoryKey, string> = {
+  userPreferences: '用户偏好',
+  importantFacts: '重要事实',
+  openTasks: '未完成事项',
+  completedTasks: '已完成事项',
+  toolResults: '工具执行结论',
+  constraints: '长期约束',
+};
+
+const SENSITIVE_MEMORY_PATTERN =
+  /(api[\s_-]?key|apikey|secret|token|bearer|password|passwd|密码|密钥|令牌|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{12,})/i;
 
 const roleLabel = (role: ConversationRole): string => {
   if (role === 'user') return '用户';
@@ -97,6 +149,122 @@ const truncateText = (value: string, maxChars: number): string => {
 
 const contentChars = (messages: ConversationMemoryMessage[]): number =>
   messages.reduce((sum, message) => sum + (message.content?.length || 0), 0);
+
+const normalizeMemoryEntryText = (value: unknown, maxChars = 900): string => {
+  const text = typeof value === 'string' ? normalizeWhitespace(value) : '';
+  if (!text || SENSITIVE_MEMORY_PATTERN.test(text)) return '';
+  return truncateText(text, maxChars);
+};
+
+const createMemoryEntry = (
+  value: string | Partial<ConversationStructuredMemoryEntry>,
+  source?: string,
+): ConversationStructuredMemoryEntry | null => {
+  const text = normalizeMemoryEntryText(typeof value === 'string' ? value : value.text);
+  if (!text) return null;
+  return {
+    id: typeof value === 'string' ? `memory_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` : value.id || `memory_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    text,
+    source: typeof value === 'string' ? source : value.source || source,
+    updatedAt: typeof value === 'string' ? Date.now() : typeof value.updatedAt === 'number' ? value.updatedAt : Date.now(),
+  };
+};
+
+export const createEmptyStructuredMemory = (): ConversationStructuredMemory => ({
+  userPreferences: [],
+  importantFacts: [],
+  openTasks: [],
+  completedTasks: [],
+  toolResults: [],
+  constraints: [],
+});
+
+export const normalizeStructuredMemory = (value: any): ConversationStructuredMemory | undefined => {
+  if (!value || typeof value !== 'object') return undefined;
+  const normalized = createEmptyStructuredMemory();
+  let hasAny = false;
+  for (const key of STRUCTURED_MEMORY_KEYS) {
+    const entries = Array.isArray(value[key]) ? value[key] : [];
+    normalized[key] = entries
+      .map((entry: any) => createMemoryEntry(entry, entry?.source))
+      .filter((entry): entry is ConversationStructuredMemoryEntry => Boolean(entry))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, STRUCTURED_MEMORY_LIMITS[key]);
+    if (normalized[key].length > 0) hasAny = true;
+  }
+  return hasAny ? normalized : undefined;
+};
+
+export const mergeStructuredMemory = (
+  current: ConversationStructuredMemory | undefined,
+  patch: ConversationStructuredMemoryPatch,
+  source?: string,
+): ConversationStructuredMemory | undefined => {
+  const base = current ? normalizeStructuredMemory(current) || createEmptyStructuredMemory() : createEmptyStructuredMemory();
+  let hasPatch = false;
+
+  for (const key of STRUCTURED_MEMORY_KEYS) {
+    const incoming = (patch[key] || [])
+      .map(item => createMemoryEntry(item, source))
+      .filter((entry): entry is ConversationStructuredMemoryEntry => Boolean(entry));
+    if (incoming.length === 0) continue;
+    hasPatch = true;
+
+    const merged = [...incoming, ...base[key]];
+    const seen = new Set<string>();
+    base[key] = merged
+      .filter(entry => {
+        const identity = normalizeWhitespace(entry.text).toLowerCase();
+        if (!identity || seen.has(identity)) return false;
+        seen.add(identity);
+        return true;
+      })
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, STRUCTURED_MEMORY_LIMITS[key]);
+  }
+
+  return hasPatch ? base : current;
+};
+
+export const mergeConversationMemoryState = (
+  current: ConversationMemoryState | null | undefined,
+  patch: ConversationStructuredMemoryPatch,
+  meta: { provider?: string; model?: string; source?: string } = {},
+): ConversationMemoryState | null => {
+  const structured = mergeStructuredMemory(current?.structured, patch, meta.source);
+  if (!structured) return current || null;
+  return {
+    summary: current?.summary || '',
+    compactedUntilMessageId: current?.compactedUntilMessageId,
+    compactedUntilTimestamp: current?.compactedUntilTimestamp,
+    sourceMessageCount: current?.sourceMessageCount,
+    sourceCharCount: current?.sourceCharCount,
+    structured,
+    updatedAt: Date.now(),
+    provider: meta.provider || current?.provider,
+    model: meta.model || current?.model,
+    version: 1,
+  };
+};
+
+export const formatStructuredMemory = (
+  structured?: ConversationStructuredMemory,
+  maxChars = 9000,
+): string => {
+  const normalized = normalizeStructuredMemory(structured);
+  if (!normalized) return '';
+  const sections = STRUCTURED_MEMORY_KEYS
+    .map(key => {
+      const entries = normalized[key];
+      if (!entries.length) return '';
+      return [
+        `### ${STRUCTURED_MEMORY_LABELS[key]}`,
+        ...entries.map(entry => `- ${entry.text}`),
+      ].join('\n');
+    })
+    .filter(Boolean);
+  return truncateText(sections.join('\n\n'), maxChars);
+};
 
 const attachmentSummary = (message: ConversationMemoryMessage): string => {
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
@@ -207,7 +375,11 @@ export const buildConversationContextMessages = <T extends ConversationMemoryMes
   const recentMessages = takeRecentTurns(uncompactedMessages, config.keepRecentTurns)
     .map(message => cloneWithContent(message, truncateText(message.content || '', config.maxRecentMessageChars)));
   const olderMessages = uncompactedMessages.slice(0, Math.max(0, uncompactedMessages.length - recentMessages.length));
+  const structuredMemory = formatStructuredMemory(config.memoryState?.structured, config.maxStructuredMemoryChars);
   const summaryParts = [
+    structuredMemory
+      ? `## 结构化长期记忆\n${structuredMemory}`
+      : '',
     config.memoryState?.summary
       ? `## 已持久化压缩记忆\n${truncateText(config.memoryState.summary, config.maxSummaryChars)}`
       : '',

@@ -92,6 +92,7 @@ export interface ToolExecutionContext {
   latexTemplatePermissions: string[];
   onAutoAuthLatexFileCategory: (catId: string) => void;
   onAutoAuthLatexTemplateCategory: (catName: string) => void;
+  executeComplexTask?: (args: Record<string, any>) => Promise<any>;
   executeWebSearch?: (args: Record<string, any>) => Promise<any>;
   executeWebOpen?: (args: Record<string, any>) => Promise<any>;
   executeSpecializedSearch?: (args: Record<string, any>) => Promise<any>;
@@ -501,6 +502,7 @@ export const generateToolCallSummary = (toolCalls: ChatToolCall[]): string => {
     query_website_records: '查询网站记录', create_website_record: '创建网站记录',
     update_website_record: '更新网站记录', delete_website_record: '删除网站记录',
     create_website_tag: '创建网站标签', update_website_tag: '更新网站标签', delete_website_tag: '删除网站标签',
+    delegate_complex_task: '复杂需求处理',
     query_leetcode_lists: '查询题单', read_leetcode_list: '读取题单',
     update_leetcode_list: '更新题单', delete_leetcode_list: '删除题单',
     create_leetcode_group: '创建题单分组', update_leetcode_group: '更新题单分组',

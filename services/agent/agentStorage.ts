@@ -2,7 +2,7 @@ import {
   ChatConfig,
   DEFAULT_CHAT_CONFIG,
 } from '../chatService';
-import { trimConversationForStorage } from '../conversationMemory';
+import { normalizeStructuredMemory, trimConversationForStorage } from '../conversationMemory';
 import type { ConversationMemoryState } from '../conversationMemory';
 import {
   AgentFullAccessPermissions,
@@ -17,7 +17,7 @@ import {
 import { loadLocalJson, saveLocalJson, saveUnifiedJson } from '../../utils/unifiedStorage';
 
 export const STORAGE_KEY_AGENT_CONFIG = 'guyue_agent_config';
-export const STORAGE_KEY_AGENT_ROUTER_CONFIG = 'guyue_agent_router_config';
+export const STORAGE_KEY_AGENT_COMPLEX_TASK_CONFIG = 'guyue_agent_complex_task_config';
 export const STORAGE_KEY_AGENT_SEARCH_CONFIG = 'guyue_agent_search_config';
 export const STORAGE_KEY_AGENT_HISTORY = 'guyue_agent_history';
 export const STORAGE_KEY_AGENT_MEMORY = 'guyue_agent_memory';
@@ -27,7 +27,7 @@ export const STORAGE_KEY_CONTACTS = 'guyue_agent_contacts';
 export const AGENT_EMAIL_CONFIG_KEY = 'linkmaster_email_config';
 
 const STORE_KEY_AGENT_CONFIG = 'agent-config';
-const STORE_KEY_AGENT_ROUTER_CONFIG = 'agent-router-config';
+const STORE_KEY_AGENT_COMPLEX_TASK_CONFIG = 'agent-complex-task-config';
 const STORE_KEY_AGENT_SEARCH_CONFIG = 'agent-search-config';
 const STORE_KEY_AGENT_HISTORY = 'agent-history';
 const STORE_KEY_AGENT_MEMORY = 'agent-memory';
@@ -43,6 +43,22 @@ export const DEFAULT_AGENT_EMAIL_CONFIG = {
 };
 
 export type AgentEmailConfig = typeof DEFAULT_AGENT_EMAIL_CONFIG;
+
+export interface AgentComplexTaskConfig extends ChatConfig {
+  enabled: boolean;
+}
+
+export const DEFAULT_AGENT_COMPLEX_TASK_CONFIG: AgentComplexTaskConfig = {
+  ...DEFAULT_CHAT_CONFIG,
+  enabled: false,
+  systemPrompt: [
+    '你是 Guyue Master Agent 的复杂需求处理模型。',
+    '你只负责处理被委托来的复杂写作、长文本生成、深度分析、复杂推理和结构化方案输出。',
+    '严格按委托任务要求输出最终内容，不要声称自己操作了本地应用工具。',
+  ].join('\n'),
+  temperature: 0.7,
+  maxTokens: 8192,
+};
 
 export type AgentSearchProvider =
   | 'duckduckgo-browser'
@@ -135,6 +151,25 @@ const normalizeConfig = (value: any): ChatConfig => ({
   ...(value && typeof value === 'object' ? value : {}),
   systemPrompt: typeof value?.systemPrompt === 'string' ? value.systemPrompt : '',
 });
+
+const normalizeComplexTaskConfig = (value: any): AgentComplexTaskConfig => {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const normalized = normalizeConfig(source);
+  const maxTokens = Number(source.maxTokens);
+  const temperature = Number(source.temperature);
+  return {
+    ...DEFAULT_AGENT_COMPLEX_TASK_CONFIG,
+    ...normalized,
+    enabled: Boolean(source.enabled),
+    systemPrompt: typeof source.systemPrompt === 'string'
+      ? source.systemPrompt
+      : DEFAULT_AGENT_COMPLEX_TASK_CONFIG.systemPrompt,
+    temperature: Number.isFinite(temperature) ? temperature : DEFAULT_AGENT_COMPLEX_TASK_CONFIG.temperature,
+    maxTokens: Number.isFinite(maxTokens)
+      ? Math.min(Math.max(Math.floor(maxTokens), 1024), 64000)
+      : DEFAULT_AGENT_COMPLEX_TASK_CONFIG.maxTokens,
+  };
+};
 
 const AGENT_SEARCH_MODES = new Set<AgentSearchMode>(['fast', 'balanced', 'deep']);
 const AGENT_SEARCH_PROVIDERS = new Set<AgentSearchProvider>([
@@ -357,6 +392,7 @@ const normalizeConversationMemory = (value: any): ConversationMemoryState | null
   if (!value || typeof value !== 'object' || typeof value.summary !== 'string') return null;
   return {
     summary: value.summary,
+    structured: normalizeStructuredMemory(value.structured),
     compactedUntilMessageId: typeof value.compactedUntilMessageId === 'string' ? value.compactedUntilMessageId : undefined,
     compactedUntilTimestamp: typeof value.compactedUntilTimestamp === 'number' ? value.compactedUntilTimestamp : undefined,
     sourceMessageCount: typeof value.sourceMessageCount === 'number' ? value.sourceMessageCount : undefined,
@@ -387,39 +423,22 @@ export const saveAgentConfig = (config: ChatConfig): void => {
   );
 };
 
-export const DEFAULT_AGENT_ROUTER_CONFIG: ChatConfig = {
-  ...DEFAULT_CHAT_CONFIG,
-  systemPrompt: '',
-  temperature: 0,
-  maxTokens: 1024,
-};
-
-export const loadAgentRouterConfig = (): ChatConfig =>
+export const loadAgentComplexTaskConfig = (): AgentComplexTaskConfig =>
   loadLocalJson({
-    localStorageKey: STORAGE_KEY_AGENT_ROUTER_CONFIG,
-    defaultValue: () => ({ ...DEFAULT_AGENT_ROUTER_CONFIG }),
-    normalize: value => ({
-      ...DEFAULT_AGENT_ROUTER_CONFIG,
-      ...(value && typeof value === 'object' ? value : {}),
-      systemPrompt: '',
-      temperature: typeof value?.temperature === 'number' ? value.temperature : 0,
-      maxTokens: typeof value?.maxTokens === 'number' ? value.maxTokens : 1024,
-    }),
+    localStorageKey: STORAGE_KEY_AGENT_COMPLEX_TASK_CONFIG,
+    defaultValue: () => ({ ...DEFAULT_AGENT_COMPLEX_TASK_CONFIG }),
+    normalize: normalizeComplexTaskConfig,
   });
 
-export const saveAgentRouterConfig = (config: ChatConfig): void => {
+export const saveAgentComplexTaskConfig = (config: AgentComplexTaskConfig): void => {
   saveUnifiedJson(
     {
-      appDataKey: STORE_KEY_AGENT_ROUTER_CONFIG,
-      localStorageKey: STORAGE_KEY_AGENT_ROUTER_CONFIG,
-      defaultValue: () => ({ ...DEFAULT_AGENT_ROUTER_CONFIG }),
-      normalize: value => ({
-        ...DEFAULT_AGENT_ROUTER_CONFIG,
-        ...(value && typeof value === 'object' ? value : {}),
-        systemPrompt: '',
-      }),
+      appDataKey: STORE_KEY_AGENT_COMPLEX_TASK_CONFIG,
+      localStorageKey: STORAGE_KEY_AGENT_COMPLEX_TASK_CONFIG,
+      defaultValue: () => ({ ...DEFAULT_AGENT_COMPLEX_TASK_CONFIG }),
+      normalize: normalizeComplexTaskConfig,
     },
-    { ...config, systemPrompt: '', temperature: config.temperature ?? 0, maxTokens: config.maxTokens ?? 1024 },
+    normalizeComplexTaskConfig(config),
   );
 };
 

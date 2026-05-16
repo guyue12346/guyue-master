@@ -28,11 +28,12 @@ import {
 import {
   DEFAULT_AGENT_EMAIL_CONFIG,
   AGENT_EMAIL_CONFIG_KEY,
+  DEFAULT_AGENT_COMPLEX_TASK_CONFIG,
   loadAgentConfig,
-  loadAgentRouterConfig,
+  loadAgentComplexTaskConfig,
   loadAgentSearchConfig,
   saveAgentConfig,
-  saveAgentRouterConfig,
+  saveAgentComplexTaskConfig,
   saveAgentSearchConfig,
   loadAgentHistory,
   saveAgentHistory,
@@ -46,6 +47,7 @@ import {
   loadModulePrompts as loadStoredModulePrompts,
   saveModulePrompts,
   type AgentEmailConfig,
+  type AgentComplexTaskConfig,
   type AgentSearchConfig,
   type Contact,
 } from '../services/agent/agentStorage';
@@ -89,6 +91,7 @@ import {
 import {
   createAgentRuntime,
   createAgentToolExecutionEnvelope,
+  type AgentClarificationResult,
   type AgentCompletionEvaluation,
   type AgentTraceEvent,
 } from '../services/agent/runtime';
@@ -110,14 +113,16 @@ import {
   restoreAgentUndoSnapshot,
 } from '../services/agent/snapshots';
 import {
-  detectModuleScopeLocally,
   getModuleDisplayName,
   getModuleScopeLabel,
-  getRouterSignature,
   normalizeModuleScope,
 } from '../services/agent/router';
 import { detectSensitiveInput, redactSensitiveText } from '../services/agent/privacy';
-import { buildConversationContextMessages } from '../services/conversationMemory';
+import {
+  buildConversationContextMessages,
+  mergeConversationMemoryState,
+  type ConversationStructuredMemoryPatch,
+} from '../services/conversationMemory';
 import type { ConversationMemoryState } from '../services/conversationMemory';
 import { maybeCompactConversationMemory } from '../services/conversationCompaction';
 
@@ -218,31 +223,10 @@ interface AgentPromptOptions {
 
 interface AgentRouteResult {
   modules: string[];
-  source: 'manual' | 'local' | 'llm' | 'cache' | 'search-only' | 'none';
+  source: 'manual' | 'all';
   confidence: number;
   reason: string;
   useTools: boolean;
-}
-
-interface AgentSupplementalRouteResult {
-  addModules: string[];
-  needContinue: boolean;
-  source: 'llm' | 'cache' | 'none';
-  confidence: number;
-  reason: string;
-}
-
-interface AgentRouteCacheEntry {
-  key: string;
-  kind: 'initial' | 'supplemental';
-  modules: string[];
-  useTools: boolean;
-  confidence: number;
-  reason: string;
-  routerSignature: string;
-  createdAt: number;
-  updatedAt: number;
-  hitCount: number;
 }
 
 interface AgentDebugItem {
@@ -279,6 +263,9 @@ const AGENT_TOOL_CATEGORY_LABELS: Record<AgentCrudAction, string> = {
   delete: '删除',
 };
 
+const createAgentLocalId = (prefix: string) =>
+  `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
 const getToolVisualMeta = (registration: ToolRegistration) => {
   const owner = getToolRegistryOwner(registration.name);
   const permissionTarget = getToolPermissionTarget(registration);
@@ -298,11 +285,58 @@ const getToolVisualMeta = (registration: ToolRegistration) => {
     permissionLabel: `${getModuleDisplayName(permissionTarget.module)} · ${permissionTarget.action}`,
   };
 };
-const AGENT_ROUTE_CACHE_KEY = 'guyue_agent_route_cache_v2';
-const AGENT_ROUTE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const AGENT_ROUTE_CACHE_MAX_ENTRIES = 100;
-const AGENT_ROUTE_CACHE_MIN_CONFIDENCE = 0.75;
 const AGENT_PAGE_STATE_KEY = 'guyue_agent_page_state_v1';
+const AGENT_TIME_ZONE = 'Asia/Shanghai';
+
+const getZonedDateParts = (timeZone: string, date = new Date()) => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const get = (type: string) => Number(parts.find(part => part.type === type)?.value);
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+  };
+};
+
+const formatDateParts = (date: Date) => {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const getShanghaiDate = (offsetDays = 0) => {
+  const { year, month, day } = getZonedDateParts(AGENT_TIME_ZONE);
+  const date = new Date(Date.UTC(year, month - 1, day + offsetDays));
+  return formatDateParts(date);
+};
+
+const getShanghaiWeekday = (offsetDays = 0) => {
+  const { year, month, day } = getZonedDateParts(AGENT_TIME_ZONE);
+  const date = new Date(Date.UTC(year, month - 1, day + offsetDays, 12));
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: AGENT_TIME_ZONE,
+    weekday: 'long',
+  }).format(date);
+};
+
+const getShanghaiDateTimeLabel = () =>
+  new Intl.DateTimeFormat('zh-CN', {
+    timeZone: AGENT_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'long',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(new Date());
 
 interface AgentPageState {
   inputDraft: string;
@@ -340,6 +374,10 @@ const saveAgentPageState = (state: AgentPageState) => {
 };
 
 const EMAIL_SENDING_LINE_RE = /(^|\n)\s*发送中(?:\.{3}|…+|。*)\s*(?=\n|$)/g;
+const MEMORY_IMPORTANT_USER_RE = /(记住|以后|以后都|默认|偏好|习惯|我希望|我想要|我不想|不要再|不要|必须|每次|始终|总是|优先|我的|我是|我在用|我用的是)/;
+const MEMORY_CONSTRAINT_RE = /(不要再|不要|不能|必须|始终|总是|每次|优先|只允许|禁止|默认)/;
+const MEMORY_TASK_RE = /(待办|接下来|后续|之后|下一步|还要|未完成|继续|todo|任务)/i;
+const MEMORY_MAX_TEXT = 700;
 
 const removeEmailSendingLine = (content: string) => {
   EMAIL_SENDING_LINE_RE.lastIndex = 0;
@@ -363,12 +401,83 @@ const withEmailFinalLine = (content: string, finalLine: string) => {
   return `${cleaned}\n\n${finalLine}`;
 };
 
+const compactMemoryText = (value: unknown, maxLength = MEMORY_MAX_TEXT) => {
+  const text = typeof value === 'string' ? redactSensitiveText(value).replace(/\s+/g, ' ').trim() : '';
+  if (!text) return '';
+  return text.length > maxLength ? `${text.slice(0, maxLength).trim()}...` : text;
+};
+
+const summarizeMemoryResult = (result: any): string => {
+  if (!result) return '';
+  if (typeof result === 'string') return compactMemoryText(result, 260);
+  if (result.pendingConfirmation) return compactMemoryText(result.message || '等待用户确认', 260);
+  if (result.success === false) return compactMemoryText(result.error || result.message || '执行失败', 260);
+  if (typeof result.message === 'string') return compactMemoryText(result.message, 260);
+  if (typeof result.summary === 'string') return compactMemoryText(result.summary, 260);
+  if (Array.isArray(result.items)) return `返回 ${result.items.length} 项`;
+  if (Array.isArray(result.records)) return `返回 ${result.records.length} 条记录`;
+  if (Array.isArray(result.results)) return `返回 ${result.results.length} 条结果`;
+  if (typeof result.total === 'number') return `返回总数 ${result.total}`;
+  if (result.success === true) return '执行成功';
+  try {
+    return compactMemoryText(JSON.stringify(result), 260);
+  } catch {
+    return '';
+  }
+};
+
+const buildAgentTurnMemoryPatch = (input: {
+  goal: string;
+  finalText: string;
+  status: string;
+  modules: string[];
+  toolCalls?: ChatToolCall[];
+  toolResults?: Array<{ toolCall: ChatToolCall; result: any }>;
+}): ConversationStructuredMemoryPatch => {
+  const patch: ConversationStructuredMemoryPatch = {};
+  const goal = compactMemoryText(input.goal);
+  const finalText = compactMemoryText(input.finalText);
+  const moduleLabel = input.modules.length > 0 ? getModuleScopeLabel(input.modules) : '未限定';
+
+  if (goal && MEMORY_IMPORTANT_USER_RE.test(goal)) {
+    patch.importantFacts = [`用户曾说明：${goal}`];
+    if (MEMORY_CONSTRAINT_RE.test(goal)) {
+      patch.constraints = [`用户约束：${goal}`];
+    } else {
+      patch.userPreferences = [`用户偏好：${goal}`];
+    }
+  }
+
+  if (goal && input.status === 'needs_user') {
+    patch.openTasks = [`待补充：${goal}${finalText ? `；需要：${finalText}` : ''}`];
+  } else if (goal && input.status === 'completed' && input.toolCalls && input.toolCalls.length > 0) {
+    patch.completedTasks = [`已完成：${goal}（作用域：${moduleLabel}）`];
+  } else if (goal && MEMORY_TASK_RE.test(goal) && input.status !== 'failed') {
+    patch.openTasks = [`用户提到的后续事项：${goal}`];
+  }
+
+  const toolSummaries = (input.toolResults || [])
+    .slice(-10)
+    .map(item => {
+      const summary = summarizeMemoryResult(item.result);
+      if (!summary) return '';
+      return `${item.toolCall.name}：${summary}`;
+    })
+    .filter(Boolean);
+  if (toolSummaries.length > 0) {
+    patch.toolResults = toolSummaries;
+  }
+
+  return patch;
+};
+
 /* ─── 调试阶段中文标签映射 ─── */
 const STAGE_DISPLAY: Record<string, string> = {
   'send:start': '🚀 开始执行',
   'send:blocked': '🚫 发送阻止',
   'send:routing-result': '🧭 路由完成',
   'send:error': '❌ 执行失败',
+  'langgraph:clarification': '❔ Agent 澄清',
   'langgraph:planning': '🧠 Agent 规划',
   'langgraph:decision': '🧭 Agent 决策',
   'langgraph:execution': '⚙️ Agent 执行',
@@ -379,17 +488,7 @@ const STAGE_DISPLAY: Record<string, string> = {
   'langgraph:approval': '✋ Agent 待确认',
   'langgraph:error': '❌ Agent 错误',
   'router:selected-scope': '📌 手动作用域',
-  'router:local-intent': '🔍 本地意图匹配',
-  'router:cache-hit': '⚡ 路由缓存命中',
-  'router:llm-request': '🤖 LLM 路由请求',
-  'router:llm-response': '📨 LLM 路由结果',
-  'router:supplement-request': '🔄 补充路由请求',
-  'router:supplement-response': '📨 补充路由结果',
-  'router:supplement-cache-hit': '⚡ 补充路由缓存',
-  'router:supplement-applied': '✅ 补充作用域应用',
-  'router:supplement-skip': '⏭️ 跳过补充路由',
   'router:skip': '⏭️ 跳过路由',
-  'router:error': '❌ 路由失败',
   'native:request-context': '📋 构建请求上下文',
   'native:tool-call': '🔧 调用工具',
   'native:tool-result': '📦 工具执行结果',
@@ -437,6 +536,7 @@ const TURN_COLORS = [
 
 const AGENT_RUNTIME_STAGE_LABELS: Record<AgentRuntimeStatusStage, string> = {
   idle: '空闲',
+  clarification: '澄清',
   planning: '规划',
   decision: '决策',
   execution: '执行',
@@ -449,6 +549,7 @@ const AGENT_RUNTIME_STAGE_LABELS: Record<AgentRuntimeStatusStage, string> = {
 };
 
 const AGENT_RUNTIME_VISUAL_STAGES: Array<Exclude<AgentRuntimeStatusStage, 'idle'>> = [
+  'clarification',
   'planning',
   'decision',
   'execution',
@@ -464,7 +565,7 @@ const getAgentRuntimeIndicatorClass = (state: AgentRuntimeStatusState): string =
   if (!state.active && state.status !== 'error') return 'bg-slate-300 ring-slate-100';
   if (state.status === 'error' || state.stage === 'error') return 'bg-red-500 ring-red-100';
   if (state.status === 'success') return 'bg-emerald-500 ring-emerald-100';
-  if (state.status === 'waiting' || state.stage === 'approval') return 'bg-amber-500 ring-amber-100';
+  if (state.status === 'waiting' || state.stage === 'approval' || state.stage === 'clarification') return 'bg-amber-500 ring-amber-100';
   if (state.stage === 'decision') return 'bg-indigo-500 ring-indigo-100';
   if (state.stage === 'verification') return 'bg-cyan-500 ring-cyan-100';
   if (state.stage === 'inspection') return 'bg-emerald-500 ring-emerald-100';
@@ -492,7 +593,7 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
 你可以管理用户的待办事项（增删改查）、子任务、重复事件（循环日程）和分类。
 
 ### 可用工具
-- **create_todo** — 创建待办。必填 content（标题）；普通时间点用 dueDate，时间段事件用 startDateTime + endDateTime（或 durationMinutes），必要时显式传 timeType="range"。
+- **create_todo** — 创建待办。必填 content（标题）、category（已有分类）、priority（high/medium/low）；普通时间点用 dueDate，时间段事件用 startDateTime + endDateTime（或 durationMinutes），必要时显式传 timeType="range"。
 - **query_todos** — 查询待办列表。可按 status（pending/completed/all）筛选，默认返回未完成项。
 - **update_todo** — 修改待办。通过 id 定位，可改 content、priority、category、dueDate、startDateTime、endDateTime、isCompleted。
 - **delete_todo** — 删除待办。优先通过 id 删除；若没有 id，可传 content 做精确定位。
@@ -504,12 +605,13 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
 - **create_category** — 为 todo / prompts / markdown 模块创建新分类（module + name）。
 
 ### 工作流程规范
-1. **创建待办前**：如果用户没有明确指定分类，先 query_todos 了解已有分类结构，选择最合适的分类。
-2. **设定时间**：用户说"明天下午三点"时，用明天对应日期的 dueDate（YYYY-MM-DDT15:00）；用户说"明天下午三点到五点"时，必须改用 startDateTime 和 endDateTime，不要只传一个 dueDate。
-3. **批量创建**：用户要求创建多个待办时，逐个调用 create_todo，每个都带合适的参数。创建完后统一列出所有已创建项。
-4. **子任务**：创建子任务前必须先知道父待办 id，可以在同一轮中先 create_todo 再 create_subtask（同一会话上下文中 id 可用）。
-5. **重复事件分类**：创建/修改重复事件前**必须**先调用 query_recurring_events 获取 availableCategories（含 id），然后用 categoryId 指定。不要猜测分类名称。
-6. **Todo 分类**：是字符串，直接用名称。如果用户指定的分类不在已有列表中，先调用 create_category（module: "todo"）创建。`,
+1. **创建待办前**：如果用户没有明确指定分类，先 query_todos 了解已有分类结构；若能明显匹配到合适分类就使用该已有分类，不确定时再向用户确认。不要使用“默认/未分类/全部”。
+2. **确认优先级**：创建待办必须明确 priority。用户没说紧急程度时，先问高/中/低或是否紧急，不要自行默认 medium。
+3. **设定时间**：用户说"明天下午三点"时，用明天对应日期的 dueDate（YYYY-MM-DDT15:00）；用户说"明天下午三点到五点"时，必须改用 startDateTime 和 endDateTime，不要只传一个 dueDate。
+4. **批量创建**：用户要求创建多个待办时，逐个调用 create_todo，每个都带合适的参数。创建完后统一列出所有已创建项。
+5. **子任务**：创建子任务前必须先知道父待办 id，可以在同一轮中先 create_todo 再 create_subtask（同一会话上下文中 id 可用）。
+6. **重复事件分类**：创建/修改重复事件前**必须**先调用 query_recurring_events 获取 availableCategories（含 id），然后用 categoryId 指定。不要猜测分类名称。
+7. **Todo 分类**：是字符串，直接用名称。如果用户指定的分类不在已有列表中，先调用 create_category（module: "todo"）创建。`,
 
   notes: `## 便签笔记模块
 
@@ -904,111 +1006,6 @@ const toSafeChatMessage = (message: AgentMessage): ChatMessage => ({
 
 /* ─── Agent System Prompt ─── */
 
-const normalizeRouteCacheText = (value: string) =>
-  value
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 1200);
-
-const hashRouteCacheKey = (value: string) => {
-  let hash = 2166136261;
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
-};
-
-const loadRouteCacheEntries = (): AgentRouteCacheEntry[] => {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(AGENT_ROUTE_CACHE_KEY) || '[]');
-    if (!Array.isArray(parsed)) return [];
-    const now = Date.now();
-    return parsed.filter((entry): entry is AgentRouteCacheEntry => (
-      entry &&
-      typeof entry.key === 'string' &&
-      (entry.kind === 'initial' || entry.kind === 'supplemental') &&
-      Array.isArray(entry.modules) &&
-      typeof entry.useTools === 'boolean' &&
-      typeof entry.confidence === 'number' &&
-      typeof entry.routerSignature === 'string' &&
-      typeof entry.updatedAt === 'number' &&
-      now - entry.updatedAt <= AGENT_ROUTE_CACHE_TTL_MS
-    ));
-  } catch {
-    return [];
-  }
-};
-
-const saveRouteCacheEntries = (entries: AgentRouteCacheEntry[]) => {
-  const now = Date.now();
-  const next = entries
-    .filter(entry => now - entry.updatedAt <= AGENT_ROUTE_CACHE_TTL_MS)
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, AGENT_ROUTE_CACHE_MAX_ENTRIES);
-  localStorage.setItem(AGENT_ROUTE_CACHE_KEY, JSON.stringify(next));
-};
-
-const getRouteCacheEntry = (
-  key: string,
-  routerSignature: string,
-): AgentRouteCacheEntry | null => {
-  const entries = loadRouteCacheEntries();
-  const found = entries.find(entry => entry.key === key && entry.routerSignature === routerSignature);
-  if (!found) {
-    saveRouteCacheEntries(entries);
-    return null;
-  }
-  const updated = {
-    ...found,
-    hitCount: found.hitCount + 1,
-    updatedAt: Date.now(),
-  };
-  saveRouteCacheEntries(entries.map(entry => entry.key === key ? updated : entry));
-  return updated;
-};
-
-const setRouteCacheEntry = (entry: Omit<AgentRouteCacheEntry, 'createdAt' | 'updatedAt' | 'hitCount'>) => {
-  const entries = loadRouteCacheEntries();
-  const existing = entries.find(item => item.key === entry.key && item.routerSignature === entry.routerSignature);
-  const now = Date.now();
-  const nextEntry: AgentRouteCacheEntry = {
-    ...entry,
-    createdAt: existing?.createdAt || now,
-    updatedAt: now,
-    hitCount: existing?.hitCount || 0,
-  };
-  saveRouteCacheEntries([
-    nextEntry,
-    ...entries.filter(item => !(item.key === entry.key && item.routerSignature === entry.routerSignature)),
-  ]);
-};
-
-const makeInitialRouteCacheKey = (input: string, routingConfig: ChatConfig) =>
-  `initial:${hashRouteCacheKey(`${getRouterSignature(routingConfig)}|${normalizeRouteCacheText(input)}`)}`;
-
-const makeSupplementalRouteCacheKey = (input: {
-  goal: string;
-  currentModules: string[];
-  finalText: string;
-  evaluationMessage: string;
-  failedTools: string[];
-}, routingConfig: ChatConfig) =>
-  `supplemental:${hashRouteCacheKey([
-    getRouterSignature(routingConfig),
-    normalizeRouteCacheText(input.goal),
-    input.currentModules.slice().sort().join(','),
-    normalizeRouteCacheText(input.evaluationMessage),
-    normalizeRouteCacheText(input.finalText).slice(0, 500),
-    input.failedTools.slice().sort().join(','),
-  ].join('|'))}`;
-
-const shouldCacheRouteResult = (routeResult: AgentRouteResult) =>
-  routeResult.source === 'llm' &&
-  routeResult.confidence >= AGENT_ROUTE_CACHE_MIN_CONFIDENCE &&
-  (!routeResult.useTools || routeResult.modules.length > 0);
-
 const getActiveModuleScope = (options: Pick<AgentPromptOptions, 'selectedModule' | 'selectedModules' | 'routedModule' | 'routedModules'>): string[] => {
   const routedScope = normalizeModuleScope([
     ...(options.routedModules || []),
@@ -1034,171 +1031,12 @@ const buildModulePromptSection = (moduleIds: string[], modulePrompts?: Record<st
     .join('');
 };
 
-const WEB_ROUTER_SCOPE = {
-  id: 'web',
-  name: '联网搜索',
-  description: '网页搜索、实时信息、天气、新闻、官方文档、GitHub/npm/StackOverflow/arXiv 等外部信息检索',
-};
-
-interface RouterPromptOptions {
-  toolRegistry?: ToolRegistration[];
-  toolPermissions?: AgentToolPermissions;
-  includeWebSearch?: boolean;
-  includeSpecializedSearch?: boolean;
-}
-
-const summarizeToolNames = (toolNames: string[]) => {
-  const uniqueNames = Array.from(new Set(toolNames)).filter(Boolean);
-  if (uniqueNames.length === 0) return '当前没有已授权函数';
-  const visible = uniqueNames.slice(0, 24);
-  return `函数：${visible.join(', ')}${uniqueNames.length > visible.length ? ` 等 ${uniqueNames.length} 个` : ''}`;
-};
-
-const buildRouterModuleList = (
-  modules: AgentModule[] = getEnabledAgentModules(),
-  options: RouterPromptOptions = {},
-  excludedModuleIds: string[] = [],
-) => {
-  const excludedSet = new Set(excludedModuleIds);
-  const moduleRows = [
-    ...modules.map(module => ({
-      id: module.id,
-      name: module.name,
-      description: module.description,
-    })),
-    WEB_ROUTER_SCOPE,
-  ].filter((module, index, list) => (
-    !excludedSet.has(module.id) &&
-    list.findIndex(item => item.id === module.id) === index
-  ));
-
-  return moduleRows
-    .map(module => {
-      const toolNames = (options.toolRegistry || [])
-        .filter(registration => registration.module === module.id)
-        .filter(registration => canUseToolRegistration(registration, options.toolPermissions))
-        .map(registration => registration.name);
-      if (module.id === 'web') {
-        if (options.includeWebSearch) toolNames.unshift(WEB_SEARCH_TOOL_REGISTRATION.name);
-        if (options.includeWebSearch) toolNames.splice(1, 0, WEB_OPEN_TOOL_REGISTRATION.name);
-        if (options.includeSpecializedSearch) toolNames.push(SPECIALIZED_SEARCH_TOOL.name);
-      }
-      const webStatus = module.id === 'web'
-        ? `；状态：${options.includeWebSearch ? '联网搜索工具已启用' : '联网搜索工具未启用或未授权'}`
-        : '';
-      return `- ${module.id}: ${module.name}，${module.description}${webStatus}；${summarizeToolNames(toolNames)}`;
-    })
-    .join('\n');
-};
-
 const buildVisibleToolSection = (tools?: ChatTool[]) => {
   if (!tools || tools.length === 0) return '';
   const rows = tools
     .map(tool => `- ${tool.name}: ${tool.description || '无描述'}`)
     .join('\n');
   return `\n\n## 本轮实际可调用函数\n${rows}`;
-};
-
-const buildModuleRouterPrompt = (
-  input: string,
-  modules: AgentModule[] = getEnabledAgentModules(),
-  options: RouterPromptOptions = {},
-) => {
-  const moduleList = buildRouterModuleList(modules, options);
-  return [
-    '你是 Guyue Master Agent 的作用域路由器。你的任务是根据用户请求选择需要开放给 Agent 的应用模块。',
-    '只返回 JSON，不要输出 Markdown，不要解释。',
-    'JSON 格式：{"modules":["todo"],"useTools":true,"confidence":0.82,"reason":"一句话理由"}',
-    '规则：',
-    '1. modules 可以为空，也可以包含多个模块；跨模块任务必须返回多个模块。',
-    '2. 如果用户只是闲聊、解释概念、问设计方案且无需调用应用数据，返回 {"modules":[],"useTools":false,...}。',
-    '3. 如果不确定但可能需要应用能力，返回最可能的 1-3 个模块，不要为了保险返回全部模块。',
-    '4. 只能从可用模块 ID 中选择。',
-    '5. 如果用户询问天气、新闻、最新资料、实时数据、官方文档、网页内容、GitHub/npm/StackOverflow/arXiv 等外部信息，必须包含 "web" 且 useTools=true。',
-    '6. 如果用户同时要求联网检索和操作本地应用数据，返回 "web" 加对应本地模块。',
-    '',
-    '可用模块与函数：',
-    moduleList,
-    '',
-    `用户请求：${input}`,
-  ].join('\n');
-};
-
-const buildSupplementalRouterPrompt = (input: {
-  goal: string;
-  currentModules: string[];
-  finalText: string;
-  toolCalls: ChatToolCall[];
-  toolResults: Array<{ toolCall: ChatToolCall; result: any }>;
-  evaluation: AgentCompletionEvaluation;
-}, modules: AgentModule[] = getEnabledAgentModules(), options: RouterPromptOptions = {}) => {
-  const moduleList = buildRouterModuleList(modules, options, input.currentModules) || '无';
-  const compactResults = input.toolResults.slice(-8).map(item => ({
-    tool: item.toolCall.name,
-    success: item.result?.success !== false,
-    message: item.result?.message || item.result?.error || item.result?.summary,
-  }));
-
-  return [
-    '你是 Guyue Master Agent 的补充作用域路由器。',
-    '当前 Agent 已执行一轮，但验收节点认为任务没有完成。你的任务是判断是否需要追加开放新的应用模块。',
-    '只返回 JSON，不要输出 Markdown，不要解释。',
-    'JSON 格式：{"addModules":["email"],"needContinue":true,"confidence":0.82,"reason":"一句话理由"}',
-    '规则：',
-    '1. addModules 只能选择尚未开放的模块，最多 3 个；不要返回当前已开放模块。',
-    '2. 如果失败原因是权限未开启、用户信息不足、API 错误、模型回答质量问题，返回 {"addModules":[],"needContinue":false,...}。',
-    '3. 如果任务缺少发送邮件、写待办、读文件、查询数据中心等跨模块能力，返回需要追加的模块。',
-    '4. 不要为了保险返回全部模块，只返回真正能补齐任务的模块。',
-    '5. 如果任务失败是因为缺少联网搜索、实时网页信息、GitHub/npm/论文搜索能力，追加 "web"。',
-    '',
-    `当前已开放模块：${input.currentModules.length > 0 ? getModuleScopeLabel(input.currentModules) : '仅搜索 / 无应用模块'}`,
-    '',
-    '可追加模块：',
-    moduleList,
-    '',
-    '执行上下文：',
-    JSON.stringify({
-      goal: input.goal,
-      finalText: input.finalText,
-      evaluation: input.evaluation,
-      toolCalls: input.toolCalls.map(call => ({ name: call.name, arguments: call.arguments })),
-      recentToolResults: compactResults,
-    }).slice(0, 16000),
-  ].join('\n');
-};
-
-const parseModuleRouterResponse = (text: string): AgentRouteResult => {
-  const jsonText = text.match(/\{[\s\S]*\}/)?.[0] || text;
-  const parsed = JSON.parse(jsonText);
-  const modules = normalizeModuleScope(Array.isArray(parsed.modules) ? parsed.modules.map(String) : []);
-  const useTools = parsed.useTools !== false;
-  return {
-    modules,
-    source: useTools ? (modules.length > 0 ? 'llm' : 'search-only') : 'none',
-    confidence: typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0.5,
-    reason: typeof parsed.reason === 'string' ? parsed.reason : 'LLM 路由完成',
-    useTools,
-  };
-};
-
-const parseSupplementalRouterResponse = (
-  text: string,
-  currentModules: string[],
-): AgentSupplementalRouteResult => {
-  const jsonText = text.match(/\{[\s\S]*\}/)?.[0] || text;
-  const parsed = JSON.parse(jsonText);
-  const currentSet = new Set(currentModules);
-  const addModules = normalizeModuleScope(Array.isArray(parsed.addModules) ? parsed.addModules.map(String) : [])
-    .filter(moduleId => !currentSet.has(moduleId))
-    .slice(0, 3);
-  const needContinue = parsed.needContinue !== false && addModules.length > 0;
-  return {
-    addModules,
-    needContinue,
-    source: needContinue ? 'llm' : 'none',
-    confidence: typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0.5,
-    reason: typeof parsed.reason === 'string' ? parsed.reason : '补充路由完成',
-  };
 };
 
 const getAgentSystemPrompt = ({
@@ -1218,6 +1056,11 @@ const getAgentSystemPrompt = ({
   const permissionPrompt = allowedActionTypes
     ? `\n\n## 当前授权函数\n本轮只允许使用以下 action / tool：${allowedActionTypes.length ? allowedActionTypes.join('、') : '无'}。未列出的能力不要输出 action，也不要假装已经执行。`
     : '';
+  const currentTimeLabel = getShanghaiDateTimeLabel();
+  const today = getShanghaiDate(0);
+  const tomorrow = getShanghaiDate(1);
+  const dayAfterTomorrow = getShanghaiDate(2);
+  const todayWeekday = getShanghaiWeekday(0);
 
   const activeModuleIds = getActiveModuleScope({ selectedModule, selectedModules, routedModule, routedModules });
   const modulePrompt = buildModulePromptSection(activeModuleIds, modulePrompts);
@@ -1225,7 +1068,7 @@ const getAgentSystemPrompt = ({
 
   const moduleInfo = activeModuleIds.length > 0
     ? `\n\n## 当前任务作用域\n当前任务作用域为：${getModuleScopeLabel(activeModuleIds)}。你只能优先使用该作用域内被授权的工具；跨模块任务需要按模块顺序完成。${modulePrompt}`
-    : '\n\n## 当前任务作用域\n当前没有手动限定作用域。系统会根据用户请求自动选择可用模块；如果没有合适工具，直接自然语言回复。';
+    : '\n\n## 当前任务作用域\n当前没有手动限定作用域。本轮会直接提供权限中心已开启的全部工具；你需要自行根据用户请求选择合适工具。如果没有合适工具，直接自然语言回复。';
 
   if (promptMode === 'native-tools') {
     // 原生工具模式：工具已按作用域和权限过滤后通过 tools 参数提供
@@ -1238,9 +1081,11 @@ const getAgentSystemPrompt = ({
 4. 不要输出 Markdown action 代码块，也不要伪造工具调用结果。
 5. 如果工具执行返回了错误信息，请根据错误原因调整参数后重试，最多重试一次。
 6. 你可以进行多轮工具调用。例如先 query_files 查询文件列表，再逐个 read_file 读取内容。不要在只完成第一步后就停止。
-7. 当前作用域：${activeModuleIds.length > 0 ? getModuleScopeLabel(activeModuleIds) : '自动路由 / 未限定'}。不要请求未提供的工具，也不要声称调用了不可见工具。
-8. 如果验收节点补充开放了新的模块工具，你会收到一条继续执行提示；以最新提示和当前可见工具为准，不要重复已经成功完成的创建、修改、删除操作。
-9. 如果本轮工具列表包含 web_search、web_open 或 specialized_search，说明你已获得联网权限，可以检索并打开网页、GitHub、npm、StackOverflow、arXiv 等信息；不要再声称无法访问互联网或 GitHub。搜索结果只有摘要时，应继续调用 web_open 打开最相关来源再回答。
+7. 当前作用域：${activeModuleIds.length > 0 ? getModuleScopeLabel(activeModuleIds) : '未手动限定 / 全部授权工具'}。不要请求未提供的工具，也不要声称调用了不可见工具。
+8. 如果本轮工具列表包含 web_search、web_open 或 specialized_search，说明你已获得联网权限，可以检索并打开网页、GitHub、npm、StackOverflow、arXiv 等信息；不要再声称无法访问互联网或 GitHub。搜索结果只有摘要时，应继续调用 web_open 打开最相关来源再回答。
+9. 涉及“今天/明天/昨天/最新/当前/天气/新闻/日程/提醒”等时效性任务时，必须以「时间处理」里的北京时间为准；如果提供了 get_current_time 工具，优先调用它确认当前电脑时间。
+10. 创建或修改带分类的数据时，分类必须来自查询工具返回的已有分类；不要使用“默认/未分类/全部”，不要自行猜测分类。
+11. 如果工具列表包含 delegate_complex_task，并且用户请求属于长文写作、论文、报告、深度分析、复杂推理或结构化方案生成，应把完整任务委托给该工具，再基于返回结果回复用户。
 ${visibleToolSection}
 
 ## 任务分解
@@ -1261,10 +1106,11 @@ ${visibleToolSection}
   ❌「已帮你完成这个任务。」
 
 ## 时间处理
-- 当前时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}
-- 今天: ${new Date().toISOString().split('T')[0]}（${new Date().toLocaleDateString('zh-CN', { weekday: 'long' })}）
-- 明天: ${new Date(Date.now() + 86400000).toISOString().split('T')[0]}
-- 后天: ${new Date(Date.now() + 172800000).toISOString().split('T')[0]}
+- 当前时间: ${currentTimeLabel}
+- 时区: ${AGENT_TIME_ZONE}
+- 今天: ${today}（${todayWeekday}）
+- 明天: ${tomorrow}
+- 后天: ${dayAfterTomorrow}
 - 时间点事项使用 dueDate；如果用户说的是"下午 3 点到 5 点"这类时间段，必须改传 startDateTime 和 endDateTime。所有时间字段都必须换算为 ISO 8601 格式（YYYY-MM-DDTHH:mm），绝对不要传自然语言或时间戳。${modulePrompt}${permissionPrompt}${customPromptSection}`;
   }
 
@@ -1300,8 +1146,8 @@ ${visibleToolSection}
     "content": "事项内容",
     "description": "详细描述",
     "priority": "medium",
-    "category": "未分类",
-    "dueDate": "${new Date(Date.now() + 86400000).toISOString().split('T')[0]}T23:59"
+    "category": "已有分类名称",
+    "dueDate": "${tomorrow}T23:59"
   }
 }
 \`\`\`
@@ -1313,8 +1159,8 @@ ${visibleToolSection}
     "content": "和产品开评审会",
     "category": "工作",
     "timeType": "range",
-    "startDateTime": "${new Date(Date.now() + 86400000).toISOString().split('T')[0]}T15:00",
-    "endDateTime": "${new Date(Date.now() + 86400000).toISOString().split('T')[0]}T17:00"
+    "startDateTime": "${tomorrow}T15:00",
+    "endDateTime": "${tomorrow}T17:00"
   }
 }
 \`\`\`
@@ -1365,7 +1211,7 @@ color 可选：bg-yellow-100, bg-green-100, bg-blue-100, bg-pink-100, bg-purple-
     "problemId": "P1001",
     "categoryId": "分类ID（从 query_oj_stats 获取）",
     "problemTitle": "A+B Problem",
-    "date": "${new Date().toISOString().split('T')[0]}"
+    "date": "${today}"
   }
 }
 \`\`\`
@@ -1553,10 +1399,11 @@ categoryName 填写你想归属的分类，若不存在会自动新建。icon �
 上传图片时，用户必须在消息中附带图片附件。attachmentIndex 指定上传第几个图片（从 0 开始）。
 
 ## 时间处理
-- 当前时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}
-- 今天: ${new Date().toISOString().split('T')[0]}（${new Date().toLocaleDateString('zh-CN', { weekday: 'long' })}）
-- 明天: ${new Date(Date.now() + 86400000).toISOString().split('T')[0]}
-- 后天: ${new Date(Date.now() + 172800000).toISOString().split('T')[0]}
+- 当前时间: ${currentTimeLabel}
+- 时区: ${AGENT_TIME_ZONE}
+- 今天: ${today}（${todayWeekday}）
+- 明天: ${tomorrow}
+- 后天: ${dayAfterTomorrow}
 - 时间点事项使用 dueDate；时间段事项使用 startDateTime / endDateTime。所有时间字段都必须换算为 ISO 8601 格式（YYYY-MM-DDTHH:mm）。用户没指定具体时间时，单点事项默认 23:59。绝对不要传自然语言或时间戳。
 
 ## 交互原则
@@ -1704,10 +1551,398 @@ function parseIntentLocally(input: string): { isCreateTodo: boolean; data?: Part
       timeType,
       timeStart,
       timeEnd,
-      category: '未分类',
     }
   };
 }
+
+interface AgentClarificationContext {
+  goal: string;
+  routedModules: string[];
+  tools: ChatTool[];
+  sshCategories: string[];
+  apiCategories: string[];
+  todoCategories: string[];
+}
+
+interface AgentAppStructureContextInput {
+  tools: ChatTool[];
+  routedModules: string[];
+  todoCategories: string[];
+  recurringCategories: RecurringCategory[];
+  sshCategories: string[];
+  apiCategories: string[];
+  promptCategories: string[];
+  markdownCategories: string[];
+  fileCategories: string[];
+}
+
+const CATEGORY_WORD_RE = /(分类|标签|tag|归到|放到|归类|类别)/i;
+const CREATE_WORD_RE = /(新建|新增|添加|创建|加一个|保存|记录|导入|上传)/;
+const UPDATE_WORD_RE = /(修改|更新|改成|重命名|编辑|调整|移动|归档|完成|标记)/;
+const DELETE_WORD_RE = /(删除|移除|清空|丢弃|撤销)/;
+const TODO_WORD_RE = /(待办|事项|任务|提醒|日程|安排|开会|会议|约|预约|todo)/i;
+const TODO_PRIORITY_WORD_RE = /(优先级|紧急|急|重要|高优先级|中优先级|低优先级|不急|普通|一般)/i;
+const COARSE_TIME_WORD_RE = /(早上|上午|中午|下午|晚上|傍晚|凌晨|夜里|明早|明晚|今天|明天|后天|下周|周[一二三四五六日天])/;
+const EXPLICIT_CLOCK_RE = /(\d{1,2}\s*(?:点|时)(?:\s*\d{1,2}\s*分)?|\d{1,2}:\d{2})/;
+const URL_RE = /(https?:\/\/|www\.|[a-z0-9-]+\.[a-z]{2,})(\S*)/i;
+const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+const WEATHER_WORD_RE = /(天气|气温|温度|下雨|降雨|空气质量|AQI|预报|风力|湿度)/i;
+const LOCATION_HINT_RE =
+  /(北京|上海|广州|深圳|杭州|成都|重庆|天津|南京|武汉|西安|苏州|青岛|长沙|郑州|厦门|福州|合肥|济南|昆明|贵阳|南宁|海淀|朝阳|浦东|天河|南山|[一-龥]{2,}(?:省|市|区|县|州|国|镇|乡)|beijing|shanghai|haidian|guangzhou|shenzhen|hangzhou|chengdu)/i;
+
+const hasAnyTool = (tools: ChatTool[], names: string[]) => {
+  const toolNames = new Set(tools.map(tool => tool.name));
+  return names.some(name => toolNames.has(name));
+};
+
+const RESERVED_CATEGORY_NAMES = new Set(['全部', '默认', '未分类', '__all__']);
+
+const getAvailableCategoryNames = (names: string[]) =>
+  names
+    .map(name => name.trim())
+    .filter(name => name && !RESERVED_CATEGORY_NAMES.has(name));
+
+const mentionsKnownName = (text: string, names: string[]) =>
+  names.some(name => {
+    const trimmed = name.trim();
+    return trimmed.length > 0 && !RESERVED_CATEGORY_NAMES.has(trimmed) && text.includes(trimmed);
+  });
+
+const buildNeedsUserClarification = (
+  questions: string[],
+  payload: Record<string, any> = {},
+): AgentClarificationResult => ({
+  status: 'needs_user',
+  questions,
+  missing: questions,
+  confidence: 0.88,
+  message: [
+    '我需要你补充一点信息后再继续执行：',
+    '',
+    ...questions.map((question, index) => `${index + 1}. ${question}`),
+  ].join('\n'),
+  payload,
+});
+
+const formatStructureList = (items: string[], empty = '暂无') => {
+  const normalized = getAvailableCategoryNames(items);
+  return normalized.length > 0 ? normalized.join('、') : empty;
+};
+
+const getWebsiteTagNamesForAgent = () => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem('linkmaster_password_tags_v1') || '[]');
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+};
+
+const buildAgentAppStructureContext = ({
+  tools,
+  routedModules,
+  todoCategories,
+  recurringCategories,
+  sshCategories,
+  apiCategories,
+  promptCategories,
+  markdownCategories,
+  fileCategories,
+}: AgentAppStructureContextInput) => {
+  const toolNames = new Set(tools.map(tool => tool.name));
+  const hasToolLine = (name: string) => toolNames.has(name) ? '可用' : '不可用';
+  const activeScope = routedModules.length > 0 ? getModuleScopeLabel(routedModules) : '未手动限定，已开放权限中心授权的全部工具';
+  const websiteTags = getWebsiteTagNamesForAgent();
+  const recurringCategoryList = recurringCategories
+    .filter(category => category.name && !RESERVED_CATEGORY_NAMES.has(category.name))
+    .map(category => `${category.name}(${category.id})`);
+
+  return [
+    '## Guyue Master 应用结构与硬性规则',
+    `当前作用域：${activeScope}`,
+    '',
+    '### 全局规则',
+    '- 这是本地 App，不是普通聊天机器人；能通过查询工具获得的结构信息，应先查询，不要凭空假设。',
+    '- 所有带分类/标签的模块都不允许使用“默认/未分类/全部”。新建内容必须放入已有分类/标签；若没有合适分类，先创建分类或询问用户。',
+    '- 删除、修改等高风险操作需要确认；缺少定位对象时必须先查询。',
+    '- 密码、API Key、token 等私密字段不要要求用户直接发给大模型；应让工具创建本地占位/补充卡片，由用户在本地填写。',
+    '',
+    '### 待办事项',
+    `- create_todo: ${hasToolLine('create_todo')}；必须有 content 和已有 category。`,
+    `- query_todos: ${hasToolLine('query_todos')}；创建前优先调用它获取 availableCategories。`,
+    `- 当前待办分类：${formatStructureList(todoCategories)}。`,
+    '- 待办 priority 是创建前需要确认的字段，取值 high / medium / low。用户未说明紧急程度或优先级时，应询问“高/中/低，是否紧急？”。',
+    '- 如果用户只说“明天早上/下午/晚上”但没有具体时间，应澄清具体几点几分，或确认是否全天事项。',
+    '- 如果用户没有给分类，但现有分类和事项语义明显匹配，可以继续计划先 query_todos 再创建；如果无法判断，应先问用户。',
+    '',
+    '### 重复事件/日程',
+    `- create_recurring_event: ${hasToolLine('create_recurring_event')}；必须先 query_recurring_events 获取 categoryId。`,
+    `- 当前重复事件分类：${recurringCategoryList.length ? recurringCategoryList.join('、') : '暂无'}。`,
+    '',
+    '### 网站 / SSH / API 管理',
+    `- 网站记录：create_website_record ${hasToolLine('create_website_record')}；必须有 URL 和已有网站标签。当前网站标签：${formatStructureList(websiteTags)}。`,
+    `- SSH 记录：create_ssh_record ${hasToolLine('create_ssh_record')}；必须有主机地址和已有 SSH 分类。当前 SSH 分类：${formatStructureList(sshCategories)}。`,
+    `- API 记录：create_api_record ${hasToolLine('create_api_record')}；必须有 endpoint/base URL 和已有 API 分类。当前 API 分类：${formatStructureList(apiCategories)}。`,
+    '',
+    '### 笔记 / 技能 / 文件',
+    `- Prompt 技能卡分类：${formatStructureList(promptCategories)}。`,
+    `- Markdown 笔记分类：${formatStructureList(markdownCategories)}。`,
+    `- 文件管理分类：${formatStructureList(fileCategories)}。`,
+    '',
+    '### 联网与时间',
+    `- get_current_time: ${hasToolLine('get_current_time')}；涉及今天/明天/昨天/最新/天气/日程时应优先使用。`,
+    `- web_search: ${hasToolLine('web_search')}；web_open: ${hasToolLine('web_open')}。搜索后通常需要打开最相关来源再总结。`,
+  ].join('\n');
+};
+
+const parseModelClarification = (text: string): AgentClarificationResult | null => {
+  try {
+    const jsonText = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1]
+      || text.match(/\{[\s\S]*\}/)?.[0]
+      || text;
+    const parsed = JSON.parse(jsonText);
+    const status = parsed.status === 'needs_user' ? 'needs_user' : 'ready';
+    const questions = Array.isArray(parsed.questions)
+      ? parsed.questions.map((question: unknown) => String(question).trim()).filter(Boolean).slice(0, 4)
+      : [];
+    const message = typeof parsed.message === 'string' && parsed.message.trim()
+      ? parsed.message.trim()
+      : questions.length > 0
+        ? [
+            '我需要你补充一点信息后再继续执行：',
+            '',
+            ...questions.map((question, index) => `${index + 1}. ${question}`),
+          ].join('\n')
+        : undefined;
+    return {
+      status: questions.length > 0 ? 'needs_user' : status,
+      questions,
+      missing: questions,
+      message,
+      confidence: typeof parsed.confidence === 'number' ? parsed.confidence : undefined,
+      payload: {
+        reason: typeof parsed.reason === 'string' ? parsed.reason : 'model_clarification',
+        source: 'llm_app_structure',
+      },
+    };
+  } catch {
+    return null;
+  }
+};
+
+const buildClarificationConversationContext = (messages?: ChatMessage[]) => {
+  const recentMessages = (messages || [])
+    .filter(message => message.role !== 'system' && message.content.trim())
+    .slice(-8);
+  if (recentMessages.length === 0) return '无';
+  return recentMessages
+    .map(message => {
+      const role = message.role === 'user' ? '用户' : 'Agent';
+      const content = redactSensitiveText(message.content).replace(/\s+/g, ' ').trim();
+      return `${role}: ${content.length > 700 ? `${content.slice(0, 700)}...` : content}`;
+    })
+    .join('\n');
+};
+
+const buildModelClarificationPrompt = (
+  goal: string,
+  appStructureContext: string,
+  visibleTools: ChatTool[],
+  messages?: ChatMessage[],
+) => [
+  '你是 Guyue Master Agent 的澄清节点。你的任务是判断“现在是否可以开始执行”，不是执行工具，也不是回答用户。',
+  '',
+  '请根据应用结构、工具规则和用户请求判断：',
+  '1. 如果缺少必须由用户提供的信息，返回 needs_user 并提出简短问题。',
+  '2. 如果缺失信息可以通过 query/get/search/open 等工具获得，返回 ready，不要要求用户补充。',
+  '3. 如果创建/修改对象必须选择已有分类，而用户未指定且无法从现有分类明显判断，应返回 needs_user。',
+  '4. 不要要求用户把密码、API Key、token 等私密字段发给模型。',
+  '5. 对于天气/最新/今天/明天这类任务，如果 get_current_time 可用，时间不算缺失，应返回 ready。',
+  '6. 如果这是对上一轮澄清问题的补充回答，必须结合最近对话上下文判断还有哪些字段缺失。',
+  '',
+  '只输出 JSON，不要 Markdown，不要解释。格式：',
+  '{"status":"ready|needs_user","questions":["问题1"],"reason":"一句话原因","confidence":0.9}',
+  '',
+  appStructureContext,
+  '',
+  '本轮实际可调用工具：',
+  visibleTools.map(tool => `- ${tool.name}: ${tool.description}`).join('\n') || '无',
+  '',
+  '最近对话上下文：',
+  buildClarificationConversationContext(messages),
+  '',
+  `用户请求：${goal}`,
+].join('\n');
+
+const buildAgentClarificationWithModel = async (input: {
+  chatService: ChatService;
+  goal: string;
+  messages?: ChatMessage[];
+  appStructureContext: string;
+  tools: ChatTool[];
+  deterministic: AgentClarificationResult;
+  onDebugEvent?: (event: ChatDebugEvent) => void;
+}): Promise<AgentClarificationResult> => {
+  if (input.deterministic.status === 'needs_user') return input.deterministic;
+  if (!input.goal.trim() || input.tools.length === 0) return input.deterministic;
+  try {
+    const text = await input.chatService.completeText([
+      {
+        id: createAgentLocalId('clarify_system'),
+        role: 'system',
+        content: '你只做任务澄清判断，必须严格返回 JSON。',
+        timestamp: Date.now(),
+      },
+      {
+        id: createAgentLocalId('clarify_user'),
+        role: 'user',
+        content: buildModelClarificationPrompt(input.goal, input.appStructureContext, input.tools, input.messages),
+        timestamp: Date.now(),
+      },
+    ], { onDebugEvent: input.onDebugEvent });
+    const parsed = parseModelClarification(text);
+    if (!parsed) return input.deterministic;
+    if (parsed.status === 'needs_user' && parsed.questions?.length) return parsed;
+    return {
+      ...input.deterministic,
+      payload: {
+        ...(input.deterministic.payload || {}),
+        modelClarification: parsed.payload,
+      },
+    };
+  } catch (error) {
+    return {
+      ...input.deterministic,
+      payload: {
+        ...(input.deterministic.payload || {}),
+        modelClarificationError: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+};
+
+const buildAgentClarification = ({
+  goal,
+  routedModules,
+  tools,
+  sshCategories,
+  apiCategories,
+  todoCategories,
+}: AgentClarificationContext): AgentClarificationResult => {
+  const text = goal.trim();
+  const compactText = text.replace(/\s+/g, '');
+  const modules = new Set(routedModules);
+  const isUnscoped = modules.size === 0;
+  const hasCreateIntent = CREATE_WORD_RE.test(text);
+  const hasUpdateIntent = UPDATE_WORD_RE.test(text);
+  const hasDeleteIntent = DELETE_WORD_RE.test(text);
+  const hasWriteIntent = hasCreateIntent || hasUpdateIntent || hasDeleteIntent;
+
+  if (!text || /^\[已上传\s*\d+\s*个文件\]$/.test(text)) {
+    return buildNeedsUserClarification(['请说明希望我基于这些附件完成什么任务。'], { reason: 'empty_goal' });
+  }
+
+  if (hasWriteIntent && compactText.length <= 8) {
+    return buildNeedsUserClarification(['请补充具体要操作的对象、内容或目标。'], { reason: 'generic_write_request' });
+  }
+
+  if (WEATHER_WORD_RE.test(text) && !LOCATION_HINT_RE.test(text)) {
+    return buildNeedsUserClarification(['你要查询哪个城市或地区的天气？'], { reason: 'weather_missing_location' });
+  }
+
+  if ((isUnscoped || modules.has('todo')) && hasAnyTool(tools, ['create_todo']) && hasCreateIntent && TODO_WORD_RE.test(text)) {
+    const questions: string[] = [];
+    const availableTodoCategories = getAvailableCategoryNames(todoCategories);
+    const canQueryTodoCategories = hasAnyTool(tools, ['query_todos']);
+    if (!canQueryTodoCategories && !mentionsKnownName(text, availableTodoCategories)) {
+      questions.push(availableTodoCategories.length > 0
+        ? `请选择一个已有待办分类：${availableTodoCategories.join('、')}。`
+        : '当前没有可用待办分类，请先告诉我要创建哪个分类。');
+    }
+    if (COARSE_TIME_WORD_RE.test(text) && !EXPLICIT_CLOCK_RE.test(text)) {
+      questions.push('这个事项的具体时间是几点几分？如果只是全天事项，也请明确说明。');
+    }
+    if (!TODO_PRIORITY_WORD_RE.test(text)) {
+      questions.push('这个待办的优先级是高、中、低哪一种？是否紧急？');
+    }
+    if (questions.length > 0) {
+      return buildNeedsUserClarification(questions, { reason: 'todo_create_missing_required_fields' });
+    }
+  }
+
+  if ((isUnscoped || modules.has('email')) && hasAnyTool(tools, ['send_email'])) {
+    const asksToSend = /(发邮件|发送邮件|邮件给|写封邮件|email)/i.test(text);
+    if (asksToSend && !EMAIL_RE.test(text) && !/(默认收件人|默认邮箱|通讯录|给\S{1,12})/.test(text)) {
+      return buildNeedsUserClarification(['邮件要发送给谁？可以给我通讯录昵称、默认收件人，或直接给邮箱地址。'], { reason: 'email_missing_recipient' });
+    }
+    if (asksToSend && !/(主题|正文|内容|告诉|通知|说明|写|说|转达)/.test(text)) {
+      return buildNeedsUserClarification(['邮件正文或要表达的内容是什么？'], { reason: 'email_missing_content' });
+    }
+  }
+
+  if ((isUnscoped || modules.has('dc-website')) && hasAnyTool(tools, ['create_website_record'])) {
+    if (hasCreateIntent && /(网站|网址|账号|密码|登录|站点|website)/i.test(text)) {
+      const websiteTags = (() => {
+        try {
+          const parsed = JSON.parse(localStorage.getItem('linkmaster_password_tags_v1') || '[]');
+          return Array.isArray(parsed) ? parsed.map(String) : [];
+        } catch {
+          return [];
+        }
+      })();
+      const questions: string[] = [];
+      if (!URL_RE.test(text)) questions.push('要添加的网站地址是什么？');
+      if (!CATEGORY_WORD_RE.test(text) && !mentionsKnownName(text, websiteTags)) {
+        questions.push(websiteTags.length > 0
+          ? `请选择一个已有网站标签：${websiteTags.join('、')}。`
+          : '当前没有可用网站标签，请先告诉我要创建哪个标签。');
+      }
+      if (questions.length > 0) {
+        return buildNeedsUserClarification(questions, { reason: 'website_create_missing_required_fields' });
+      }
+    }
+  }
+
+  if ((isUnscoped || modules.has('dc-ssh')) && hasAnyTool(tools, ['create_ssh_record'])) {
+    if (hasCreateIntent && /(ssh|服务器|主机|host|连接)/i.test(text)) {
+      const questions: string[] = [];
+      if (!/(host|主机|服务器|地址|ip|IP|域名)/.test(text) && !URL_RE.test(text)) questions.push('SSH 主机地址或 IP 是什么？');
+      if (!CATEGORY_WORD_RE.test(text) && !mentionsKnownName(text, sshCategories)) {
+        questions.push(sshCategories.length > 0
+          ? `请选择一个已有 SSH 分类：${sshCategories.join('、')}。`
+          : '当前没有可用 SSH 分类，请先告诉我要创建哪个分类。');
+      }
+      if (questions.length > 0) {
+        return buildNeedsUserClarification(questions, { reason: 'ssh_create_missing_required_fields' });
+      }
+    }
+  }
+
+  if ((isUnscoped || modules.has('dc-api')) && hasAnyTool(tools, ['create_api_record'])) {
+    if (hasCreateIntent && /(api|接口|endpoint|key|token|密钥)/i.test(text)) {
+      const questions: string[] = [];
+      if (!URL_RE.test(text) && !/(endpoint|接口地址|baseUrl|base url)/i.test(text)) questions.push('API 的 endpoint 或 base URL 是什么？');
+      if (!CATEGORY_WORD_RE.test(text) && !mentionsKnownName(text, apiCategories)) {
+        questions.push(apiCategories.length > 0
+          ? `请选择一个已有 API 分类：${apiCategories.join('、')}。`
+          : '当前没有可用 API 分类，请先告诉我要创建哪个分类。');
+      }
+      if (questions.length > 0) {
+        return buildNeedsUserClarification(questions, { reason: 'api_create_missing_required_fields' });
+      }
+    }
+  }
+
+  if ((isUnscoped || modules.has('git')) && hasWriteIntent && !/(仓库|repo|repository|项目|目录|路径|分支|branch|commit|提交|push|pull|fetch|merge|stash)/i.test(text)) {
+    return buildNeedsUserClarification(['你要操作哪个 Git 仓库，以及具体执行什么 Git 操作？'], { reason: 'git_missing_target' });
+  }
+
+  return {
+    status: 'ready',
+    confidence: 0.72,
+    payload: { reason: 'deterministic_clarification_passed' },
+  };
+};
 
 /* ─── 组件 ─── */
 
@@ -1781,7 +2016,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const [showPluginDocs, setShowPluginDocs] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [config, setConfig] = useState<ChatConfig>(() => loadAgentConfig());
-  const [routerConfig, setRouterConfig] = useState<ChatConfig>(() => loadAgentRouterConfig());
+  const [complexTaskConfig, setComplexTaskConfig] = useState<AgentComplexTaskConfig>(() => loadAgentComplexTaskConfig());
   const [searchConfig, setSearchConfig] = useState<AgentSearchConfig>(() => loadAgentSearchConfig());
   const [modulePrompts, setModulePrompts] = useState<Record<string, string>>(() => loadStoredModulePrompts(DEFAULT_MODULE_PROMPTS));
   const [selectedModules, setSelectedModules] = useState<string[]>(() => initialPageState.selectedModules);
@@ -1971,6 +2206,42 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     });
   }, [pushDebugItem]);
 
+  const getFreshAgentMemory = useCallback(() => {
+    const storedMemory = loadAgentMemory();
+    const currentMemory = conversationMemoryRef.current;
+    const storedTime = storedMemory?.updatedAt || 0;
+    const currentTime = currentMemory?.updatedAt || 0;
+    if (storedMemory && storedTime > currentTime) {
+      conversationMemoryRef.current = storedMemory;
+      setConversationMemory(storedMemory);
+      return storedMemory;
+    }
+    return currentMemory;
+  }, []);
+
+  const mergeAgentMemoryPatch = useCallback((
+    patch: ConversationStructuredMemoryPatch,
+    source: string,
+  ) => {
+    const hasPatch = Object.values(patch).some(items => Array.isArray(items) && items.length > 0);
+    if (!hasPatch) return;
+    const latestMemory = getFreshAgentMemory();
+    const nextMemory = mergeConversationMemoryState(latestMemory, patch, {
+      provider: config.provider,
+      model: config.model,
+      source,
+    });
+    if (!nextMemory) return;
+    conversationMemoryRef.current = nextMemory;
+    setConversationMemory(nextMemory);
+    pushDebugItem({
+      stage: 'memory:structured',
+      summary: 'Agent 结构化记忆已更新',
+      payload: patch,
+      level: 'success',
+    });
+  }, [config.model, config.provider, getFreshAgentMemory, pushDebugItem]);
+
   const prepareAgentContextMessages = useCallback(async (
     dialogueMessages: ChatMessage[],
     options?: {
@@ -1980,9 +2251,10 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       memoryTitle?: string;
     },
   ): Promise<ChatMessage[]> => {
+    const latestMemory = getFreshAgentMemory();
     const compaction = await maybeCompactConversationMemory({
       messages: dialogueMessages,
-      memoryState: conversationMemoryRef.current,
+      memoryState: latestMemory,
       chatService: chatServiceRef.current,
       provider: config.provider,
       model: config.model,
@@ -2018,7 +2290,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       memoryMessageId: options?.memoryMessageId || 'agent-conversation-memory',
       memoryTitle: options?.memoryTitle || '以下是较早的 Agent 对话摘要。继续任务时优先保持这些约束、用户偏好和未完成事项。',
     });
-  }, [config.model, config.provider, pushDebugItem]);
+  }, [config.model, config.provider, getFreshAgentMemory, pushDebugItem]);
 
   const handleSaveEmailConfig = useCallback(() => {
     localStorage.setItem(AGENT_EMAIL_CONFIG_KEY, JSON.stringify(emailConfig));
@@ -2137,6 +2409,72 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     return registration ? canUseToolRegistration(registration, toolPermissions) : true;
   }, [toolPermissions, toolRegistry]);
 
+  const isComplexTaskModelReady = Boolean(
+    complexTaskConfig.enabled &&
+    complexTaskConfig.model &&
+    (complexTaskConfig.apiKey || complexTaskConfig.provider === 'ollama')
+  );
+
+  const executeComplexTask = useCallback(async (args: Record<string, any>) => {
+    if (!complexTaskConfig.enabled) {
+      return { success: false, error: '复杂需求处理模型未启用。' };
+    }
+    if (!complexTaskConfig.model) {
+      return { success: false, error: '复杂需求处理模型未选择模型。' };
+    }
+    if (!complexTaskConfig.apiKey && complexTaskConfig.provider !== 'ollama') {
+      return { success: false, error: '复杂需求处理模型 API Key 未配置。' };
+    }
+
+    const task = typeof args.task === 'string' ? args.task.trim() : '';
+    if (!task) return { success: false, error: '复杂任务描述不能为空。' };
+
+    const context = typeof args.context === 'string' && args.context.trim()
+      ? args.context.trim()
+      : '';
+    const outputFormat = typeof args.outputFormat === 'string' && args.outputFormat.trim()
+      ? args.outputFormat.trim()
+      : '';
+    const constraints = typeof args.constraints === 'string' && args.constraints.trim()
+      ? args.constraints.trim()
+      : '';
+    const prompt = [
+      `任务：\n${task}`,
+      context ? `背景资料：\n${context}` : '',
+      outputFormat ? `输出格式：\n${outputFormat}` : '',
+      constraints ? `约束：\n${constraints}` : '',
+    ].filter(Boolean).join('\n\n');
+
+    const service = new ChatService({
+      ...complexTaskConfig,
+      systemPrompt: complexTaskConfig.systemPrompt?.trim() || DEFAULT_AGENT_COMPLEX_TASK_CONFIG.systemPrompt,
+      maxTokens: complexTaskConfig.maxTokens || DEFAULT_AGENT_COMPLEX_TASK_CONFIG.maxTokens,
+      temperature: complexTaskConfig.temperature ?? DEFAULT_AGENT_COMPLEX_TASK_CONFIG.temperature,
+    });
+    const text = await service.completeText([
+      {
+        id: 'complex-task-system',
+        role: 'system',
+        content: complexTaskConfig.systemPrompt?.trim() || DEFAULT_AGENT_COMPLEX_TASK_CONFIG.systemPrompt || '',
+        timestamp: 0,
+      },
+      {
+        id: 'complex-task-user',
+        role: 'user',
+        content: prompt,
+        timestamp: Date.now(),
+      },
+    ], { onDebugEvent: pushServiceDebugEvent });
+
+    return {
+      success: true,
+      provider: complexTaskConfig.provider,
+      model: complexTaskConfig.model,
+      text,
+      message: text,
+    };
+  }, [complexTaskConfig, pushServiceDebugEvent]);
+
   const buildToolExecContext = useCallback((currentAttachments?: ChatAttachment[]): ToolExecutionContext => ({
     todos: [...todos],
     notes,
@@ -2183,6 +2521,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     latexTemplatePermissions: effectiveLatexTemplatePermissions,
     onAutoAuthLatexFileCategory: () => undefined,
     onAutoAuthLatexTemplateCategory: () => undefined,
+    executeComplexTask,
     executeWebSearch: async (args: Record<string, any>) => {
       const electronAPI = (window as any).electronAPI;
       if (!electronAPI?.agentWebSearch) return { success: false, error: '联网搜索功能不可用（非桌面端）。' };
@@ -2231,6 +2570,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     effectiveLatexFileReadPermissions,
     effectiveLatexFileWritePermissions,
     effectiveLatexTemplatePermissions,
+    executeComplexTask,
     fileRecords,
     knowledgeBaseFileIds,
     markdownCategories,
@@ -2471,8 +2811,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   }, [allowedActionTypes, config, modulePrompts, selectedModules, supportsNativeTools]);
 
   useEffect(() => {
-    saveAgentRouterConfig(routerConfig);
-  }, [routerConfig]);
+    saveAgentComplexTaskConfig(complexTaskConfig);
+  }, [complexTaskConfig]);
 
   useEffect(() => {
     saveAgentSearchConfig(searchConfig);
@@ -2511,7 +2851,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     saveAgentPermissions(effectiveDataPermissions, [], toolPermissions, fullAccessPermissions);
   }, [effectiveDataPermissions, fullAccessPermissions, toolPermissions]);
 
-  const detectModuleScope = useCallback(async (input: string): Promise<AgentRouteResult> => {
+  const detectModuleScope = useCallback(async (_input: string): Promise<AgentRouteResult> => {
     const manualScope = normalizeModuleScope(selectedModules);
     if (manualScope.length > 0) {
       const routeResult: AgentRouteResult = {
@@ -2529,267 +2869,20 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       return routeResult;
     }
 
-    const localScope = detectModuleScopeLocally(input);
-    if (localScope.length > 0) {
-      const routeResult: AgentRouteResult = {
-        modules: localScope,
-        source: 'local',
-        confidence: 0.78,
-        reason: '本地关键词规则命中模块作用域',
-        useTools: true,
-      };
-      pushDebugItem({
-        stage: 'router:local-intent',
-        summary: `本地路由命中：${getModuleScopeLabel(localScope)}`,
-        payload: routeResult,
-      });
-      return routeResult;
-    }
-
-    const routingConfig = routerConfig.apiKey ? routerConfig : config;
-    if (!routingConfig.apiKey) {
-      return {
-        modules: [],
-        source: 'search-only',
-        confidence: 0.2,
-        reason: '路由模型未配置，仅开放搜索工具；应用工具需要手动选择作用域或配置路由模型',
-        useTools: true,
-      };
-    }
-
-    const routerSignature = getRouterSignature(routingConfig);
-    const cacheKey = makeInitialRouteCacheKey(input, routingConfig);
-    const cached = getRouteCacheEntry(cacheKey, routerSignature);
-    if (cached) {
-      const routeResult: AgentRouteResult = {
-        modules: normalizeModuleScope(cached.modules),
-        source: 'cache',
-        confidence: cached.confidence,
-        reason: `${cached.reason}（路由缓存命中）`,
-        useTools: cached.useTools,
-      };
-      pushDebugItem({
-        stage: 'router:cache-hit',
-        summary: routeResult.useTools
-          ? routeResult.modules.length > 0
-            ? `路由缓存命中：${getModuleScopeLabel(routeResult.modules)}`
-            : '路由缓存命中：无需应用工具'
-          : '路由缓存命中：无需工具',
-        payload: { routeResult, cacheKey, hitCount: cached.hitCount },
-      });
-      return routeResult;
-    }
-
-    try {
-      const routerPrompt = buildModuleRouterPrompt(input, enabledAgentModules, {
-        toolRegistry,
-        toolPermissions,
-        includeWebSearch: effectiveWebSearchEnabled,
-        includeSpecializedSearch: effectiveSpecializedSearchEnabled,
-      });
-      const routerService = new ChatService({
-        ...routingConfig,
-        systemPrompt: '',
-        temperature: 0,
-        maxTokens: Math.min(routingConfig.maxTokens || 1024, 1024),
-      });
-      pushDebugItem({
-        stage: 'router:llm-request',
-        summary: '请求 LLM 自动选择多模块作用域',
-        payload: {
-          prompt: routerPrompt,
-          provider: routingConfig.provider,
-          model: routingConfig.model,
-          independentRouterConfig: Boolean(routerConfig.apiKey),
-        },
-      });
-      const text = await routerService.completeText([
-        { id: 'agent-router-system', role: 'system', content: routerPrompt, timestamp: 0 },
-      ], { onDebugEvent: pushServiceDebugEvent });
-      const routeResult = parseModuleRouterResponse(text);
-      if (shouldCacheRouteResult(routeResult)) {
-        setRouteCacheEntry({
-          key: cacheKey,
-          kind: 'initial',
-          modules: routeResult.modules,
-          useTools: routeResult.useTools,
-          confidence: routeResult.confidence,
-          reason: routeResult.reason,
-          routerSignature,
-        });
-      }
-      pushDebugItem({
-        stage: 'router:llm-response',
-        summary: routeResult.useTools
-          ? routeResult.modules.length > 0
-            ? `LLM 路由：${getModuleScopeLabel(routeResult.modules)}`
-            : 'LLM 路由：仅开放搜索工具'
-          : 'LLM 路由：无需工具',
-        payload: { text, routeResult },
-      });
-      return routeResult;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const routeResult: AgentRouteResult = {
-        modules: [],
-        source: 'search-only',
-        confidence: 0.1,
-        reason: `自动路由失败，仅开放搜索工具：${message}`,
-        useTools: true,
-      };
-      pushDebugItem({
-        stage: 'router:llm-response',
-        summary: '自动路由失败，回退到搜索工具',
-        payload: routeResult,
-        level: 'info',
-      });
-      return routeResult;
-    }
-  }, [
-    config,
-    effectiveSpecializedSearchEnabled,
-    effectiveWebSearchEnabled,
-    enabledAgentModules,
-    pushDebugItem,
-    pushServiceDebugEvent,
-    routerConfig,
-    selectedModules,
-    toolPermissions,
-    toolRegistry,
-  ]);
-
-  const detectSupplementalModuleScope = useCallback(async (input: {
-    goal: string;
-    currentModules: string[];
-    finalText: string;
-    toolCalls: ChatToolCall[];
-    toolResults: Array<{ toolCall: ChatToolCall; result: any }>;
-    evaluation: AgentCompletionEvaluation;
-  }): Promise<AgentSupplementalRouteResult> => {
-    const currentModules = normalizeModuleScope(input.currentModules);
-    const routingConfig = routerConfig.apiKey ? routerConfig : config;
-    if (!routingConfig.apiKey) {
-      return {
-        addModules: [],
-        needContinue: false,
-        source: 'none',
-        confidence: 0,
-        reason: '路由模型未配置，无法补充作用域',
-      };
-    }
-
-    const failedTools = input.toolResults
-      .filter(item => item.result?.success === false)
-      .map(item => item.toolCall.name);
-    const routerSignature = getRouterSignature(routingConfig);
-    const cacheKey = makeSupplementalRouteCacheKey({
-      goal: input.goal,
-      currentModules,
-      finalText: input.finalText,
-      evaluationMessage: input.evaluation.message,
-      failedTools,
-    }, routingConfig);
-    const cached = getRouteCacheEntry(cacheKey, routerSignature);
-    if (cached) {
-      const addModules = normalizeModuleScope(cached.modules).filter(moduleId => !currentModules.includes(moduleId));
-      const result: AgentSupplementalRouteResult = {
-        addModules,
-        needContinue: cached.useTools && addModules.length > 0,
-        source: 'cache',
-        confidence: cached.confidence,
-        reason: `${cached.reason}（补充路由缓存命中）`,
-      };
-      pushDebugItem({
-        stage: 'router:supplement-cache-hit',
-        summary: result.needContinue
-          ? `补充路由缓存命中：${getModuleScopeLabel(result.addModules)}`
-          : '补充路由缓存命中：无需追加模块',
-        payload: { result, cacheKey, hitCount: cached.hitCount },
-      });
-      return result;
-    }
-
-    try {
-      const routerPrompt = buildSupplementalRouterPrompt({
-        ...input,
-        currentModules,
-      }, enabledAgentModules, {
-        toolRegistry,
-        toolPermissions,
-        includeWebSearch: effectiveWebSearchEnabled,
-        includeSpecializedSearch: effectiveSpecializedSearchEnabled,
-      });
-      const routerService = new ChatService({
-        ...routingConfig,
-        systemPrompt: '',
-        temperature: 0,
-        maxTokens: Math.min(routingConfig.maxTokens || 1024, 1024),
-      });
-      pushDebugItem({
-        stage: 'router:supplement-request',
-        summary: '请求 LLM 补充任务作用域',
-        payload: {
-          prompt: routerPrompt,
-          provider: routingConfig.provider,
-          model: routingConfig.model,
-          currentModules,
-        },
-      });
-      const text = await routerService.completeText([
-        { id: 'agent-supplement-router-system', role: 'system', content: routerPrompt, timestamp: 0 },
-      ], { onDebugEvent: pushServiceDebugEvent });
-      const result = parseSupplementalRouterResponse(text, currentModules);
-      if (
-        result.needContinue &&
-        result.confidence >= AGENT_ROUTE_CACHE_MIN_CONFIDENCE &&
-        result.addModules.length > 0
-      ) {
-        setRouteCacheEntry({
-          key: cacheKey,
-          kind: 'supplemental',
-          modules: result.addModules,
-          useTools: result.needContinue,
-          confidence: result.confidence,
-          reason: result.reason,
-          routerSignature,
-        });
-      }
-      pushDebugItem({
-        stage: 'router:supplement-response',
-        summary: result.needContinue
-          ? `补充路由：${getModuleScopeLabel(result.addModules)}`
-          : '补充路由：无需追加模块',
-        payload: { text, result },
-      });
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const result: AgentSupplementalRouteResult = {
-        addModules: [],
-        needContinue: false,
-        source: 'none',
-        confidence: 0,
-        reason: `补充路由失败：${message}`,
-      };
-      pushDebugItem({
-        stage: 'router:supplement-response',
-        summary: result.reason,
-        payload: result,
-        level: 'error',
-      });
-      return result;
-    }
-  }, [
-    config,
-    effectiveSpecializedSearchEnabled,
-    effectiveWebSearchEnabled,
-    enabledAgentModules,
-    pushDebugItem,
-    pushServiceDebugEvent,
-    routerConfig,
-    toolPermissions,
-    toolRegistry,
-  ]);
+    const routeResult: AgentRouteResult = {
+      modules: [],
+      source: 'all',
+      confidence: 1,
+      reason: '未手动选择作用域，开放权限中心已启用的全部工具',
+      useTools: true,
+    };
+    pushDebugItem({
+      stage: 'router:skip',
+      summary: '未选择作用域，使用全部授权工具',
+      payload: routeResult,
+    });
+    return routeResult;
+  }, [pushDebugItem, selectedModules]);
 
   const runFallbackConversation = useCallback(async (
     assistantId: string,
@@ -2861,6 +2954,12 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             ? { ...message, content: plainFallbackContent, targetModule: primaryModule, targetModules: routedModules }
             : message
         ));
+        mergeAgentMemoryPatch(buildAgentTurnMemoryPatch({
+          goal: userMessage.content,
+          finalText: plainFallbackContent,
+          status: 'completed',
+          modules: routedModules,
+        }), `agent-fallback:${assistantId}`);
         setIsProcessing(false);
         return;
 
@@ -2924,6 +3023,11 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             } else if (action.type === 'create_todo') {
               const schedule = resolveTodoSchedulePayload(action.data || {});
               if (schedule.error) throw new Error(schedule.error);
+              const availableTodoCategories = getAvailableCategoryNames(todoCategories);
+              const category = typeof action.data?.category === 'string' ? action.data.category.trim() : '';
+              if (!category || RESERVED_CATEGORY_NAMES.has(category) || !availableTodoCategories.includes(category)) {
+                throw new Error(`创建待办必须指定一个已有分类，不能使用“默认/未分类/全部”。当前可用分类：${availableTodoCategories.join('、') || '（暂无）'}。`);
+              }
               resultData = normalizeTodoPayload(action.data || {});
               onCreateTodo(resultData);
               summaryText = '待办创建成功';
@@ -3312,7 +3416,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         setIsProcessing(false);
       },
     });
-  }, [allowedActionTypes, config.model, config.provider, config.systemPrompt, messages, todos, effectiveDataPermissions, effectiveFilePermissions, fileRecords, onCreateTodo, onCreateNote, onCreatePrompt, onCreateMarkdownNote, onCreateOJSubmission, ojHeatmapData, onCreateResource, resourceData, pushDebugItem, selectedModules, isFallbackActionAllowed, prepareAgentContextMessages]);
+  }, [allowedActionTypes, config.model, config.provider, config.systemPrompt, messages, todos, effectiveDataPermissions, effectiveFilePermissions, fileRecords, mergeAgentMemoryPatch, onCreateTodo, onCreateNote, onCreatePrompt, onCreateMarkdownNote, onCreateOJSubmission, ojHeatmapData, onCreateResource, resourceData, pushDebugItem, selectedModules, isFallbackActionAllowed, prepareAgentContextMessages]);
 
   const evaluateAgentCompletion = useCallback(async (input: {
     goal: string;
@@ -3480,13 +3584,14 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       }
 
       const routeResult = await detectModuleScope(userMessage.content);
-      let activeRoutedScope = routeResult.useTools ? routeResult.modules : [];
-      const routeRequiresWeb = routeResult.useTools && activeRoutedScope.includes('web');
+      const activeRoutedScope = routeResult.useTools ? routeResult.modules : [];
+      const routeRequiresWeb = routeResult.source !== 'all' && routeResult.useTools && activeRoutedScope.includes('web');
       const getNativeToolScope = (scope: string[], useTools: boolean) =>
-        useTools
-          ? (scope.length === 0 ? ['__search_only__'] : scope)
-          : ['__no_tools__'];
-      const searchOnlyScope = routeResult.useTools && activeRoutedScope.length === 0;
+        !useTools
+          ? ['__no_tools__']
+          : routeResult.source === 'all'
+            ? []
+            : (scope.length === 0 ? ['__search_only__'] : scope);
       const toolScope = getNativeToolScope(activeRoutedScope, routeResult.useTools);
       const enableSpecializedSearch = effectiveSpecializedSearchEnabled;
       const runtimeToolRegistry = [
@@ -3504,28 +3609,27 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               effectiveWebSearchEnabled,
               toolPermissions,
               enableSpecializedSearch,
-            )
+            ).filter(registration => registration.name !== 'delegate_complex_task' || isComplexTaskModelReady)
           : [];
-      const buildNativeToolsForScope = (scope: string[], useTools: boolean): ChatTool[] =>
-        buildNativeRegistrationsForScope(scope, useTools).map(registration => toStrictTool(registration.tool));
 
-      // 原生模式：按作用域注册已授权工具。自动路由未命中模块时只开放搜索工具，避免全量工具暴露。
+      // 原生模式：未手动选择作用域时开放权限中心已启用的全部工具；手动选择时按作用域过滤。
       const nativeRegistrations = buildNativeRegistrationsForScope(activeRoutedScope, routeResult.useTools);
       const nativeTools = nativeRegistrations.map(registration => toStrictTool(registration.tool));
       const toolExecContext = buildToolExecContext(currentAttachments);
 
       pushDebugItem({
         stage: 'send:routing-result',
-        summary: '任务路由完成',
+        summary: routeResult.source === 'all' ? '未选择作用域，使用全部授权工具' : '手动作用域已应用',
         payload: {
           selectedModules: manualScope,
           routeResult,
           routedScope: activeRoutedScope,
           toolScope,
-          searchOnlyScope,
           nativeToolCount: nativeTools.length,
           nativeToolNames: nativeTools.map(t => t.name),
-          mode: supportsNativeTools && nativeTools.length > 0 ? 'native-tools (self-route)' : 'fallback',
+          mode: supportsNativeTools && nativeTools.length > 0
+            ? routeResult.source === 'all' ? 'native-tools (all-permitted)' : 'native-tools (manual-scope)'
+            : 'fallback',
         },
       });
 
@@ -3616,7 +3720,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             }
             const visualMeta = getToolVisualMeta(registration);
             markToolEvent({ ...visualMeta, summary: '校验工具权限' });
-            if (registration.module !== 'web' && activeRoutedScope.length > 0 && !activeRoutedScope.includes(registration.module)) {
+            if (registration.module !== 'web' && registration.module !== 'system' && activeRoutedScope.length > 0 && !activeRoutedScope.includes(registration.module)) {
               const moduleName = getModuleDisplayName(registration.module);
               const error = `工具 ${toolCall.name} 属于「${moduleName}」，不在当前作用域「${getModuleScopeLabel(activeRoutedScope)}」内。`;
               markToolEvent({
@@ -3710,6 +3814,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
           const handleRuntimeTrace = (event: AgentTraceEvent) => {
             const stageText: Partial<Record<AgentTraceEvent['stage'], string>> = {
+              clarification: '正在检查需求是否明确...',
               planning: '正在规划任务...',
               decision: '正在决策工具...',
               execution: '正在调用工具...',
@@ -3765,93 +3870,6 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             },
           });
 
-          const supplementTools = async (input: {
-            goal: string;
-            finalText: string;
-            toolCalls: ChatToolCall[];
-            toolResults: Array<{ toolCall: ChatToolCall; result: any }>;
-            currentTools: ChatTool[];
-            evaluation: AgentCompletionEvaluation;
-            supplementCount: number;
-          }) => {
-            if (manualScope.length > 0) {
-              pushDebugItem({
-                stage: 'router:supplement-skip',
-                summary: '手动作用域已启用，跳过补充路由',
-                payload: { manualScope, evaluation: input.evaluation },
-              });
-              return null;
-            }
-
-            setAgentRuntimeStatus({
-              stage: 'reflection',
-              status: 'started',
-              title: '正在补充任务作用域',
-              active: true,
-            });
-            setMessages(prev => prev.map(message =>
-              message.id === assistantId
-                ? { ...message, content: '正在补充任务作用域...' }
-                : message
-            ));
-
-            const supplementalRoute = await detectSupplementalModuleScope({
-              goal: input.goal,
-              currentModules: activeRoutedScope,
-              finalText: input.finalText,
-              toolCalls: input.toolCalls,
-              toolResults: input.toolResults,
-              evaluation: input.evaluation,
-            });
-            if (!supplementalRoute.needContinue || supplementalRoute.addModules.length === 0) {
-              return null;
-            }
-
-            const nextScope = normalizeModuleScope([...activeRoutedScope, ...supplementalRoute.addModules]);
-            const nextTools = buildNativeToolsForScope(nextScope, true);
-            const currentToolNames = new Set(input.currentTools.map(tool => tool.name));
-            const addedToolNames = nextTools
-              .map(tool => tool.name)
-              .filter(toolName => !currentToolNames.has(toolName));
-            if (addedToolNames.length === 0) {
-              pushDebugItem({
-                stage: 'router:supplement-skip',
-                summary: '补充模块没有新增可用工具',
-                payload: { supplementalRoute, nextScope, nextToolNames: nextTools.map(tool => tool.name) },
-              });
-              return null;
-            }
-
-            activeRoutedScope = nextScope;
-            pushDebugItem({
-              stage: 'router:supplement-applied',
-              summary: `补充作用域已应用：${getModuleScopeLabel(supplementalRoute.addModules)}`,
-              payload: {
-                supplementalRoute,
-                activeRoutedScope,
-                addedToolNames,
-                supplementCount: input.supplementCount + 1,
-              },
-              level: 'success',
-            });
-            appendAgentExecutionEntry(agentRunLogId, {
-              stage: 'router:supplement-applied',
-              level: 'info',
-              message: `补充作用域：${getModuleScopeLabel(supplementalRoute.addModules)}`,
-              payload: { supplementalRoute, activeRoutedScope, addedToolNames },
-            });
-
-            return {
-              tools: nextTools,
-              addedModules: supplementalRoute.addModules,
-              message: [
-                `新增作用域：${getModuleScopeLabel(supplementalRoute.addModules)}`,
-                `当前完整作用域：${getModuleScopeLabel(activeRoutedScope)}`,
-                `原因：${supplementalRoute.reason}`,
-              ].join('\n'),
-            };
-          };
-
           const runtime = createAgentRuntime({
             chatService: chatServiceRef.current,
             messages: chatMessages,
@@ -3859,6 +3877,35 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             goal: userMessage.content,
             runId: agentRunLogId,
             maxIterations: 10,
+            clarify: async () => {
+              const deterministic = buildAgentClarification({
+                goal: userMessage.content,
+                routedModules: activeRoutedScope,
+                tools: nativeTools,
+                sshCategories,
+                apiCategories,
+                todoCategories,
+              });
+              return buildAgentClarificationWithModel({
+                chatService: chatServiceRef.current,
+                goal: userMessage.content,
+                messages: chatMessages,
+                appStructureContext: buildAgentAppStructureContext({
+                  tools: nativeTools,
+                  routedModules: activeRoutedScope,
+                  todoCategories,
+                  recurringCategories,
+                  sshCategories,
+                  apiCategories,
+                  promptCategories,
+                  markdownCategories,
+                  fileCategories,
+                }),
+                tools: nativeTools,
+                deterministic,
+                onDebugEvent: pushServiceDebugEvent,
+              });
+            },
             executeToolCall: executeNativeToolCall,
             getToolRisk: (toolCall: ChatToolCall) => {
               const registration = findToolRegistration(runtimeToolRegistry, toolCall.name);
@@ -3866,8 +3913,6 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               return getToolPermissionTarget(registration).action === 'read' ? 'read' : 'write';
             },
             evaluateCompletion: evaluateAgentCompletion,
-            supplementTools,
-            maxSupplementRoutes: 2,
             onTrace: handleRuntimeTrace,
             onDebugEvent: pushServiceDebugEvent,
           });
@@ -3894,6 +3939,15 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
           const displayModules = inferredModules.length > 0 ? inferredModules : activeRoutedScope;
           const runtimePendingConfirmation = runtimeResult.pendingConfirmations?.[runtimeResult.pendingConfirmations.length - 1] as PendingConfirmation | undefined;
           const runtimeUndoSnapshot = runtimeResult.undoSnapshots?.[runtimeResult.undoSnapshots.length - 1] as UndoSnapshot | undefined;
+          const runtimeNeedsClarification = runtimeResult.status === 'needs_user' && runtimeResult.clarification?.status === 'needs_user';
+          mergeAgentMemoryPatch(buildAgentTurnMemoryPatch({
+            goal: userMessage.content,
+            finalText: runtimeResult.text,
+            status: runtimeResult.status,
+            modules: displayModules,
+            toolCalls: runtimeResult.toolCalls,
+            toolResults: runtimeResult.toolResults,
+          }), `agent-run:${agentRunLogId}`);
 
           setMessages(prev => prev.map(message =>
             message.id === assistantId
@@ -3909,9 +3963,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               : message
           ));
           setAgentRuntimeStatus({
-            stage: runtimePendingConfirmation || runtimeResult.status === 'needs_user' ? 'approval' : runtimeResult.status === 'failed' ? 'error' : 'reporting',
+            stage: runtimeNeedsClarification ? 'clarification' : runtimePendingConfirmation || runtimeResult.status === 'needs_user' ? 'approval' : runtimeResult.status === 'failed' ? 'error' : 'reporting',
             status: runtimePendingConfirmation || runtimeResult.status === 'needs_user' ? 'waiting' : runtimeResult.status === 'failed' ? 'error' : 'success',
-            title: runtimePendingConfirmation || runtimeResult.status === 'needs_user' ? '等待用户确认或补充' : runtimeResult.status === 'failed' ? 'Agent 执行失败' : 'Agent 执行完成',
+            title: runtimeNeedsClarification ? '等待用户补充信息' : runtimePendingConfirmation || runtimeResult.status === 'needs_user' ? '等待用户确认或补充' : runtimeResult.status === 'failed' ? 'Agent 执行失败' : 'Agent 执行完成',
             active: Boolean(runtimePendingConfirmation || runtimeResult.status === 'needs_user'),
           });
           setIsProcessing(false);
@@ -3920,9 +3974,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       }
 
       // Fallback 模式沿用同一作用域结果
-      const fallbackScope = activeRoutedScope.length > 0
-        ? activeRoutedScope
-        : normalizeModuleScope([parseIntentLocally(trimmedInput).suggestedModule]);
+      const fallbackScope = activeRoutedScope;
       setAgentRuntimeStatus({
         stage: 'execution',
         status: 'started',
@@ -3935,9 +3987,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
           ? [
               '本轮没有可用工具。',
               routeRequiresWeb && !effectiveWebSearchEnabled
-                ? '本轮路由已识别为联网搜索任务，但权限中心没有开启「联网搜索 / 读取」。'
+                ? '本轮手动作用域包含联网搜索，但权限中心没有开启「联网搜索 / 读取」。'
                 : effectiveWebSearchEnabled
-                ? '可能是自动路由未命中可执行模块，或权限中心没有开启对应工具。'
+                ? '权限中心没有开启对应工具，或当前手动作用域下没有可用工具。'
                 : '如果需要联网搜索，请在权限中心开启「联网搜索 / 读取」。',
             ].join('')
           : '逐步工具 runtime 未启动。';
@@ -3979,22 +4031,26 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   }, [
     allowedActionTypes,
     buildToolExecContext,
+    apiCategories,
     config.apiKey,
     config.model,
     config.provider,
     config.systemPrompt,
     detectModuleScope,
-    detectSupplementalModuleScope,
     effectiveDataPermissions,
+    effectiveSpecializedSearchEnabled,
     effectiveWebSearchEnabled,
     enabledAgentModules,
     evaluateAgentCompletion,
     executeRegisteredToolWithSafety,
+    fileCategories,
     fileRecords,
     inputValue,
+    isComplexTaskModelReady,
     isProcessing,
     knowledgeBaseFileIds,
     messages,
+    mergeAgentMemoryPatch,
     notes,
     ojHeatmapData,
     onAddCategory,
@@ -4017,6 +4073,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     pendingAttachments,
     prepareAgentContextMessages,
     promptCategories,
+    markdownCategories,
     pushDebugItem,
     pushServiceDebugEvent,
     recurringCategories,
@@ -4025,6 +4082,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     runFallbackConversation,
     searchConfig,
     selectedModules,
+    sshCategories,
     supportsNativeTools,
     todoCategories,
     toolPermissions,
@@ -4068,6 +4126,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     const runningTexts = new Set([
       '正在处理任务...',
       '正在判断任务归属...',
+      '正在检查需求是否明确...',
       '正在规划任务...',
       '正在调用工具...',
       '正在检查结果...',
@@ -4628,7 +4687,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                             <div className="px-3 py-1.5 flex items-center justify-between shrink-0 border-b" style={{ borderColor: 'var(--t-border)' }}>
                               <div>
                                 <p className="text-[11px] font-semibold text-gray-500">Agent 作用域</p>
-                                <p className="text-[10px] text-gray-400 mt-0.5">不选则自动路由</p>
+                                <p className="text-[10px] text-gray-400 mt-0.5">不选则开放全部授权工具</p>
                               </div>
                               {selectedModules.length > 0 && (
                                 <button onClick={() => setSelectedModules([])} className="text-[10px] text-gray-400 hover:text-gray-600">清除</button>
@@ -4998,8 +5057,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         onClose={() => setShowSettings(false)}
         config={config}
         onChangeConfig={setConfig}
-        routerConfig={routerConfig}
-        onChangeRouterConfig={setRouterConfig}
+        complexTaskConfig={complexTaskConfig}
+        onChangeComplexTaskConfig={setComplexTaskConfig}
         searchConfig={searchConfig}
         onChangeSearchConfig={setSearchConfig}
         onClearHistory={handleClearHistory}
@@ -5061,6 +5120,111 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 const formatRuntimeTimestamp = (timestamp: number) =>
   new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
+type RuntimePlanStepStatus = 'pending' | 'running' | 'success' | 'error' | 'waiting' | 'skipped';
+
+interface RuntimePlanViewStep {
+  id: string;
+  title: string;
+  description?: string;
+  toolName?: string;
+  status: RuntimePlanStepStatus;
+  timestamp?: number;
+}
+
+const normalizeRuntimePlanStep = (step: any, index: number): RuntimePlanViewStep => ({
+  id: String(step?.id || `step_${index + 1}`),
+  title: String(step?.title || step?.name || `步骤 ${index + 1}`),
+  description: typeof step?.description === 'string' ? step.description : undefined,
+  toolName: typeof step?.toolName === 'string' && step.toolName ? step.toolName : undefined,
+  status: 'pending',
+});
+
+const getTracePlanStep = (event: AgentTraceEvent): any | undefined => {
+  const payload = event.payload as any;
+  return payload?.currentStep || payload?.completedStep;
+};
+
+const buildRuntimePlanView = (
+  events: AgentTraceEvent[],
+  status: AgentRuntimeStatusState,
+): RuntimePlanViewStep[] => {
+  const planningEvent = [...events]
+    .reverse()
+    .find(event => event.stage === 'planning' && Array.isArray((event.payload as any)?.plan));
+  const rawPlan = (planningEvent?.payload as any)?.plan;
+  if (!Array.isArray(rawPlan) || rawPlan.length === 0) return [];
+
+  const steps = rawPlan.map(normalizeRuntimePlanStep);
+  const stepIndex = new Map(steps.map((step, index) => [step.id, index]));
+
+  const applyStatus = (rawStep: any, nextStatus: RuntimePlanStepStatus, timestamp: number) => {
+    if (!rawStep?.id) return;
+    const index = stepIndex.get(String(rawStep.id));
+    if (index === undefined) return;
+    const current = steps[index];
+    const rank: Record<RuntimePlanStepStatus, number> = {
+      pending: 0,
+      running: 1,
+      skipped: 2,
+      waiting: 3,
+      success: 4,
+      error: 5,
+    };
+    if (rank[nextStatus] >= rank[current.status]) {
+      steps[index] = { ...current, status: nextStatus, timestamp };
+    }
+  };
+
+  events.forEach(event => {
+    const payload = event.payload as any;
+    if (payload?.completedStep) {
+      applyStatus(payload.completedStep, 'success', event.timestamp);
+    }
+    if (payload?.currentStep) {
+      const stepStatus: RuntimePlanStepStatus =
+        event.status === 'error'
+          ? 'error'
+          : event.status === 'waiting'
+            ? 'waiting'
+            : event.status === 'skipped'
+              ? 'skipped'
+              : 'running';
+      applyStatus(payload.currentStep, stepStatus, event.timestamp);
+    }
+    if (event.stage === 'decision' && event.status === 'success') {
+      const currentStep = getTracePlanStep(event);
+      if (currentStep && !currentStep.toolName && event.title.includes('无需工具')) {
+        applyStatus(currentStep, 'success', event.timestamp);
+      }
+    }
+  });
+
+  const latestStepEvent = [...events].reverse().find(event => Boolean(getTracePlanStep(event)));
+  const latestStep = latestStepEvent ? getTracePlanStep(latestStepEvent) : undefined;
+  if (status.active && latestStep && ['decision', 'execution', 'verification'].includes(status.stage)) {
+    applyStatus(latestStep, status.status === 'waiting' ? 'waiting' : 'running', latestStepEvent?.timestamp || Date.now());
+  }
+
+  return steps;
+};
+
+const getRuntimePlanStepTone = (stepStatus: RuntimePlanStepStatus) => {
+  if (stepStatus === 'error') return 'border-red-100 bg-red-50/70 text-red-700';
+  if (stepStatus === 'waiting') return 'border-amber-100 bg-amber-50/70 text-amber-700';
+  if (stepStatus === 'running') return 'border-blue-100 bg-blue-50/70 text-blue-700';
+  if (stepStatus === 'success') return 'border-emerald-100 bg-emerald-50/70 text-emerald-700';
+  if (stepStatus === 'skipped') return 'border-slate-100 bg-slate-50 text-slate-500';
+  return 'border-slate-100 bg-white text-slate-500';
+};
+
+const getRuntimePlanStepIcon = (stepStatus: RuntimePlanStepStatus) => {
+  if (stepStatus === 'running') return <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />;
+  if (stepStatus === 'success') return <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />;
+  if (stepStatus === 'error') return <AlertCircle className="w-3.5 h-3.5 shrink-0" />;
+  if (stepStatus === 'waiting') return <ShieldCheck className="w-3.5 h-3.5 shrink-0" />;
+  return <ChevronRight className="w-3.5 h-3.5 shrink-0" />;
+};
+
 const AgentExecutionProcessPanel: React.FC<{
   status: AgentRuntimeStatusState;
   events: AgentTraceEvent[];
@@ -5076,6 +5240,10 @@ const AgentExecutionProcessPanel: React.FC<{
   const visibleStages = AGENT_RUNTIME_VISUAL_STAGES.filter(stage =>
     stage !== 'error' || latestByStage.has('error') || status.stage === 'error',
   );
+
+  const planSteps = useMemo(() => buildRuntimePlanView(events, status), [events, status]);
+  const completedPlanCount = planSteps.filter(step => step.status === 'success').length;
+  const activePlanStep = planSteps.find(step => step.status === 'running' || step.status === 'waiting');
 
   const selectedToolNames = useMemo(() => {
     const names = new Set<string>();
@@ -5120,7 +5288,7 @@ const AgentExecutionProcessPanel: React.FC<{
           : '已完成';
 
   const phaseCards: Array<{ label: string; desc: string; stages: AgentTraceEvent['stage'][] }> = [
-    { label: '路由/规划', desc: '确定作用域与工具范围', stages: ['planning', 'decision'] },
+    { label: '澄清/规划', desc: '确认信息与工具范围', stages: ['clarification', 'planning', 'decision'] },
     { label: '执行', desc: '调用已授权函数', stages: ['execution'] },
     { label: '检查', desc: '校验结果与缺失项', stages: ['verification', 'inspection'] },
     { label: '汇报', desc: '整理最终答复', stages: ['reflection', 'reporting'] },
@@ -5222,8 +5390,8 @@ const AgentExecutionProcessPanel: React.FC<{
               <p className="text-sm font-semibold text-slate-700">{completedStageCount}/{visibleStages.length}</p>
             </div>
             <div className="rounded-xl bg-slate-50 px-2 py-2">
-              <p className="text-[10px] text-slate-400">函数</p>
-              <p className="text-sm font-semibold text-slate-700">{selectedToolNames.length}</p>
+              <p className="text-[10px] text-slate-400">计划</p>
+              <p className="text-sm font-semibold text-slate-700">{planSteps.length ? `${completedPlanCount}/${planSteps.length}` : '-'}</p>
             </div>
             <div className="rounded-xl bg-slate-50 px-2 py-2">
               <p className="text-[10px] text-slate-400">确认</p>
@@ -5235,6 +5403,51 @@ const AgentExecutionProcessPanel: React.FC<{
             </div>
           </div>
         </div>
+
+        <section className="rounded-2xl border border-slate-100 bg-white p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold text-slate-500">执行计划</p>
+              {activePlanStep && (
+                <p className="text-[10px] text-blue-500 truncate mt-0.5">当前：{activePlanStep.title}</p>
+              )}
+            </div>
+            <span className="text-[10px] text-slate-400 shrink-0">
+              {planSteps.length ? `${completedPlanCount}/${planSteps.length}` : '等待规划'}
+            </span>
+          </div>
+          {planSteps.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-white/70 py-5 text-center text-xs text-slate-400">
+              任务开始后会在这里显示计划步骤
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {planSteps.map((step, index) => (
+                <div key={step.id} className={`rounded-xl border px-2.5 py-2 ${getRuntimePlanStepTone(step.status)}`}>
+                  <div className="flex items-start gap-2">
+                    <div className="mt-0.5 w-5 h-5 rounded-lg bg-white/70 flex items-center justify-center shrink-0">
+                      {getRuntimePlanStepIcon(step.status)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold truncate">{index + 1}. {step.title}</p>
+                        {step.timestamp && <span className="text-[10px] opacity-70 shrink-0">{formatRuntimeTimestamp(step.timestamp)}</span>}
+                      </div>
+                      <div className="mt-1 flex items-center gap-1.5 text-[10px] opacity-80">
+                        {step.toolName ? (
+                          <span className="rounded-md bg-white/70 px-1.5 py-0.5 font-mono">{step.toolName}</span>
+                        ) : (
+                          <span className="rounded-md bg-white/70 px-1.5 py-0.5">无需工具</span>
+                        )}
+                        {step.description && <span className="line-clamp-1">{step.description}</span>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
         <section className="grid grid-cols-2 gap-2">
           {phaseCards.map(phase => (
@@ -5447,7 +5660,7 @@ const MessageBubble: React.FC<{
     <div className={`flex items-end gap-2.5 ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div className={`max-w-[80%] px-4 py-3.5 ${
         isUser 
-          ? 'bg-gradient-to-br from-violet-500 via-purple-600 to-indigo-600 text-white rounded-2xl rounded-tr-sm shadow-[0_4px_24px_rgba(139,92,246,0.45)]' 
+          ? 'bg-gradient-to-br from-violet-500 via-purple-600 to-indigo-600 text-white rounded-2xl rounded-br-sm shadow-[0_4px_24px_rgba(139,92,246,0.45)]' 
           : 'rounded-3xl shadow-sm'
       }`} style={!isUser ? { background: 'var(--t-bg-secondary)', color: 'var(--t-text)' } : undefined}>
         <div className="flex items-center gap-2 flex-wrap mb-2">
