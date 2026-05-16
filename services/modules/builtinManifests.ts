@@ -156,7 +156,7 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
   },
   {
     id: 'prompts',
-    name: 'Skills',
+    name: 'Skills/MCP',
     version: '1.0.0',
     kind: 'builtin',
     icon: 'Sparkles',
@@ -165,7 +165,9 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
     ui: { type: 'native', appMode: 'prompts' },
     agent: {
       scopes: [
-        { id: 'prompts', name: 'Skills', icon: 'Sparkles', description: '创建 Prompt 技能卡' },
+        { id: 'prompts', name: '技能卡', icon: 'Sparkles', description: '创建 Prompt 技能卡' },
+        { id: 'skills', name: 'Agent Skills', icon: 'Sparkles', description: '查询并加载可供 Agent 使用的 Skill 能力包' },
+        { id: 'mcp', name: 'MCP', icon: 'Cable', description: '查询和调用 MCP Server 的 tools 与 resources' },
       ],
     },
   },

@@ -239,7 +239,7 @@ export const DEFAULT_MODULE_CONFIG: ModuleConfig[] = [
   { id: 'image-hosting', name: '图床管理', enabled: true, priority: 10, icon: 'Image',         shortcut: 'Tab+I' },
   { id: 'question-bank', name: '题库',     enabled: true, priority: 11, icon: 'BookOpenCheck', shortcut: 'Tab+Q' },
   { id: 'browser',      name: '内置浏览器', enabled: false, priority: 12, icon: 'Globe',       shortcut: 'Tab+B' },
-  { id: 'prompts',      name: 'Skills',    enabled: true, priority: 13, icon: 'Sparkles',      shortcut: 'Tab+8' },
+  { id: 'prompts',      name: 'Skills/MCP', enabled: true, priority: 13, icon: 'Sparkles',      shortcut: 'Tab+8' },
   { id: 'knowledge-base', name: '知识库',  enabled: true, priority: 14, icon: 'Library',       shortcut: 'Tab+J' },
   { id: 'music',        name: 'Music',      enabled: false, priority: 15, icon: 'Music',        shortcut: 'Tab+M' },
   { id: 'rag',          name: 'RAG Lab',    enabled: true, priority: 16, icon: 'Database',      shortcut: 'Tab+R' },

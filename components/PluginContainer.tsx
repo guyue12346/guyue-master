@@ -298,7 +298,7 @@ export const PluginContainer: React.FC<PluginContainerProps> = ({
           partition={`persist:plugin-${pluginId}`}
           preload={pluginPreloadPath}
           // @ts-ignore
-          webpreferences="contextIsolation=yes,nodeIntegration=no,sandbox=no"
+          webpreferences="contextIsolation=yes,nodeIntegration=no,sandbox=yes"
         />
 
         {!hidden && isLoading && (

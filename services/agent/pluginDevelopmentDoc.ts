@@ -3,7 +3,7 @@ export const AGENT_PLUGIN_DEVELOPMENT_DOC_FILENAME = 'guyue-agent-plugin-develop
 export const AGENT_PLUGIN_DEVELOPMENT_DOC = [
   '# Guyue Master Agent 插件开发标准说明',
   '',
-  '本说明用于开发可安装到 Guyue Master 的功能插件，并把插件能力注册给 Agent 调用。当前插件运行在 Electron `webview` 中，通过安全 preload 暴露 `window.guyue`，不开放 Node.js 直接能力。',
+  '本说明用于开发可安装到 Guyue Master 的功能插件，并把插件能力注册给 Agent 调用。当前插件运行在 Electron `webview` 的 sandbox 环境中，通过安全 preload 暴露 `window.guyue`，不开放 Node.js 直接能力。插件、Skill、MCP 只能通过声明式 manifest 和 IPC 能力边界接入，不能直接访问主进程实现。',
   '',
   '## 1. 插件目录结构',
   '',

@@ -9,6 +9,8 @@ const SECRET_LABEL_PATTERN = /(^|[\s"'`，。；;,\n\r])((?:api\s*key|apikey|acc
 const URL_PASSWORD_PARAM_PATTERN = /([?&](?:password|passwd|pwd)=)([^&#\s]{3,})/gi;
 const URL_SECRET_PARAM_PATTERN = /([?&](?:api[_-]?key|token|access_token|secret|client_secret)=)([^&#\s]{6,})/gi;
 const OPENAI_STYLE_KEY_PATTERN = /\b(sk-[A-Za-z0-9_-]{16,}|sk-proj-[A-Za-z0-9_-]{16,}|sk-ant-[A-Za-z0-9_-]{16,})\b/g;
+const PROVIDER_KEY_PATTERN = /\b(ak|sk)-[A-Za-z0-9][A-Za-z0-9_-]{5,}\b/gi;
+const ESCAPED_PROVIDER_KEY_PATTERN = /\\u003c(ak|sk)-[^\\\s]+\\u003e/gi;
 const AWS_ACCESS_KEY_PATTERN = /\bAKIA[0-9A-Z]{16}\b/g;
 const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\b/g;
 const PEM_PRIVATE_KEY_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]+?-----END [A-Z ]*PRIVATE KEY-----/g;
@@ -43,6 +45,14 @@ export const detectSensitiveInput = (text: string): SensitiveInputDetection => {
   redactedText = redactedText.replace(OPENAI_STYLE_KEY_PATTERN, () => {
     addKind(kinds, 'API Key');
     return '[已拦截的 API Key]';
+  });
+  redactedText = redactedText.replace(ESCAPED_PROVIDER_KEY_PATTERN, (_match, prefix) => {
+    addKind(kinds, 'API Key');
+    return `\\u003c${prefix}-***\\u003e`;
+  });
+  redactedText = redactedText.replace(PROVIDER_KEY_PATTERN, (_match, prefix) => {
+    addKind(kinds, 'API Key');
+    return `${prefix}-***`;
   });
   redactedText = redactedText.replace(AWS_ACCESS_KEY_PATTERN, () => {
     addKind(kinds, 'Access Key');

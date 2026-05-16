@@ -102,6 +102,46 @@ export interface ChatRunOptions {
   onDebugEvent?: (event: ChatDebugEvent) => void;
 }
 
+const sanitizeProviderText = (value: string): string => {
+  let sanitized = value;
+  sanitized = sanitized.replace(/\\u003c(ak|sk)-[^\\\s]+\\u003e/gi, (_match, prefix) => `\\u003c${prefix}-***\\u003e`);
+  sanitized = sanitized.replace(/<(ak|sk)-[^>\s]+>/gi, (_match, prefix) => `<${prefix}-***>`);
+  sanitized = sanitized.replace(/\b(ak|sk)-[A-Za-z0-9][A-Za-z0-9_-]{5,}\b/gi, (_match, prefix) => `${prefix}-***`);
+  sanitized = sanitized.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer ***');
+  sanitized = sanitized.replace(
+    /(["']?(?:api[_-]?key|apikey|access[_-]?token|token|password|secret)["']?\s*[:=]\s*["']?)[^"',\s}\]]+/gi,
+    '$1***',
+  );
+  return sanitized;
+};
+
+const sanitizeDebugValue = (value: unknown, depth = 0): unknown => {
+  if (typeof value === 'string') return sanitizeProviderText(value);
+  if (!value || typeof value !== 'object') return value;
+  if (depth > 4) return value;
+
+  if (Array.isArray(value)) {
+    return value.map(item => sanitizeDebugValue(item, depth + 1));
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (/^(authorization|x-api-key|apiKey|apikey|accessToken|token|password|secret)$/i.test(key)) {
+      result[key] = '***';
+      continue;
+    }
+    result[key] = sanitizeDebugValue(item, depth + 1);
+  }
+  return result;
+};
+
+const sanitizeDebugEvent = <T extends Omit<ChatDebugEvent, 'provider' | 'timestamp'>>(event: T): T => ({
+  ...event,
+  detail: typeof event.detail === 'string' ? sanitizeProviderText(event.detail) : event.detail,
+  request: sanitizeDebugValue(event.request) as T['request'],
+  response: sanitizeDebugValue(event.response) as T['response'],
+});
+
 // ==================== Model Definitions ====================
 
 import { ZENMUX_MODELS, ZENMUX_AGENT_MODELS } from './zenmuxModels';
@@ -286,6 +326,10 @@ export class ChatService {
     this.config = { ...this.config, ...config };
   }
 
+  getConfig(): ChatConfig {
+    return this.config;
+  }
+
   supportsNativeTools(): boolean {
     return ['openai', 'anthropic', 'gemini', 'zenmux', 'moonshot', 'deepseek'].includes(this.config.provider);
   }
@@ -320,7 +364,7 @@ export class ChatService {
 
     const emitDebug = (event: Omit<ChatDebugEvent, 'provider' | 'timestamp'>) => {
       options?.onDebugEvent?.({
-        ...event,
+        ...sanitizeDebugEvent(event),
         provider: this.config.provider,
         timestamp: Date.now(),
       });
@@ -400,7 +444,7 @@ export class ChatService {
           const fbErr = await fallbackResp.text();
           throw new Error(
             fallbackResp.status === 403
-              ? `Kimi API 权限不足 (403)：请检查 API Key 是否有效，或尝试切换到 moonshot-v1-128k 模型。\n${fbErr}`
+              ? `Kimi API 权限不足 (403)：请检查 API Key 是否有效，或尝试切换到 moonshot-v1-128k 模型。\n${sanitizeProviderText(fbErr)}`
               : this.formatApiError(fallbackResp.status, fbErr, 'Kimi 无工具降级请求').message,
           );
         }
@@ -414,7 +458,7 @@ export class ChatService {
         };
       }
       if (response.status === 403 && this.config.provider === 'moonshot') {
-        throw new Error(`Kimi API 权限不足 (403)：请检查 API Key 是否有效，或尝试切换到 moonshot-v1-128k 模型。\n${errorText}`);
+        throw new Error(`Kimi API 权限不足 (403)：请检查 API Key 是否有效，或尝试切换到 moonshot-v1-128k 模型。\n${sanitizeProviderText(errorText)}`);
       }
       throw this.formatApiError(response.status, errorText, '工具决策请求');
     }
@@ -639,7 +683,7 @@ export class ChatService {
 
   private formatApiError(status: number, errorText: string, operation = '模型请求', endpoint = `${this.getBaseUrl()}/chat/completions`): Error {
     const context = `provider=${this.config.provider}, model=${this.config.model}, endpoint=${endpoint}`;
-    const raw = errorText || '无错误正文';
+    const raw = sanitizeProviderText(errorText || '无错误正文');
 
     if (status === 401) {
       return new Error(`${operation}失败：API Key 无效或未被服务端接受 (401)。\n当前请求：${context}\n请检查 API Key 是否填到了对应提供商，Base URL 是否正确。\n原始错误：${raw}`);
@@ -724,7 +768,7 @@ export class ChatService {
   ): Promise<ChatToolRunResult> {
     const emitDebug = (event: Omit<ChatDebugEvent, 'provider' | 'timestamp'>) => {
       options?.onDebugEvent?.({
-        ...event,
+        ...sanitizeDebugEvent(event),
         provider: this.config.provider,
         timestamp: Date.now(),
       });
@@ -813,7 +857,7 @@ export class ChatService {
             const fbErr = await fallbackResp.text();
             throw new Error(
               fallbackResp.status === 403
-                ? `Kimi API 权限不足 (403)：请检查 API Key 是否有效，或尝试切换到 moonshot-v1-128k 模型。\n${fbErr}`
+                ? `Kimi API 权限不足 (403)：请检查 API Key 是否有效，或尝试切换到 moonshot-v1-128k 模型。\n${sanitizeProviderText(fbErr)}`
                 : this.formatApiError(fallbackResp.status, fbErr, 'Kimi 无工具降级请求').message
             );
           }
@@ -825,7 +869,7 @@ export class ChatService {
           };
         }
         if (response.status === 403 && this.config.provider === 'moonshot') {
-          throw new Error(`Kimi API 权限不足 (403)：请检查 API Key 是否有效，或尝试切换到 moonshot-v1-128k 模型。\n${errorText}`);
+          throw new Error(`Kimi API 权限不足 (403)：请检查 API Key 是否有效，或尝试切换到 moonshot-v1-128k 模型。\n${sanitizeProviderText(errorText)}`);
         }
         throw this.formatApiError(response.status, errorText, '工具调用请求');
       }
@@ -917,7 +961,7 @@ export class ChatService {
   ): Promise<ChatToolRunResult> {
     const emitDebug = (event: Omit<ChatDebugEvent, 'provider' | 'timestamp'>) => {
       options?.onDebugEvent?.({
-        ...event,
+        ...sanitizeDebugEvent(event),
         provider: this.config.provider,
         timestamp: Date.now(),
       });
@@ -1056,7 +1100,7 @@ export class ChatService {
   ): Promise<ChatToolRunResult> {
     const emitDebug = (event: Omit<ChatDebugEvent, 'provider' | 'timestamp'>) => {
       options?.onDebugEvent?.({
-        ...event,
+        ...sanitizeDebugEvent(event),
         provider: this.config.provider,
         timestamp: Date.now(),
       });
@@ -1322,7 +1366,7 @@ export class ChatService {
     if (!response.ok) {
       const errorText = await response.text();
       if (response.status === 403 && this.config.provider === 'moonshot') {
-        throw new Error(`Kimi API 权限不足 (403)：请检查 API Key 是否正确（需从 platform.moonshot.cn 获取），或尝试切换到 moonshot-v1-128k 模型。\n${errorText}`);
+        throw new Error(`Kimi API 权限不足 (403)：请检查 API Key 是否正确（需从 platform.moonshot.cn 获取），或尝试切换到 moonshot-v1-128k 模型。\n${sanitizeProviderText(errorText)}`);
       }
       throw this.formatApiError(response.status, errorText, '流式对话请求');
     }

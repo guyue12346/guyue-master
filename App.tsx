@@ -2248,7 +2248,7 @@ const App: React.FC = () => {
   const getSearchPlaceholder = () => {
     if (appMode === 'todo') return '搜索任务...';
     if (appMode === 'files') return '搜索文件...';
-    if (appMode === 'prompts') return '搜索 Skills...';
+    if (appMode === 'prompts') return '搜索 Skills/MCP...';
     if (appMode === 'files') return '搜索文件...';
     if (appMode === 'markdown') return '搜索笔记...';
     if (appMode === 'browser') return '搜索网页...';
@@ -3281,7 +3281,7 @@ const App: React.FC = () => {
             />
           </Suspense>
         ), '音乐分类栏')
-      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'practice' && appMode !== 'spaces' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'git' && appMode !== 'question-bank' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
+      ) : appMode !== 'markdown' && appMode !== 'files' && appMode !== 'todo' && appMode !== 'prompts' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'practice' && appMode !== 'spaces' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'git' && appMode !== 'question-bank' && appMode !== 'agent' && !isRendererFullscreen && !isTerminalFullscreen && isSidebarVisible && !moduleConfig.find(m => m.id === appMode)?.isPlugin ? (
         renderCollapsibleModuleSidebar(`category:${appMode}`, (
           <Sidebar 
             appMode={appMode}  
@@ -3391,7 +3391,7 @@ const App: React.FC = () => {
                 title: promptData.title || '未命名技能',
                 content: promptData.content || '',
                 description: promptData.description,
-                tags: promptData.tags || [],
+                tags: [],
                 category: promptData.category || '未分类',
                 note: '',
                 createdAt: Date.now(),
@@ -3491,7 +3491,7 @@ const App: React.FC = () => {
       )}
 
       <div className={`flex-1 flex flex-col min-w-0 relative`} style={appMode === 'agent' ? { display: 'none' } : { background: 'var(--t-bg-main)' }}>
-        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'practice' && appMode !== 'spaces' && appMode !== 'image-hosting' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'git' && appMode !== 'question-bank' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
+        {!(isRendererFullscreen || isMarkdownFullscreen || isTerminalFullscreen || isBrowserFullscreen) && appMode !== 'terminal' && appMode !== 'browser' && appMode !== 'practice' && appMode !== 'spaces' && appMode !== 'prompts' && appMode !== 'image-hosting' && appMode !== 'files' && appMode !== 'excalidraw' && appMode !== 'datacenter' && appMode !== 'git' && appMode !== 'question-bank' && appMode !== 'latex' && appMode !== 'music' && appMode !== 'rag' && appMode !== 'knowledge-base' && appMode !== 'workflow' && !(appMode === 'todo' && todoSubMode !== 'tasks') && !moduleConfig.find(m => m.id === appMode)?.isPlugin && (
         <div className="theme-header-bar h-16 flex items-center justify-between px-6 shrink-0">
            <div className="flex items-center gap-4 flex-1 max-w-xl">
               <div className="relative flex-1">
@@ -3721,7 +3721,32 @@ const App: React.FC = () => {
                )
             )}
 
-            {appMode === 'prompts' && <PromptList prompts={filteredPrompts} onDelete={handleDeletePrompt} onDeleteMany={handleDeleteManyPrompts} onEdit={handleEditPrompt} onImport={handleImportSkills} isImportOpen={isSkillImportOpen} onImportOpenChange={setIsSkillImportOpen} />}
+            {appMode === 'prompts' && (
+              <PromptList
+                prompts={prompts}
+                onDelete={handleDeletePrompt}
+                onDeleteMany={handleDeleteManyPrompts}
+                onEdit={handleEditPrompt}
+                onCreate={() => {
+                  if (getStrictCategoryNames(categoriesMap['prompts'] || []).length === 0) {
+                    window.alert('请先创建 Prompt 分类。');
+                    setInitialCategoryEditId(null);
+                    setIsCategoryManagerOpen(true);
+                    return;
+                  }
+                  setEditingPrompt(null);
+                  setIsPromptModalOpen(true);
+                }}
+                onImport={handleImportSkills}
+                categories={getStrictCategoryNames(categoriesMap['prompts'] || [])}
+                onManageCategories={() => {
+                  setInitialCategoryEditId(null);
+                  setIsCategoryManagerOpen(true);
+                }}
+                isImportOpen={isSkillImportOpen}
+                onImportOpenChange={setIsSkillImportOpen}
+              />
+            )}
             
             {appMode === 'image-hosting' && (
               <ImageHosting 

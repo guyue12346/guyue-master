@@ -5,6 +5,7 @@ import {
   DEFAULT_AGENT_FULL_ACCESS_PERMISSIONS,
   type AgentCrudAction,
   type AgentFullAccessPermissions,
+  type AgentPermissionSourceGroup,
   type AgentToolPermissions,
 } from '../services/agent/agentPermissions';
 import type { ToolPermissionCapabilities } from '../services/agent/toolRegistry';
@@ -15,7 +16,7 @@ interface AgentPermissionCenterModalProps {
   capabilities: ToolPermissionCapabilities;
   toolPermissions: AgentToolPermissions;
   fullAccessPermissions: AgentFullAccessPermissions;
-  modules: Array<{ key: string; label: string; desc: string }>;
+  modules: Array<{ key: string; label: string; desc: string; sourceGroup?: AgentPermissionSourceGroup }>;
   allToolPermissionsEnabled: boolean;
   enabledToolPermissionCount: number;
   fullAccessPermissionCount: number;
@@ -43,6 +44,21 @@ const ACTION_TONE_MAP = {
   update: 'bg-amber-500 text-white',
   delete: 'bg-rose-500 text-white',
 } satisfies Record<AgentCrudAction, string>;
+
+const SOURCE_GROUP_LABELS: Record<AgentPermissionSourceGroup, string> = {
+  core: '核心模块',
+  plugin: '插件模块',
+  skill: 'Skills',
+  mcp: 'MCP',
+};
+
+const getSourceGroup = (module: { key: string; sourceGroup?: AgentPermissionSourceGroup }): AgentPermissionSourceGroup => {
+  if (module.sourceGroup) return module.sourceGroup;
+  if (module.key === 'skills') return 'skill';
+  if (module.key === 'mcp') return 'mcp';
+  if (module.key.startsWith('plugin-')) return 'plugin';
+  return 'core';
+};
 
 export const AgentPermissionCenterModal: React.FC<AgentPermissionCenterModalProps> = ({
   isOpen,
@@ -108,10 +124,18 @@ export const AgentPermissionCenterModal: React.FC<AgentPermissionCenterModalProp
             })}
             <span className="flex justify-center" title="完全权限"><ShieldCheck className="h-3.5 w-3.5" /></span>
           </div>
-          <div className="space-y-1">
-            {modules
-              .filter(module => AGENT_CRUD_ACTIONS.some(action => isSupported(capabilities, module.key, action.key)))
-              .map(module => {
+          <div className="space-y-4">
+            {(['core', 'plugin', 'skill', 'mcp'] as AgentPermissionSourceGroup[]).map(group => {
+              const groupModules = modules
+                .filter(module => getSourceGroup(module) === group)
+                .filter(module => AGENT_CRUD_ACTIONS.some(action => isSupported(capabilities, module.key, action.key)));
+              if (groupModules.length === 0) return null;
+              return (
+                <div key={group} className="space-y-1">
+                  <div className="px-2 pt-1 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    {SOURCE_GROUP_LABELS[group]}
+                  </div>
+                  {groupModules.map(module => {
                 const enabledFullActions = (['update', 'delete'] as AgentCrudAction[])
                   .filter(action => isSupported(capabilities, module.key, action) && toolPermissions[module.key]?.[action]);
                 const fullEnabled = enabledFullActions.length > 0 && enabledFullActions.every(action => fullAccessPermissions[module.key]?.[action]);
@@ -163,7 +187,10 @@ export const AgentPermissionCenterModal: React.FC<AgentPermissionCenterModalProp
                     </button>
                   </div>
                 );
-              })}
+                  })}
+                </div>
+              );
+            })}
           </div>
         </div>
 

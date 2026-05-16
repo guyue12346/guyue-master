@@ -14,6 +14,9 @@ export type AgentRunStatus =
 
 export type AgentTraceStage =
   | 'clarification'
+  | 'tool_search'
+  | 'load_skill'
+  | 'mcp_read_resource'
   | 'planning'
   | 'decision'
   | 'execution'

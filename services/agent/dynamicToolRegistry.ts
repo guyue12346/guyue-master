@@ -3,7 +3,7 @@ import type { AgentCrudAction } from './agentPermissions';
 import type { ToolRegistration } from './toolRegistry';
 
 export interface AgentToolRegistryOwner {
-  kind: 'builtin' | 'plugin';
+  kind: 'builtin' | 'plugin' | 'skill' | 'mcp';
   ownerId: string;
 }
 
@@ -54,7 +54,11 @@ export class DynamicAgentToolRegistry {
       throw new Error(`Agent 工具已被注册：${name}`);
     }
     this.unregister(name, owner.ownerId, false);
-    this.registrations.push(registration);
+    this.registrations.push({
+      ...registration,
+      origin: registration.origin || owner.kind,
+      sourceId: registration.sourceId || owner.ownerId,
+    });
     this.owners.set(name, owner);
     notifyToolRegistryChanged();
     return () => this.unregister(name, owner.ownerId);

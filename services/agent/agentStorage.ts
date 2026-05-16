@@ -19,6 +19,7 @@ import { loadLocalJson, saveLocalJson, saveUnifiedJson } from '../../utils/unifi
 export const STORAGE_KEY_AGENT_CONFIG = 'guyue_agent_config';
 export const STORAGE_KEY_AGENT_COMPLEX_TASK_CONFIG = 'guyue_agent_complex_task_config';
 export const STORAGE_KEY_AGENT_SEARCH_CONFIG = 'guyue_agent_search_config';
+export const STORAGE_KEY_AGENT_RUNTIME_CONFIG = 'guyue_agent_runtime_config';
 export const STORAGE_KEY_AGENT_HISTORY = 'guyue_agent_history';
 export const STORAGE_KEY_AGENT_MEMORY = 'guyue_agent_memory';
 export const STORAGE_KEY_AGENT_PERMISSIONS = 'guyue_agent_permissions';
@@ -29,6 +30,7 @@ export const AGENT_EMAIL_CONFIG_KEY = 'linkmaster_email_config';
 const STORE_KEY_AGENT_CONFIG = 'agent-config';
 const STORE_KEY_AGENT_COMPLEX_TASK_CONFIG = 'agent-complex-task-config';
 const STORE_KEY_AGENT_SEARCH_CONFIG = 'agent-search-config';
+const STORE_KEY_AGENT_RUNTIME_CONFIG = 'agent-runtime-config';
 const STORE_KEY_AGENT_HISTORY = 'agent-history';
 const STORE_KEY_AGENT_MEMORY = 'agent-memory';
 const STORE_KEY_AGENT_PERMISSIONS = 'agent-permissions';
@@ -87,6 +89,7 @@ export interface AgentSearchConfig {
   fallbackProviders: AgentSearchProvider[];
   mode: AgentSearchMode;
   maxResults: number;
+  maxOpenPages: number;
   includeAnswer: boolean;
   includeRawContent: boolean;
   apiKeys: {
@@ -112,6 +115,7 @@ export const DEFAULT_AGENT_SEARCH_CONFIG: AgentSearchConfig = {
   fallbackProviders: [],
   mode: 'balanced',
   maxResults: 8,
+  maxOpenPages: 1,
   includeAnswer: true,
   includeRawContent: false,
   apiKeys: {
@@ -137,6 +141,14 @@ export const DEFAULT_AGENT_SEARCH_CONFIG: AgentSearchConfig = {
       stackExchange: '',
     },
   },
+};
+
+export interface AgentRuntimeConfig {
+  maxIterations: number;
+}
+
+export const DEFAULT_AGENT_RUNTIME_CONFIG: AgentRuntimeConfig = {
+  maxIterations: 10,
 };
 
 export interface Contact {
@@ -244,6 +256,7 @@ const normalizeSearchConfig = (value: any): AgentSearchConfig => {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const apiKeys = source.apiKeys && typeof source.apiKeys === 'object' ? source.apiKeys : {};
   const maxResults = Number(source.maxResults);
+  const maxOpenPages = Number(source.maxOpenPages);
   const normalizedApiKeys = {
     openai: typeof apiKeys.openai === 'string' ? apiKeys.openai : '',
     bing: typeof apiKeys.bing === 'string' ? apiKeys.bing : '',
@@ -269,6 +282,7 @@ const normalizeSearchConfig = (value: any): AgentSearchConfig => {
     fallbackProviders,
     mode: AGENT_SEARCH_MODES.has(source.mode) ? source.mode : DEFAULT_AGENT_SEARCH_CONFIG.mode,
     maxResults: Number.isFinite(maxResults) ? Math.min(Math.max(Math.floor(maxResults), 3), 20) : DEFAULT_AGENT_SEARCH_CONFIG.maxResults,
+    maxOpenPages: Number.isFinite(maxOpenPages) ? Math.min(Math.max(Math.floor(maxOpenPages), 1), 5) : DEFAULT_AGENT_SEARCH_CONFIG.maxOpenPages,
     includeAnswer: source.includeAnswer !== false,
     includeRawContent: Boolean(source.includeRawContent),
     apiKeys: normalizedApiKeys,
@@ -283,6 +297,16 @@ const normalizeSearchConfig = (value: any): AgentSearchConfig => {
     language: typeof source.language === 'string' && source.language.trim() ? source.language : DEFAULT_AGENT_SEARCH_CONFIG.language,
     country: typeof source.country === 'string' && source.country.trim() ? source.country : DEFAULT_AGENT_SEARCH_CONFIG.country,
     specialized: normalizeSpecializedSearchConfig(source.specialized),
+  };
+};
+
+const normalizeRuntimeConfig = (value: any): AgentRuntimeConfig => {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const maxIterations = Number(source.maxIterations);
+  return {
+    maxIterations: Number.isFinite(maxIterations)
+      ? Math.min(Math.max(Math.floor(maxIterations), 3), 50)
+      : DEFAULT_AGENT_RUNTIME_CONFIG.maxIterations,
   };
 };
 
@@ -456,6 +480,25 @@ export const saveAgentSearchConfig = (config: AgentSearchConfig): void => {
       localStorageKey: STORAGE_KEY_AGENT_SEARCH_CONFIG,
       defaultValue: () => ({ ...DEFAULT_AGENT_SEARCH_CONFIG }),
       normalize: normalizeSearchConfig,
+    },
+    config,
+  );
+};
+
+export const loadAgentRuntimeConfig = (): AgentRuntimeConfig =>
+  loadLocalJson({
+    localStorageKey: STORAGE_KEY_AGENT_RUNTIME_CONFIG,
+    defaultValue: () => ({ ...DEFAULT_AGENT_RUNTIME_CONFIG }),
+    normalize: normalizeRuntimeConfig,
+  });
+
+export const saveAgentRuntimeConfig = (config: AgentRuntimeConfig): void => {
+  saveUnifiedJson(
+    {
+      appDataKey: STORE_KEY_AGENT_RUNTIME_CONFIG,
+      localStorageKey: STORAGE_KEY_AGENT_RUNTIME_CONFIG,
+      defaultValue: () => ({ ...DEFAULT_AGENT_RUNTIME_CONFIG }),
+      normalize: normalizeRuntimeConfig,
     },
     config,
   );

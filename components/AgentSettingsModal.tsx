@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, CheckCircle2, AlertCircle, Trash2, Sparkles, ChevronDown, ChevronRight, Plus, Pencil, Mail, Server, Key, Edit3, BookUser, Send, Loader2, Globe2 } from 'lucide-react';
 import { AGENT_AVAILABLE_MODELS, ChatConfig, getDefaultAgentModel } from '../services/chatService';
-import type { AgentComplexTaskConfig, AgentEmailConfig, AgentSearchConfig, AgentSearchMode, AgentSearchProvider, Contact } from '../services/agent/agentStorage';
+import type { AgentComplexTaskConfig, AgentEmailConfig, AgentRuntimeConfig, AgentSearchConfig, AgentSearchMode, AgentSearchProvider, Contact } from '../services/agent/agentStorage';
 import { isStepwiseNativeProvider } from '../services/agent/agentModules';
 import { loadProfiles } from '../utils/apiProfileService';
 import type { ApiProfile } from '../types';
@@ -18,6 +18,8 @@ interface AgentSettingsModalProps {
   onChangeConfig: (config: ChatConfig) => void;
   complexTaskConfig: AgentComplexTaskConfig;
   onChangeComplexTaskConfig: (config: AgentComplexTaskConfig) => void;
+  runtimeConfig: AgentRuntimeConfig;
+  onChangeRuntimeConfig: (config: AgentRuntimeConfig) => void;
   searchConfig: AgentSearchConfig;
   onChangeSearchConfig: (config: AgentSearchConfig) => void;
   onClearHistory: () => void;
@@ -119,6 +121,8 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   onChangeConfig,
   complexTaskConfig,
   onChangeComplexTaskConfig,
+  runtimeConfig,
+  onChangeRuntimeConfig,
   searchConfig,
   onChangeSearchConfig,
   onClearHistory,
@@ -261,6 +265,7 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
   const selectedComplexConfig = savedApiConfigs.find(item => item.id === selectedComplexApiConfigId);
   const hasUnlistedComplexConfig = Boolean(complexTaskConfig.enabled && complexTaskConfig.apiKey && !selectedComplexConfig);
   const isEditing = editingId !== null;
+  const updateRuntimeConfig = (patch: Partial<AgentRuntimeConfig>) => onChangeRuntimeConfig({ ...runtimeConfig, ...patch });
   const updateSearchConfig = (patch: Partial<AgentSearchConfig>) => onChangeSearchConfig({ ...searchConfig, ...patch });
   const updateSearchApiKey = (provider: keyof AgentSearchConfig['apiKeys'], apiKey: string) => {
     updateSearchConfig({ apiKeys: { ...searchConfig.apiKeys, [provider]: apiKey } });
@@ -572,6 +577,40 @@ export const AgentSettingsModal: React.FC<AgentSettingsModalProps> = ({
                     ? `复杂任务使用 ${selectedComplexConfig?.label ? `${selectedComplexConfig.label} · ` : ''}${PROVIDER_LABELS[complexTaskConfig.provider] || complexTaskConfig.provider} · ${complexTaskConfig.model}`
                     : '复杂任务默认由主 Agent 模型处理。'}
                 </p>
+              </div>
+            </div>
+          </div>
+
+          {/* ── 执行控制 ── */}
+          <div className="px-5 pb-4">
+            <div className="rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">执行控制</p>
+                <span className="text-[11px] text-gray-400">长任务与网页读取</span>
+              </div>
+              <div className="p-4 grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">最大迭代轮数</label>
+                  <input
+                    type="number"
+                    min={3}
+                    max={50}
+                    value={runtimeConfig.maxIterations}
+                    onChange={e => updateRuntimeConfig({ maxIterations: Math.min(Math.max(parseInt(e.target.value, 10) || 10, 3), 50) })}
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">每轮最多打开网页</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={5}
+                    value={searchConfig.maxOpenPages}
+                    onChange={e => updateSearchConfig({ maxOpenPages: Math.min(Math.max(parseInt(e.target.value, 10) || 1, 1), 5) })}
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  />
+                </div>
               </div>
             </div>
           </div>

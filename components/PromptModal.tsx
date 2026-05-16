@@ -21,8 +21,6 @@ export const PromptModal: React.FC<PromptModalProps> = ({
   const [category, setCategory] = useState('');
   const [description, setDescription] = useState('');
   const [content, setContent] = useState('');
-  const [tagInput, setTagInput] = useState('');
-  const [tags, setTags] = useState<string[]>([]);
   const [author, setAuthor] = useState('');
   const [source, setSource] = useState('');
   const [contentTab, setContentTab] = useState<'edit' | 'preview'>('edit');
@@ -34,27 +32,15 @@ export const PromptModal: React.FC<PromptModalProps> = ({
       setCategory(categoryOptions.includes(initialData.category) ? initialData.category : '');
       setDescription(initialData.description || initialData.note || '');
       setContent(initialData.content);
-      setTags(initialData.tags || []);
       setAuthor(initialData.author || '');
       setSource(initialData.source || '');
       setShowDetails(!!(initialData.author || initialData.source));
     } else {
       setTitle(''); setCategory(''); setDescription(''); setContent('');
-      setTags([]); setTagInput(''); setAuthor(''); setSource('');
+      setAuthor(''); setSource('');
       setContentTab('edit'); setShowDetails(false);
     }
   }, [initialData, isOpen, categories]);
-
-  const handleAddTag = () => {
-    const t = tagInput.trim().replace(/^#/, '');
-    if (t && !tags.includes(t)) setTags(prev => [...prev, t]);
-    setTagInput('');
-  };
-
-  const handleTagKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if ((e.key === 'Enter' && !e.nativeEvent.isComposing) || e.key === ',') { e.preventDefault(); handleAddTag(); }
-    if (e.key === 'Backspace' && !tagInput && tags.length > 0) setTags(prev => prev.slice(0, -1));
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,7 +54,7 @@ export const PromptModal: React.FC<PromptModalProps> = ({
       category,
       description,
       content,
-      tags,
+      tags: [],
       note: description,
       author: author || undefined,
       source: source || undefined,
@@ -131,29 +117,6 @@ export const PromptModal: React.FC<PromptModalProps> = ({
                 placeholder="一句话描述这个 Skill 的用途..."
                 className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
               />
-            </div>
-
-            {/* Tags */}
-            <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wide">标签</label>
-              <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl min-h-[42px] focus-within:ring-2 focus-within:ring-purple-500/20 focus-within:border-purple-500 transition-all">
-                {tags.map(tag => (
-                  <span key={tag} className="inline-flex items-center gap-1 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
-                    #{tag}
-                    <button type="button" onClick={() => setTags(prev => prev.filter(t => t !== tag))} className="hover:text-red-500 leading-none">
-                      <X className="w-2.5 h-2.5" />
-                    </button>
-                  </span>
-                ))}
-                <input
-                  type="text" value={tagInput}
-                  onChange={e => setTagInput(e.target.value)}
-                  onKeyDown={handleTagKeyDown}
-                  onBlur={handleAddTag}
-                  placeholder={tags.length === 0 ? '输入标签后按 Enter 或逗号...' : ''}
-                  className="flex-1 min-w-[140px] bg-transparent text-sm outline-none"
-                />
-              </div>
             </div>
 
             {/* Content with Edit/Preview tabs */}

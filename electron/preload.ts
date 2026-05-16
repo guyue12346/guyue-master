@@ -195,6 +195,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       apiKeys?: { github?: string; stackExchange?: string };
     };
   }) => ipcRenderer.invoke('agent-specialized-search', params),
+  agentMcpListTools: (params: { server: any }) => ipcRenderer.invoke('agent-mcp-list-tools', params),
+  agentMcpCallTool: (params: { server: any; toolName: string; arguments?: Record<string, any> }) =>
+    ipcRenderer.invoke('agent-mcp-call-tool', params),
+  agentMcpListResources: (params: { server: any }) => ipcRenderer.invoke('agent-mcp-list-resources', params),
+  agentMcpReadResource: (params: { server: any; uri: string }) => ipcRenderer.invoke('agent-mcp-read-resource', params),
+  agentSkillScan: (params: { roots: string[] }) => ipcRenderer.invoke('agent-skill-scan', params),
+  agentSkillRead: (params: { path: string }) => ipcRenderer.invoke('agent-skill-read', params),
 
   // 代理设置
   setProxy: (port: number | null) => ipcRenderer.invoke('set-proxy', port),
@@ -437,6 +444,12 @@ export interface ElectronAPI {
       apiKeys?: { github?: string; stackExchange?: string };
     };
   }) => Promise<{ success: boolean; source?: string; results: Array<{ title: string; url: string; snippet: string; source?: string; publishedDate?: string; score?: number; content?: string; meta?: Record<string, any> }>; error?: string; query?: string }>;
+  agentMcpListTools: (params: { server: any }) => Promise<{ success: boolean; tools?: any[]; raw?: any; error?: string }>;
+  agentMcpCallTool: (params: { server: any; toolName: string; arguments?: Record<string, any> }) => Promise<{ success: boolean; result?: any; raw?: any; error?: string }>;
+  agentMcpListResources: (params: { server: any }) => Promise<{ success: boolean; resources?: any[]; raw?: any; error?: string }>;
+  agentMcpReadResource: (params: { server: any; uri: string }) => Promise<{ success: boolean; contents?: any[]; raw?: any; error?: string }>;
+  agentSkillScan: (params: { roots: string[] }) => Promise<{ success: boolean; skills?: any[]; error?: string }>;
+  agentSkillRead: (params: { path: string }) => Promise<{ success: boolean; content?: string; error?: string }>;
   // 代理设置
   setProxy: (port: number | null) => Promise<{ success: boolean; error?: string }>;
   extractPdfText: (filePath: string) => Promise<string | null>;

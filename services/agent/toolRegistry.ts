@@ -23,6 +23,9 @@ import { toStrictTool, validateToolArguments } from './toolSchema';
 export interface ToolRegistration {
   name: string;
   module: string;
+  origin?: 'builtin' | 'plugin' | 'skill' | 'mcp';
+  sourceId?: string;
+  exposure?: 'direct' | 'deferred' | 'hidden';
   tool: ChatTool;
   permission?: {
     module?: string;
@@ -92,6 +95,7 @@ export interface ToolExecutionContext {
   latexTemplatePermissions: string[];
   onAutoAuthLatexFileCategory: (catId: string) => void;
   onAutoAuthLatexTemplateCategory: (catName: string) => void;
+  toolRegistry?: ToolRegistration[];
   executeComplexTask?: (args: Record<string, any>) => Promise<any>;
   executeWebSearch?: (args: Record<string, any>) => Promise<any>;
   executeWebOpen?: (args: Record<string, any>) => Promise<any>;
@@ -570,6 +574,13 @@ export const generateToolCallSummary = (toolCalls: ChatToolCall[]): string => {
     query_latex_templates: '查询 LaTeX 模板', read_latex_template: '读取 LaTeX 模板',
     create_latex_template: '创建 LaTeX 模板', edit_latex_template: '编辑 LaTeX 模板',
     delete_latex_template: '删除 LaTeX 模板',
+    search_agent_capabilities: '查询 Agent 能力',
+    tool_search: '搜索 Agent 工具能力',
+    query_agent_skills: '查询 Agent Skills', load_agent_skill: '加载 Agent Skill',
+    load_skill: '加载 Skill',
+    query_mcp_servers: '查询 MCP Server', list_mcp_tools: '列出 MCP 工具',
+    call_mcp_tool: '调用 MCP 工具', list_mcp_resources: '列出 MCP 资源',
+    read_mcp_resource: '读取 MCP 资源', mcp_read_resource: '读取 MCP 资源',
   };
 
   const lines = toolCalls.map(toolCall => {

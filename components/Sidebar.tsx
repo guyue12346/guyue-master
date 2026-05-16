@@ -114,7 +114,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       case 'api': return 'APIManager';
       case 'todo': return 'TodoMaster';
       case 'files': return 'FileManager';
-      case 'prompts': return 'Skills';
+      case 'prompts': return 'Skills/MCP';
       case 'renderer': return 'Reader';
       case 'image-hosting': return 'ImageHost';
       default: return 'LinkMaster';
@@ -128,7 +128,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       case 'api': return '接口与密钥';
       case 'todo': return '任务与日程';
       case 'files': return '文件管理';
-      case 'prompts': return '提示词库';
+      case 'prompts': return '能力中心';
       case 'renderer': return '文件其它';
       case 'image-hosting': return '图床管理';
       default: return '收藏与管理';

@@ -32,9 +32,11 @@ import {
   loadAgentConfig,
   loadAgentComplexTaskConfig,
   loadAgentSearchConfig,
+  loadAgentRuntimeConfig,
   saveAgentConfig,
   saveAgentComplexTaskConfig,
   saveAgentSearchConfig,
+  saveAgentRuntimeConfig,
   loadAgentHistory,
   saveAgentHistory,
   loadAgentMemory,
@@ -48,6 +50,7 @@ import {
   saveModulePrompts,
   type AgentEmailConfig,
   type AgentComplexTaskConfig,
+  type AgentRuntimeConfig,
   type AgentSearchConfig,
   type Contact,
 } from '../services/agent/agentStorage';
@@ -65,7 +68,6 @@ import {
 } from '../services/agent/agentPermissions';
 import {
   canUseToolRegistration,
-  executeToolRegistration,
   findToolRegistration,
   generateToolCallSummary,
   getNativeToolRegistrations,
@@ -80,6 +82,8 @@ import {
   type ToolRegistration,
   type ToolExecutionContext,
 } from '../services/agent/toolRegistry';
+import { executeAgentToolPipeline } from '../services/agent/toolExecutionPipeline';
+import { buildAgentAppSchemaContext } from '../services/agent/appSchema';
 import { toStrictTool } from '../services/agent/toolSchema';
 import { getToolRegistry, getToolRegistryOwner } from '../services/agent/tools';
 import { AGENT_TOOL_REGISTRY_CHANGED_EVENT } from '../services/agent/dynamicToolRegistry';
@@ -89,12 +93,12 @@ import {
   resolveTodoSchedulePayload,
 } from '../services/agent/tools/todoHelpers';
 import {
-  createAgentRuntime,
   createAgentToolExecutionEnvelope,
   type AgentClarificationResult,
   type AgentCompletionEvaluation,
   type AgentTraceEvent,
 } from '../services/agent/runtime';
+import { agentRuntimeService } from '../services/agent/AgentRuntimeService';
 import {
   appendAgentExecutionEntry,
   appendAgentExecutionTrace,
@@ -104,7 +108,6 @@ import {
   startAgentToolTransaction,
 } from '../services/agent/executionLog';
 import {
-  needsHumanConfirmation,
   type AgentPendingConfirmation,
   type AgentUndoSnapshot,
 } from '../services/agent/safety';
@@ -219,6 +222,11 @@ interface AgentPromptOptions {
   modulePrompts?: Record<string, string>;
   allowedActionTypes?: string[];
   visibleTools?: ChatTool[];
+  appStructureContext?: string;
+  runtimeLimits?: {
+    maxIterations: number;
+    maxOpenPages: number;
+  };
 }
 
 interface AgentRouteResult {
@@ -256,6 +264,7 @@ interface AgentRuntimeToolVisualEvent {
 const MAX_DEBUG_ITEMS = 200;
 const MAX_RUNTIME_VISUAL_EVENTS = 120;
 const MAX_RUNTIME_TOOL_EVENTS = 80;
+const COMPLEX_TASK_TIMEOUT_MS = 45_000;
 const AGENT_TOOL_CATEGORY_LABELS: Record<AgentCrudAction, string> = {
   read: '查询',
   create: '创建',
@@ -537,6 +546,9 @@ const TURN_COLORS = [
 const AGENT_RUNTIME_STAGE_LABELS: Record<AgentRuntimeStatusStage, string> = {
   idle: '空闲',
   clarification: '澄清',
+  tool_search: '工具检索',
+  load_skill: '加载 Skill',
+  mcp_read_resource: 'MCP 资源',
   planning: '规划',
   decision: '决策',
   execution: '执行',
@@ -550,6 +562,9 @@ const AGENT_RUNTIME_STAGE_LABELS: Record<AgentRuntimeStatusStage, string> = {
 
 const AGENT_RUNTIME_VISUAL_STAGES: Array<Exclude<AgentRuntimeStatusStage, 'idle'>> = [
   'clarification',
+  'tool_search',
+  'load_skill',
+  'mcp_read_resource',
   'planning',
   'decision',
   'execution',
@@ -643,6 +658,41 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
 2. 如果用户提供了一段提示词，帮助优化排版后存入——添加清晰的标题、使用 Markdown 结构化。
 3. category 是字符串分类名，如果用户指定的分类不存在，先 create_category 创建。
 4. description 应是一句话简介，方便用户快速识别这张卡片的用途。`,
+
+  skills: `## Agent Skills 模块
+
+### 核心能力
+查询和加载可提供给 Agent 使用的 Skill。Skill 本质是可复用的能力说明、流程规范或提示词包，用来指导后续执行。
+
+### 可用工具
+- **query_agent_skills** — 查询当前可用 Skill，可按关键词、分类、标签筛选。
+- **load_agent_skill / load_skill** — 加载某个 Skill 的完整内容。
+- **search_agent_capabilities / tool_search** — 查询当前 Agent 已注册的工具能力，适合在不确定有哪些函数可用时先检索。
+
+### 工作流程规范
+1. 当任务涉及专门流程、格式规范或用户提到“skill/技能/插件能力”时，先 query_agent_skills。
+2. 只有当某个 Skill 明显相关时再 load_agent_skill，避免加载过多无关内容。
+3. 用户询问“具体有哪些 Skills/技能”时，必须返回 query_agent_skills 的实际列表，不要只说明查询接口。
+4. Skill 只提供执行指导，不等于已经完成任务；加载后仍需要按计划使用具体工具完成。`,
+
+  mcp: `## MCP 模块
+
+### 核心能力
+通过已配置的 MCP Server 扩展 Agent 能力，包括外部工具、资源和上下文读取。
+
+### 可用工具
+- **query_mcp_servers** — 查询已配置并启用的 MCP Server。
+- **list_mcp_tools** — 查看某个 MCP Server 暴露的工具列表。
+- **call_mcp_tool** — 调用 MCP 工具。此类调用可能产生外部副作用，默认需要确认。
+- **list_mcp_resources** — 查看 MCP Server 暴露的资源。
+- **read_mcp_resource / mcp_read_resource** — 读取 MCP 资源内容。
+- **search_agent_capabilities / tool_search** — 查询所有已注册工具能力。
+
+### 工作流程规范
+1. 使用 MCP 前先 query_mcp_servers，再针对目标 server list_mcp_tools 或 list_mcp_resources。
+2. 不要猜测 MCP 工具参数；需要先查看工具 schema，再发起调用。
+3. 用户询问“具体有哪些 MCP/Server”时，必须返回 query_mcp_servers 的实际列表；如果用户追问某个 Server 的工具，再调用 list_mcp_tools。
+4. 对可能修改外部系统、发送信息、删除数据的 MCP 调用，必须等待用户确认。`,
 
   markdown: `## Markdown 笔记模块
 
@@ -1049,6 +1099,8 @@ const getAgentSystemPrompt = ({
   modulePrompts,
   allowedActionTypes,
   visibleTools,
+  appStructureContext,
+  runtimeLimits,
 }: AgentPromptOptions = {}) => {
   const customPromptSection = customSystemPrompt?.trim()
     ? `\n\n## 用户自定义系统提示\n${customSystemPrompt.trim()}`
@@ -1065,6 +1117,9 @@ const getAgentSystemPrompt = ({
   const activeModuleIds = getActiveModuleScope({ selectedModule, selectedModules, routedModule, routedModules });
   const modulePrompt = buildModulePromptSection(activeModuleIds, modulePrompts);
   const visibleToolSection = buildVisibleToolSection(visibleTools);
+  const appStructureSection = appStructureContext?.trim()
+    ? `\n\n${appStructureContext.trim()}`
+    : '';
 
   const moduleInfo = activeModuleIds.length > 0
     ? `\n\n## 当前任务作用域\n当前任务作用域为：${getModuleScopeLabel(activeModuleIds)}。你只能优先使用该作用域内被授权的工具；跨模块任务需要按模块顺序完成。${modulePrompt}`
@@ -1082,11 +1137,13 @@ const getAgentSystemPrompt = ({
 5. 如果工具执行返回了错误信息，请根据错误原因调整参数后重试，最多重试一次。
 6. 你可以进行多轮工具调用。例如先 query_files 查询文件列表，再逐个 read_file 读取内容。不要在只完成第一步后就停止。
 7. 当前作用域：${activeModuleIds.length > 0 ? getModuleScopeLabel(activeModuleIds) : '未手动限定 / 全部授权工具'}。不要请求未提供的工具，也不要声称调用了不可见工具。
-8. 如果本轮工具列表包含 web_search、web_open 或 specialized_search，说明你已获得联网权限，可以检索并打开网页、GitHub、npm、StackOverflow、arXiv 等信息；不要再声称无法访问互联网或 GitHub。搜索结果只有摘要时，应继续调用 web_open 打开最相关来源再回答。
-9. 涉及“今天/明天/昨天/最新/当前/天气/新闻/日程/提醒”等时效性任务时，必须以「时间处理」里的北京时间为准；如果提供了 get_current_time 工具，优先调用它确认当前电脑时间。
-10. 创建或修改带分类的数据时，分类必须来自查询工具返回的已有分类；不要使用“默认/未分类/全部”，不要自行猜测分类。
-11. 如果工具列表包含 delegate_complex_task，并且用户请求属于长文写作、论文、报告、深度分析、复杂推理或结构化方案生成，应把完整任务委托给该工具，再基于返回结果回复用户。
+8. 用户询问当前 App 具体有哪些 Skills、MCP、工具、能力、插件、已配置 Server 时，这是本地能力查询；必须调用 query_agent_skills、query_mcp_servers、search_agent_capabilities 等本地工具，不要调用 web_search，也不要解释概念代替查询结果。
+9. 如果本轮工具列表包含 web_search、web_open 或 specialized_search，说明你已获得联网权限，可以检索并打开网页、GitHub、npm、StackOverflow、arXiv 等信息；不要再声称无法访问互联网或 GitHub。搜索结果只有摘要时，应继续调用 web_open 打开最相关来源再回答；本轮最多打开 ${runtimeLimits?.maxOpenPages ?? 1} 个网页。
+10. 涉及“今天/明天/昨天/最新/当前/天气/新闻/日程/提醒”等时效性任务时，必须以「时间处理」里的北京时间为准；如果提供了 get_current_time 工具，优先调用它确认当前电脑时间。
+11. 创建或修改带分类的数据时，分类必须来自查询工具返回的已有分类；不要使用“默认/未分类/全部”，不要自行猜测分类。
+12. 如果工具列表包含 delegate_complex_task，并且用户请求属于长文写作、论文、报告、深度分析、复杂推理或结构化方案生成，应把完整任务委托给该工具，再基于返回结果回复用户。
 ${visibleToolSection}
+${appStructureSection}
 
 ## 任务分解
 - 如果用户的请求包含多个子任务（如「帮我创建三个待办」「查一下文件然后把内容总结发邮件」），你必须逐个完成每个子任务，依次调用对应的工具。
@@ -1111,7 +1168,7 @@ ${visibleToolSection}
 - 今天: ${today}（${todayWeekday}）
 - 明天: ${tomorrow}
 - 后天: ${dayAfterTomorrow}
-- 时间点事项使用 dueDate；如果用户说的是"下午 3 点到 5 点"这类时间段，必须改传 startDateTime 和 endDateTime。所有时间字段都必须换算为 ISO 8601 格式（YYYY-MM-DDTHH:mm），绝对不要传自然语言或时间戳。${modulePrompt}${permissionPrompt}${customPromptSection}`;
+- 时间点事项使用 dueDate；如果用户说的是"下午 3 点到 5 点"这类时间段，必须改传 startDateTime 和 endDateTime。所有时间字段都必须换算为 ISO 8601 格式（YYYY-MM-DDTHH:mm），绝对不要传自然语言或时间戳。${modulePrompt}${appStructureSection}${permissionPrompt}${customPromptSection}`;
   }
 
   return `你是「Guyue-Master-Agent」，Guyue Master 应用的内置智能 Agent。${moduleInfo}
@@ -1649,50 +1706,22 @@ const buildAgentAppStructureContext = ({
   markdownCategories,
   fileCategories,
 }: AgentAppStructureContextInput) => {
-  const toolNames = new Set(tools.map(tool => tool.name));
-  const hasToolLine = (name: string) => toolNames.has(name) ? '可用' : '不可用';
   const activeScope = routedModules.length > 0 ? getModuleScopeLabel(routedModules) : '未手动限定，已开放权限中心授权的全部工具';
   const websiteTags = getWebsiteTagNamesForAgent();
-  const recurringCategoryList = recurringCategories
-    .filter(category => category.name && !RESERVED_CATEGORY_NAMES.has(category.name))
-    .map(category => `${category.name}(${category.id})`);
-
-  return [
-    '## Guyue Master 应用结构与硬性规则',
-    `当前作用域：${activeScope}`,
-    '',
-    '### 全局规则',
-    '- 这是本地 App，不是普通聊天机器人；能通过查询工具获得的结构信息，应先查询，不要凭空假设。',
-    '- 所有带分类/标签的模块都不允许使用“默认/未分类/全部”。新建内容必须放入已有分类/标签；若没有合适分类，先创建分类或询问用户。',
-    '- 删除、修改等高风险操作需要确认；缺少定位对象时必须先查询。',
-    '- 密码、API Key、token 等私密字段不要要求用户直接发给大模型；应让工具创建本地占位/补充卡片，由用户在本地填写。',
-    '',
-    '### 待办事项',
-    `- create_todo: ${hasToolLine('create_todo')}；必须有 content 和已有 category。`,
-    `- query_todos: ${hasToolLine('query_todos')}；创建前优先调用它获取 availableCategories。`,
-    `- 当前待办分类：${formatStructureList(todoCategories)}。`,
-    '- 待办 priority 是创建前需要确认的字段，取值 high / medium / low。用户未说明紧急程度或优先级时，应询问“高/中/低，是否紧急？”。',
-    '- 如果用户只说“明天早上/下午/晚上”但没有具体时间，应澄清具体几点几分，或确认是否全天事项。',
-    '- 如果用户没有给分类，但现有分类和事项语义明显匹配，可以继续计划先 query_todos 再创建；如果无法判断，应先问用户。',
-    '',
-    '### 重复事件/日程',
-    `- create_recurring_event: ${hasToolLine('create_recurring_event')}；必须先 query_recurring_events 获取 categoryId。`,
-    `- 当前重复事件分类：${recurringCategoryList.length ? recurringCategoryList.join('、') : '暂无'}。`,
-    '',
-    '### 网站 / SSH / API 管理',
-    `- 网站记录：create_website_record ${hasToolLine('create_website_record')}；必须有 URL 和已有网站标签。当前网站标签：${formatStructureList(websiteTags)}。`,
-    `- SSH 记录：create_ssh_record ${hasToolLine('create_ssh_record')}；必须有主机地址和已有 SSH 分类。当前 SSH 分类：${formatStructureList(sshCategories)}。`,
-    `- API 记录：create_api_record ${hasToolLine('create_api_record')}；必须有 endpoint/base URL 和已有 API 分类。当前 API 分类：${formatStructureList(apiCategories)}。`,
-    '',
-    '### 笔记 / 技能 / 文件',
-    `- Prompt 技能卡分类：${formatStructureList(promptCategories)}。`,
-    `- Markdown 笔记分类：${formatStructureList(markdownCategories)}。`,
-    `- 文件管理分类：${formatStructureList(fileCategories)}。`,
-    '',
-    '### 联网与时间',
-    `- get_current_time: ${hasToolLine('get_current_time')}；涉及今天/明天/昨天/最新/天气/日程时应优先使用。`,
-    `- web_search: ${hasToolLine('web_search')}；web_open: ${hasToolLine('web_open')}。搜索后通常需要打开最相关来源再总结。`,
-  ].join('\n');
+  return buildAgentAppSchemaContext({
+    tools,
+    scopeLabel: activeScope,
+    categories: {
+      todo: todoCategories,
+      recurring: recurringCategories,
+      website: websiteTags,
+      ssh: sshCategories,
+      api: apiCategories,
+      prompts: promptCategories,
+      markdown: markdownCategories,
+      files: fileCategories,
+    },
+  });
 };
 
 const parseModelClarification = (text: string): AgentClarificationResult | null => {
@@ -2017,6 +2046,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [config, setConfig] = useState<ChatConfig>(() => loadAgentConfig());
   const [complexTaskConfig, setComplexTaskConfig] = useState<AgentComplexTaskConfig>(() => loadAgentComplexTaskConfig());
+  const [runtimeConfig, setRuntimeConfig] = useState<AgentRuntimeConfig>(() => loadAgentRuntimeConfig());
   const [searchConfig, setSearchConfig] = useState<AgentSearchConfig>(() => loadAgentSearchConfig());
   const [modulePrompts, setModulePrompts] = useState<Record<string, string>>(() => loadStoredModulePrompts(DEFAULT_MODULE_PROMPTS));
   const [selectedModules, setSelectedModules] = useState<string[]>(() => initialPageState.selectedModules);
@@ -2042,6 +2072,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const [debugItems, setDebugItems] = useState<AgentDebugItem[]>([]);
   const [agentRuntimeEvents, setAgentRuntimeEvents] = useState<AgentTraceEvent[]>([]);
   const [agentRuntimeToolEvents, setAgentRuntimeToolEvents] = useState<AgentRuntimeToolVisualEvent[]>([]);
+  const [activeAgentJobId, setActiveAgentJobId] = useState<string | null>(null);
   const [agentRuntimeStatus, setAgentRuntimeStatus] = useState<AgentRuntimeStatusState>({
     stage: 'idle',
     status: 'idle',
@@ -2451,7 +2482,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       maxTokens: complexTaskConfig.maxTokens || DEFAULT_AGENT_COMPLEX_TASK_CONFIG.maxTokens,
       temperature: complexTaskConfig.temperature ?? DEFAULT_AGENT_COMPLEX_TASK_CONFIG.temperature,
     });
-    const text = await service.completeText([
+    const messages: ChatMessage[] = [
       {
         id: 'complex-task-system',
         role: 'system',
@@ -2464,15 +2495,64 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         content: prompt,
         timestamp: Date.now(),
       },
-    ], { onDebugEvent: pushServiceDebugEvent });
+    ];
 
-    return {
-      success: true,
+    pushServiceDebugEvent({
+      stage: 'complex-task:start',
       provider: complexTaskConfig.provider,
-      model: complexTaskConfig.model,
-      text,
-      message: text,
-    };
+      detail: `复杂需求处理模型开始执行，超时上限 ${Math.round(COMPLEX_TASK_TIMEOUT_MS / 1000)} 秒`,
+      request: {
+        model: complexTaskConfig.model,
+        timeoutMs: COMPLEX_TASK_TIMEOUT_MS,
+      },
+      timestamp: Date.now(),
+    });
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const text = await new Promise<string>((resolve, reject) => {
+        timeoutId = setTimeout(() => {
+          service.abort();
+          reject(new Error(`复杂需求处理模型超过 ${Math.round(COMPLEX_TASK_TIMEOUT_MS / 1000)} 秒未返回，已自动回退主 Agent。`));
+        }, COMPLEX_TASK_TIMEOUT_MS);
+
+        service.completeText(messages, { onDebugEvent: pushServiceDebugEvent })
+          .then(resolve)
+          .catch(reject);
+      });
+
+      return {
+        success: true,
+        provider: complexTaskConfig.provider,
+        model: complexTaskConfig.model,
+        text,
+        message: text,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      pushServiceDebugEvent({
+        stage: 'complex-task:fallback',
+        provider: complexTaskConfig.provider,
+        detail: message,
+        response: {
+          fallback: 'main-agent',
+          fatal: false,
+        },
+        timestamp: Date.now(),
+      });
+
+      return {
+        success: false,
+        fatal: false,
+        recoverable: true,
+        provider: complexTaskConfig.provider,
+        model: complexTaskConfig.model,
+        error: message,
+        message: `${message} 主 Agent 将继续基于已有上下文完成任务。`,
+      };
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
   }, [complexTaskConfig, pushServiceDebugEvent]);
 
   const buildToolExecContext = useCallback((currentAttachments?: ChatAttachment[]): ToolExecutionContext => ({
@@ -2521,6 +2601,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     latexTemplatePermissions: effectiveLatexTemplatePermissions,
     onAutoAuthLatexFileCategory: () => undefined,
     onAutoAuthLatexTemplateCategory: () => undefined,
+    toolRegistry,
     executeComplexTask,
     executeWebSearch: async (args: Record<string, any>) => {
       const electronAPI = (window as any).electronAPI;
@@ -2607,6 +2688,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     sshRecords,
     todoCategories,
     todos,
+    toolRegistry,
   ]);
 
   const createUndoSnapshotForTool = useCallback((
@@ -2646,32 +2728,21 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     context: ToolExecutionContext,
     options: { confirmed?: boolean } = {},
   ): Promise<{ result: any; undoSnapshot?: UndoSnapshot; pendingConfirmation?: PendingConfirmation; executed: boolean }> => {
-    const target = getToolPermissionTarget(registration);
-    const forceConfirmation = Boolean(registration.safety?.confirm);
-    const needsSafety = forceConfirmation || needsHumanConfirmation(target.action);
-    const snapshot = needsSafety ? await createUndoSnapshotForTool(registration.name, args) : undefined;
-    const requiresConfirmation = needsSafety && !options.confirmed && (forceConfirmation || !hasFullToolAccess(registration, fullAccessPermissions));
-
-    if (requiresConfirmation) {
-      const pendingConfirmation = buildToolConfirmation(registration.name, args, snapshot);
-      return {
-        executed: false,
-        pendingConfirmation,
-        result: {
-          success: true,
-          pendingConfirmation: true,
-          confirmationId: pendingConfirmation.id,
-          confirmationType: 'agent_tool',
-          message: `${snapshot?.label || registration.name} 等待确认。`,
-          toolName: registration.name,
-          arguments: args,
-        },
-      };
-    }
-
-    const normalizedResult = await executeToolRegistration(registration, args, context);
-    const result = normalizedResult.raw ?? normalizedResult;
-    return { executed: true, result, undoSnapshot: snapshot };
+    const execution = await executeAgentToolPipeline({
+      registration,
+      args,
+      context,
+      options,
+      fullAccessPermissions,
+      createUndoSnapshot: createUndoSnapshotForTool,
+      buildConfirmation: buildToolConfirmation,
+    });
+    return {
+      executed: execution.executed,
+      result: execution.result,
+      undoSnapshot: execution.undoSnapshot,
+      pendingConfirmation: execution.pendingConfirmation,
+    };
   }, [buildToolConfirmation, createUndoSnapshotForTool, fullAccessPermissions]);
 
   const IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml']);
@@ -2780,6 +2851,10 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         customSystemPrompt: config.systemPrompt,
         modulePrompts,
         allowedActionTypes,
+        runtimeLimits: {
+          maxIterations: runtimeConfig.maxIterations,
+          maxOpenPages: searchConfig.maxOpenPages,
+        },
       }),
     });
   }, []);
@@ -2805,14 +2880,22 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
           customSystemPrompt: config.systemPrompt,
           modulePrompts,
           allowedActionTypes,
+          runtimeLimits: {
+            maxIterations: runtimeConfig.maxIterations,
+            maxOpenPages: searchConfig.maxOpenPages,
+          },
         }),
       });
     }
-  }, [allowedActionTypes, config, modulePrompts, selectedModules, supportsNativeTools]);
+  }, [allowedActionTypes, config, modulePrompts, runtimeConfig.maxIterations, searchConfig.maxOpenPages, selectedModules, supportsNativeTools]);
 
   useEffect(() => {
     saveAgentComplexTaskConfig(complexTaskConfig);
   }, [complexTaskConfig]);
+
+  useEffect(() => {
+    saveAgentRuntimeConfig(runtimeConfig);
+  }, [runtimeConfig]);
 
   useEffect(() => {
     saveAgentSearchConfig(searchConfig);
@@ -3536,6 +3619,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       model: config.model,
       selectedModule: manualScope.length > 0 ? manualScope.join(',') : null,
     });
+    setActiveAgentJobId(agentRunLogId);
     setMessages(prev => [...prev, userMessage, {
       id: assistantId,
       role: 'assistant',
@@ -3652,6 +3736,17 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             memoryTitle: '以下是较早的 Agent 对话摘要。继续任务时优先保持这些约束、用户偏好和未完成事项。',
           },
         );
+        const appStructureContext = buildAgentAppStructureContext({
+          tools: nativeTools,
+          routedModules: activeRoutedScope,
+          todoCategories,
+          recurringCategories,
+          sshCategories,
+          apiCategories,
+          promptCategories,
+          markdownCategories,
+          fileCategories,
+        });
         const chatMessages: ChatMessage[] = [
           {
             id: 'system',
@@ -3664,6 +3759,11 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               modulePrompts,
               allowedActionTypes,
               visibleTools: nativeTools,
+              appStructureContext,
+              runtimeLimits: {
+                maxIterations: runtimeConfig.maxIterations,
+                maxOpenPages: searchConfig.maxOpenPages,
+              },
             }),
             timestamp: 0,
           },
@@ -3672,6 +3772,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
         {
           let executedAction: AgentAction | undefined;
+          let openedWebPagesInRun = 0;
+          const maxOpenPagesInRun = Math.min(Math.max(Math.floor(searchConfig.maxOpenPages || 1), 1), 5);
 
           const executeNativeToolCall = async (toolCall: ChatToolCall) => {
             const txId = startAgentToolTransaction(agentRunLogId, toolCall.name, toolCall.arguments || {});
@@ -3754,6 +3856,26 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               return { success: false, error: `工具未授权: ${toolCall.name}` };
             }
 
+            if (registration.name === 'web_open') {
+              if (openedWebPagesInRun >= maxOpenPagesInRun) {
+                const error = `本轮已达到网页打开上限（${maxOpenPagesInRun} 个）。如需更深入浏览，请在 Agent 设置中调高「每轮最多打开网页」。`;
+                markToolEvent({
+                  ...visualMeta,
+                  status: 'error',
+                  summary: error,
+                });
+                pushDebugItem({
+                  stage: 'native:tool-result',
+                  summary: error,
+                  payload: { toolCall, openedWebPagesInRun, maxOpenPagesInRun },
+                  level: 'error',
+                });
+                finishAgentToolTransaction(agentRunLogId, txId, { status: 'failed', error });
+                return { success: false, error, fatal: false };
+              }
+              openedWebPagesInRun += 1;
+            }
+
             try {
               const execution = await executeRegisteredToolWithSafety(registration, toolCall.arguments, toolExecContext);
               const result = execution.result;
@@ -3815,6 +3937,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
           const handleRuntimeTrace = (event: AgentTraceEvent) => {
             const stageText: Partial<Record<AgentTraceEvent['stage'], string>> = {
               clarification: '正在检查需求是否明确...',
+              tool_search: '正在检索可用工具...',
+              load_skill: '正在加载相关 Skill...',
+              mcp_read_resource: '正在读取 MCP 资源上下文...',
               planning: '正在规划任务...',
               decision: '正在决策工具...',
               execution: '正在调用工具...',
@@ -3870,13 +3995,13 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             },
           });
 
-          const runtime = createAgentRuntime({
+          const runtimeResult = await agentRuntimeService.runNativeToolTask({
             chatService: chatServiceRef.current,
             messages: chatMessages,
             tools: nativeTools,
             goal: userMessage.content,
             runId: agentRunLogId,
-            maxIterations: 10,
+            maxIterations: runtimeConfig.maxIterations,
             clarify: async () => {
               const deterministic = buildAgentClarification({
                 goal: userMessage.content,
@@ -3890,17 +4015,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                 chatService: chatServiceRef.current,
                 goal: userMessage.content,
                 messages: chatMessages,
-                appStructureContext: buildAgentAppStructureContext({
-                  tools: nativeTools,
-                  routedModules: activeRoutedScope,
-                  todoCategories,
-                  recurringCategories,
-                  sshCategories,
-                  apiCategories,
-                  promptCategories,
-                  markdownCategories,
-                  fileCategories,
-                }),
+                appStructureContext,
                 tools: nativeTools,
                 deterministic,
                 onDebugEvent: pushServiceDebugEvent,
@@ -3916,7 +4031,6 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             onTrace: handleRuntimeTrace,
             onDebugEvent: pushServiceDebugEvent,
           });
-          const runtimeResult = await runtime.run();
           pushDebugItem({
             stage: 'native:done',
             summary: '逐步原生工具模式执行完成',
@@ -3968,6 +4082,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             title: runtimeNeedsClarification ? '等待用户补充信息' : runtimePendingConfirmation || runtimeResult.status === 'needs_user' ? '等待用户确认或补充' : runtimeResult.status === 'failed' ? 'Agent 执行失败' : 'Agent 执行完成',
             active: Boolean(runtimePendingConfirmation || runtimeResult.status === 'needs_user'),
           });
+          setActiveAgentJobId(null);
           setIsProcessing(false);
           return;
         }
@@ -4004,6 +4119,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         title: 'Agent 空闲',
         active: false,
       });
+      setActiveAgentJobId(null);
     } catch (error) {
       finalizeAgentExecutionLog(agentRunLogId, {
         status: 'failed',
@@ -4026,6 +4142,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         title: error instanceof Error ? error.message : String(error),
         active: false,
       });
+      setActiveAgentJobId(null);
       setIsProcessing(false);
     }
   }, [
@@ -4080,6 +4197,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     recurringEvents,
     resourceData,
     runFallbackConversation,
+    runtimeConfig.maxIterations,
     searchConfig,
     selectedModules,
     sshCategories,
@@ -4123,6 +4241,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
   const handleAbort = useCallback(() => {
     chatServiceRef.current?.abort();
+    if (activeAgentJobId) {
+      agentRuntimeService.cancel(activeAgentJobId);
+    }
     const runningTexts = new Set([
       '正在处理任务...',
       '正在判断任务归属...',
@@ -4146,12 +4267,13 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       title: '执行已终止',
       active: false,
     });
+    setActiveAgentJobId(null);
     pushDebugItem({
       stage: 'send:aborted',
       summary: '用户手动终止了当前执行',
       level: 'info',
     });
-  }, [pushDebugItem]);
+  }, [activeAgentJobId, pushDebugItem]);
 
   const handleDeleteMessage = (messageId: string) => {
     if (messageId === 'welcome') {
@@ -5059,6 +5181,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         onChangeConfig={setConfig}
         complexTaskConfig={complexTaskConfig}
         onChangeComplexTaskConfig={setComplexTaskConfig}
+        runtimeConfig={runtimeConfig}
+        onChangeRuntimeConfig={setRuntimeConfig}
         searchConfig={searchConfig}
         onChangeSearchConfig={setSearchConfig}
         onClearHistory={handleClearHistory}

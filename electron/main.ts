@@ -11,6 +11,7 @@ import { spawn, exec, execFile } from 'child_process';
 import { createHash, createSign } from 'crypto';
 import { gzipSync, gunzipSync } from 'zlib';
 import { runAgentSpecializedSearch, runAgentWebOpen, runAgentWebSearch } from './agentSearch.js';
+import { McpManager } from './mcpManager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2749,6 +2750,75 @@ ipcMain.handle('delete-plugin', async (event, pluginId) => {
     console.error('Failed to delete plugin:', e);
     return false;
   }
+});
+
+const scanSkillMdFiles = async (root: string, depth = 4): Promise<Array<{ path: string; content: string; updatedAt: number }>> => {
+  const normalizedRoot = path.resolve(String(root || ''));
+  const results: Array<{ path: string; content: string; updatedAt: number }> = [];
+  const walk = async (dir: string, remainingDepth: number) => {
+    if (remainingDepth < 0) return;
+    let entries: Array<import('fs').Dirent> = [];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.git') continue;
+        await walk(fullPath, remainingDepth - 1);
+      } else if (entry.isFile() && entry.name === 'SKILL.md') {
+        try {
+          const stat = await fs.stat(fullPath);
+          const content = await fs.readFile(fullPath, 'utf8');
+          results.push({ path: fullPath, content, updatedAt: stat.mtimeMs });
+        } catch {
+          // Ignore unreadable skill files.
+        }
+      }
+    }
+  };
+  await walk(normalizedRoot, depth);
+  return results;
+};
+
+ipcMain.handle('agent-skill-scan', async (_event, params?: { roots?: string[] }) => {
+  try {
+    const roots = Array.isArray(params?.roots) ? params!.roots.filter(Boolean).slice(0, 20) : [];
+    const scanned = (await Promise.all(roots.map(root => scanSkillMdFiles(root)))).flat();
+    return {
+      success: true,
+      skills: scanned.map(item => ({
+        id: `skill-file:${createHash('sha1').update(item.path).digest('hex').slice(0, 12)}`,
+        path: item.path,
+        content: item.content,
+        updatedAt: item.updatedAt,
+      })),
+    };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+ipcMain.handle('agent-skill-read', async (_event, params?: { path?: string }) => {
+  try {
+    const targetPath = path.resolve(String(params?.path || ''));
+    if (!targetPath || path.basename(targetPath) !== 'SKILL.md') {
+      throw new Error('只能读取 SKILL.md 文件。');
+    }
+    const content = await fs.readFile(targetPath, 'utf8');
+    return { success: true, content };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+const mcpManager = new McpManager(writeDiagnosticLog);
+mcpManager.registerIpcHandlers();
+
+app.on('before-quit', () => {
+  mcpManager.closeAll();
 });
 
 // --- Terminal Logic ---
