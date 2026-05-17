@@ -32,7 +32,7 @@ const DEFAULT_MCP_SERVERS: AgentMcpServerConfig[] = [
     transport: 'stdio',
     framing: 'jsonl',
     command: 'npx',
-    args: ['-y', '@playwright/mcp@latest'],
+    args: ['-y', '@playwright/mcp@latest', '--isolated'],
     env: {},
     headers: {},
     timeoutMs: 120_000,

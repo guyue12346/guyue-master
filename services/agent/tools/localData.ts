@@ -1,4 +1,6 @@
-import { loadLocalJson, loadUnifiedJson, saveUnifiedJson } from '../../../utils/unifiedStorage';
+import type { MusicPlaylist, MusicTrack } from '../../../types';
+import { DEFAULT_MUSIC_PLAYLISTS } from '../../../types';
+import { appDataMirrorKeyForLocalStorageKey, loadLocalJson, loadUnifiedJson, saveUnifiedJson } from '../../../utils/unifiedStorage';
 
 export const agentNowId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -96,6 +98,9 @@ export const CANVAS_DRAWINGS_STORE_KEY = 'excalidraw-drawings';
 export const CANVAS_CATEGORIES_STORE_KEY = 'excalidraw-categories';
 export const CANVAS_ACTIVE_STORE_KEY = 'excalidraw-active';
 export const GIT_REPOSITORIES_STORAGE_KEY = 'guyue_git_repositories_v1';
+export const MUSIC_TRACKS_STORAGE_KEY = 'guyue_music_tracks_v1';
+export const MUSIC_PLAYLISTS_STORAGE_KEY = 'guyue_music_playlists_v1';
+export const MUSIC_SELECTED_PLAYLIST_STORAGE_KEY = 'guyue_music_selected_playlist';
 
 export const createAgentQuestionDefaultData = (): AgentQuestionBankData => ({
   categories: [{ id: agentNowId('cat'), name: '数学', createdAt: Date.now(), updatedAt: Date.now() }],
@@ -382,6 +387,96 @@ export const saveAgentCanvasCategories = (categories: AgentCanvasCategoryMeta[])
   window.dispatchEvent(new CustomEvent('guyue-canvas-updated'));
 };
 
+const normalizeMusicTrack = (track: any): MusicTrack | null => {
+  const id = String(track?.id || '').trim();
+  const filePath = String(track?.filePath || '').trim();
+  const title = String(track?.title || track?.name || '').trim();
+  if (!id && !filePath && !title) return null;
+  return {
+    id: id || agentNowId('track'),
+    filePath,
+    title: title || filePath.split(/[\\/]/).pop() || '未命名歌曲',
+    artist: String(track?.artist || '未知艺术家'),
+    album: String(track?.album || ''),
+    duration: Number(track?.duration) || 0,
+    format: String(track?.format || ''),
+    sampleRate: Number.isFinite(Number(track?.sampleRate)) ? Number(track.sampleRate) : undefined,
+    bitDepth: Number.isFinite(Number(track?.bitDepth)) ? Number(track.bitDepth) : undefined,
+    bitrate: Number.isFinite(Number(track?.bitrate)) ? Number(track.bitrate) : undefined,
+    lossless: typeof track?.lossless === 'boolean' ? track.lossless : undefined,
+    addedAt: Number(track?.addedAt) || Date.now(),
+    lyricist: typeof track?.lyricist === 'string' ? track.lyricist : undefined,
+    composer: typeof track?.composer === 'string' ? track.composer : undefined,
+    arranger: typeof track?.arranger === 'string' ? track.arranger : undefined,
+    producer: typeof track?.producer === 'string' ? track.producer : undefined,
+    band: typeof track?.band === 'string' ? track.band : undefined,
+    genre: typeof track?.genre === 'string' ? track.genre : undefined,
+    year: Number.isFinite(Number(track?.year)) ? Number(track.year) : undefined,
+    trackNumber: Number.isFinite(Number(track?.trackNumber)) ? Number(track.trackNumber) : undefined,
+    discNumber: Number.isFinite(Number(track?.discNumber)) ? Number(track.discNumber) : undefined,
+    comment: typeof track?.comment === 'string' ? track.comment : undefined,
+    lyrics: typeof track?.lyrics === 'string' ? track.lyrics : undefined,
+    customCover: typeof track?.customCover === 'string' ? track.customCover : undefined,
+  };
+};
+
+const normalizeMusicTracks = (source: unknown): MusicTrack[] =>
+  Array.isArray(source)
+    ? source.map(normalizeMusicTrack).filter((track): track is MusicTrack => Boolean(track))
+    : [];
+
+const normalizeMusicPlaylists = (source: unknown): MusicPlaylist[] => {
+  const raw = Array.isArray(source) ? source : DEFAULT_MUSIC_PLAYLISTS;
+  const seen = new Set<string>();
+  const playlists = raw
+    .filter((playlist: any) => playlist?.id !== 'favorites')
+    .map((playlist: any): MusicPlaylist | null => {
+      const id = String(playlist?.id || '').trim();
+      const name = String(playlist?.name || '').trim();
+      if (!id || !name || seen.has(id)) return null;
+      seen.add(id);
+      return {
+        id,
+        name,
+        icon: String(playlist?.icon || 'ListMusic'),
+        color: typeof playlist?.color === 'string' ? playlist.color : undefined,
+        isSystem: Boolean(playlist?.isSystem),
+        trackIds: Array.isArray(playlist?.trackIds)
+          ? playlist.trackIds.map((trackId: unknown) => String(trackId).trim()).filter(Boolean)
+          : [],
+      };
+    })
+    .filter((playlist): playlist is MusicPlaylist => Boolean(playlist));
+  if (!playlists.some(playlist => playlist.id === 'all')) {
+    playlists.unshift({ ...DEFAULT_MUSIC_PLAYLISTS[0] });
+  }
+  return playlists;
+};
+
+export const loadAgentMusicTracks = () =>
+  loadUnifiedJson({
+    appDataKey: appDataMirrorKeyForLocalStorageKey(MUSIC_TRACKS_STORAGE_KEY),
+    localStorageKey: MUSIC_TRACKS_STORAGE_KEY,
+    defaultValue: () => [] as MusicTrack[],
+    normalize: normalizeMusicTracks,
+  });
+
+export const loadAgentMusicPlaylists = () =>
+  loadUnifiedJson({
+    appDataKey: appDataMirrorKeyForLocalStorageKey(MUSIC_PLAYLISTS_STORAGE_KEY),
+    localStorageKey: MUSIC_PLAYLISTS_STORAGE_KEY,
+    defaultValue: () => DEFAULT_MUSIC_PLAYLISTS,
+    normalize: normalizeMusicPlaylists,
+  });
+
+export const loadAgentSelectedMusicPlaylist = () => {
+  try {
+    return localStorage.getItem(MUSIC_SELECTED_PLAYLIST_STORAGE_KEY) || 'all';
+  } catch {
+    return 'all';
+  }
+};
+
 export const loadAgentGitRepositories = () =>
   loadLocalJson({
     localStorageKey: GIT_REPOSITORIES_STORAGE_KEY,
@@ -406,4 +501,3 @@ export const findAgentGitRepo = (args: Record<string, any>) => {
     || (repoName ? repositories.find(repo => repo.name === repoName) : undefined)
     || (repositories.length === 1 ? repositories[0] : undefined);
 };
-

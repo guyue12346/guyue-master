@@ -53,7 +53,9 @@ export const CAPABILITY_TOOL_REGISTRATIONS: ToolRegistration[] = [
         exposure: registration.exposure || 'direct',
         permission: registration.permission
           ? { module: registration.permission.module || registration.module, action: registration.permission.action || 'read' }
-          : undefined,
+          : registration.permissionless
+            ? undefined
+            : { module: registration.module, action: 'read' },
       }));
       const capabilities = (providerCapabilities.length > 0 ? providerCapabilities : fallbackCapabilities)
         .filter(capability => !origin || capability.origin === origin)

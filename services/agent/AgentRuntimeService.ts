@@ -22,6 +22,7 @@ import {
   requestCancelAgentJob,
   type AgentJobRecord,
 } from './jobs';
+import type { AgentMention } from './agentMentions';
 
 export interface AgentRuntimeServiceRunInput {
   chatService: ChatService;
@@ -30,6 +31,7 @@ export interface AgentRuntimeServiceRunInput {
   goal: string;
   runId: string;
   maxIterations?: number;
+  mentions?: AgentMention[];
   clarify: () => Promise<AgentClarificationResult> | AgentClarificationResult;
   executeToolCall: (toolCall: ChatToolCall) => Promise<any>;
   getToolRisk: (toolCall: ChatToolCall) => 'read' | 'write';
@@ -68,6 +70,7 @@ export class AgentRuntimeService {
       metadata: {
         toolCount: input.tools.length,
         maxIterations: input.maxIterations ?? 10,
+        mentionCount: input.mentions?.length || 0,
       },
     });
     this.activeRuns.add(job.runId);
@@ -86,6 +89,7 @@ export class AgentRuntimeService {
       goal: input.goal,
       runId: job.runId,
       maxIterations: input.maxIterations ?? 10,
+      mentions: input.mentions,
       clarify: input.clarify,
       executeToolCall: async toolCall => {
         if (isAgentJobCancellationRequested(job.id)) {

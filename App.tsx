@@ -86,6 +86,7 @@ const STORAGE_KEY_LAST_EMAIL_CHECK = 'linkmaster_last_email_check';
 const STORAGE_KEY_RECURRING = 'linkmaster_recurring_v1';
 const STORAGE_KEY_MUSIC_TRACKS = 'guyue_music_tracks_v1';
 const STORAGE_KEY_MUSIC_PLAYLISTS = 'guyue_music_playlists_v1';
+const STORAGE_KEY_MUSIC_SELECTED_PLAYLIST = 'guyue_music_selected_playlist';
 const STORAGE_KEY_APP_MODE = 'guyue_app_mode';
 const STORAGE_KEY_TODO_SUBMODE = 'guyue_todo_submode';
 const STORAGE_KEY_MODE_SNAPSHOTS = 'guyue_mode_snapshots';
@@ -963,7 +964,9 @@ const App: React.FC = () => {
       return DEFAULT_MUSIC_PLAYLISTS;
     } catch { return DEFAULT_MUSIC_PLAYLISTS; }
   });
-  const [selectedMusicPlaylist, setSelectedMusicPlaylist] = useState('all');
+  const [selectedMusicPlaylist, setSelectedMusicPlaylist] = useState(() => {
+    try { return localStorage.getItem(STORAGE_KEY_MUSIC_SELECTED_PLAYLIST) || 'all'; } catch { return 'all'; }
+  });
   const musicCoverCache = useRef(new Map<string, string>());
   const [musicCoverVersion, setMusicCoverVersion] = useState(0);
   const musicRuntimeControlsRef = useRef<MusicRuntimeControls | null>(null);
@@ -978,6 +981,19 @@ const App: React.FC = () => {
     setMusicPlaylists(pls);
     try { saveLocalStorageMirror(STORAGE_KEY_MUSIC_PLAYLISTS, pls); } catch {}
   }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY_MUSIC_SELECTED_PLAYLIST, selectedMusicPlaylist); } catch {}
+  }, [selectedMusicPlaylist]);
+
+  useEffect(() => {
+    const playlistExists =
+      selectedMusicPlaylist === 'all' ||
+      selectedMusicPlaylist === '__artists__' ||
+      selectedMusicPlaylist.startsWith('__artist__:') ||
+      musicPlaylists.some(playlist => playlist.id === selectedMusicPlaylist);
+    if (!playlistExists) setSelectedMusicPlaylist('all');
+  }, [musicPlaylists, selectedMusicPlaylist]);
 
   useEffect(() => {
     if (!hasUnifiedFileStorage()) return;
@@ -3159,6 +3175,7 @@ const App: React.FC = () => {
                 progress: musicStatusProgress,
                 title: musicRuntime.currentTrack?.title || '暂无正在播放',
                 subtitle: musicRuntime.currentTrack?.artist || '',
+                cover: musicRuntime.cover,
                 lyricLines: musicRuntime.hasLyrics
                   ? [musicRuntime.currentLyric, musicRuntime.nextLyric].filter(Boolean)
                   : [],

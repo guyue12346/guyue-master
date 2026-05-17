@@ -15,7 +15,9 @@ export const toStrictJsonSchema = (schema: JsonSchema): JsonSchema => {
 
   const next: JsonSchema = Array.isArray(schema) ? [...schema] : { ...schema };
   if (next.type === 'object') {
-    next.additionalProperties = false;
+    next.additionalProperties = Object.prototype.hasOwnProperty.call(next, 'additionalProperties')
+      ? next.additionalProperties
+      : false;
     const properties = isPlainObject(next.properties) ? next.properties : {};
     next.properties = Object.fromEntries(
       Object.entries(properties).map(([key, value]) => [key, toStrictJsonSchema(value as JsonSchema)]),
@@ -81,7 +83,9 @@ const validateValue = (schema: JsonSchema, value: unknown, path: string, errors:
       });
       Object.keys(value).forEach(key => {
         if (!properties[key]) {
-          errors.push(`${path}.${key} 不是支持的参数`);
+          if (schema.additionalProperties === false) {
+            errors.push(`${path}.${key} 不是支持的参数`);
+          }
           return;
         }
         validateValue(properties[key], value[key], `${path}.${key}`, errors);

@@ -23,6 +23,7 @@ interface NavRailProps {
     progress: number;
     title: string;
     subtitle?: string;
+    cover?: string;
     lyricLines?: string[];
     accent?: string;
     isPlaying?: boolean;
@@ -97,7 +98,7 @@ export const NavRail: React.FC<NavRailProps> = ({
   const statusLyricLines = (statusIsland?.lyricLines || [])
     .map(line => line.trim())
     .filter(Boolean)
-    .slice(0, 2);
+    .slice(0, 4);
 
   // Pointer-based vertical-only drag reorder with threshold
   const DRAG_THRESHOLD = 8;
@@ -243,11 +244,15 @@ export const NavRail: React.FC<NavRailProps> = ({
           className="theme-rail-status-cover"
           title={statusIsland?.title || '打开状态模块'}
         >
-          <StatusIcon className="w-5 h-5" />
+          {statusIsland?.cover ? (
+            <img src={statusIsland.cover} alt="" className="h-full w-full rounded-[inherit] object-cover" />
+          ) : (
+            <StatusIcon className="w-5 h-5" />
+          )}
         </button>
 
         <div className="theme-rail-status-pipe" title={`${Math.round(statusProgress * 100)}%`}>
-          <div className="theme-rail-status-pipe-fill">
+          <div className={`theme-rail-status-pipe-fill ${statusProgress <= 0 ? 'is-empty' : ''}`}>
             <span className="theme-rail-status-pipe-wave" />
             <span className="theme-rail-status-pipe-stream" />
           </div>

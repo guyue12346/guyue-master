@@ -14,7 +14,7 @@ import {
   deriveDataPermissionsFromToolPermissions,
   getAgentPermissionModules,
 } from './agentPermissions';
-import { loadLocalJson, saveLocalJson, saveUnifiedJson } from '../../utils/unifiedStorage';
+import { loadLocalJson, loadUnifiedJson, saveLocalJson, saveUnifiedJson } from '../../utils/unifiedStorage';
 
 export const STORAGE_KEY_AGENT_CONFIG = 'guyue_agent_config';
 export const STORAGE_KEY_AGENT_COMPLEX_TASK_CONFIG = 'guyue_agent_complex_task_config';
@@ -430,6 +430,14 @@ const normalizeConversationMemory = (value: any): ConversationMemoryState | null
 
 export const loadAgentConfig = (): ChatConfig =>
   loadLocalJson({
+    localStorageKey: STORAGE_KEY_AGENT_CONFIG,
+    defaultValue: () => ({ ...DEFAULT_CHAT_CONFIG, systemPrompt: '' }),
+    normalize: normalizeConfig,
+  });
+
+export const loadAgentConfigFromUnified = (): Promise<ChatConfig> =>
+  loadUnifiedJson({
+    appDataKey: STORE_KEY_AGENT_CONFIG,
     localStorageKey: STORAGE_KEY_AGENT_CONFIG,
     defaultValue: () => ({ ...DEFAULT_CHAT_CONFIG, systemPrompt: '' }),
     normalize: normalizeConfig,

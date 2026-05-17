@@ -79,6 +79,7 @@ export const buildAgentAppSchemaContext = ({
     `- Prompt 技能卡分类：${list(categories.prompts)}。`,
     `- Markdown 笔记分类：${list(categories.markdown)}。`,
     `- 文件管理分类：${list(categories.files)}。`,
+    '- 用户询问 Guyue Master、本 App 或某个模块怎么用、使用指南、功能说明、配置方法时，应使用 query_app_usage_guide 查询内置文档。',
     '- 用户询问当前 App 里具体有哪些 Skills、MCP、工具、能力、插件或 Server 时，这是本地能力查询；应使用 query_agent_skills、query_mcp_servers、search_agent_capabilities，不要使用 web_search。',
     '- 这类问题必须返回查询工具得到的实际列表，不要只解释有哪些查询接口。',
     '',

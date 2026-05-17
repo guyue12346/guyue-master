@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, Send, Loader2, Sparkles, CheckCircle2, AlertCircle, ListTodo, Settings, Settings2, StickyNote, FolderOpen, Command, Globe, Code2, GraduationCap, Image, MessageSquare, Pencil, HelpCircle, ChevronDown, ChevronUp, ChevronRight, Bug, Trash2, Paperclip, FileText, Trophy, HardDrive, Lock, Unlock, LayoutGrid, Mail, StopCircle, Undo2, Plus, BookUser, User, ShieldCheck, Workflow } from 'lucide-react';
+import { X, Send, Loader2, Sparkles, CheckCircle2, AlertCircle, ListTodo, Settings, Settings2, StickyNote, FolderOpen, Command, Globe, Code2, GraduationCap, Image, MessageSquare, Pencil, HelpCircle, ChevronDown, ChevronUp, ChevronRight, Bug, Trash2, Paperclip, FileText, Trophy, HardDrive, Lock, Unlock, LayoutGrid, Mail, StopCircle, Undo2, Plus, BookUser, User, ShieldCheck, Workflow, Download, AtSign, Wrench, Cable } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { TodoItem, Note, PromptRecord, MarkdownNote, OJSubmission, OJHeatmapData, ResourceItem, ResourceCenterData, EmailConfig, SubTask, FileRecord, Category, RecurringEvent, RecurringCategory, LatexFileCategory, LatexManagedFile, LatexTemplate, SSHRecord, APIRecord } from '../types';
 import {
@@ -30,6 +30,7 @@ import {
   AGENT_EMAIL_CONFIG_KEY,
   DEFAULT_AGENT_COMPLEX_TASK_CONFIG,
   loadAgentConfig,
+  loadAgentConfigFromUnified,
   loadAgentComplexTaskConfig,
   loadAgentSearchConfig,
   loadAgentRuntimeConfig,
@@ -105,6 +106,7 @@ import {
   createAgentExecutionLog,
   finalizeAgentExecutionLog,
   finishAgentToolTransaction,
+  loadAgentExecutionLogs,
   startAgentToolTransaction,
 } from '../services/agent/executionLog';
 import {
@@ -128,6 +130,16 @@ import {
 } from '../services/conversationMemory';
 import type { ConversationMemoryState } from '../services/conversationMemory';
 import { maybeCompactConversationMemory } from '../services/conversationCompaction';
+import { listAgentSkillsAsync, type AgentSkillManifest } from '../services/agent/skillManager';
+import { loadMcpServers, MCP_REGISTRY_EVENT, type AgentMcpServerConfig } from '../services/agent/mcpConfig';
+import {
+  AGENT_MENTION_TYPE_LABELS,
+  createAgentMentionToken,
+  formatAgentMentionsForPrompt,
+  stripAgentMentionTokens,
+  type AgentMention,
+  type AgentMentionType,
+} from '../services/agent/agentMentions';
 
 /* ─── 类型定义 ─── */
 
@@ -142,6 +154,7 @@ interface AgentMessage {
   action?: AgentAction;
   targetModule?: string; // 目标模块
   targetModules?: string[]; // 多模块作用域
+  mentions?: AgentMention[];
   attachments?: ChatAttachment[];
   undoSnapshot?: UndoSnapshot;
   pendingConfirmation?: PendingConfirmation;
@@ -265,6 +278,10 @@ const MAX_DEBUG_ITEMS = 200;
 const MAX_RUNTIME_VISUAL_EVENTS = 120;
 const MAX_RUNTIME_TOOL_EVENTS = 80;
 const COMPLEX_TASK_TIMEOUT_MS = 45_000;
+const AGENT_CLARIFICATION_TIMEOUT_MS = 8_000;
+const AGENT_COMPLETION_EVAL_TIMEOUT_MS = 12_000;
+const DEBUG_EXPORT_SCHEMA_VERSION = 1;
+const DEBUG_EXPORT_SENSITIVE_KEY_RE = /(api[-_ ]?key|apikey|authorization|bearer|cookie|password|passwd|secret|token|private[-_ ]?key|access[-_ ]?key|refresh[-_ ]?token|credential|smtpPass|smtpPassword)/i;
 const AGENT_TOOL_CATEGORY_LABELS: Record<AgentCrudAction, string> = {
   read: '查询',
   create: '创建',
@@ -274,6 +291,55 @@ const AGENT_TOOL_CATEGORY_LABELS: Record<AgentCrudAction, string> = {
 
 const createAgentLocalId = (prefix: string) =>
   `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+const redactDebugValue = (value: any, key = '', seen = new WeakSet<object>(), depth = 0): any => {
+  if (DEBUG_EXPORT_SENSITIVE_KEY_RE.test(key)) {
+    if (value === undefined || value === null || value === '') return value;
+    return '[REDACTED]';
+  }
+  if (typeof value === 'string') {
+    if (/base64/i.test(key) && value.length > 80) return `[BASE64_REDACTED length=${value.length}]`;
+    return value.length > 30000 ? `${value.slice(0, 30000)}\n...[TRUNCATED ${value.length - 30000} chars]` : value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean' || value === null || value === undefined) return value;
+  if (typeof value === 'bigint') return value.toString();
+  if (typeof value === 'function') return `[Function ${value.name || 'anonymous'}]`;
+  if (typeof value !== 'object') return String(value);
+  if (seen.has(value)) return '[Circular]';
+  if (depth > 8) return '[MaxDepth]';
+  seen.add(value);
+  if (Array.isArray(value)) {
+    const items = value.slice(0, 500).map((item, index) => redactDebugValue(item, `${key}.${index}`, seen, depth + 1));
+    if (value.length > items.length) items.push(`[TRUNCATED_ARRAY ${value.length - items.length} more items]`);
+    seen.delete(value);
+    return items;
+  }
+  const result = Object.fromEntries(
+    Object.entries(value).map(([entryKey, entryValue]) => [
+      entryKey,
+      redactDebugValue(entryValue, entryKey, seen, depth + 1),
+    ]),
+  );
+  seen.delete(value);
+  return result;
+};
+
+const downloadAgentDebugJson = (payload: any, filename: string) => {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+};
+
+const createDebugExportFilename = (turnIndex?: number) => {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `guyue-agent-debug-turn-${(turnIndex ?? 0) + 1}-${stamp}.json`;
+};
 
 const getToolVisualMeta = (registration: ToolRegistration) => {
   const owner = getToolRegistryOwner(registration.name);
@@ -380,6 +446,49 @@ const saveAgentPageState = (state: AgentPageState) => {
   try {
     localStorage.setItem(AGENT_PAGE_STATE_KEY, JSON.stringify(state));
   } catch {}
+};
+
+interface AgentMentionOption extends AgentMention {
+  category?: string;
+}
+
+const PROMPT_STORAGE_KEY = 'linkmaster_prompts_v1';
+const MAX_MENTION_OPTIONS = 12;
+
+const safeReadPromptRecords = (): PromptRecord[] => {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PROMPT_STORAGE_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.filter(prompt => prompt?.id && prompt?.title) : [];
+  } catch {
+    return [];
+  }
+};
+
+const mentionText = (option: AgentMentionOption) => [
+  option.type,
+  option.label,
+  option.value,
+  option.description,
+  option.category,
+  option.source,
+].filter(Boolean).join(' ').toLowerCase();
+
+const getMentionOptionIcon = (type: AgentMentionType) => {
+  switch (type) {
+    case 'skill':
+      return Sparkles;
+    case 'mcp-server':
+      return Cable;
+    case 'tool':
+      return Wrench;
+    case 'prompt':
+      return MessageSquare;
+    case 'module':
+      return LayoutGrid;
+    default:
+      return AtSign;
+  }
 };
 
 const EMAIL_SENDING_LINE_RE = /(^|\n)\s*发送中(?:\.{3}|…+|。*)\s*(?=\n|$)/g;
@@ -665,7 +774,7 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
 查询和加载可提供给 Agent 使用的 Skill。Skill 本质是可复用的能力说明、流程规范或提示词包，用来指导后续执行。
 
 ### 可用工具
-- **query_agent_skills** — 查询当前可用 Skill，可按关键词、分类、标签筛选。
+- **query_agent_skills** — 查询当前可用 Skill，只返回真正的 Agent Skill / SKILL.md，不返回 Prompt 提示词卡片。
 - **load_agent_skill / load_skill** — 加载某个 Skill 的完整内容。
 - **search_agent_capabilities / tool_search** — 查询当前 Agent 已注册的工具能力，适合在不确定有哪些函数可用时先检索。
 
@@ -683,7 +792,7 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
 ### 可用工具
 - **query_mcp_servers** — 查询已配置并启用的 MCP Server。
 - **list_mcp_tools** — 查看某个 MCP Server 暴露的工具列表。
-- **call_mcp_tool** — 调用 MCP 工具。此类调用可能产生外部副作用，默认需要确认。
+- **call_mcp_tool** — 调用 MCP 工具。浏览器导航、快照、截图、网络/控制台读取等只读工具可连续执行；点击、输入、表单、文件、任意代码等有副作用或高风险工具需要确认。
 - **list_mcp_resources** — 查看 MCP Server 暴露的资源。
 - **read_mcp_resource / mcp_read_resource** — 读取 MCP 资源内容。
 - **search_agent_capabilities / tool_search** — 查询所有已注册工具能力。
@@ -692,7 +801,8 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
 1. 使用 MCP 前先 query_mcp_servers，再针对目标 server list_mcp_tools 或 list_mcp_resources。
 2. 不要猜测 MCP 工具参数；需要先查看工具 schema，再发起调用。
 3. 用户询问“具体有哪些 MCP/Server”时，必须返回 query_mcp_servers 的实际列表；如果用户追问某个 Server 的工具，再调用 list_mcp_tools。
-4. 对可能修改外部系统、发送信息、删除数据的 MCP 调用，必须等待用户确认。`,
+4. 对可能修改外部系统、发送信息、删除数据或执行任意代码的 MCP 调用，必须等待用户确认；只读浏览器分析任务应连续完成导航、正文提取和总结。
+5. 使用 Playwright 分析网页时，snapshot 保存成文件链接不足以完成任务；需要用 browser_evaluate 读取正文文本，拿到真实内容后再分析。`,
 
   markdown: `## Markdown 笔记模块
 
@@ -1005,6 +1115,19 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
 2. 画布工具只管理画布库结构，不直接编辑 Excalidraw 元素内容。
 3. 修改/删除前先 query_canvases 确认 id。`,
 
+  music: `## 音乐模块
+
+### 核心能力
+查询 Music 音乐库、播放列表和歌曲元信息。该模块查询不会播放音乐，也不会修改本地文件。
+
+### 可用工具
+- **query_music_library** — 查询歌曲、播放列表、当前选中播放列表和基础音频元信息。
+
+### 工作流程规范
+1. 用户说“看看音乐库/播放列表/歌曲/歌单”时，直接调用 query_music_library。
+2. 如果用户只要求查看，不要启动播放、不要切换播放列表、不要修改歌曲信息。
+3. 回复时优先总结歌曲数量、播放列表数量、当前选中播放列表和最近歌曲。`,
+
   git: `## Git 管理模块
 
 ### 核心能力
@@ -1036,7 +1159,7 @@ const DEFAULT_MODULE_PROMPTS: Record<string, string> = {
 const createAgentWelcomeMessage = (content?: string): AgentMessage => ({
   id: 'welcome',
   role: 'assistant',
-  content: content || '👋 你好！我是 **古月助手**，你的智能工作台助理。\n\n我可以帮你管理待办与日程、整理笔记、查询学习进度、记录刷题、收发邮件等。直接描述需求即可，也可以点击右侧输入框旁的 **作用域图标** 限定一个或多个模块。\n\n**目前支持的功能**：\n- 📋 **任务与日程**：创建/更新待办、管理重复事件\n- 📝 **笔记**：创建便签与 Markdown 文档\n- 🎯 **Skills**：管理提示词技能库\n- 🗂️ **数据中心**：查询云资源、OJ 提交记录、SSH/API 记录\n- 📚 **学习空间**：查询课程与学习分类\n- 💻 **LeetCode**：记录刷题提交\n- 🧑‍💻 **Code**：管理编码练习、分类笔记和练习文件\n- 📁 **文件管理/知识库**：查询文件归档、检索本地知识库\n- 📧 **邮件**：发送邮件通知\n\n有什么我可以帮你的吗？',
+  content: content || '👋 你好！我是 **古月助手**，你的智能工作台助理。\n\n我可以帮你管理待办与日程、整理笔记、查询学习进度、记录刷题、收发邮件等。直接描述需求即可，也可以点击右侧输入框旁的 **作用域图标** 限定一个或多个模块。\n\n**目前支持的功能**：\n- 📋 **任务与日程**：创建/更新待办、管理重复事件\n- 📝 **笔记**：创建便签与 Markdown 文档\n- 🎯 **Prompt / Skills / MCP**：管理提示词卡片、Agent 能力包和外部 MCP 工具\n- 🗂️ **数据中心**：查询云资源、OJ 提交记录、SSH/API 记录\n- 📚 **学习空间**：查询课程与学习分类\n- 💻 **LeetCode**：记录刷题提交\n- 🧑‍💻 **Code**：管理编码练习、分类笔记和练习文件\n- 📁 **文件管理/知识库**：查询文件归档、检索本地知识库\n- 📧 **邮件**：发送邮件通知\n\n有什么我可以帮你的吗？',
   timestamp: Date.now(),
 });
 
@@ -1138,10 +1261,11 @@ const getAgentSystemPrompt = ({
 6. 你可以进行多轮工具调用。例如先 query_files 查询文件列表，再逐个 read_file 读取内容。不要在只完成第一步后就停止。
 7. 当前作用域：${activeModuleIds.length > 0 ? getModuleScopeLabel(activeModuleIds) : '未手动限定 / 全部授权工具'}。不要请求未提供的工具，也不要声称调用了不可见工具。
 8. 用户询问当前 App 具体有哪些 Skills、MCP、工具、能力、插件、已配置 Server 时，这是本地能力查询；必须调用 query_agent_skills、query_mcp_servers、search_agent_capabilities 等本地工具，不要调用 web_search，也不要解释概念代替查询结果。
-9. 如果本轮工具列表包含 web_search、web_open 或 specialized_search，说明你已获得联网权限，可以检索并打开网页、GitHub、npm、StackOverflow、arXiv 等信息；不要再声称无法访问互联网或 GitHub。搜索结果只有摘要时，应继续调用 web_open 打开最相关来源再回答；本轮最多打开 ${runtimeLimits?.maxOpenPages ?? 1} 个网页。
-10. 涉及“今天/明天/昨天/最新/当前/天气/新闻/日程/提醒”等时效性任务时，必须以「时间处理」里的北京时间为准；如果提供了 get_current_time 工具，优先调用它确认当前电脑时间。
-11. 创建或修改带分类的数据时，分类必须来自查询工具返回的已有分类；不要使用“默认/未分类/全部”，不要自行猜测分类。
-12. 如果工具列表包含 delegate_complex_task，并且用户请求属于长文写作、论文、报告、深度分析、复杂推理或结构化方案生成，应把完整任务委托给该工具，再基于返回结果回复用户。
+9. 用户询问 Guyue Master、本 App 或某个模块怎么用、功能说明、配置方法、操作指南时，必须调用 query_app_usage_guide 查询内置使用文档，不要联网搜索，也不要凭记忆泛答。
+10. 如果本轮工具列表包含 web_search、web_open 或 specialized_search，说明你已获得联网权限，可以检索并打开网页、GitHub、npm、StackOverflow、arXiv 等信息；不要再声称无法访问互联网或 GitHub。搜索结果只有摘要时，应继续调用 web_open 打开最相关来源再回答；本轮最多打开 ${runtimeLimits?.maxOpenPages ?? 1} 个网页。
+11. 涉及“今天/明天/昨天/最新/当前/天气/新闻/日程/提醒”等时效性任务时，必须以「时间处理」里的北京时间为准；如果提供了 get_current_time 工具，优先调用它确认当前电脑时间。
+12. 创建或修改带分类的数据时，分类必须来自查询工具返回的已有分类；不要使用“默认/未分类/全部”，不要自行猜测分类。
+13. 如果工具列表包含 delegate_complex_task，并且用户请求属于长文写作、论文、报告、深度分析、复杂推理或结构化方案生成，应把完整任务委托给该工具，再基于返回结果回复用户。
 ${visibleToolSection}
 ${appStructureSection}
 
@@ -1634,7 +1758,7 @@ interface AgentAppStructureContextInput {
 }
 
 const CATEGORY_WORD_RE = /(分类|标签|tag|归到|放到|归类|类别)/i;
-const CREATE_WORD_RE = /(新建|新增|添加|创建|加一个|保存|记录|导入|上传)/;
+const CREATE_WORD_RE = /(新建|新增|添加|创建|加一个|保存|导入|上传|记录一下|记一下|帮我记录|做个记录)/;
 const UPDATE_WORD_RE = /(修改|更新|改成|重命名|编辑|调整|移动|归档|完成|标记)/;
 const DELETE_WORD_RE = /(删除|移除|清空|丢弃|撤销)/;
 const TODO_WORD_RE = /(待办|事项|任务|提醒|日程|安排|开会|会议|约|预约|todo)/i;
@@ -1646,6 +1770,12 @@ const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
 const WEATHER_WORD_RE = /(天气|气温|温度|下雨|降雨|空气质量|AQI|预报|风力|湿度)/i;
 const LOCATION_HINT_RE =
   /(北京|上海|广州|深圳|杭州|成都|重庆|天津|南京|武汉|西安|苏州|青岛|长沙|郑州|厦门|福州|合肥|济南|昆明|贵阳|南宁|海淀|朝阳|浦东|天河|南山|[一-龥]{2,}(?:省|市|区|县|州|国|镇|乡)|beijing|shanghai|haidian|guangzhou|shenzhen|hangzhou|chengdu)/i;
+
+const normalizeIntentText = (text: string) => text
+  .replace(/(?:不要|无需|不需要|不|别|禁止)(?:创建|新建|新增|添加|保存|记录|导入|上传|修改|更新|改成|重命名|编辑|调整|移动|归档|完成|标记|删除|移除|清空|丢弃|撤销)(?:[\/、和或以及]*(?:创建|新建|新增|添加|保存|记录|导入|上传|修改|更新|改成|重命名|编辑|调整|移动|归档|完成|标记|删除|移除|清空|丢弃|撤销))*[^，。；;,.]*/g, '')
+  .replace(/(?:只读|查询|列出|读取|搜索|获取)[^，。；;,.]{0,24}(?:不要|无需|不需要|别|禁止)[^，。；;,.]{0,48}/g, '');
+
+const hasAffirmativeIntent = (text: string, pattern: RegExp) => pattern.test(normalizeIntentText(text));
 
 const hasAnyTool = (tools: ChatTool[], names: string[]) => {
   const toolNames = new Set(tools.map(tool => tool.name));
@@ -1803,6 +1933,16 @@ const buildModelClarificationPrompt = (
   `用户请求：${goal}`,
 ].join('\n');
 
+const AGENT_CLARIFICATION_WRITE_INTENT_RE =
+  /(新建|新增|添加|创建|修改|更新|编辑|保存|删除|移除|清空|提交|推送|发送|上传|导入|导出|构建|安排|提醒我|帮我记|记录一下)/i;
+
+const AGENT_CLARIFICATION_SKIP_CONTEXT_RE =
+  new RegExp('skill|skills|技能|mcp|只看|查看|查询|列出|有哪些|列表|清单|使用指南|怎么用|如何使用|天气|联网|搜索|网页|页面|URL|https?://', 'i');
+
+const shouldSkipModelClarification = (goal: string) =>
+  !AGENT_CLARIFICATION_WRITE_INTENT_RE.test(goal) &&
+  AGENT_CLARIFICATION_SKIP_CONTEXT_RE.test(goal);
+
 const buildAgentClarificationWithModel = async (input: {
   chatService: ChatService;
   goal: string;
@@ -1814,8 +1954,20 @@ const buildAgentClarificationWithModel = async (input: {
 }): Promise<AgentClarificationResult> => {
   if (input.deterministic.status === 'needs_user') return input.deterministic;
   if (!input.goal.trim() || input.tools.length === 0) return input.deterministic;
+  if (shouldSkipModelClarification(input.goal)) {
+    return {
+      ...input.deterministic,
+      payload: {
+        ...(input.deterministic.payload || {}),
+        modelClarification: {
+          reason: 'deterministic_clarification_skip_for_readonly_or_capability_task',
+          source: 'local_rule',
+        },
+      },
+    };
+  }
   try {
-    const text = await input.chatService.completeText([
+    const clarifyMessages: ChatMessage[] = [
       {
         id: createAgentLocalId('clarify_system'),
         role: 'system',
@@ -1828,7 +1980,23 @@ const buildAgentClarificationWithModel = async (input: {
         content: buildModelClarificationPrompt(input.goal, input.appStructureContext, input.tools, input.messages),
         timestamp: Date.now(),
       },
-    ], { onDebugEvent: input.onDebugEvent });
+    ];
+    const text = await new Promise<string>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        input.chatService.abort();
+        reject(new Error(`澄清模型超过 ${Math.round(AGENT_CLARIFICATION_TIMEOUT_MS / 1000)} 秒未返回`));
+      }, AGENT_CLARIFICATION_TIMEOUT_MS);
+
+      input.chatService.completeText(clarifyMessages, { onDebugEvent: input.onDebugEvent })
+        .then((value) => {
+          window.clearTimeout(timer);
+          resolve(value);
+        })
+        .catch((error) => {
+          window.clearTimeout(timer);
+          reject(error);
+        });
+    });
     const parsed = parseModelClarification(text);
     if (!parsed) return input.deterministic;
     if (parsed.status === 'needs_user' && parsed.questions?.length) return parsed;
@@ -1862,9 +2030,9 @@ const buildAgentClarification = ({
   const compactText = text.replace(/\s+/g, '');
   const modules = new Set(routedModules);
   const isUnscoped = modules.size === 0;
-  const hasCreateIntent = CREATE_WORD_RE.test(text);
-  const hasUpdateIntent = UPDATE_WORD_RE.test(text);
-  const hasDeleteIntent = DELETE_WORD_RE.test(text);
+  const hasCreateIntent = hasAffirmativeIntent(text, CREATE_WORD_RE);
+  const hasUpdateIntent = hasAffirmativeIntent(text, UPDATE_WORD_RE);
+  const hasDeleteIntent = hasAffirmativeIntent(text, DELETE_WORD_RE);
   const hasWriteIntent = hasCreateIntent || hasUpdateIntent || hasDeleteIntent;
 
   if (!text || /^\[已上传\s*\d+\s*个文件\]$/.test(text)) {
@@ -1962,7 +2130,8 @@ const buildAgentClarification = ({
     }
   }
 
-  if ((isUnscoped || modules.has('git')) && hasWriteIntent && !/(仓库|repo|repository|项目|目录|路径|分支|branch|commit|提交|push|pull|fetch|merge|stash)/i.test(text)) {
+  const hasGitIntent = /(git|仓库|repo|repository|提交|commit|push|pull|fetch|merge|stash|暂存|stage|工作区|远程仓库|remote|分支|branch)/i.test(text);
+  if ((modules.has('git') || (isUnscoped && hasGitIntent)) && hasWriteIntent && !/(仓库|repo|repository|目录|路径|分支|branch|commit|提交|push|pull|fetch|merge|stash|暂存|stage|工作区|远程仓库|remote)/i.test(text)) {
     return buildNeedsUserClarification(['你要操作哪个 Git 仓库，以及具体执行什么 Git 操作？'], { reason: 'git_missing_target' });
   }
 
@@ -2045,11 +2214,19 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const [showPluginDocs, setShowPluginDocs] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [config, setConfig] = useState<ChatConfig>(() => loadAgentConfig());
+  const [isAgentConfigHydrated, setIsAgentConfigHydrated] = useState(false);
   const [complexTaskConfig, setComplexTaskConfig] = useState<AgentComplexTaskConfig>(() => loadAgentComplexTaskConfig());
   const [runtimeConfig, setRuntimeConfig] = useState<AgentRuntimeConfig>(() => loadAgentRuntimeConfig());
   const [searchConfig, setSearchConfig] = useState<AgentSearchConfig>(() => loadAgentSearchConfig());
   const [modulePrompts, setModulePrompts] = useState<Record<string, string>>(() => loadStoredModulePrompts(DEFAULT_MODULE_PROMPTS));
   const [selectedModules, setSelectedModules] = useState<string[]>(() => initialPageState.selectedModules);
+  const [agentMentions, setAgentMentions] = useState<AgentMention[]>([]);
+  const [mentionPickerOpen, setMentionPickerOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionTriggerIndex, setMentionTriggerIndex] = useState<number | null>(null);
+  const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
+  const [mentionSkills, setMentionSkills] = useState<AgentSkillManifest[]>([]);
+  const [mentionMcpServers, setMentionMcpServers] = useState<AgentMcpServerConfig[]>(() => loadMcpServers());
   const [storedAgentPermissions] = useState(() => loadAgentPermissions());
   const [toolPermissions, setToolPermissions] = useState<AgentToolPermissions>(() => storedAgentPermissions.tools || DEFAULT_AGENT_TOOL_PERMISSIONS);
   const [fullAccessPermissions, setFullAccessPermissions] = useState<AgentFullAccessPermissions>(() => storedAgentPermissions.fullAccess || DEFAULT_AGENT_FULL_ACCESS_PERMISSIONS);
@@ -2073,6 +2250,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   const [agentRuntimeEvents, setAgentRuntimeEvents] = useState<AgentTraceEvent[]>([]);
   const [agentRuntimeToolEvents, setAgentRuntimeToolEvents] = useState<AgentRuntimeToolVisualEvent[]>([]);
   const [activeAgentJobId, setActiveAgentJobId] = useState<string | null>(null);
+  const lastAgentRunLogIdRef = useRef<string | null>(null);
+  const processingConfirmationIdsRef = useRef<Set<string>>(new Set());
   const [agentRuntimeStatus, setAgentRuntimeStatus] = useState<AgentRuntimeStatusState>({
     stage: 'idle',
     status: 'idle',
@@ -2096,6 +2275,28 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       window.removeEventListener(AGENT_MODULE_REGISTRY_CHANGED_EVENT, bumpRegistryVersion);
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!mentionPickerOpen) return () => {};
+    listAgentSkillsAsync({ source: 'agent-skill', includeDisabled: false })
+      .then(skills => {
+        if (!cancelled) setMentionSkills(skills);
+      })
+      .catch(() => {
+        if (!cancelled) setMentionSkills([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mentionPickerOpen, registryVersion]);
+
+  useEffect(() => {
+    const reloadMcpServers = () => setMentionMcpServers(loadMcpServers());
+    reloadMcpServers();
+    window.addEventListener(MCP_REGISTRY_EVENT, reloadMcpServers);
+    return () => window.removeEventListener(MCP_REGISTRY_EVENT, reloadMcpServers);
+  }, [registryVersion]);
 
   useEffect(() => {
     const defaultPermissions = createAgentToolPermissions(false);
@@ -2156,20 +2357,95 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   );
   const allowedActionTypes = useMemo(
     () => {
-      const names = toolRegistry
-        .filter(registration => canUseToolRegistration(registration, toolPermissions))
-        .map(registration => registration.name);
-      if (effectiveWebSearchEnabled) {
-        names.push('web_search');
-        names.push('web_open');
-        if (effectiveSpecializedSearchEnabled) {
-          names.push(SPECIALIZED_SEARCH_TOOL.name);
-        }
-      }
-      return names;
+      const names = new Set(toolRegistry.map(registration => registration.name));
+      names.add('web_search');
+      names.add('web_open');
+      names.add(SPECIALIZED_SEARCH_TOOL.name);
+      return Array.from(names);
     },
-    [effectiveSpecializedSearchEnabled, effectiveWebSearchEnabled, toolPermissions, toolRegistry],
+    [toolRegistry],
   );
+  const mentionOptions = useMemo<AgentMentionOption[]>(() => {
+    const skillOptions = mentionSkills.map(skill => ({
+      id: `skill:${skill.id}`,
+      type: 'skill' as const,
+      label: skill.name,
+      value: skill.id,
+      description: skill.description || '',
+      source: skill.source,
+      category: skill.category,
+      invocationType: 'explicit' as const,
+      metadata: { skillId: skill.id, path: skill.path },
+    }));
+    const mcpOptions = mentionMcpServers
+      .filter(server => server.enabled !== false)
+      .map(server => ({
+        id: `mcp:${server.id}`,
+        type: 'mcp-server' as const,
+        label: server.name,
+        value: server.id,
+        description: [server.category, server.transport, server.command || server.url].filter(Boolean).join(' · '),
+        source: 'mcp',
+        category: server.category,
+        invocationType: 'explicit' as const,
+        metadata: { serverId: server.id, transport: server.transport },
+      }));
+    const toolOptions = [
+      ...toolRegistry,
+      WEB_SEARCH_TOOL_REGISTRATION,
+      WEB_OPEN_TOOL_REGISTRATION,
+      SPECIALIZED_SEARCH_TOOL_REGISTRATION,
+    ].map(registration => ({
+      id: `tool:${registration.name}`,
+      type: 'tool' as const,
+      label: registration.name,
+      value: registration.name,
+      description: registration.tool.description,
+      source: registration.origin || getToolRegistryOwner(registration.name)?.kind || 'builtin',
+      category: getModuleScopeLabel([registration.module]),
+      invocationType: 'explicit' as const,
+      metadata: { module: registration.module },
+    }));
+    const moduleOptions = enabledAgentModules.map(module => ({
+      id: `module:${module.id}`,
+      type: 'module' as const,
+      label: module.name,
+      value: module.id,
+      description: module.description || '',
+      source: 'module',
+      category: '作用域',
+      invocationType: 'explicit' as const,
+      metadata: { moduleId: module.id },
+    }));
+    const promptOptions = safeReadPromptRecords().map(prompt => ({
+      id: `prompt:${prompt.id}`,
+      type: 'prompt' as const,
+      label: prompt.title,
+      value: prompt.id,
+      description: prompt.description || prompt.note || '',
+      source: 'prompt',
+      category: prompt.category,
+      invocationType: 'explicit' as const,
+      metadata: { promptId: prompt.id },
+    }));
+    return [...skillOptions, ...mcpOptions, ...toolOptions, ...moduleOptions, ...promptOptions];
+  }, [enabledAgentModules, mentionMcpServers, mentionSkills, toolRegistry]);
+  const filteredMentionOptions = useMemo(() => {
+    if (!mentionPickerOpen) return [];
+    const query = mentionQuery.trim().toLowerCase();
+    const options = query
+      ? mentionOptions.filter(option => mentionText(option).includes(query))
+      : mentionOptions;
+    return options
+      .sort((a, b) => {
+        const order: AgentMentionType[] = ['skill', 'mcp-server', 'tool', 'module', 'prompt'];
+        return order.indexOf(a.type) - order.indexOf(b.type) || a.label.localeCompare(b.label, 'zh-CN');
+      })
+      .slice(0, MAX_MENTION_OPTIONS);
+  }, [mentionOptions, mentionPickerOpen, mentionQuery]);
+  useEffect(() => {
+    setMentionActiveIndex(0);
+  }, [mentionQuery, mentionPickerOpen]);
   const effectiveFilePermissions = useMemo(
     () => (toolPermissions.files?.read || toolPermissions.files?.update) ? ['全部'] : [],
     [toolPermissions],
@@ -2869,6 +3145,23 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   }, [inputValue, isDebugCollapsed, isExecutionVizCollapsed, selectedModules]);
 
   useEffect(() => {
+    let cancelled = false;
+    loadAgentConfigFromUnified()
+      .then((nextConfig) => {
+        if (cancelled) return;
+        setConfig(nextConfig);
+        setIsAgentConfigHydrated(true);
+      })
+      .catch(() => {
+        if (!cancelled) setIsAgentConfigHydrated(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isAgentConfigHydrated) return;
     saveAgentConfig(config);
     saveModulePrompts(modulePrompts);
     if (chatServiceRef.current) {
@@ -2887,7 +3180,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         }),
       });
     }
-  }, [allowedActionTypes, config, modulePrompts, runtimeConfig.maxIterations, searchConfig.maxOpenPages, selectedModules, supportsNativeTools]);
+  }, [allowedActionTypes, config, isAgentConfigHydrated, modulePrompts, runtimeConfig.maxIterations, searchConfig.maxOpenPages, selectedModules, supportsNativeTools]);
 
   useEffect(() => {
     saveAgentComplexTaskConfig(complexTaskConfig);
@@ -2935,37 +3228,20 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
   }, [effectiveDataPermissions, fullAccessPermissions, toolPermissions]);
 
   const detectModuleScope = useCallback(async (_input: string): Promise<AgentRouteResult> => {
-    const manualScope = normalizeModuleScope(selectedModules);
-    if (manualScope.length > 0) {
-      const routeResult: AgentRouteResult = {
-        modules: manualScope,
-        source: 'manual',
-        confidence: 1,
-        reason: '使用用户手动限定的作用域',
-        useTools: true,
-      };
-      pushDebugItem({
-        stage: 'router:selected-scope',
-        summary: '使用用户手动限定的作用域',
-        payload: routeResult,
-      });
-      return routeResult;
-    }
-
     const routeResult: AgentRouteResult = {
       modules: [],
       source: 'all',
       confidence: 1,
-      reason: '未手动选择作用域，开放权限中心已启用的全部工具',
+      reason: '不再按模块作用域过滤，向 Agent 暴露全部已注册函数；执行时仍由权限中心校验。',
       useTools: true,
     };
     pushDebugItem({
       stage: 'router:skip',
-      summary: '未选择作用域，使用全部授权工具',
+      summary: '已关闭模块作用域过滤，使用全部函数',
       payload: routeResult,
     });
     return routeResult;
-  }, [pushDebugItem, selectedModules]);
+  }, [pushDebugItem]);
 
   const runFallbackConversation = useCallback(async (
     assistantId: string,
@@ -3038,7 +3314,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             : message
         ));
         mergeAgentMemoryPatch(buildAgentTurnMemoryPatch({
-          goal: userMessage.content,
+          goal: stripAgentMentionTokens(userMessage.content) || userMessage.content,
           finalText: plainFallbackContent,
           status: 'completed',
           modules: routedModules,
@@ -3048,7 +3324,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
 
         const actionFromModel = parseAgentAction(text);
         const localIntent = !actionFromModel && routedModules.includes('todo')
-          ? parseIntentLocally(userMessage.content)
+          ? parseIntentLocally(stripAgentMentionTokens(userMessage.content) || userMessage.content)
           : { isCreateTodo: false };
         const action: AgentAction | null = actionFromModel || (localIntent.isCreateTodo
           ? { type: 'create_todo', status: 'pending', data: (localIntent.data || {}) as Record<string, any> }
@@ -3501,7 +3777,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     });
   }, [allowedActionTypes, config.model, config.provider, config.systemPrompt, messages, todos, effectiveDataPermissions, effectiveFilePermissions, fileRecords, mergeAgentMemoryPatch, onCreateTodo, onCreateNote, onCreatePrompt, onCreateMarkdownNote, onCreateOJSubmission, ojHeatmapData, onCreateResource, resourceData, pushDebugItem, selectedModules, isFallbackActionAllowed, prepareAgentContextMessages]);
 
-  const evaluateAgentCompletion = useCallback(async (input: {
+const evaluateAgentCompletion = useCallback(async (input: {
     goal: string;
     finalText: string;
     toolCalls: ChatToolCall[];
@@ -3525,31 +3801,55 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       '如果需要用户补充信息或确认，应判定 needs_user。',
       'JSON 格式：{"status":"success|failed|needs_user","message":"一句话原因","confidence":0.0,"missing":["缺失项"]}',
     ].join('\n');
-    const text = await chatServiceRef.current.completeText([
-      { id: 'agent-eval-system', role: 'system', content: verifierPrompt, timestamp: 0 },
-      {
-        id: 'agent-eval-user',
-        role: 'user',
-        timestamp: Date.now(),
-        content: JSON.stringify({
-          goal: input.goal,
-          finalText: input.finalText,
-          toolCalls: input.toolCalls.map(call => ({ name: call.name, arguments: call.arguments })),
-          toolResults: compactResults,
-        }).slice(0, 18000),
-      },
-    ], { onDebugEvent: pushServiceDebugEvent });
+    try {
+      const messagesForEval: ChatMessage[] = [
+        { id: 'agent-eval-system', role: 'system', content: verifierPrompt, timestamp: 0 },
+        {
+          id: 'agent-eval-user',
+          role: 'user',
+          timestamp: Date.now(),
+          content: JSON.stringify({
+            goal: input.goal,
+            finalText: input.finalText,
+            toolCalls: input.toolCalls.map(call => ({ name: call.name, arguments: call.arguments })),
+            toolResults: compactResults,
+          }).slice(0, 18000),
+        },
+      ];
+      const text = await new Promise<string>((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          chatServiceRef.current?.abort();
+          reject(new Error(`模型复核超过 ${Math.round(AGENT_COMPLETION_EVAL_TIMEOUT_MS / 1000)} 秒未返回`));
+        }, AGENT_COMPLETION_EVAL_TIMEOUT_MS);
 
-    const jsonText = text.match(/\{[\s\S]*\}/)?.[0] || text;
-    const parsed = JSON.parse(jsonText);
-    const status = ['success', 'failed', 'needs_user'].includes(parsed.status) ? parsed.status : 'failed';
-    return {
-      status,
-      message: typeof parsed.message === 'string' ? parsed.message : '模型复核完成。',
-      confidence: typeof parsed.confidence === 'number' ? parsed.confidence : undefined,
-      missing: Array.isArray(parsed.missing) ? parsed.missing.map(String) : undefined,
-      retryable: status === 'failed',
-    };
+        chatServiceRef.current!.completeText(messagesForEval, { onDebugEvent: pushServiceDebugEvent })
+          .then((value) => {
+            window.clearTimeout(timer);
+            resolve(value);
+          })
+          .catch((error) => {
+            window.clearTimeout(timer);
+            reject(error);
+          });
+      });
+
+      const jsonText = text.match(/\{[\s\S]*\}/)?.[0] || text;
+      const parsed = JSON.parse(jsonText);
+      const status = ['success', 'failed', 'needs_user'].includes(parsed.status) ? parsed.status : 'failed';
+      return {
+        status,
+        message: typeof parsed.message === 'string' ? parsed.message : '模型复核完成。',
+        confidence: typeof parsed.confidence === 'number' ? parsed.confidence : undefined,
+        missing: Array.isArray(parsed.missing) ? parsed.missing.map(String) : undefined,
+        retryable: status === 'failed',
+      };
+    } catch (error) {
+      return {
+        status: 'success',
+        message: error instanceof Error ? `模型复核不可用：${error.message}` : '模型复核不可用，已使用确定性检查。',
+        confidence: 0.35,
+      };
+    }
   }, [pushServiceDebugEvent]);
 
   const handleSend = useCallback(async () => {
@@ -3580,6 +3880,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       };
       setMessages(prev => [...prev, userMessage, assistantMessage]);
       setInputValue('');
+      setAgentMentions([]);
+      setMentionPickerOpen(false);
       setPendingAttachments([]);
       pushDebugItem({
         stage: 'send:blocked-sensitive',
@@ -3602,6 +3904,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     }
 
     const currentAttachments = pendingAttachments.length > 0 ? [...pendingAttachments] : undefined;
+    const currentMentions = agentMentions.map(mention => ({ ...mention, invocationType: 'explicit' as const }));
     const manualScope = normalizeModuleScope(selectedModules);
     const userMessage: AgentMessage = {
       id: crypto.randomUUID(),
@@ -3610,15 +3913,18 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       timestamp: Date.now(),
       targetModule: manualScope[0],
       targetModules: manualScope.length > 0 ? manualScope : undefined,
+      mentions: currentMentions.length > 0 ? currentMentions : undefined,
       attachments: currentAttachments,
     };
+    const runtimeGoal = stripAgentMentionTokens(userMessage.content) || userMessage.content;
     const assistantId = crypto.randomUUID();
     const agentRunLogId = createAgentExecutionLog({
-      goal: userMessage.content,
+      goal: runtimeGoal,
       provider: config.provider,
       model: config.model,
       selectedModule: manualScope.length > 0 ? manualScope.join(',') : null,
     });
+    lastAgentRunLogIdRef.current = agentRunLogId;
     setActiveAgentJobId(agentRunLogId);
     setMessages(prev => [...prev, userMessage, {
       id: assistantId,
@@ -3627,6 +3933,10 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       timestamp: Date.now(),
     }]);
     setInputValue('');
+    setAgentMentions([]);
+    setMentionPickerOpen(false);
+    setMentionQuery('');
+    setMentionTriggerIndex(null);
     setPendingAttachments([]);
     setIsProcessing(true);
 
@@ -3647,6 +3957,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         model: config.model,
         supportsNativeTools,
         selectedModules: manualScope,
+        mentions: currentMentions,
         userInput: trimmedInput,
       },
     });
@@ -3658,7 +3969,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         provider: config.provider,
         model: config.model,
         selectedModules: manualScope,
-        input: userMessage.content,
+        mentions: currentMentions,
+        input: runtimeGoal,
+        rawInput: userMessage.content,
       },
     });
 
@@ -3667,52 +3980,42 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         throw new Error('聊天服务尚未初始化');
       }
 
-      const routeResult = await detectModuleScope(userMessage.content);
-      const activeRoutedScope = routeResult.useTools ? routeResult.modules : [];
-      const routeRequiresWeb = routeResult.source !== 'all' && routeResult.useTools && activeRoutedScope.includes('web');
-      const getNativeToolScope = (scope: string[], useTools: boolean) =>
-        !useTools
-          ? ['__no_tools__']
-          : routeResult.source === 'all'
-            ? []
-            : (scope.length === 0 ? ['__search_only__'] : scope);
-      const toolScope = getNativeToolScope(activeRoutedScope, routeResult.useTools);
-      const enableSpecializedSearch = effectiveSpecializedSearchEnabled;
+      const routeResult = await detectModuleScope(runtimeGoal);
+      const activeRoutedScope: string[] = [];
       const runtimeToolRegistry = [
         ...toolRegistry,
         WEB_SEARCH_TOOL_REGISTRATION,
         WEB_OPEN_TOOL_REGISTRATION,
         SPECIALIZED_SEARCH_TOOL_REGISTRATION,
       ];
-      const buildNativeRegistrationsForScope = (scope: string[], useTools: boolean) =>
-        supportsNativeTools && useTools && !(scope.includes('web') && !effectiveWebSearchEnabled)
+      const buildNativeRegistrations = (useTools: boolean) =>
+        supportsNativeTools && useTools
           ? getNativeToolRegistrations(
               toolRegistry,
               enabledAgentModules,
-              getNativeToolScope(scope, useTools),
-              effectiveWebSearchEnabled,
-              toolPermissions,
-              enableSpecializedSearch,
+              [],
+              true,
+              undefined,
+              true,
             ).filter(registration => registration.name !== 'delegate_complex_task' || isComplexTaskModelReady)
           : [];
 
-      // 原生模式：未手动选择作用域时开放权限中心已启用的全部工具；手动选择时按作用域过滤。
-      const nativeRegistrations = buildNativeRegistrationsForScope(activeRoutedScope, routeResult.useTools);
+      // 原生模式：始终向模型暴露全部已注册函数；执行时再通过权限中心校验。
+      const nativeRegistrations = buildNativeRegistrations(routeResult.useTools);
       const nativeTools = nativeRegistrations.map(registration => toStrictTool(registration.tool));
       const toolExecContext = buildToolExecContext(currentAttachments);
 
       pushDebugItem({
         stage: 'send:routing-result',
-        summary: routeResult.source === 'all' ? '未选择作用域，使用全部授权工具' : '手动作用域已应用',
+        summary: '使用全部已注册函数',
         payload: {
           selectedModules: manualScope,
           routeResult,
           routedScope: activeRoutedScope,
-          toolScope,
           nativeToolCount: nativeTools.length,
           nativeToolNames: nativeTools.map(t => t.name),
           mode: supportsNativeTools && nativeTools.length > 0
-            ? routeResult.source === 'all' ? 'native-tools (all-permitted)' : 'native-tools (manual-scope)'
+            ? 'native-tools (all-registered)'
             : 'fallback',
         },
       });
@@ -3727,7 +4030,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         const contextMessages = await prepareAgentContextMessages(
           [
             ...messages.filter(m => m.role !== 'system' && m.id !== 'welcome').map(toSafeChatMessage),
-            toSafeChatMessage(userMessage),
+            toSafeChatMessage({ ...userMessage, content: runtimeGoal }),
           ],
           {
             keepRecentTurns: 8,
@@ -3752,7 +4055,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             id: 'system',
             role: 'system',
             content: getAgentSystemPrompt({
-              selectedModules: manualScope,
+              selectedModules: [],
               routedModules: activeRoutedScope,
               promptMode: 'native-tools',
               customSystemPrompt: config.systemPrompt || '',
@@ -3767,6 +4070,12 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             }),
             timestamp: 0,
           },
+          ...(currentMentions.length > 0 ? [{
+            id: 'agent-explicit-mentions',
+            role: 'system' as const,
+            content: formatAgentMentionsForPrompt(currentMentions),
+            timestamp: 0,
+          }] : []),
           ...contextMessages,
         ];
 
@@ -3822,24 +4131,6 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             }
             const visualMeta = getToolVisualMeta(registration);
             markToolEvent({ ...visualMeta, summary: '校验工具权限' });
-            if (registration.module !== 'web' && registration.module !== 'system' && activeRoutedScope.length > 0 && !activeRoutedScope.includes(registration.module)) {
-              const moduleName = getModuleDisplayName(registration.module);
-              const error = `工具 ${toolCall.name} 属于「${moduleName}」，不在当前作用域「${getModuleScopeLabel(activeRoutedScope)}」内。`;
-              markToolEvent({
-                ...visualMeta,
-                moduleName,
-                status: 'error',
-                summary: error,
-              });
-              pushDebugItem({
-                stage: 'native:tool-result',
-                summary: error,
-                payload: { toolCall, routedScope: activeRoutedScope },
-                level: 'error',
-              });
-              finishAgentToolTransaction(agentRunLogId, txId, { status: 'failed', error });
-              return { success: false, error };
-            }
             if (!canUseToolRegistration(registration, toolPermissions)) {
               markToolEvent({
                 ...visualMeta,
@@ -3873,12 +4164,14 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                 finishAgentToolTransaction(agentRunLogId, txId, { status: 'failed', error });
                 return { success: false, error, fatal: false };
               }
-              openedWebPagesInRun += 1;
             }
 
             try {
               const execution = await executeRegisteredToolWithSafety(registration, toolCall.arguments, toolExecContext);
               const result = execution.result;
+              if (registration.name === 'web_open' && result?.success !== false) {
+                openedWebPagesInRun += 1;
+              }
               const moduleName = visualMeta.moduleName;
               executedAction = { type: toolCall.name, status: execution.executed ? 'success' : 'pending', data: execution.executed ? toolCall.arguments : result };
               const pendingConfirmation = execution.pendingConfirmation || (
@@ -3989,9 +4282,10 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
           pushDebugItem({
             stage: 'native:request-context',
             summary: '准备逐步原生工具模式请求上下文',
-            payload: {
+          payload: {
               messages: chatMessages,
               tools: nativeTools,
+              mentions: currentMentions,
             },
           });
 
@@ -3999,12 +4293,13 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
             chatService: chatServiceRef.current,
             messages: chatMessages,
             tools: nativeTools,
-            goal: userMessage.content,
+            goal: runtimeGoal,
             runId: agentRunLogId,
             maxIterations: runtimeConfig.maxIterations,
+            mentions: currentMentions,
             clarify: async () => {
               const deterministic = buildAgentClarification({
-                goal: userMessage.content,
+                goal: runtimeGoal,
                 routedModules: activeRoutedScope,
                 tools: nativeTools,
                 sshCategories,
@@ -4013,7 +4308,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
               });
               return buildAgentClarificationWithModel({
                 chatService: chatServiceRef.current,
-                goal: userMessage.content,
+                goal: runtimeGoal,
                 messages: chatMessages,
                 appStructureContext,
                 tools: nativeTools,
@@ -4055,7 +4350,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
           const runtimeUndoSnapshot = runtimeResult.undoSnapshots?.[runtimeResult.undoSnapshots.length - 1] as UndoSnapshot | undefined;
           const runtimeNeedsClarification = runtimeResult.status === 'needs_user' && runtimeResult.clarification?.status === 'needs_user';
           mergeAgentMemoryPatch(buildAgentTurnMemoryPatch({
-            goal: userMessage.content,
+            goal: runtimeGoal,
             finalText: runtimeResult.text,
             status: runtimeResult.status,
             modules: displayModules,
@@ -4101,14 +4396,10 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         : nativeTools.length === 0
           ? [
               '本轮没有可用工具。',
-              routeRequiresWeb && !effectiveWebSearchEnabled
-                ? '本轮手动作用域包含联网搜索，但权限中心没有开启「联网搜索 / 读取」。'
-                : effectiveWebSearchEnabled
-                ? '权限中心没有开启对应工具，或当前手动作用域下没有可用工具。'
-                : '如果需要联网搜索，请在权限中心开启「联网搜索 / 读取」。',
+              '请检查当前模型是否支持原生 Function Calling，或工具注册是否初始化完成。',
             ].join('')
           : '逐步工具 runtime 未启动。';
-      await runFallbackConversation(assistantId, userMessage, fallbackScope, fallbackReason);
+      await runFallbackConversation(assistantId, { ...userMessage, content: runtimeGoal }, fallbackScope, fallbackReason);
       finalizeAgentExecutionLog(agentRunLogId, {
         status: 'completed',
         finalText: '兼容模式执行完成',
@@ -4147,6 +4438,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     }
   }, [
     allowedActionTypes,
+    agentMentions,
     buildToolExecContext,
     apiCategories,
     config.apiKey,
@@ -4369,6 +4661,8 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
         ));
         return;
       }
+      if (processingConfirmationIdsRef.current.has(pc.id)) return;
+      processingConfirmationIdsRef.current.add(pc.id);
 
       setMessages(prev => prev.map(m =>
         m.id === messageId
@@ -4441,6 +4735,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       }
       return;
     }
+
+    if (processingConfirmationIdsRef.current.has(pc.id)) return;
+    processingConfirmationIdsRef.current.add(pc.id);
 
     if (pc.type === 'agent_tool') {
       const toolName = pc.data.toolName;
@@ -4631,11 +4928,218 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
     });
   }, []);
 
+  const updateMentionPickerFromInput = useCallback((value: string, caretIndex?: number | null) => {
+    const caret = typeof caretIndex === 'number' ? caretIndex : value.length;
+    const beforeCaret = value.slice(0, caret);
+    const atIndex = Math.max(beforeCaret.lastIndexOf('@'), beforeCaret.lastIndexOf('＠'));
+    if (atIndex < 0) {
+      setMentionPickerOpen(false);
+      setMentionTriggerIndex(null);
+      setMentionQuery('');
+      return;
+    }
+    const query = beforeCaret.slice(atIndex + 1);
+    if (/\s/.test(query)) {
+      setMentionPickerOpen(false);
+      setMentionTriggerIndex(null);
+      setMentionQuery('');
+      return;
+    }
+    setMentionPickerOpen(true);
+    setMentionTriggerIndex(atIndex);
+    setMentionQuery(query);
+  }, []);
+
+  const handleInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const nextValue = event.target.value;
+    setInputValue(nextValue);
+    setAgentMentions(prev => prev.filter(mention => !mention.token || nextValue.includes(mention.token)));
+    updateMentionPickerFromInput(nextValue, event.target.selectionStart);
+  }, [updateMentionPickerFromInput]);
+
+  const handleSelectMention = useCallback((option: AgentMentionOption) => {
+    const input = inputRef.current;
+    const caret = input?.selectionStart ?? inputValue.length;
+    const beforeCaret = inputValue.slice(0, caret);
+    const triggerIndex = mentionTriggerIndex ?? Math.max(beforeCaret.lastIndexOf('@'), beforeCaret.lastIndexOf('＠'));
+    const safeTriggerIndex = triggerIndex >= 0 ? triggerIndex : inputValue.length;
+    const token = createAgentMentionToken(option);
+    const before = inputValue.slice(0, safeTriggerIndex);
+    const after = inputValue.slice(caret).replace(/^\S*/, '');
+    const nextValue = `${before}${token} ${after}`.replace(/\s{2,}/g, ' ');
+    const mention: AgentMention = {
+      id: option.id,
+      type: option.type,
+      label: option.label,
+      value: option.value,
+      token,
+      description: option.description,
+      source: option.source,
+      invocationType: 'explicit',
+      metadata: option.metadata,
+    };
+    setInputValue(nextValue);
+    setAgentMentions(prev => {
+      const exists = prev.some(item => item.id === mention.id);
+      return exists ? prev.map(item => item.id === mention.id ? mention : item) : [...prev, mention];
+    });
+    setMentionPickerOpen(false);
+    setMentionTriggerIndex(null);
+    setMentionQuery('');
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      const nextCaret = `${before}${token} `.length;
+      inputRef.current?.setSelectionRange(nextCaret, nextCaret);
+    });
+  }, [inputValue, mentionTriggerIndex]);
+
+  const handleRemoveMention = useCallback((mentionId: string) => {
+    const target = agentMentions.find(mention => mention.id === mentionId);
+    if (target?.token) {
+      setInputValue(value => value.replace(target.token, '').replace(/\s{2,}/g, ' ').trimStart());
+    }
+    setAgentMentions(prev => prev.filter(mention => mention.id !== mentionId));
+  }, [agentMentions]);
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (mentionPickerOpen) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        if (filteredMentionOptions.length > 0) {
+          setMentionActiveIndex(index => (index + 1) % filteredMentionOptions.length);
+        }
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (filteredMentionOptions.length > 0) {
+          setMentionActiveIndex(index => (index - 1 + filteredMentionOptions.length) % filteredMentionOptions.length);
+        }
+        return;
+      }
+      if (event.key === 'Tab' || event.key === 'Enter') {
+        if (filteredMentionOptions.length > 0) {
+          event.preventDefault();
+          handleSelectMention(filteredMentionOptions[mentionActiveIndex] || filteredMentionOptions[0]);
+        }
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setMentionPickerOpen(false);
+        return;
+      }
+    }
     if (event.key === 'Enter' && !event.nativeEvent.isComposing && !event.shiftKey) {
       event.preventDefault();
       handleSend();
     }
+  };
+
+  const handleExportLatestDebugTurn = () => {
+    const latestTurnId = debugItems[debugItems.length - 1]?.turnId;
+    const latestTurnItems = latestTurnId
+      ? debugItems.filter(item => item.turnId === latestTurnId)
+      : debugItems;
+    const latestTurnIndex = latestTurnItems[0]?.turnIndex ?? debugItems[debugItems.length - 1]?.turnIndex ?? 0;
+    const logs = loadAgentExecutionLogs();
+    const runLogId = activeAgentJobId || lastAgentRunLogIdRef.current || logs[0]?.id || null;
+    const executionLog = runLogId
+      ? logs.find(log => log.id === runLogId) || logs[0]
+      : logs[0];
+    const lastUserMessageIndex = [...messages].map((message, index) => ({ message, index }))
+      .reverse()
+      .find(item => item.message.role === 'user')?.index ?? Math.max(0, messages.length - 8);
+    const latestTurnMessages = messages.slice(lastUserMessageIndex).map(message => ({
+      id: message.id,
+      role: message.role,
+      timestamp: message.timestamp,
+      content: message.content,
+      action: message.action,
+      targetModule: message.targetModule,
+      targetModules: message.targetModules,
+      mentions: message.mentions,
+      attachments: message.attachments,
+      pendingConfirmation: message.pendingConfirmation,
+    }));
+    const registeredTools = [
+      ...toolRegistry,
+      WEB_SEARCH_TOOL_REGISTRATION,
+      WEB_OPEN_TOOL_REGISTRATION,
+      SPECIALIZED_SEARCH_TOOL_REGISTRATION,
+    ].map(registration => ({
+      name: registration.name,
+      module: registration.module,
+      origin: registration.origin || 'builtin',
+      sourceId: registration.sourceId,
+      exposure: registration.exposure || 'direct',
+      permission: getToolPermissionTarget(registration),
+      description: registration.tool.description,
+      inputSchema: registration.tool.inputSchema,
+    }));
+    const rawExport = {
+      schemaVersion: DEBUG_EXPORT_SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
+      exportKind: 'agent-latest-turn-debug',
+      run: {
+        id: runLogId,
+        activeAgentJobId,
+        lastAgentRunLogId: lastAgentRunLogIdRef.current,
+        executionLogStatus: executionLog?.status,
+        startedAt: executionLog?.startedAt,
+        finishedAt: executionLog?.finishedAt,
+      },
+      turn: {
+        id: latestTurnId || null,
+        index: latestTurnIndex,
+        startedAt: latestTurnItems[0]?.timestamp,
+        endedAt: latestTurnItems[latestTurnItems.length - 1]?.timestamp,
+        debugItemCount: latestTurnItems.length,
+      },
+      runtimeStatus: agentRuntimeStatus,
+      runtimeEvents: agentRuntimeEvents,
+      runtimeToolEvents: agentRuntimeToolEvents,
+      debugItems: latestTurnItems,
+      messages: latestTurnMessages,
+      executionLog,
+      config: {
+        provider: config.provider,
+        model: config.model,
+        baseUrl: config.baseUrl,
+        supportsNativeTools,
+        runtimeConfig,
+        searchConfig,
+        selectedModules,
+        effectiveWebSearchEnabled,
+        effectiveSpecializedSearchEnabled,
+      },
+      permissions: {
+        enabledToolPermissionCount,
+        allToolPermissionsEnabled,
+        toolPermissions,
+        fullAccessPermissions,
+      },
+      tools: {
+        registeredToolCount: registeredTools.length,
+        allowedActionTypes,
+        registeredTools,
+      },
+      memory: conversationMemoryRef.current,
+    };
+    const safeExport = redactDebugValue(rawExport);
+    downloadAgentDebugJson(safeExport, createDebugExportFilename(latestTurnIndex));
+    pushDebugItem({
+      stage: 'debug:export',
+      summary: `已导出第 ${latestTurnIndex + 1} 轮调试包`,
+      payload: {
+        runId: runLogId,
+        turnId: latestTurnId,
+        debugItemCount: latestTurnItems.length,
+        runtimeEventCount: agentRuntimeEvents.length,
+        runtimeToolEventCount: agentRuntimeToolEvents.length,
+      },
+      level: 'success',
+    });
   };
 
   const serializeDebugPayload = (payload: any): string => {
@@ -4649,6 +5153,7 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
       return String(payload);
     }
   };
+  const canExportDebugTurn = debugItems.length > 0 || agentRuntimeEvents.length > 0 || agentRuntimeToolEvents.length > 0 || Boolean(activeAgentJobId || lastAgentRunLogIdRef.current);
 
   if (!isOpen && isOpen !== undefined) return null;
 
@@ -4712,7 +5217,51 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                   </div>
                 ) : null}
 
-                <div className="rounded-[24px] border px-4 py-3 transition-colors focus-within:border-blue-400 focus-within:ring-4 focus-within:ring-blue-100" style={{ borderColor: 'var(--t-input-border)', background: 'var(--t-input-bg)' }}>
+                <div className="relative rounded-[24px] border px-4 py-3 transition-colors focus-within:border-blue-400 focus-within:ring-4 focus-within:ring-blue-100" style={{ borderColor: 'var(--t-input-border)', background: 'var(--t-input-bg)' }}>
+                  {mentionPickerOpen && (
+                    <div className="absolute left-4 right-4 bottom-full mb-2 z-50 rounded-2xl border shadow-xl overflow-hidden" style={{ background: 'var(--t-bg-card)', borderColor: 'var(--t-border)' }}>
+                      <div className="px-3 py-2 border-b flex items-center gap-2 text-xs text-slate-500" style={{ borderColor: 'var(--t-border)' }}>
+                        <AtSign className="w-3.5 h-3.5" />
+                        <span>{mentionQuery ? `搜索：${mentionQuery}` : '选择要显式加载的 Agent 能力'}</span>
+                      </div>
+                      <div className="max-h-72 overflow-y-auto py-1">
+                        {filteredMentionOptions.length === 0 ? (
+                          <div className="px-3 py-4 text-sm text-slate-400">
+                            没有匹配的 Skill、MCP 或工具
+                          </div>
+                        ) : filteredMentionOptions.map((option, index) => {
+                          const Icon = getMentionOptionIcon(option.type);
+                          const selected = index === mentionActiveIndex;
+                          return (
+                            <button
+                              key={option.id}
+                              type="button"
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                handleSelectMention(option);
+                              }}
+                              className={`w-full px-3 py-2.5 flex items-center gap-3 text-left transition-colors ${selected ? 'bg-blue-50 text-blue-700' : 'hover:bg-slate-50 text-slate-700'}`}
+                            >
+                              <span className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${selected ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
+                                <Icon className="w-4 h-4" />
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="flex items-center gap-2 min-w-0">
+                                  <span className="font-semibold truncate">{option.label}</span>
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/80 border border-slate-200 text-slate-500">
+                                    {AGENT_MENTION_TYPE_LABELS[option.type]}
+                                  </span>
+                                </span>
+                                <span className="block text-xs text-slate-400 truncate mt-0.5">
+                                  {option.description || option.value}
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   {pendingAttachments.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-2">
                       {pendingAttachments.map((att, idx) => (
@@ -4731,6 +5280,30 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                           </button>
                         </div>
                       ))}
+                    </div>
+                  )}
+                  {agentMentions.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {agentMentions.map(mention => {
+                        const Icon = getMentionOptionIcon(mention.type);
+                        return (
+                          <span
+                            key={mention.id}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs text-blue-700"
+                          >
+                            <Icon className="w-3 h-3" />
+                            <span>{AGENT_MENTION_TYPE_LABELS[mention.type]} · {mention.label}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveMention(mention.id)}
+                              className="ml-0.5 text-blue-400 hover:text-blue-700"
+                              title="移除此能力"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </span>
+                        );
+                      })}
                     </div>
                   )}
                   <div className="flex items-center gap-3">
@@ -4759,7 +5332,9 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                       ref={inputRef}
                       type="text"
                       value={inputValue}
-                      onChange={(event) => setInputValue(event.target.value)}
+                      onChange={handleInputChange}
+                      onClick={(event) => updateMentionPickerFromInput(inputValue, event.currentTarget.selectionStart)}
+                      onFocus={(event) => updateMentionPickerFromInput(inputValue, event.currentTarget.selectionStart)}
                       onKeyDown={handleKeyDown}
                       placeholder={config.apiKey ? '描述你想完成的任务...' : '请先在设置中配置 API Key'}
                       className="flex-1 bg-transparent placeholder-gray-400 outline-none text-[15px]" style={{ color: 'var(--t-text)' }}
@@ -4880,13 +5455,27 @@ export const AgentPanel: React.FC<AgentPanelProps> = ({
                       <span className="text-[10px] text-slate-400">({debugItems.length})</span>
                     )}
                   </div>
-                  <button
-                    onClick={() => { setDebugItems([]); setExpandedDebugIds(new Set()); }}
-                    className="w-7 h-7 inline-flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-                    title="清空调试信息"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={handleExportLatestDebugTurn}
+                      disabled={!canExportDebugTurn}
+                      className={`w-7 h-7 inline-flex items-center justify-center rounded-lg transition-colors ${
+                        canExportDebugTurn
+                          ? 'text-slate-400 hover:text-blue-600 hover:bg-blue-50'
+                          : 'text-slate-200 cursor-not-allowed'
+                      }`}
+                      title="导出最近一轮调试信息"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => { setDebugItems([]); setExpandedDebugIds(new Set()); }}
+                      className="w-7 h-7 inline-flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                      title="清空调试信息"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-2">
                   {debugItems.length === 0 ? (

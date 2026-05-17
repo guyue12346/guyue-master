@@ -72,6 +72,7 @@ function parseLrc(raw: string): LrcLine[] {
 }
 
 const MUSIC_AI_CONFIG_KEY = 'guyue_music_ai_config';
+const MUSIC_PLAYBACK_STATE_KEY = 'guyue_music_playback_state';
 
 interface MusicAiConfig {
   provider: string;
@@ -97,6 +98,44 @@ function loadMusicAiConfig(): MusicAiConfig {
 function saveMusicAiConfig(cfg: MusicAiConfig) {
   localStorage.setItem(MUSIC_AI_CONFIG_KEY, JSON.stringify(cfg));
 }
+
+interface MusicPlaybackState {
+  currentTrackId?: string | null;
+  progress?: number;
+  repeatMode?: MusicRepeatMode;
+  isShuffled?: boolean;
+  userQueue?: string[];
+}
+
+function loadMusicPlaybackState(): MusicPlaybackState {
+  try {
+    const saved = JSON.parse(localStorage.getItem(MUSIC_PLAYBACK_STATE_KEY) || '{}');
+    return {
+      currentTrackId: typeof saved.currentTrackId === 'string' ? saved.currentTrackId : null,
+      progress: Number.isFinite(saved.progress) ? Math.max(0, saved.progress) : 0,
+      repeatMode: ['off', 'all', 'one'].includes(saved.repeatMode) ? saved.repeatMode : 'off',
+      isShuffled: Boolean(saved.isShuffled),
+      userQueue: Array.isArray(saved.userQueue) ? saved.userQueue.filter((id: unknown) => typeof id === 'string') : [],
+    };
+  } catch {
+    return { currentTrackId: null, progress: 0, repeatMode: 'off', isShuffled: false, userQueue: [] };
+  }
+}
+
+function saveMusicPlaybackState(state: MusicPlaybackState) {
+  try {
+    localStorage.setItem(MUSIC_PLAYBACK_STATE_KEY, JSON.stringify(state));
+  } catch {}
+}
+
+const shuffleTrackIds = (ids: string[], keepFirstId?: string | null) => {
+  const next = ids.filter(id => id !== keepFirstId);
+  for (let i = next.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [next[i], next[j]] = [next[j], next[i]];
+  }
+  return keepFirstId && ids.includes(keepFirstId) ? [keepFirstId, ...next] : next;
+};
 
 // ── Lyrics Modal (standalone page) ──
 const LyricsModal: React.FC<{
@@ -708,14 +747,15 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   onRuntimeChange,
   globalHotkeysEnabled = true,
 }) => {
-  const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
+  const playbackStateRef = useRef<MusicPlaybackState>(loadMusicPlaybackState());
+  const [currentTrackId, setCurrentTrackId] = useState<string | null>(playbackStateRef.current.currentTrackId || null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [progress, setProgress] = useState(playbackStateRef.current.progress || 0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(() => { try { return parseFloat(localStorage.getItem('guyue_music_volume') || '0.8'); } catch { return 0.8; } });
   const [isMuted, setIsMuted] = useState(false);
-  const [repeatMode, setRepeatMode] = useState<MusicRepeatMode>('off');
-  const [isShuffled, setIsShuffled] = useState(false);
+  const [repeatMode, setRepeatMode] = useState<MusicRepeatMode>(playbackStateRef.current.repeatMode || 'off');
+  const [isShuffled, setIsShuffled] = useState(Boolean(playbackStateRef.current.isShuffled));
   const [searchQuery, setSearchQuery] = useState('');
   const [detailTrackId, setDetailTrackId] = useState<string | null>(null);
   const [addToPlTrackId, setAddToPlTrackId] = useState<string | null>(null);
@@ -725,8 +765,9 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   const [missingFiles, setMissingFiles] = useState<Set<string>>(new Set());
   const [dragTrackId, setDragTrackId] = useState<string | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
-  const [userQueue, setUserQueue] = useState<string[]>([]);
+  const [userQueue, setUserQueue] = useState<string[]>(playbackStateRef.current.userQueue || []);
   const [showQueue, setShowQueue] = useState(false);
+  const [shuffledQueueIds, setShuffledQueueIds] = useState<string[]>([]);
 
   const howlRef = useRef<Howl | null>(null);
   const progressTimer = useRef<number>(0);
@@ -772,15 +813,42 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
     return playlistTracks.filter(t => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q) || t.album.toLowerCase().includes(q));
   }, [playlistTracks, searchQuery]);
 
-  const playQueue = useMemo(() => {
-    if (!isShuffled) return filteredTracks;
-    const arr = [...filteredTracks];
-    for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; }
-    return arr;
-  }, [filteredTracks, isShuffled]);
-
   const currentTrack = useMemo(() => tracks.find(t => t.id === currentTrackId), [tracks, currentTrackId]);
   const detailTrack = useMemo(() => tracks.find(t => t.id === detailTrackId), [tracks, detailTrackId]);
+
+  useEffect(() => {
+    if (!currentTrackId && playbackStateRef.current.currentTrackId && tracks.some(t => t.id === playbackStateRef.current.currentTrackId)) {
+      setCurrentTrackId(playbackStateRef.current.currentTrackId);
+      return;
+    }
+    if (currentTrackId && tracks.length > 0 && !tracks.some(t => t.id === currentTrackId)) {
+      setCurrentTrackId(null);
+      setProgress(0);
+    }
+  }, [currentTrackId, tracks]);
+
+  const filteredTrackIds = useMemo(() => filteredTracks.map(t => t.id), [filteredTracks]);
+
+  useEffect(() => {
+    if (!isShuffled) return;
+    setShuffledQueueIds(prev => {
+      const validIds = new Set(filteredTrackIds);
+      const retained = prev.filter(id => validIds.has(id));
+      const missing = filteredTrackIds.filter(id => !retained.includes(id));
+      const merged = [...retained, ...shuffleTrackIds(missing)];
+      if (merged.length === prev.length && merged.every((id, index) => id === prev[index])) return prev;
+      return merged;
+    });
+  }, [filteredTrackIds, isShuffled]);
+
+  const playQueue = useMemo(() => {
+    if (!isShuffled) return filteredTracks;
+    const byId = new Map(filteredTracks.map(t => [t.id, t]));
+    const ordered = shuffledQueueIds.map(id => byId.get(id)).filter(Boolean) as MusicTrack[];
+    const orderedIds = new Set(ordered.map(t => t.id));
+    const missing = filteredTracks.filter(t => !orderedIds.has(t.id));
+    return [...ordered, ...missing];
+  }, [filteredTracks, isShuffled, shuffledQueueIds]);
 
   const parsedLyrics = useMemo(() => {
     if (!currentTrack?.lyrics) return null;
@@ -827,13 +895,14 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
 
   // ── Playback engine ──
   const UNSUPPORTED_FORMATS = new Set(['DSF', 'DFF', 'APE', 'WMA', 'WV']);
-  const playTrack = useCallback((track: MusicTrack) => {
+  const playTrack = useCallback((track: MusicTrack, startAt = 0) => {
     if (UNSUPPORTED_FORMATS.has(track.format.toUpperCase())) {
       alert(`${track.format.toUpperCase()} 格式暂不支持在线播放。\n建议使用工具将文件转换为 FLAC 或 WAV 格式。`);
       return;
     }
     if (howlRef.current) howlRef.current.unload();
     clearInterval(progressTimer.current);
+    let didInitialSeek = false;
     const h = new Howl({
       src: [`file://${track.filePath}`],
       html5: true,
@@ -841,6 +910,11 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
       onplay: () => {
         setIsPlaying(true);
         setDuration(h.duration());
+        if (startAt > 0 && !didInitialSeek) {
+          didInitialSeek = true;
+          h.seek(startAt);
+          setProgress(startAt);
+        }
         progressTimer.current = window.setInterval(() => {
           if (!seekingRef.current) setProgress(h.seek() as number);
         }, 250);
@@ -850,7 +924,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
     });
     howlRef.current = h;
     setCurrentTrackId(track.id);
-    setProgress(0);
+    setProgress(Math.max(0, startAt));
     h.play();
     try {
       const ctx = Howler.ctx;
@@ -880,9 +954,22 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   }, [playQueue, currentTrackId, repeatMode, playTrack]);
 
   const togglePlay = () => {
-    if (!howlRef.current) { if (playQueue.length > 0) playTrack(playQueue[0]); return; }
+    if (!howlRef.current) {
+      if (currentTrack) playTrack(currentTrack, Math.min(progress || 0, Math.max(0, currentTrack.duration - 1)));
+      else if (playQueue.length > 0) playTrack(playQueue[0]);
+      return;
+    }
     if (isPlaying) { howlRef.current.pause(); setIsPlaying(false); clearInterval(progressTimer.current); }
     else { howlRef.current.play(); }
+  };
+
+  const toggleShuffle = () => {
+    setIsShuffled(prev => {
+      const next = !prev;
+      if (next) setShuffledQueueIds(shuffleTrackIds(filteredTrackIds, currentTrackId));
+      else setShuffledQueueIds([]);
+      return next;
+    });
   };
 
   const playNext = () => {
@@ -989,6 +1076,20 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   };
   const clearQueue = () => setUserQueue([]);
   const queueTracks = useMemo(() => userQueue.map(id => tracks.find(t => t.id === id)).filter(Boolean) as MusicTrack[], [userQueue, tracks]);
+  const upNextTracks = useMemo(() => {
+    if (userQueue.length > 0) return queueTracks.slice(0, 4);
+    const idx = playQueue.findIndex(t => t.id === currentTrackId);
+    return (idx >= 0 ? playQueue.slice(idx + 1, idx + 5) : playQueue.slice(0, 4));
+  }, [currentTrackId, playQueue, queueTracks, userQueue.length]);
+  const libraryStats = useMemo(() => {
+    const totalDuration = tracks.reduce((sum, track) => sum + (track.duration || 0), 0);
+    const artists = new Set(tracks.map(track => track.artist).filter(Boolean));
+    return {
+      totalDuration,
+      artistCount: artists.size,
+      losslessCount: tracks.filter(track => track.lossless).length,
+    };
+  }, [tracks]);
 
   const playPlaylist = () => {
     if (filteredTracks.length > 0) playTrack(filteredTracks[0]);
@@ -1019,6 +1120,42 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
 
   const curCover = currentTrack ? (currentTrack.customCover || coverCache.get(currentTrack.id)) : undefined;
   const getCover = (t: MusicTrack) => t.customCover || coverCache.get(t.id);
+
+  useEffect(() => {
+    const validTrackIds = new Set(tracks.map(t => t.id));
+    const cleanedQueue = userQueue.filter(id => validTrackIds.has(id));
+    if (cleanedQueue.length !== userQueue.length) setUserQueue(cleanedQueue);
+    saveMusicPlaybackState({
+      currentTrackId,
+      progress: Math.max(0, progress || 0),
+      repeatMode,
+      isShuffled,
+      userQueue: cleanedQueue,
+    });
+  }, [currentTrackId, progress, repeatMode, isShuffled, userQueue, tracks]);
+
+  useEffect(() => {
+    if (!currentTrack || typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: currentTrack.title,
+        artist: currentTrack.artist,
+        album: currentTrack.album,
+        artwork: curCover ? [{ src: curCover, sizes: '512x512' }] : undefined,
+      });
+      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+      navigator.mediaSession.setActionHandler('play', togglePlay);
+      navigator.mediaSession.setActionHandler('pause', togglePlay);
+      navigator.mediaSession.setActionHandler('previoustrack', playPrev);
+      navigator.mediaSession.setActionHandler('nexttrack', playNext);
+      navigator.mediaSession.setActionHandler('seekto', event => {
+        if (typeof event.seekTime === 'number') seekTo(event.seekTime);
+      });
+      if ('setPositionState' in navigator.mediaSession && duration > 0) {
+        navigator.mediaSession.setPositionState({ duration, playbackRate: 1, position: Math.min(progress, duration) });
+      }
+    } catch {}
+  }, [currentTrack, curCover, isPlaying, progress, duration, togglePlay, playPrev, playNext]);
 
   useEffect(() => {
     if (!onRuntimeChange) return;
@@ -1094,7 +1231,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   }
 
   return (
-    <div className="h-full flex flex-col bg-white">
+    <div className="relative h-full flex flex-col bg-white">
       {/* Main area */}
       <div className="flex-1 flex min-h-0">
         {/* Track list */}
@@ -1185,6 +1322,134 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
           </div>
         </div>
 
+        {/* Now playing insight panel */}
+        <aside className="hidden 2xl:flex w-80 shrink-0 flex-col border-l border-gray-100 bg-gradient-to-b from-white via-white to-purple-50/30">
+          <div className="px-5 py-4 border-b border-gray-100">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800">正在播放</h3>
+                <p className="text-xs text-gray-400">{currentTrack ? '播放上下文' : '音乐库概览'}</p>
+              </div>
+              {currentTrack && (
+                <button
+                  onClick={() => setShowQueue(true)}
+                  className="relative p-2 rounded-xl text-gray-400 hover:text-purple-500 hover:bg-purple-50 transition-colors"
+                  title="播放队列"
+                >
+                  <ListOrdered className="w-4 h-4" />
+                  {userQueue.length > 0 && <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-purple-500 text-white text-[9px] flex items-center justify-center">{userQueue.length}</span>}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {currentTrack ? (
+            <div className="flex-1 min-h-0 overflow-y-auto px-5 py-5 space-y-5">
+              <button
+                onClick={() => currentTrack.lyrics && setShowFullscreenLyrics(true)}
+                className="group w-full text-left"
+                title={currentTrack.lyrics ? '打开全屏歌词' : '暂无歌词'}
+              >
+                <div className="mx-auto w-44 h-44 rounded-3xl overflow-hidden bg-gray-100 shadow-[0_24px_60px_-34px_rgba(88,28,135,0.8)] ring-1 ring-gray-100 transition-transform group-hover:scale-[1.015]">
+                  {curCover ? <img src={curCover} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-gradient-to-br from-purple-100 to-sky-50 flex items-center justify-center"><Music className="w-14 h-14 text-purple-300" /></div>}
+                </div>
+              </button>
+
+              <div className="text-center min-w-0">
+                <h3 className="text-lg font-semibold text-gray-900 truncate">{currentTrack.title}</h3>
+                <p className="text-sm text-gray-500 truncate">{currentTrack.artist}</p>
+                <div className="mt-2 flex items-center justify-center gap-2 text-[10px] text-gray-400">
+                  <span className="px-2 py-0.5 rounded-full bg-white border border-gray-100">{qualityLabel(currentTrack)}</span>
+                  <span className="tabular-nums">{fmt(progress)} / {fmt(duration)}</span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                  <div className="h-full rounded-full bg-gradient-to-r from-purple-400 to-sky-400 transition-all" style={{ width: `${duration ? Math.min(100, Math.max(0, progress / duration * 100)) : 0}%` }} />
+                </div>
+                <div className="flex items-center justify-center gap-4">
+                  <button onClick={playPrev} className="p-2 rounded-full text-gray-500 hover:text-purple-500 hover:bg-purple-50 transition-colors"><SkipBack className="w-4 h-4" /></button>
+                  <button onClick={togglePlay} className="w-11 h-11 rounded-full bg-gray-900 text-white flex items-center justify-center shadow-lg hover:scale-105 transition-transform">
+                    {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 ml-0.5" />}
+                  </button>
+                  <button onClick={playNext} className="p-2 rounded-full text-gray-500 hover:text-purple-500 hover:bg-purple-50 transition-colors"><SkipForward className="w-4 h-4" /></button>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-gray-100 bg-white/80 px-4 py-3 shadow-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-gray-400">歌词</span>
+                  {currentTrack.lyrics && <button onClick={() => setShowFullscreenLyrics(true)} className="text-xs text-purple-500 hover:text-purple-600">全屏</button>}
+                </div>
+                {currentTrack.lyrics ? (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-gray-900 leading-relaxed line-clamp-2">{lyricRuntime.current || '♪ ♪ ♪'}</p>
+                    {lyricRuntime.next && <p className="text-xs text-gray-400 leading-relaxed line-clamp-2">{lyricRuntime.next}</p>}
+                    <div className="h-1 rounded-full bg-gray-100 overflow-hidden">
+                      <div className="h-full bg-purple-400 transition-all" style={{ width: `${Math.round(lyricRuntime.lineProgress * 100)}%` }} />
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={() => setLyricsModalTrackId(currentTrack.id)} className="w-full rounded-xl border border-dashed border-gray-200 py-3 text-xs text-gray-400 hover:border-purple-200 hover:text-purple-500 transition-colors">
+                    添加歌词
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-gray-400">接下来</span>
+                  <span className="text-[11px] text-gray-300">{upNextTracks.length} 首</span>
+                </div>
+                <div className="space-y-1">
+                  {upNextTracks.length > 0 ? upNextTracks.map(track => (
+                    <button key={track.id} onClick={() => playTrack(track)} className="w-full flex items-center gap-2 rounded-xl px-2 py-2 text-left hover:bg-white transition-colors">
+                      <div className="w-8 h-8 rounded-lg overflow-hidden bg-gray-100 shrink-0">
+                        {getCover(track) ? <img src={getCover(track)} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center"><Music className="w-3.5 h-3.5 text-gray-300" /></div>}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-medium text-gray-700 truncate">{track.title}</div>
+                        <div className="text-[11px] text-gray-400 truncate">{track.artist}</div>
+                      </div>
+                      <span className="text-[10px] text-gray-300 tabular-nums">{fmt(track.duration)}</span>
+                    </button>
+                  )) : (
+                    <p className="rounded-xl bg-white/70 py-4 text-center text-xs text-gray-300">没有下一首</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 px-5 py-6 space-y-5">
+              <div className="rounded-3xl bg-white border border-gray-100 p-5 shadow-sm">
+                <div className="w-16 h-16 rounded-2xl bg-purple-50 flex items-center justify-center mb-4">
+                  <Music className="w-7 h-7 text-purple-400" />
+                </div>
+                <h3 className="text-base font-semibold text-gray-900">音乐库</h3>
+                <p className="text-xs text-gray-400 mt-1">{tracks.length} 首歌曲 · {libraryStats.artistCount} 位艺术家</p>
+                <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-xl bg-gray-50 px-3 py-2">
+                    <div className="text-gray-400">总时长</div>
+                    <div className="mt-1 font-medium text-gray-700">{Math.floor(libraryStats.totalDuration / 3600)}h {Math.floor((libraryStats.totalDuration % 3600) / 60)}m</div>
+                  </div>
+                  <div className="rounded-xl bg-gray-50 px-3 py-2">
+                    <div className="text-gray-400">无损</div>
+                    <div className="mt-1 font-medium text-gray-700">{libraryStats.losslessCount} 首</div>
+                  </div>
+                </div>
+              </div>
+              <button onClick={playPlaylist} className="w-full rounded-2xl bg-gray-900 py-3 text-sm font-medium text-white hover:bg-gray-800 transition-colors">
+                播放当前列表
+              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={onAddFiles} className="rounded-2xl border border-gray-200 bg-white py-3 text-xs text-gray-600 hover:border-purple-200 hover:text-purple-500 transition-colors">添加文件</button>
+                <button onClick={onAddFolder} className="rounded-2xl border border-gray-200 bg-white py-3 text-xs text-gray-600 hover:border-purple-200 hover:text-purple-500 transition-colors">扫描文件夹</button>
+              </div>
+            </div>
+          )}
+        </aside>
+
         {/* Detail modal */}
         {detailTrack && (
           <TrackDetailModal
@@ -1226,7 +1491,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
             {/* Center: controls */}
             <div className="flex-1 flex flex-col items-center justify-center gap-1 min-w-0">
               <div className="flex items-center gap-3">
-                <button onClick={() => setIsShuffled(!isShuffled)} className={`p-1 rounded-full transition-colors ${isShuffled ? 'text-purple-500 bg-purple-50' : 'text-gray-400 hover:text-gray-600'}`} title="随机"><Shuffle className="w-4 h-4" /></button>
+                <button onClick={toggleShuffle} className={`p-1 rounded-full transition-colors ${isShuffled ? 'text-purple-500 bg-purple-50' : 'text-gray-400 hover:text-gray-600'}`} title="随机"><Shuffle className="w-4 h-4" /></button>
                 <button onClick={playPrev} className="p-1 text-gray-600 hover:text-gray-800 rounded-full hover:bg-gray-100"><SkipBack className="w-5 h-5" /></button>
                 <button onClick={togglePlay} className="w-10 h-10 flex items-center justify-center rounded-full bg-purple-500 text-white hover:bg-purple-600 shadow-md transition-all hover:scale-105">
                   {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 ml-0.5" />}

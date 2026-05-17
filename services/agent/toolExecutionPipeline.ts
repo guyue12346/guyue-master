@@ -77,7 +77,7 @@ export const executeAgentToolPipeline = async ({
     };
   }
 
-  const forceConfirmation = Boolean(registration.safety?.confirm);
+  const forceConfirmation = Boolean(registration.safety?.confirm || registration.safety?.shouldConfirm?.(args));
   const needsSafety = forceConfirmation || needsHumanConfirmation(target.action);
   const snapshot = needsSafety ? await createUndoSnapshot(registration.name, args) : undefined;
   const requiresConfirmation = needsSafety
@@ -122,4 +122,3 @@ export const executeAgentToolPipeline = async ({
     result: attachVerification(rawResult, afterValidation),
   };
 };
-

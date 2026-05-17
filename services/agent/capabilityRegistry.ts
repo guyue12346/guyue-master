@@ -110,7 +110,7 @@ export const AGENT_CAPABILITY_REGISTRY = new AgentCapabilityRegistry();
 export const AGENT_CAPABILITY_REGISTRY_CHANGED_EVENT = CAPABILITY_REGISTRY_EVENT;
 
 export const toolRegistrationToCapability = (registration: ToolRegistration): AgentCapability => {
-  const permissionTarget = getToolPermissionTarget(registration);
+  const permissionTarget = registration.permissionless ? null : getToolPermissionTarget(registration);
   const origin: AgentCapabilityOrigin = registration.origin || 'builtin';
   const sourceId = registration.sourceId || registration.module;
   return {
@@ -122,14 +122,23 @@ export const toolRegistrationToCapability = (registration: ToolRegistration): Ag
     type: 'tool',
     exposure: registration.exposure || 'direct',
     tool: registration.tool,
-    permission: {
-      module: permissionTarget.module,
-      action: permissionTarget.action || inferToolPermissionAction(registration.name),
-      requiresConfirmation: Boolean(registration.safety?.confirm),
-    },
-    tags: [registration.module, permissionTarget.module, permissionTarget.action, origin],
+    permission: permissionTarget
+      ? {
+          module: permissionTarget.module,
+          action: permissionTarget.action || inferToolPermissionAction(registration.name),
+          requiresConfirmation: Boolean(registration.safety?.confirm),
+        }
+      : undefined,
+    tags: [
+      registration.module,
+      permissionTarget?.module,
+      permissionTarget?.action,
+      origin,
+      registration.permissionless ? 'permissionless' : '',
+    ].filter(Boolean) as string[],
     metadata: {
       module: registration.module,
+      permissionless: Boolean(registration.permissionless),
     },
   };
 };

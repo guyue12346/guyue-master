@@ -30,6 +30,14 @@ export interface AgentSkillLoadResult {
   error?: string;
 }
 
+export type AgentSkillSourceFilter = 'agent-skill' | 'prompt' | 'all';
+
+export interface AgentSkillListOptions {
+  includeDisabled?: boolean;
+  source?: AgentSkillSourceFilter;
+  includePromptBacked?: boolean;
+}
+
 export const STORAGE_KEY_AGENT_SKILLS = 'guyue_agent_skills_v1';
 export const STORAGE_KEY_AGENT_SKILL_ROOTS = 'guyue_agent_skill_roots_v1';
 export const STORAGE_KEY_AGENT_SKILL_CATEGORY_OVERRIDES = 'guyue_agent_skill_category_overrides_v1';
@@ -267,24 +275,36 @@ export const saveStoredAgentSkills = (skills: AgentSkillManifest[]) => {
   localStorage.setItem(STORAGE_KEY_AGENT_SKILLS, JSON.stringify(skills));
 };
 
-export const listAgentSkills = (options: { includeDisabled?: boolean } = {}): AgentSkillManifest[] => {
-  const skills = applyAgentSkillCategoryOverrides([
-    ...loadBuiltinAgentSkills(),
-    ...loadPromptBackedAgentSkills(),
-    ...loadStoredAgentSkills(),
-  ]);
+const shouldIncludeAgentSkillSource = (options: AgentSkillListOptions) =>
+  options.source !== 'prompt';
+
+const shouldIncludePromptSource = (options: AgentSkillListOptions) =>
+  options.source === 'prompt' || options.source === 'all' || options.includePromptBacked === true;
+
+const filterAgentSkillSources = (skills: AgentSkillManifest[], options: AgentSkillListOptions) =>
+  skills.filter(skill => {
+    if (skill.source === 'prompt') return shouldIncludePromptSource(options);
+    return shouldIncludeAgentSkillSource(options);
+  });
+
+export const listAgentSkills = (options: AgentSkillListOptions = {}): AgentSkillManifest[] => {
+  const skills = filterAgentSkillSources(applyAgentSkillCategoryOverrides([
+    ...(shouldIncludeAgentSkillSource(options) ? loadBuiltinAgentSkills() : []),
+    ...(shouldIncludePromptSource(options) ? loadPromptBackedAgentSkills() : []),
+    ...(shouldIncludeAgentSkillSource(options) ? loadStoredAgentSkills() : []),
+  ]), options);
   const deduped = Array.from(new Map(skills.map(skill => [skill.id, skill])).values());
   return options.includeDisabled ? deduped : deduped.filter(skill => skill.enabled !== false);
 };
 
-export const listAgentSkillsAsync = async (options: { includeDisabled?: boolean } = {}) => {
+export const listAgentSkillsAsync = async (options: AgentSkillListOptions = {}) => {
   const scanned = await scanAgentSkillDirectories();
-  const skills = applyAgentSkillCategoryOverrides([
-    ...loadBuiltinAgentSkills(),
-    ...loadPromptBackedAgentSkills(),
-    ...loadStoredAgentSkills(),
-    ...scanned,
-  ]);
+  const skills = filterAgentSkillSources(applyAgentSkillCategoryOverrides([
+    ...(shouldIncludeAgentSkillSource(options) ? loadBuiltinAgentSkills() : []),
+    ...(shouldIncludePromptSource(options) ? loadPromptBackedAgentSkills() : []),
+    ...(shouldIncludeAgentSkillSource(options) ? loadStoredAgentSkills() : []),
+    ...(shouldIncludeAgentSkillSource(options) ? scanned : []),
+  ]), options);
   const deduped = Array.from(new Map(skills.map(skill => [skill.id, skill])).values());
   return options.includeDisabled ? deduped : deduped.filter(skill => skill.enabled !== false);
 };
@@ -331,10 +351,10 @@ export const searchAgentSkillsAsync = async (query: string, limit = 12) => {
     .map(item => item.skill);
 };
 
-export const loadAgentSkill = async (idOrName: string): Promise<AgentSkillLoadResult> => {
+export const loadAgentSkill = async (idOrName: string, options: AgentSkillListOptions = {}): Promise<AgentSkillLoadResult> => {
   const needle = idOrName.trim().toLowerCase();
   if (!needle) return { success: false, error: 'skill id/name 不能为空。' };
-  const skill = (await listAgentSkillsAsync({ includeDisabled: true })).find(item =>
+  const skill = (await listAgentSkillsAsync({ ...options, includeDisabled: true })).find(item =>
     item.id.toLowerCase() === needle ||
     item.name.toLowerCase() === needle ||
     item.id.toLowerCase().endsWith(`:${needle}`),

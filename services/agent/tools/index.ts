@@ -11,6 +11,7 @@ import { KNOWLEDGE_TOOL_REGISTRATIONS } from './knowledgeTools';
 import { LATEX_TOOL_REGISTRATIONS } from './latexTools';
 import { LEARNING_TOOL_REGISTRATIONS } from './learningTools';
 import { MCP_TOOL_REGISTRATIONS } from './mcpTools';
+import { MUSIC_TOOL_REGISTRATIONS } from './musicTools';
 import { NOTE_TOOL_REGISTRATIONS } from './noteTools';
 import { QUESTION_BANK_TOOL_REGISTRATIONS } from './questionBankTools';
 import { SKILL_TOOL_REGISTRATIONS } from './skillTools';
@@ -35,6 +36,7 @@ export const BUILTIN_TOOL_REGISTRATIONS: ToolRegistration[] = [
   ...QUESTION_BANK_TOOL_REGISTRATIONS,
   ...CODE_TOOL_REGISTRATIONS,
   ...CANVAS_TOOL_REGISTRATIONS,
+  ...MUSIC_TOOL_REGISTRATIONS,
   ...GIT_TOOL_REGISTRATIONS,
   ...IMAGE_TOOL_REGISTRATIONS,
   ...EMAIL_TOOL_REGISTRATIONS,

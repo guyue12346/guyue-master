@@ -22,7 +22,7 @@ export const SKILL_TOOL_REGISTRATIONS: ToolRegistration[] = [
     permission: { module: 'skills', action: 'read' },
     tool: {
       name: 'query_agent_skills',
-      description: '查询可供 Agent 使用的 Skills。包括 Skills 模块中的提示词卡片，以及未来的 SKILL.md 能力包。需要复用用户已有提示词、查找领域工作流或加载某个技能前使用。',
+      description: '查询可供 Agent 使用的 Skills，仅返回真正的 Agent Skill / SKILL.md 能力包，不返回 Prompt 提示词卡片。需要查找领域工作流、流程规范或加载某个 Skill 前使用。',
       inputSchema: {
         type: 'object',
         properties: {
@@ -55,11 +55,11 @@ export const SKILL_TOOL_REGISTRATIONS: ToolRegistration[] = [
     permission: { module: 'skills', action: 'read' },
     tool: {
       name: 'load_agent_skill',
-      description: '加载某个 Agent Skill 的完整内容。适合在执行任务前读取用户保存的提示词/流程规范。必须传 query_agent_skills 返回的 id，或准确标题。',
+      description: '加载某个 Agent Skill 的完整内容。适合在执行任务前读取 SKILL.md 能力包、流程规范或内置 Skill。必须传 query_agent_skills 返回的 id，或准确标题。',
       inputSchema: {
         type: 'object',
         properties: {
-          idOrName: { type: 'string', description: 'Skill id 或准确标题，例如 prompt:xxx。' },
+          idOrName: { type: 'string', description: 'Skill id 或准确标题，例如 builtin:create-plan。' },
         },
         required: ['idOrName'],
       },

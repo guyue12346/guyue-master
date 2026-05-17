@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 interface SplashScreenProps {
   onComplete: () => void;
@@ -14,17 +14,22 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
   theme = 'default',
 }) => {
   const [fadeOut, setFadeOut] = useState(false);
+  const onCompleteRef = useRef(onComplete);
+
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
 
   useEffect(() => {
     // 确保至少显示 minDuration 毫秒
     const timer = setTimeout(() => {
       setFadeOut(true);
       // 等待淡出动画完成后调用 onComplete
-      setTimeout(onComplete, 800);
+      setTimeout(() => onCompleteRef.current(), 800);
     }, minDuration);
 
     return () => clearTimeout(timer);
-  }, [minDuration, onComplete]);
+  }, [minDuration]);
 
   return (
     <div 

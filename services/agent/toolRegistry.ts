@@ -26,6 +26,7 @@ export interface ToolRegistration {
   origin?: 'builtin' | 'plugin' | 'skill' | 'mcp';
   sourceId?: string;
   exposure?: 'direct' | 'deferred' | 'hidden';
+  permissionless?: boolean;
   tool: ChatTool;
   permission?: {
     module?: string;
@@ -33,6 +34,7 @@ export interface ToolRegistration {
   };
   safety?: {
     confirm?: boolean;
+    shouldConfirm?: (args: Record<string, any>) => boolean;
   };
   execute: (args: Record<string, any>, context: ToolExecutionContext) => Promise<any>;
 }
@@ -382,6 +384,7 @@ export const getToolPermissionCapabilities = (
 ): ToolPermissionCapabilities => {
   const enabledModuleIds = new Set(enabledModules.map(module => module.id));
   const capabilities = registry.reduce((acc, registration) => {
+    if (registration.permissionless) return acc;
     if (!enabledModuleIds.has(registration.module)) return acc;
     const target = getToolPermissionTarget(registration);
     if (!acc[target.module]) acc[target.module] = {};
@@ -402,6 +405,7 @@ export const canUseToolRegistration = (
   registration: ToolRegistration,
   permissions?: AgentToolPermissions,
 ): boolean => {
+  if (registration.permissionless) return true;
   if (!permissions) return true;
   const target = getToolPermissionTarget(registration);
   return Boolean(permissions[target.module]?.[target.action]);
@@ -411,6 +415,7 @@ export const hasFullToolAccess = (
   registration: ToolRegistration,
   permissions?: AgentFullAccessPermissions,
 ): boolean => {
+  if (registration.permissionless) return true;
   if (!permissions) return false;
   const target = getToolPermissionTarget(registration);
   return Boolean(permissions[target.module]?.[target.action]);
@@ -542,6 +547,7 @@ export const generateToolCallSummary = (toolCalls: ChatToolCall[]): string => {
     query_canvas_categories: '查询画布分类', create_canvas_category: '创建画布分类',
     query_canvases: '查询画布', create_canvas: '创建画布',
     update_canvas_meta: '更新画布', delete_canvas: '删除画布',
+    query_music_library: '查询音乐库',
     query_git_repositories: '查询 Git 仓库', discover_git_repositories: '扫描 Git 仓库',
     query_git_status: '查询 Git 状态',
     query_git_repository_info: '查看仓库信息', query_git_log: '查询 Git 日志',

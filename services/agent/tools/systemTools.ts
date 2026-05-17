@@ -1,4 +1,5 @@
 import type { ToolRegistration } from '../toolRegistry';
+import { queryAppUsageGuide } from '../appUsageGuide';
 
 const formatOffset = (date: Date) => {
   const offsetMinutes = -date.getTimezoneOffset();
@@ -27,6 +28,32 @@ const getZonedDateISO = (timeZone: string, offsetDays = 0) => {
 };
 
 export const SYSTEM_TOOL_REGISTRATIONS: ToolRegistration[] = [
+  {
+    name: 'query_app_usage_guide',
+    module: 'system',
+    origin: 'builtin',
+    exposure: 'direct',
+    permissionless: true,
+    tool: {
+      name: 'query_app_usage_guide',
+      description: '查询 Guyue Master 内置使用指南。用户询问本 App、某个模块、Agent、Skills/MCP、RAG、数据中心、学习空间、题库等怎么用、功能说明、配置方法或操作指南时调用；这是本地文档查询，不需要联网，也不需要权限中心授权。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: '用户关于 App 使用方法、模块功能、操作流程的原始问题。' },
+          section: { type: 'string', description: '可选。指定章节 id 或标题，例如 agent、skills-mcp-prompts、data-center、files-rag。' },
+          limit: { type: 'number', description: '最多返回章节数，默认 5。' },
+          includeFullGuide: { type: 'boolean', description: '是否返回完整指南。用户要求完整/全部功能时设为 true。' },
+        },
+      },
+    },
+    execute: async (args) => queryAppUsageGuide({
+      query: typeof args.query === 'string' ? args.query : '',
+      section: typeof args.section === 'string' ? args.section : '',
+      limit: args.limit,
+      includeFullGuide: Boolean(args.includeFullGuide),
+    }),
+  },
   {
     name: 'get_current_time',
     module: 'system',

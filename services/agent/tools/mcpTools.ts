@@ -59,6 +59,65 @@ const resolveServer = (serverIdOrName: string):
   return { server };
 };
 
+const SAFE_MCP_TOOL_NAMES = new Set([
+  'browser_navigate',
+  'browser_navigate_back',
+  'browser_snapshot',
+  'browser_take_screenshot',
+  'browser_console_messages',
+  'browser_network_requests',
+  'browser_network_request',
+  'browser_wait_for',
+  'browser_resize',
+]);
+
+const READ_ONLY_EVALUATE_HINT_RE = /(innerText|textContent|document\.title|location\.href|document\.body|querySelector|querySelectorAll)/i;
+const UNSAFE_EVALUATE_RE =
+  /(\.click\s*\(|\.submit\s*\(|\.remove\s*\(|\.append(?:Child)?\s*\(|\.prepend\s*\(|\.insertAdjacent|fetch\s*\(|XMLHttpRequest|WebSocket|localStorage\s*\.\s*setItem|sessionStorage\s*\.\s*setItem|document\s*\.\s*cookie\s*=|eval\s*\(|Function\s*\(|browser_run_code_unsafe|window\.open\s*\()/i;
+
+const isReadOnlyBrowserEvaluate = (value: unknown) => {
+  const source = String(value || '').trim();
+  if (!source || source.length > 2500) return false;
+  return READ_ONLY_EVALUATE_HINT_RE.test(source) && !UNSAFE_EVALUATE_RE.test(source);
+};
+
+const needsMcpToolConfirmation = (args: Record<string, any>) => {
+  const toolName = String(args.toolName || '').trim();
+  if (!toolName) return true;
+  if (toolName === 'browser_evaluate') {
+    return !isReadOnlyBrowserEvaluate(args.arguments?.function);
+  }
+  if (toolName === 'browser_tabs') {
+    const action = String(args.arguments?.action || '').trim();
+    return action !== 'list' && action !== 'select';
+  }
+  return !SAFE_MCP_TOOL_NAMES.has(toolName);
+};
+
+const collectMcpContentText = (value: any) => {
+  const content = value?.content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map(item => typeof item?.text === 'string' ? item.text : '')
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+};
+
+const normalizeMcpCallResult = (result: any) => {
+  if (!result?.success) return result;
+  const payload = result.result || result.raw;
+  if (!payload?.isError) return result;
+  const message = collectMcpContentText(payload) || 'MCP 工具返回错误。';
+  return {
+    ...result,
+    success: false,
+    fatal: true,
+    error: message,
+    message,
+  };
+};
+
 export const MCP_TOOL_REGISTRATIONS: ToolRegistration[] = [
   {
     name: 'query_mcp_servers',
@@ -129,17 +188,21 @@ export const MCP_TOOL_REGISTRATIONS: ToolRegistration[] = [
     module: 'mcp',
     origin: 'mcp',
     exposure: 'direct',
-    permission: { module: 'mcp', action: 'update' },
-    safety: { confirm: true },
+    permission: { module: 'mcp', action: 'read' },
+    safety: { shouldConfirm: needsMcpToolConfirmation },
     tool: {
       name: 'call_mcp_tool',
-      description: '调用某个 MCP Server 的工具。MCP 工具可能产生外部副作用，因此执行前会要求确认。调用前应先 list_mcp_tools。',
+      description: '调用某个 MCP Server 的工具。浏览器导航、快照、截图、网络/控制台读取等只读工具可直接执行；点击、输入、表单、文件、任意代码等有副作用或高风险工具会要求确认。调用前应先 list_mcp_tools。',
       inputSchema: {
         type: 'object',
         properties: {
           server: { type: 'string', description: 'MCP Server id 或名称。' },
           toolName: { type: 'string', description: '要调用的 MCP tool 名称。' },
-          arguments: { type: 'object', description: '传给 MCP tool 的参数。' },
+          arguments: {
+            type: 'object',
+            description: '传给 MCP tool 的参数。该对象按目标 MCP tool 的 schema 透传，可包含任意字段。',
+            additionalProperties: true,
+          },
         },
         required: ['server', 'toolName'],
       },
@@ -149,11 +212,12 @@ export const MCP_TOOL_REGISTRATIONS: ToolRegistration[] = [
       if ('error' in resolved) return { success: false, error: resolved.error };
       const electronAPI = getElectronAPI();
       if (!electronAPI?.agentMcpCallTool) return { success: false, error: 'MCP 执行器不可用（非桌面端）。' };
-      return electronAPI.agentMcpCallTool({
+      const result = await electronAPI.agentMcpCallTool({
         server: resolved.server,
         toolName: String(args.toolName || ''),
         arguments: args.arguments || {},
       });
+      return normalizeMcpCallResult(result);
     },
   },
   {

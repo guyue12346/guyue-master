@@ -22,7 +22,7 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
     version: '1.0.0',
     kind: 'builtin',
     icon: 'ListTodo',
-    priority: 1,
+    priority: 2,
     shortcut: 'Tab+1',
     ui: { type: 'native', appMode: 'todo' },
     agent: {
@@ -39,7 +39,7 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
     version: '1.0.0',
     kind: 'builtin',
     icon: 'BarChart3',
-    priority: 2,
+    priority: 3,
     shortcut: 'Tab+D',
     ui: { type: 'native', appMode: 'datacenter' },
     agent: {
@@ -59,7 +59,7 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
     version: '1.0.0',
     kind: 'builtin',
     icon: 'PanelsTopLeft',
-    priority: 3,
+    priority: 4,
     shortcut: 'Tab+K',
     ui: { type: 'native', appMode: 'spaces' },
     agent: {
@@ -74,7 +74,7 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
     version: '1.0.0',
     kind: 'builtin',
     icon: 'Code2',
-    priority: 4,
+    priority: 5,
     shortcut: 'Tab+L',
     ui: { type: 'native', appMode: 'practice' },
     agent: {
@@ -90,7 +90,7 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
     version: '1.0.0',
     kind: 'builtin',
     icon: 'GitBranch',
-    priority: 5,
+    priority: 6,
     shortcut: 'Tab+G',
     ui: { type: 'native', appMode: 'git' },
     agent: {
@@ -105,7 +105,7 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
     version: '1.0.0',
     kind: 'builtin',
     icon: 'BookOpenCheck',
-    priority: 6,
+    priority: 7,
     shortcut: 'Tab+Q',
     ui: { type: 'native', appMode: 'question-bank' },
     agent: {
@@ -120,7 +120,7 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
     version: '1.0.0',
     kind: 'builtin',
     icon: 'FolderOpen',
-    priority: 7,
+    priority: 8,
     shortcut: 'Tab+4',
     ui: { type: 'native', appMode: 'files' },
     agent: {
@@ -135,7 +135,7 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
     version: '1.0.0',
     kind: 'builtin',
     icon: 'Command',
-    priority: 8,
+    priority: 9,
     shortcut: 'Tab+0',
     ui: { type: 'native', appMode: 'terminal' },
   },
@@ -145,7 +145,7 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
     version: '1.0.0',
     kind: 'builtin',
     icon: 'Pencil',
-    priority: 9,
+    priority: 10,
     shortcut: 'Tab+E',
     ui: { type: 'native', appMode: 'excalidraw' },
     agent: {
@@ -160,7 +160,7 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
     version: '1.0.0',
     kind: 'builtin',
     icon: 'Sparkles',
-    priority: 10,
+    priority: 1,
     shortcut: 'Tab+5',
     ui: { type: 'native', appMode: 'prompts' },
     agent: {
@@ -235,6 +235,11 @@ export const BUILTIN_MODULE_MANIFESTS: GuyueModuleManifest[] = [
     priority: 16,
     shortcut: 'Tab+M',
     ui: { type: 'native', appMode: 'music' },
+    agent: {
+      scopes: [
+        { id: 'music', name: '音乐', icon: 'Music', description: '查询 Music 音乐库、播放列表和歌曲元信息' },
+      ],
+    },
   },
   {
     id: 'rag',
