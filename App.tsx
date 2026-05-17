@@ -240,14 +240,21 @@ const pickRandomSplashQuote = (quotes: string[]) => {
   return quotes[index];
 };
 
+const safeWindowPrompt = (message: string, defaultValue = ''): string | null => {
+  if (typeof window === 'undefined' || typeof window.prompt !== 'function') return null;
+  try {
+    return window.prompt(message, defaultValue);
+  } catch {
+    return null;
+  }
+};
+
 // Data migration utility
 const migrateStorageData = () => {
   const currentVersion = localStorage.getItem(STORAGE_VERSION_KEY);
   
   // First time or old version - perform migration
   if (!currentVersion) {
-    console.log('Performing storage migration...');
-    
     // Example: Migrate old keys to new keys
     const oldKeys = [
       { old: 'linkmaster_categories', new: STORAGE_KEY_CATEGORIES },
@@ -269,7 +276,6 @@ const migrateStorageData = () => {
       const oldData = localStorage.getItem(old);
       if (oldData && !localStorage.getItem(newKey)) {
         localStorage.setItem(newKey, oldData);
-        console.log(`Migrated ${old} to ${newKey}`);
       }
     });
     
@@ -1583,7 +1589,6 @@ const App: React.FC = () => {
           } else {
             setOJHeatmapData(fileData);
           }
-          console.log("Loaded OJ data from file storage");
         } else {
           // 回退到 localStorage（兼容旧数据）
           const saved = localStorage.getItem(STORAGE_KEY_OJ_HEATMAP);
@@ -1597,7 +1602,6 @@ const App: React.FC = () => {
               }
               // 迁移到文件存储
               await window.electronAPI.saveAppData('oj-heatmap', parsed);
-              console.log("Migrated OJ data to file storage");
             } catch (e) {
               console.error("Failed to parse OJ data:", e);
             }
@@ -1638,7 +1642,6 @@ const App: React.FC = () => {
             // 如果清理后数据有变化，保存回 localStorage
             if (JSON.stringify(parsed) !== JSON.stringify(cleaned)) {
               localStorage.setItem(STORAGE_KEY_RESOURCE, JSON.stringify(cleaned));
-              console.log("Cleaned invalid cost data in resource center");
             }
           } catch (e) {
             console.error("Failed to parse resource data from localStorage:", e);
@@ -1656,9 +1659,7 @@ const App: React.FC = () => {
           // 如果清理后数据有变化，保存回文件
           if (JSON.stringify(fileData) !== JSON.stringify(cleaned)) {
             await window.electronAPI.saveAppData('resource-center', cleaned);
-            console.log("Cleaned invalid cost data in resource center");
           }
-          console.log("Loaded resource data from file storage");
         } else {
           // 回退到 localStorage
           const saved = localStorage.getItem(STORAGE_KEY_RESOURCE);
@@ -1668,7 +1669,6 @@ const App: React.FC = () => {
               const cleaned = cleanResourceData(parsed);
               setResourceData(cleaned);
               await window.electronAPI.saveAppData('resource-center', cleaned);
-              console.log("Migrated resource data to file storage");
             } catch (e) {
               console.error("Failed to parse resource data:", e);
             }
@@ -1749,7 +1749,6 @@ const App: React.FC = () => {
           });
 
           if (result.success) {
-            console.log('Expiry reminder email sent successfully');
             localStorage.setItem(STORAGE_KEY_LAST_EMAIL_CHECK, today);
           } else {
             console.error('Failed to send expiry reminder:', result.error);
@@ -2425,7 +2424,7 @@ const App: React.FC = () => {
         window.alert(`分类“${category.name}”下有 SSH 记录。请先创建另一个分类，再删除该分类。`);
         return;
       }
-      const input = window.prompt(`分类“${category.name}”下有 ${affectedCount} 条 SSH 记录。请输入要迁移到的已有分类：\n${available.join('、')}`, available[0]);
+      const input = safeWindowPrompt(`分类“${category.name}”下有 ${affectedCount} 条 SSH 记录。请输入要迁移到的已有分类：\n${available.join('、')}`, available[0]);
       if (!input) return;
       fallbackCategory = input.trim();
       if (!available.includes(fallbackCategory)) {
@@ -2525,7 +2524,7 @@ const App: React.FC = () => {
         window.alert(`分类“${category.name}”下有 API 记录。请先创建另一个分类，再删除该分类。`);
         return;
       }
-      const input = window.prompt(`分类“${category.name}”下有 ${affectedCount} 条 API 记录。请输入要迁移到的已有分类：\n${available.join('、')}`, available[0]);
+      const input = safeWindowPrompt(`分类“${category.name}”下有 ${affectedCount} 条 API 记录。请输入要迁移到的已有分类：\n${available.join('、')}`, available[0]);
       if (!input) return;
       fallbackCategory = input.trim();
       if (!available.includes(fallbackCategory)) {
@@ -2968,7 +2967,7 @@ const App: React.FC = () => {
     }
     
     // 弹窗让用户输入文件名
-    const userInput = prompt('请输入笔记文件名（不需要输入 .md 后缀）:', '');
+    const userInput = safeWindowPrompt('请输入笔记文件名（不需要输入 .md 后缀）:', '');
     if (userInput === null) return; // 用户取消
     const trimmed = userInput.trim();
     if (!trimmed) {
@@ -3048,7 +3047,7 @@ const App: React.FC = () => {
           window.alert(`分类“${category.name}”下还有内容。请先创建另一个分类，再删除该分类。`);
           return;
         }
-        const input = window.prompt(`分类“${category.name}”下有 ${affectedCount} 条内容。请输入要迁移到的已有分类：\n${available.join('、')}`, available[0]);
+        const input = safeWindowPrompt(`分类“${category.name}”下有 ${affectedCount} 条内容。请输入要迁移到的已有分类：\n${available.join('、')}`, available[0]);
         if (!input) return;
         fallbackCategory = input.trim();
         if (!available.includes(fallbackCategory)) {

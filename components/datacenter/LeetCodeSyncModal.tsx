@@ -154,11 +154,8 @@ async function fetchLeetCodeData(
         session
       });
 
-      console.log('[LeetCode] submissionList 响应:', JSON.stringify(listData));
-
       const result = listData?.data?.submissionList;
       if (!result || !result.submissions || result.submissions.length === 0) {
-        console.log('[LeetCode] submissionList 返回空数据，停止获取');
         break;
       }
 
@@ -173,7 +170,6 @@ async function fetchLeetCodeData(
         
         // 增量同步：如果遇到已同步过的记录，停止获取
         if (lastSyncTimestamp > 0 && subTimestamp <= lastSyncTimestamp) {
-          console.log(`[LeetCode] 遇到已同步记录 (${sub.timestamp})，停止获取`);
           reachedLastSync = true;
           break;
         }

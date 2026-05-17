@@ -299,7 +299,6 @@ export const isFileInLearningModule = async (filePath: string): Promise<boolean>
  */
 export const deleteCategoryFolder = async (categoryId: string): Promise<boolean> => {
   const categoryPath = await getCategoryPath(categoryId);
-  console.log('Deleting category folder:', categoryPath);
   return await deleteDirectory(categoryPath);
 };
 
@@ -314,14 +313,11 @@ export const renameCategoryFolder = async (
   const oldPath = await getCategoryPath(oldCategoryName);
   const newPath = await getCategoryPath(newCategoryName);
 
-  console.log('Renaming category folder:', oldPath, '->', newPath);
-
   try {
     // 尝试重命名
     const success = await window.electronAPI.renameFile(oldPath, newPath);
     if (!success) {
       // 文件夹可能不存在，尝试创建新文件夹
-      console.log('Category folder rename failed, creating new folder');
       await ensureDirectory(newPath);
     }
     return { success: true, oldPath, newPath };
@@ -336,7 +332,6 @@ export const renameCategoryFolder = async (
  */
 export const deleteCourseFolder = async (categoryName: string, courseName: string): Promise<boolean> => {
   const coursePath = await getCoursePath(categoryName, courseName);
-  console.log('Deleting course folder:', coursePath);
   return await deleteDirectory(coursePath);
 };
 
@@ -456,7 +451,6 @@ export const migrateToIdBasedPaths = async (
   }
 
   localStorage.setItem(MIGRATION_KEY, '1');
-  console.log(`[Migration] ID路径迁移完成，${anyChanged ? '有数据变更已写入' : '无需变更'}`);
   return anyChanged ? updatedCourses : courses;
 };
 

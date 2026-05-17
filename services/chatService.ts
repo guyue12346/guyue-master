@@ -1345,17 +1345,6 @@ export class ChatService {
       }
     }
 
-    // Enable Web Search for Zenmux (暂时禁用，需要确认正确的格式)
-    // TODO: 确认Zenmux的web search正确格式
-    // if (this.config.provider === 'zenmux' && this.config.enableWebSearch) {
-    //   body.tools = [{
-    //     type: 'web_search',
-    //     web_search: {
-    //       enabled: true
-    //     }
-    //   }];
-    // }
-
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers,

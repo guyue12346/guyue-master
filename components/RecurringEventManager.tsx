@@ -23,6 +23,15 @@ const RECURRENCE_LABELS: Record<RecurringEvent['recurrence'], string> = {
 
 const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六'];
 
+const safeWindowPrompt = (message: string, defaultValue = ''): string | null => {
+  if (typeof window === 'undefined' || typeof window.prompt !== 'function') return null;
+  try {
+    return window.prompt(message, defaultValue);
+  } catch {
+    return null;
+  }
+};
+
 function describeRecurrence(event: RecurringEvent): string {
   let base = '';
   if (event.interval === 1) {
@@ -197,7 +206,7 @@ export const RecurringEventManager: React.FC<RecurringEventManagerProps> = ({
         return false;
       }
       const availableNames = available.map(category => category.name);
-      const input = window.prompt(`分类“${cat.name}”下有 ${affected.length} 个日程事项。请输入要迁移到的已有分类：\n${availableNames.join('、')}`, availableNames[0]);
+      const input = safeWindowPrompt(`分类“${cat.name}”下有 ${affected.length} 个日程事项。请输入要迁移到的已有分类：\n${availableNames.join('、')}`, availableNames[0]);
       if (!input) return false;
       const target = input.trim();
       if (!availableNames.includes(target)) {
